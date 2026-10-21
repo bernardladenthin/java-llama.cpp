@@ -41,6 +41,14 @@ final class OllamaApiSupport {
     /** Ollama's answer to {@code "raw": true} with a {@code system}, {@code template} or {@code context}. */
     static final String RAW_CONFLICT_MESSAGE = "raw mode does not support template, system, or context";
 
+    /** The answer to a {@code template} without {@code raw}: the model's chat template renders the prompt. */
+    static final String TEMPLATE_UNSUPPORTED_MESSAGE =
+            "template is not supported: the model's chat template renders the prompt";
+
+    /** The answer to a {@code context} without {@code raw}: no answer hands out a token context. */
+    static final String CONTEXT_UNSUPPORTED_MESSAGE = "context is not supported: token contexts cannot be replayed;"
+            + " send the conversation as messages to /api/chat";
+
     /**
      * Advertised Ollama API version. Clients gate on it: VS Code Copilot's Ollama provider refuses a server
      * below 0.6.4. 0.9.0 is the first Ollama with {@code think}, the newest request feature these routes
@@ -672,7 +680,8 @@ final class OllamaApiSupport {
 
     /**
      * Whether the {@code /api/generate} request asks for the bare prompt ({@code "raw": true}). Without
-     * it Ollama applies the model's chat template, with {@code system} as the system message; with it a
+     * it Ollama applies the model's chat template, with {@code system} as the system message, and a
+     * {@code template} or {@code context} is refused ({@link #refuseTemplateAndContext}); with it a
      * {@code system}, {@code template} or {@code context} is refused ({@link #hasRawConflict}).
      *
      * @param request the parsed Ollama generate request
@@ -699,6 +708,30 @@ final class OllamaApiSupport {
         return !request.path("system").asText("").isEmpty()
                 || !request.path("template").asText("").isEmpty()
                 || (context.isArray() && context.size() > 0);
+    }
+
+    /**
+     * Refuse what a {@code /api/generate} request without {@code raw} asks for and cannot get: Ollama
+     * renders the prompt with a request's {@code template} and continues the token {@code context} of an
+     * earlier answer, but here the model's own chat template renders the prompt and no answer hands out
+     * a context. Both used to be dropped and the request answered as an ordinary chat turn. An empty
+     * {@code template}, an empty {@code context} array and {@code null} mean "not set", as in Ollama.
+     *
+     * @param request the parsed Ollama generate request
+     * @throws IllegalArgumentException with {@value #TEMPLATE_UNSUPPORTED_MESSAGE} or
+     *     {@value #CONTEXT_UNSUPPORTED_MESSAGE}
+     */
+    static void refuseTemplateAndContext(JsonNode request) {
+        JsonNode template = request.path("template");
+        if (!template.isMissingNode()
+                && !template.isNull()
+                && !(template.isTextual() && template.asText().isEmpty())) {
+            throw new IllegalArgumentException(TEMPLATE_UNSUPPORTED_MESSAGE);
+        }
+        JsonNode context = request.path("context");
+        if (!context.isMissingNode() && !context.isNull() && !(context.isArray() && context.size() == 0)) {
+            throw new IllegalArgumentException(CONTEXT_UNSUPPORTED_MESSAGE);
+        }
     }
 
     /**

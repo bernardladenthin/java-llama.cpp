@@ -525,6 +525,44 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     /**
+     * Without {@code raw}, Ollama renders the prompt with a request's {@code template} and continues the
+     * token {@code context} of an earlier answer. Neither can be honoured here -- the model's own chat
+     * template renders the prompt, and no answer hands out a context -- and both were dropped, the
+     * request answered as an ordinary chat turn. They are refused; empty values mean "not set".
+     */
+    @Test
+    public void ollamaGenerateWithATemplateOrAContextIsRefused() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String[][] cases = {
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"why?\",\"template\":\"{{ .Prompt }}\",\"stream\":false}",
+                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE
+                },
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"why?\",\"context\":[1,2,3],\"stream\":false}",
+                    OllamaApiSupport.CONTEXT_UNSUPPORTED_MESSAGE
+                },
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"def f(\",\"suffix\":\")\",\"template\":\"t\"}",
+                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE
+                }
+            };
+            for (String[] c : cases) {
+                Response response = post(server.getPort(), "/api/generate", c[0], "");
+                assertThat(c[0], response.code, is(400));
+                assertThat(c[0], READER.readTree(response.body).path("error").asText(), is(c[1]));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+
+            String empty = "{\"model\":\"test-model\",\"prompt\":\"why?\",\"template\":\"\",\"context\":[],"
+                    + "\"stream\":false}";
+            assertThat(post(server.getPort(), "/api/generate", empty, "").code, is(200));
+            assertThat(backend.called, is("complete"));
+        }
+    }
+
+    /**
      * Ollama refuses {@code "raw": true} next to a {@code system}, {@code template} or {@code context}
      * with a 400, before its load answer and before fill-in-the-middle. The server dropped them silently
      * and completed the bare prompt.

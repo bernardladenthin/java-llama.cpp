@@ -182,6 +182,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F257](#f257) — niedrig bis mittel — *gefixt*
 - [F258](#f258) — mittel — *gefixt*
 - [F259](#f259) — niedrig bis mittel — *gefixt*
+- [F260](#f260) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2363,6 +2364,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code (mit den neuen Signaturen als Stummel) rot: „OllamaApiSupportTest.aRawGenerationTakesItsFormatAsTheJsonSchema:265 Expected: is <{"type":"object"}> but: was <>“, „aRawGenerationPutsItsImagesWhereTheirTagsAre:315 Expected: is "a <m> b <m> c" but: was """, „aFormatThatIsNeitherJsonNorASchemaIsRefused:287 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, ebenso `aRawImageWithoutItsTagOrATagWithoutItsImageIsRefused:329`, `anInfillGenerationTakesItsFormatAndRefusesImages` („Expected: is <{"type":"object"}> but: was <>“), und „OpenAiCompatServerHttpTest.ollamaGenerateWithAnUnplacedImageOrAnUnknownFormatIsABadRequest:520 … Expected: is <400> but: was <200>“, „ollamaGenerateWithRawCarriesItsFormatAndImages:493 Expected: is <{"type":"object"}> but: was <>“. Der modellgestützte Test rot ohne die `json_schema`-Zeile: „OpenAiServerCompletionIntegrationTest.ollamaGenerateRawWithFormatJsonAnswersAJsonObject:321 d"d"dV"d Expected: is <true> but: was <false>“ (Winzmodell, freier Text). Mit dem Fix grün: `OllamaApiSupportTest` 54/54, `OpenAiCompatServerHttpTest` 76/76, `LlamaModelBackendTest` 4/4, `OpenAiServerCompletionIntegrationTest` 10/12 mit dem Winzmodell (die zwei übersprungenen brauchen FIM-Token).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `e5d35b1`
+
+### F260 – java-llama.cpp: Ollama `/api/generate` ohne `raw` verwirft `template` und `context` still
+- **Zeit:** 2026-10-21 15:58 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `refuseTemplateAndContext`, `TEMPLATE_UNSUPPORTED_MESSAGE`, `CONTEXT_UNSUPPORTED_MESSAGE`; Javadoc von `isRaw`), `OpenAiCompatServer.java` (`handleOllamaGenerate`), `README.md`
+- **Schwere:** niedrig (der Client bekommt eine plausible Antwort, die sein Template bzw. seinen Gesprächskontext nie gesehen hat)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Ollama routes“, zweiter Punkt; Brief JR-3), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F215 weist dieselben Felder neben `raw` ab (Ollamas eigene Regel); ohne `raw` blieb ihr Verwerfen offen.
+- **Beschreibung:** Ohne `raw` rendert Ollama den Prompt mit dem `template` der Anfrage und setzt den Token-`context` einer früheren Antwort fort. Hier rendert das Chat-Template des Modells den Prompt (`toOpenAiChatRequestFromGenerate`), und keine Antwort gibt einen `context` heraus; beide Felder wurden übergangen und die Anfrage als gewöhnlicher Chat-Zug beantwortet.
+- **Fix:** Entscheidung (klarer Fehler statt stiller Abweichung, Form wie F215): ohne `raw` beantwortet `handleOllamaGenerate` ein nicht leeres `template` mit 400 „template is not supported: the model's chat template renders the prompt“ und einen nicht leeren `context` mit 400 „context is not supported: token contexts cannot be replayed; send the conversation as messages to /api/chat“, auch auf dem FIM-Weg (`suffix`); `""`, `[]` und `null` gelten wie bei Ollama als nicht gesetzt. Die Ladeantwort (kein Prompt) bleibt davor. README-Abschnitt der Ollama-Routen nennt die Abweichung.
+- **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithATemplateOrAContextIsRefused` (`template`, `context: [1,2,3]`, `template` neben `suffix` → 400 mit der Meldung, das Backend wird nicht gerufen; leeres `template` und `context: []` → 200 über das Chat-Template).
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit den Meldungskonstanten als Stummel) rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithATemplateOrAContextIsRefused:553 {"model":"test-model","prompt":"why?","template":"{{ .Prompt }}","stream":false} Expected: is <400> but: was <200>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 77/77, `OllamaApiSupportTest` 54/54.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

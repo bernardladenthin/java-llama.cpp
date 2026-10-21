@@ -665,6 +665,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
             // prompt, anything else goes through the chat template as Ollama does.
             final OllamaApiSupport.Generated generated;
             try {
+                if (!OllamaApiSupport.isRaw(request)) {
+                    // a raw request refused both above, in Ollama's order; without raw neither can be kept
+                    OllamaApiSupport.refuseTemplateAndContext(request);
+                }
                 if (OllamaApiSupport.hasSuffix(request)) {
                     generated = OllamaApiSupport.Generated.fromInfill(
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
