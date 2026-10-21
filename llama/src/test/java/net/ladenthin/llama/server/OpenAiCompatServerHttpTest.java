@@ -10,11 +10,17 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.startsWith;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.Socket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.Test;
@@ -76,6 +82,8 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    // The backend emits only after the client has read a heartbeat, so the assertion follows an
+    // observed ": ping" instead of a timer that had to fire inside a fixed sleep.
     @Test
     public void streamingEmitsHeartbeatsDuringAGap() throws IOException {
         OpenAiServerConfig cfg = OpenAiServerConfig.builder()
@@ -83,11 +91,13 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
                 .port(0)
                 .heartbeatMillis(50L)
                 .build();
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new SlowFakeBackend(), cfg).start()) {
+        CountDownLatch release = new CountDownLatch(1);
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new SlowFakeBackend(release), cfg).start()) {
             String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
-            Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+            Response response = postReleasingAfterAHeartbeat(server.getPort(), "/v1/chat/completions", body, release);
             assertThat(response.code, is(200));
-            assertThat(response.body, containsString(":")); // SSE comment heartbeat
+            assertThat(response.body, startsWith(": ping"));
+            assertThat(response.body, containsString("\"content\":\"done\""));
             assertThat(response.body, containsString("data: [DONE]"));
         }
     }
@@ -729,7 +739,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     @Test
     public void aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent() throws IOException {
         ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+                new ScriptedStreamBackend(1, new InvalidRequestException(RejectingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             Response response = post(server.getPort(), "/v1/chat/completions", body, "");
@@ -742,6 +752,8 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     // A heartbeat starts the response too: it is what keeps a client waiting through a long prompt.
+    // The backend fails only after the client has read a heartbeat, so the stream has provably
+    // started when the rejection arrives.
     @Test
     public void aRejectionAfterAHeartbeatIsAnEvent() throws IOException {
         OpenAiServerConfig cfg = OpenAiServerConfig.builder()
@@ -749,15 +761,60 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
                 .port(0)
                 .heartbeatMillis(50L)
                 .build();
+        CountDownLatch release = new CountDownLatch(1);
         ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(0, 300L, new InvalidRequestException(RejectingBackend.REASON));
+                new ScriptedStreamBackend(0, release, new InvalidRequestException(RejectingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, cfg).start()) {
             String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
-            Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+            Response response = postReleasingAfterAHeartbeat(server.getPort(), "/v1/chat/completions", body, release);
             assertThat(response.code, is(200));
-            assertThat(response.body, containsString(": ping"));
+            assertThat(response.body, startsWith(": ping"));
             assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
+            assertThat(response.body, containsString(RejectingBackend.REASON_FRAGMENT));
         }
+    }
+
+    /**
+     * POSTs {@code body} and reads the response line by line; {@code release} is counted down once a
+     * heartbeat line has arrived, and the rest of the body is read to its end.
+     *
+     * @param port the server port
+     * @param path the request path
+     * @param body the JSON request body
+     * @param release the latch the backend waits on
+     * @return the status and the whole body, lines joined by {@code \n}
+     * @throws IOException on transport failure
+     * @throws AssertionError if a successful stream ends before a heartbeat arrived
+     */
+    private static Response postReleasingAfterAHeartbeat(int port, String path, String body, CountDownLatch release)
+            throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
+        conn.setReadTimeout((int) TimeUnit.SECONDS.toMillis(BACKEND_RELEASE_TIMEOUT_SECONDS * 2));
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+        }
+        // blocks until the first write of the server, which is the heartbeat: nothing else is written
+        // before the backend is released
+        int code = conn.getResponseCode();
+        StringBuilder text = new StringBuilder();
+        // an error status means the backend already gave up waiting: hand it to the caller's assertions
+        InputStream stream = code < 400 ? conn.getInputStream() : conn.getErrorStream();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                text.append(line).append('\n');
+                if (release.getCount() > 0 && line.startsWith(": ping")) {
+                    release.countDown();
+                }
+            }
+        }
+        if (code < 400 && release.getCount() > 0) {
+            throw new AssertionError("the stream ended without a heartbeat: " + text);
+        }
+        return new Response(code, text.toString(), null, conn.getContentType());
     }
 
     // A Responses client dispatches on the data's "type" and reads a stream failure from a
@@ -767,7 +824,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     @Test
     public void rejectedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
         ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+                new ScriptedStreamBackend(1, new InvalidRequestException(RejectingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
             String events = post(server.getPort(), "/v1/responses", body, "").body;
@@ -782,8 +839,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void failedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
-        ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(1, 0L, new LlamaException(StreamFailingBackend.REASON));
+        ScriptedStreamBackend backend = new ScriptedStreamBackend(1, new LlamaException(StreamFailingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
             String events = post(server.getPort(), "/v1/responses", body, "").body;
@@ -875,8 +931,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void aFailedStreamedAnthropicMessageIsAnApiError() throws IOException {
-        ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(1, 0L, new LlamaException(StreamFailingBackend.REASON));
+        ScriptedStreamBackend backend = new ScriptedStreamBackend(1, new LlamaException(StreamFailingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
                     + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
@@ -891,7 +946,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     @Test
     public void aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError() throws IOException {
         ScriptedStreamBackend backend =
-                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+                new ScriptedStreamBackend(1, new InvalidRequestException(RejectingBackend.REASON));
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
                     + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
@@ -1259,15 +1314,40 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
-    /** Backend whose streams emit {@code chunks} chunks, wait {@code delayMillis}, then fail with {@code failure}. */
+    /** How long a test backend waits for the client to release it before it gives up. */
+    static final long BACKEND_RELEASE_TIMEOUT_SECONDS = 30L;
+
+    /**
+     * Waits until the test releases the backend; a release that never comes fails the request
+     * instead of hanging the fork.
+     */
+    static void awaitRelease(CountDownLatch release) {
+        try {
+            if (!release.await(BACKEND_RELEASE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the client never read a heartbeat, so the backend was not released");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for the client", e);
+        }
+    }
+
+    /**
+     * Backend whose streams emit {@code chunks} chunks, wait until {@code release} is counted down,
+     * then fail with {@code failure}.
+     */
     static final class ScriptedStreamBackend extends FakeBackend {
         private final int chunks;
-        private final long delayMillis;
+        private final CountDownLatch release;
         private final RuntimeException failure;
 
-        ScriptedStreamBackend(int chunks, long delayMillis, RuntimeException failure) {
+        ScriptedStreamBackend(int chunks, RuntimeException failure) {
+            this(chunks, new CountDownLatch(0), failure);
+        }
+
+        ScriptedStreamBackend(int chunks, CountDownLatch release, RuntimeException failure) {
             this.chunks = chunks;
-            this.delayMillis = delayMillis;
+            this.release = release;
             this.failure = failure;
         }
 
@@ -1290,18 +1370,18 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
 
         private void pause() {
-            if (delayMillis > 0) {
-                try {
-                    Thread.sleep(delayMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
+            awaitRelease(release);
         }
     }
 
-    /** Backend that stalls before emitting, so the server's heartbeat fires during the gap. */
+    /** Backend that stalls until {@code release} is counted down, so the server's heartbeat fires during the gap. */
     static final class SlowFakeBackend implements OpenAiBackend {
+        private final CountDownLatch release;
+
+        SlowFakeBackend(CountDownLatch release) {
+            this.release = release;
+        }
+
         @Override
         public String complete(JsonNode request) {
             return "{\"object\":\"chat.completion\",\"choices\":[]}";
@@ -1309,12 +1389,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
         @Override
         public void stream(JsonNode request, ChunkSink sink) throws IOException {
-            try {
-                Thread.sleep(300L);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
+            awaitRelease(release);
             sink.accept("{\"object\":\"chat.completion.chunk\","
                     + "\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}");
         }
