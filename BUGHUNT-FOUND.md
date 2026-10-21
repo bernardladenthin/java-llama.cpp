@@ -2039,7 +2039,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `StreamingChunkAssemblerTest`: `RecordingHandler` führt zusätzlich eine geordnete Liste `toolCallEvents`; `assemblesParallelToolCallsByIndex` prüft jetzt die Reihenfolge (beide Aufrufe in einem Chunk); neu `completesEachToolCallAsSoonAsTheNextOneStarts` (drei Chunks, Ereignisse genau `partial:0, complete:0, partial:1, complete:1`, die `CompleteToolCall`-Nutzlasten gleich den endgültigen Requests), `defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts` (Aufruf 0 ohne Namen beim Start von 1: `partial:1, complete:0, complete:1`, Name aus dem späten Fragment; Regressionsschutz, vorher wie nachher grün), `argumentsForAToolCallThatIsAlreadyCompleteFailTheStream`. Modul `llama-langchain4j` 58/0/0/7 grün.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: `assemblesParallelToolCallsByIndex` und `completesEachToolCallAsSoonAsTheNextOneStarts` mit „Expected: iterable containing ["partial:0", "complete:0", "partial:1", "complete:1"] but: item 1: was "partial:1"“, `argumentsForAToolCallThatIsAlreadyCompleteFailTheStream` mit „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix alle 12 Tests der Klasse grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `b90de3c`
 
 ## Offene Verdachte ohne Fund-ID
 
