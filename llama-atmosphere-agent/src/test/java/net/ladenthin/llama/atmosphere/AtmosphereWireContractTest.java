@@ -261,6 +261,34 @@ class AtmosphereWireContractTest {
     }
 
     /**
+     * A request body over the server's cap is answered {@code 413} before the backend is reached, and
+     * Atmosphere reports it as the turn's failure. The system prompt alone exceeds the 64-byte cap.
+     */
+    @Test
+    void oversizedRequestIsRejectedBeforeReachingTheBackend() throws Exception {
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
+        OpenAiServerConfig smallBodies = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .apiKey(API_KEY)
+                .modelId(MODEL_ID)
+                .maxRequestBodyBytes(64)
+                .build();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, smallBodies).start()) {
+            AgentRunner runner = runner(server, API_KEY, List.of());
+            ConsoleSession session = session();
+
+            runner.run("hello", List.of(), session);
+
+            assertThat(session.await(TIMEOUT), is(true));
+            assertThat(session.text(), is(""));
+            assertThat(session.failure(), is(notNullValue()));
+            assertThat(session.failure().getMessage(), containsString("Request body too large"));
+            assertThat(backend.requests(), is(empty()));
+        }
+    }
+
+    /**
      * An engine failure before the first chunk is an error status, as upstream llama-server answers it
      * (it reads the first result before it starts a stream), and Atmosphere reports it as the turn's
      * failure. Until F182 this server sent HTTP 200 first, and the turn ended as a silent, empty answer.
