@@ -162,6 +162,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F237](#f237) — niedrig — *gefixt*
 - [F238](#f238) — niedrig — *gefixt*
 - [F239](#f239) — niedrig — *gefixt*
+- [F240](#f240) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2000,6 +2001,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („expected: <true> but was: <false>“ für `jllama.dll.4711.tmp`), mit ihm grün (`LlamaLoaderTest` 64/64); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün. Die CHANGELOG-Zeile zu F09 („removes regular files with a library suffix … nothing else“) ist damit unvollständig; sie bleibt für den CHANGELOG-Durchgang.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4205d20`
+
+### F240 – java-llama.cpp: Patch 0021 hält einen nie benutzten Slot für einen Adapterwechsel und wirft dessen geladenen Prompt weg
+- **Zeit:** 2026-10-21 02:22 UTC
+- **Datei:** `llama/patches/0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch` (zweiter Hunk in `init()` von `tools/server/server-context.cpp`, Kopftext), `llama/src/test/cpp/test_lora_cache.cpp`, `docs/patches.md`, `CLAUDE.md`
+- **Schwere:** niedrig (konservativ: kein falsches Ergebnis, nur ein verlorener Cache-Treffer und eine irreführende Trace-Zeile)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J12-2). Folge von F67 (Patch 0021), dessen `else`-Zweig den Vergleich `params_base.lora_adapters` gegen `slot.lora` einführte.
+- **Beschreibung:** `server_slot::lora` beginnt leer, und `init()` setzt es nie. Auf einem mit `--lora` gestarteten Server vergleicht der `else`-Zweig von Patch 0021 deshalb bei der ersten Aufgabe jedes Slots `[]` mit `[Adapter]`: `lora_should_clear_cache([], next)` ist für eine gewöhnliche LoRA wahr, der Slot protokolliert „clearing cache for lora change. 0 loras -> 1 loras“ und ruft `slot.prompt.clear()` auf. Auf einem leeren Slot kostet das nichts; hält der nie benutzte Slot aber schon einen Prompt -- per `SLOT_RESTORE` wiederhergestellt oder von `get_available_slot()` aus dem RAM-Prompt-Cache geladen, beides unter den Adaptern des Servers berechnet --, geht dieser Zustand verloren und der ganze Prompt wird neu verarbeitet. Vor dem Patch behielt der bloße `else`-Zweig ihn; der Satz des Patch-Kopfs „Equal sets keep the cache exactly as before“ galt für die erste Aufgabe eines Slots also nicht. Upstreams Zweig für Anfragen mit eigenen Adaptern hat dieselbe Asymmetrie, wenn eine Anfrage die Adapter des Servers nennt.
+- **Fix:** Ein zweiter Hunk in Patch 0021 setzt in der Slot-Schleife von `init()` neben `slot.id = i;` `slot.lora = params_base.lora_adapters;`, sodass `slot.lora` von Anfang an „die Adapter, zu denen der Zustand des Slots gehört“ bedeutet. Ein `SET_LORA` vor der ersten Aufgabe eines Slots ist weiter ein Wechsel und leert ihn (auf einem leeren Slot folgenlos); `slot.lora` wird sonst nur von `common_set_adapter_lora` nach dem Start und von `can_batch_with` gelesen, die Initialisierung ist dort neutral. Der Patch-Kopf beschreibt den Hunk und hat je Hunk einen Drop-Check; `docs/patches.md` neu erzeugt, die CLAUDE.md-Zeilen von 0021 und `test_lora_cache.cpp` nachgezogen (646 Tests). Der ganze Patch-Satz ist auf die unveränderte Quelle b11639 (`a0e6dc738`) angewandt und ergibt für `server-context.cpp` genau den Diff des Build-Baums; `check-patches.py`: 14 Patches, 97 Hunks, 0 Probleme.
+- **Tests:** `LoraCacheFreshSlot.AStateRestoredIntoANeverUsedSlotIsKept` (neue Fixture: zufälliges Modell und zufällige LoRA, `-np 2`, `--cache-ram 0`, `--slot-save-path`; Anfrage auf Slot 0, Slot 0 speichern, in den nie benutzten Slot 1 wiederherstellen, dieselbe Anfrage auf Slot 1: `timings.prompt_n` ≤ 2 und dieselbe Antwort wie auf Slot 0). Der vom Reviewer vorgeschlagene Test (`-np 2`, LRU, zweimal derselbe Prompt) wäre leer gewesen, weil der erste Zustand dabei nie in den RAM-Cache gelangt; deshalb der Weg über Speichern/Wiederherstellen, den der Praxis-Skeptiker beschrieben hat. Alle 646 C++-Tests grün.
+- **Rot-Grün-Nachweis:** Ohne den `init()`-Hunk rot („Expected: (prompt_n) <= (2), actual: 77 vs 2“, `cache_n` 0: der wiederhergestellte Prompt war geleert), mit ihm grün (`LoraCache*` 5/5).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

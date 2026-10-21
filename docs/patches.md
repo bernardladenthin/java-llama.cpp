@@ -35,7 +35,7 @@ match a binary to this page.
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0019 | [`0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](#0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversionpatch) | ggml-cpu : select the NEON fp32->fp16 conversion | 1 | 2 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
-| 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 1 |
+| 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 
 ## 0001-win32-arg-parse-embed-guard.patch
 
@@ -638,16 +638,26 @@ The patch applies the per-request rule in the else branch too: when params_base.
 differ from the slot's, lora_should_clear_cache() decides, the same trace lines are logged, and
 the slot takes the server's adapters. Equal sets keep the cache exactly as before.
 
+For that to hold on a slot's first task, init() starts every slot with the server's adapters.
+slot.lora used to start empty, so a never-used slot of a server started with --lora read as
+"computed under no adapters": its first task logged "0 loras -> 1 loras" and cleared a prompt
+the slot already held -- a state restored into it (SLOT_RESTORE) or loaded from the host-memory
+prompt cache by get_available_slot(), both computed under the server's adapters. The same holds
+for upstream's per-request branch when a request names the server's own adapters. A SET_LORA
+before a slot's first task is still a change and clears, which costs nothing on an empty slot.
+
 Not covered: the host-memory prompt cache (--cache-ram) stores slot states without the adapters
 they were computed with, so a state saved under other adapters can still be loaded into a slot;
 that holds for per-request adapters as much as for these.
 
 The guard is src/test/cpp/test_lora_cache.cpp: a random llama model and a random LoRA adapter on
 K, V and the FFN output, greedy, one slot; after each kind of change the warm slot must answer
-like an emptied one.
+like an emptied one. A second fixture with two slots restores slot 0's saved state into the
+never-used slot 1, which must reuse it.
 
 Drop-check on every bump: read the else branch of the "process per-request lora adapters" block of
 launch_slot_with_task() in tools/server/server-context.cpp at the new tag -- once it compares
 params_base.lora_adapters with slot.lora and clears the prompt (or SET_LORA clears the slots),
-drop this patch rather than refreshing it.
+drop that hunk rather than refreshing it; and read the slot loop of init() -- once it sets
+slot.lora from params_base.lora_adapters, drop that hunk. The patch goes when both have.
 ```

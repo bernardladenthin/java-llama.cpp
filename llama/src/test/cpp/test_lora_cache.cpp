@@ -183,3 +183,82 @@ TEST_F(LoraCache, TheServerAdaptersAfterARequestWithItsOwnAreNotAnsweredFromItsC
 
     EXPECT_EQ(after_change, fresh_answer());
 }
+
+namespace {
+
+// Two slots and a slot-save directory, for the one case the shared fixture above cannot reach: a
+// slot that has never run a task. Its adapters must already be the server's, so a state restored
+// into it is kept like on any other slot (patches/0021, init() hunk).
+class LoraCacheFreshSlot : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path_ = write_tiny_llama_gguf("jllama-lora-cache-fresh-model");
+        adapter_path_ = write_tiny_lora_gguf();
+        save_dir_ = (std::filesystem::temp_directory_path() /
+                     ("jllama-lora-cache-slots-" + std::to_string(std::random_device{}())))
+                        .string();
+        ASSERT_FALSE(model_path_.empty());
+        ASSERT_FALSE(adapter_path_.empty());
+        ASSERT_TRUE(std::filesystem::create_directories(save_dir_));
+        const std::vector<std::string> args = {
+            "jllama",  "-m",         model_path_, "--lora", adapter_path_, "-c",          "256", "-np",
+            "2",       "-ngl",       "0",         "-t",     "2",           "--cache-ram", "0",   "--slot-save-path",
+            save_dir_, "--no-warmup"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(model_path_, ignored);
+        std::filesystem::remove(adapter_path_, ignored);
+        std::filesystem::remove_all(save_dir_, ignored);
+    }
+
+    static json complete_on(int slot) {
+        const json request = {{"prompt", PROMPT}, {"n_predict", 8},       {"temperature", 0},
+                              {"top_k", 1},       {"cache_prompt", true}, {"id_slot", slot}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return json::parse(response.str());
+    }
+    static void slot_action(jllama_slot_op op, int slot, const char *filename) {
+        Owned response;
+        ASSERT_EQ(jllama_slot_action(model_, op, slot, filename, &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    }
+
+    static std::string model_path_;
+    static std::string adapter_path_;
+    static std::string save_dir_;
+    static jllama_model *model_;
+};
+std::string LoraCacheFreshSlot::model_path_;
+std::string LoraCacheFreshSlot::adapter_path_;
+std::string LoraCacheFreshSlot::save_dir_;
+jllama_model *LoraCacheFreshSlot::model_ = nullptr;
+
+} // namespace
+
+TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
+    ASSERT_NE(model_, nullptr);
+    const json first = complete_on(0);
+    slot_action(JLLAMA_SLOT_SAVE, 0, "slot0.bin");
+    slot_action(JLLAMA_SLOT_RESTORE, 1, "slot0.bin"); // slot 1 has never run a task
+
+    const json restored = complete_on(1);
+
+    // Computed under the same adapters as the restored state, so all of the prompt but the token
+    // the slot always re-evaluates comes from it; a slot that took this for an adapter change
+    // cleared it and processed the whole prompt again.
+    const int prompt_n = restored.at("timings").at("prompt_n").get<int>();
+    const int evaluated = restored.at("tokens_evaluated").get<int>();
+    EXPECT_LE(prompt_n, 2) << "of " << evaluated << " prompt tokens: " << restored.dump();
+    EXPECT_EQ(restored.at("content").get<std::string>(), first.at("content").get<std::string>());
+}
