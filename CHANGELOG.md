@@ -89,6 +89,11 @@ the first two items break every existing consumer at upgrade.
     `/v1/responses` an input item of an unknown type, an `input_image` without a URL and a
     `function_call` whose `arguments` is not a string; and an `/api/generate` `prompt` that is not a
     string, which was answered as a preload (see Changed).
+14. **Infill fields and messages on the raw completion paths take effect or are refused.**
+    `complete` / `completeWithStats` / `generate` with `withInputPrefix` or `withInputSuffix` now
+    infill and need both fields and a model with FIM tokens; with `withMessages(...)` they render the
+    messages through the chat template and refuse a non-empty prompt or the infill fields next to
+    them (see Fixed). Both used to be dropped without a word.
 
 ### Added
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
@@ -933,6 +938,22 @@ the first two items break every existing consumer at upgrade.
   - **Five "`null` clears" withers clear.** `withPrompt`, `withInputPrefix`, `withInputSuffix`,
     `withGrammar` and `withToolChoice` returned the request unchanged for `null`, so
     `withGrammar(g).withGrammar(null)` still sent the grammar.
+  - **Infilling through `complete()`, `completeWithStats()` and `generate()` works as documented.**
+    `withInputPrefix` / `withInputSuffix` -- the way the README describes infilling -- only switched
+    the task type: prefix and suffix were dropped without a word and the (mostly empty) prompt was
+    completed, and the blocking `handleCompletions` did not look at the two fields at all. The raw
+    completion paths now build the prompt around the model's fill-in-the-middle tokens exactly as
+    `handleInfill` does (an optional prompt is the text after the middle); a request with only one of
+    the two fields is an `InvalidRequestException`, a model without FIM tokens a `LlamaException`, as
+    on `handleInfill`. The same for the C API (`jllama_completions` and the raw stream) and
+    `llama-ffm`.
+  - **`withMessages(...)` takes effect on `generate()`, `complete()` and `completeWithStats()`.** Only
+    the chat paths read `messages`, so the raw paths completed the prompt next to them -- mostly the
+    empty one -- or failed with "key 'prompt' not found" without one. The messages are now rendered
+    through the model's chat template, as `applyTemplate` renders them, and that prompt is completed;
+    the other fields stay completion fields, and the media of array-form content reach the model. A
+    non-empty prompt or the infill fields next to the messages are an `InvalidRequestException`
+    instead of one of them being dropped. The same for the C API and `llama-ffm`.
   - **JSON values are taken as given or refused, never cut short.** A `ToolDefinition` schema with
     trailing content (`{"type":"object"} {"required":["x"]}`) was sent as its first value, and a
     `chat_template_kwargs` value holding two JSON values as the first of them. A schema that is not

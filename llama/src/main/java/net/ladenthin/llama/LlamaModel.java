@@ -152,6 +152,12 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Completes a prompt and returns the generated text once generation has ended. The prompt is used
      * verbatim -- no chat template, no role markers; for a conversation use {@link #chat(ChatRequest)}.
+     * Two request shapes build the prompt instead: messages set with
+     * {@link InferenceParameters#withMessages(java.util.List)} are rendered through the model's chat
+     * template, as {@link #applyTemplate(InferenceParameters)} renders them (a non-empty prompt next
+     * to them is refused), and {@link InferenceParameters#withInputPrefix(String)} together with
+     * {@link InferenceParameters#withInputSuffix(String)} is an infill request, formatted as
+     * {@link #handleInfill(String)} formats it.
      *
      * @param parameters the prompt and its sampling settings
      * @return the generated text, without the prompt
@@ -333,7 +339,8 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Streams the completion of a prompt: each element is the next piece of text as soon as it is
-     * generated. Like {@link #complete(InferenceParameters)}, the prompt is used verbatim.
+     * generated. Like {@link #complete(InferenceParameters)}, the prompt is used verbatim, and messages
+     * or the two infill fields build it instead.
      *
      * <p>The returned {@link LlamaIterable} implements {@link AutoCloseable}. Wrap it in a
      * try-with-resources block to guarantee the native task slot is released even when the
@@ -824,13 +831,17 @@ public class LlamaModel implements AutoCloseable {
      * Run a blocking completion and return the full result as a JSON string.
      * This is the JSON-in/JSON-out equivalent of {@link #complete(InferenceParameters)}.
      *
-     * @param paramsJson JSON string with at least a "prompt" field
+     * @param paramsJson JSON string with a "prompt" field, a "messages" array (rendered through the chat
+     *     template into the prompt) or both "input_prefix" and "input_suffix" (an infill request)
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
      *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size, several prompts in
      *     one request (an array of strings or of token arrays) or {@code "n"} greater than 1 -- one prompt and
-     *     one completion per request, unlike upstream's server; send separate requests
-     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     *     one completion per request, unlike upstream's server; send separate requests -- only one of
+     *     {@code "input_prefix"} and {@code "input_suffix"}, or a non-empty {@code "prompt"} or the infill fields
+     *     next to {@code "messages"}
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the request carries the infill
+     *     fields and the model has no fill-in-the-middle tokens
      */
     public native String handleCompletions(String paramsJson);
 
