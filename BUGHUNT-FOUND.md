@@ -2199,6 +2199,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `3e49d39`
 - **Nachtrag (Branch-Review 2026-10-20/21):** Der offene Punkt ist als [F264](#f264) entschieden: `initialize()` ist nach dem ersten Erfolg idempotent; `BackendLoadTest` setzt den Loader über `LlamaLoader.resetForTesting()` vor jedem Test zurück und stellt Ladezustand und Build-Info danach wieder her.
 
+<a id="f246"></a>
 ### F246 – java-llama.cpp: `complete()`/`generate()` mit `withInputPrefix`/`withInputSuffix` verwerfen Präfix und Suffix still und vervollständigen den leeren Prompt
 - **Zeit:** 2026-10-21 10:57 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (neu `require_fim_tokens`, `prepare_infill_prompt`, `prepare_raw_completion`; `infill`, `completions`, `completions_stream_request`), `llama/src/main/cpp/jllama_api.h` (Kommentare), `README.md` („Infilling“), Javadoc von `InferenceParameters.withInputPrefix`/`withInputSuffix`, `docs/c-api.md`
@@ -2212,6 +2213,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `0233127`
 - **Nachtrag (Branch-Review 2026-10-21, Abschlussprüfung):** `ExamplesTest#infillExampleKeepsPrefixAndSuffix` lief vor F246 auf einem Modell ohne FIM-Tokens scheinbar grün (Präfix und Suffix wurden verworfen) und schlug nach dem Fix mit „Model does not support fill-in-the-middle infill“ fehl; der Test lädt das Modell jetzt einmal als Probe und überspringt sich über `FimAssumptions.assumeFimTokens` wie die anderen Infill-Tests. Mit dem Winzmodell: vorher „Errors: 1“, nachher „Skipped: 1“; mit dem FIM-Winzmodell „Tests run: 1, Failures: 0, Errors: 0, Skipped: 0“.
 
+<a id="f247"></a>
 ### F247 – java-llama.cpp: `complete()`/`generate()` mit `withMessages(...)` ignorieren die Nachrichten still und vervollständigen den Prompt daneben
 - **Zeit:** 2026-10-21 11:05 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (neu `render_messages_into_prompt`; `prepare_raw_completion`, `completions`, `completions_stream_request`), `llama/src/main/cpp/jllama_api.h` (Kommentare), Javadoc der drei `InferenceParameters.withMessages*`, `docs/c-api.md`
@@ -2226,6 +2228,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (Branch-Review 2026-10-21):** Offen und in `TODO.md` eingetragen: `render_messages_into_prompt` übernimmt aus dem Ergebnis von `parse_oai_chat_params` nur `prompt`; was der Chat-Parser sonst aus dem Request ableitet, fällt still weg — die Grammatik aus `response_format`, die Tool-Call-Grammatik aus `tools`/`tool_choice` und die zusätzlichen Stoppwörter des Templates. `response_format` und `tools` ignorierte der Rohweg schon vorher (das Completion-Schema liest nur `json_schema`/`grammar`), mit `messages` liegt die abgeleitete Grammatik aber vor und wird verworfen. Gleiche Klasse wie F246/F247 (ein Feld wirkt nicht, ohne Meldung); zu entscheiden: übernehmen oder mit `InvalidRequestException` ablehnen. Reine Doku.
 - **Nachtrag (Branch-Review 2026-10-21):** Entschieden und umgesetzt in F248: `response_format`, `tools`, `tool_choice`, `parallel_tool_calls` (dazu `top_logprobs`, `thinking_budget_tokens`) neben `messages` sind auf dem Rohweg 400, die Stoppstrings des Templates werden übernommen. Offen bleiben nur die Reasoning-Budget-Tags des Templates (`TODO.md`).
 
+<a id="f248"></a>
 ### F248 – java-llama.cpp: Rohweg mit `messages` verwirft `response_format`, `tools`, `tool_choice`, `parallel_tool_calls` und die Stoppwörter des Templates still
 - **Zeit:** 2026-10-21 12:07 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`CHAT_ONLY_FIELDS` und `add_template_stops` neu; `render_messages_into_prompt`), `llama/src/main/cpp/jllama_api.h` (Kommentar zu `jllama_completions`), Javadoc von `LlamaModel.complete`/`handleCompletions`, der drei `InferenceParameters.withMessages*` sowie von `withResponseFormat`, `withToolsJson`, `withToolChoice`, `withParallelToolCalls`, `docs/c-api.md`; Testhilfe `llama/src/test/cpp/tiny_llama_gguf.hpp` (Parameter `eos`)
@@ -2239,6 +2242,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `d497b40`
 - **Nachtrag (Branch-Review 2026-10-21):** Der offene Rest (die Reasoning-Budget-Tags des Templates auf dem Rohweg) ist mit F249 erledigt: Variante a, die Tags und der Generation-Prompt des Templates werden übernommen; der `TODO.md`-Eintrag ist entfernt.
 
+<a id="f249"></a>
 ### F249 – java-llama.cpp: Rohweg mit `messages` verwirft die Reasoning-Budget-Tags des Templates still, `reasoning_budget_tokens` wirkt dort nicht
 - **Zeit:** 2026-10-21 12:49 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`REASONING_BUDGET_FIELDS` und `prime_reasoning_budget` neu; `render_messages_into_prompt`, `prepare_raw_completion`, `blocking_completion`, `streaming_request`, `completions`, `completions_stream_request`), `llama/src/main/cpp/jllama_engine.hpp` (Parameter `generation_prompt`), `llama/src/main/cpp/jllama_api.h` (Kommentar zu `jllama_completions`), Javadoc von `LlamaModel.complete`, der drei `InferenceParameters.withMessages*` und von `withReasoningBudgetTokens`, `docs/c-api.md`
@@ -2253,6 +2257,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (Branch-Review 2026-10-21, Abschluss):** Offen und in `TODO.md` eingetragen: der Rohweg übernimmt neben den Budget-Feldern nicht die `preserved_tokens` der Session, deshalb erscheint ein End-Tag, das das Vokabular als ein spezielles Token führt, im `content` als leerer Text (das Budget greift trotzdem; der Java-Test prüft deshalb Token). `preserved_tokens` ist ein Schema-Feld; die Übernahme braucht einen eigenen Rot-Grün-Test. CHANGELOG ([Unreleased], Fixed und „Upgrading from 5.1“ Punkt 14) beschreibt den Fix. Reine Doku.
 - **Nachtrag (Branch-Review 2026-10-21, Abschluss vor 6.0.0):** Der offene Rest ist mit F250 erledigt: der Rohweg übernimmt die `preserved_tokens` der Chat-Sitzung, das erzwungene End-Tag steht auch bei einem speziellen Token als Text im `content`; `ChatAdvancedTest#testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag` prüft jetzt zusätzlich den Text (in CI mit Qwen3, dessen `</think>` ein spezielles Token ist). `TODO.md`-Eintrag entfernt.
 
+<a id="f250"></a>
 ### F250 – java-llama.cpp: Rohweg mit `messages` übernimmt die `preserved_tokens` der Chat-Sitzung nicht, ein spezielles End-Tag erscheint als leerer Text
 - **Zeit:** 2026-10-21 13:33 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`render_messages_into_prompt`, `prepare_raw_completion`, `completions`, `completions_stream_request`; `prime_reasoning_budget` wird zu `apply_raw_chat_sampling`), `llama/src/main/cpp/jllama_engine.hpp` (`raw_chat_sampling` statt des Parameters `generation_prompt` von `blocking_completion`/`streaming_request`), Kommentar zu `jllama_completions` in `jllama_api.h`, `docs/c-api.md`; Testfixture `llama/src/test/cpp/tiny_llama_gguf.hpp` (optionale Spezial-Tokens)
@@ -2265,6 +2270,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d88214f`
 
+<a id="f251"></a>
 ### F251 – java-llama.cpp: die C-API nimmt den Slot-Dateinamen als Pfad, `--slot-save-path` wirkt nicht
 - **Zeit:** 2026-10-21 13:45 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`slot_action`), `jllama_engine.hpp`, `jllama_api.h` (`jllama_slot_op`, `jllama_slot_action`), `LlamaModel.saveSlot`/`restoreSlot` (Parameter `filename`, Javadoc), `Session.save`/`restore`/`checkpoint`/`fork` (Parameter `filename`), `value.SessionCheckpoint` (`getFilepath` → `getFilename`), `llama-ffm` `FfmLlamaModel.slotAction` (Javadoc), `docs/c-api.md`, `README.md`
@@ -2278,6 +2284,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `a1a5efb`
 - **Nachtrag (Branch-Review 2026-10-21, Prüfung):** Das Beispiel „Conversation checkpoints“ im README übergab noch Pfade (`checkpoints/turn1.bin`, `checkpoints/branch.bin`), die seit dem Fix als `InvalidRequestException` abgelehnt werden; es nennt jetzt das Slot-Verzeichnis (`setSlotSavePath`) und Dateinamen darin.
 
+<a id="f252"></a>
 ### F252 – java-llama.cpp: die Tag-Felder des Reasoning-Budgets fehlen im Builder, und ohne `reasoning_budget_message` erzwingt das Budget nichts
 - **Zeit:** 2026-10-21 13:58 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/RequestField.java` (`REASONING_BUDGET_START_TAG`, `REASONING_BUDGET_END_TAGS`, `REASONING_BUDGET_MESSAGE`), `InferenceParameters` (`withReasoningBudgetStartTag`, `withReasoningBudgetEndTags`, `withReasoningBudgetMessage`; Javadoc von `withReasoningBudgetTokens`), `llama/src/main/cpp/jllama_engine.cpp` (`populate_completion_task`), Kommentar zu `jllama_completions` in `jllama_api.h`, `docs/c-api.md`
@@ -2290,6 +2297,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `fdca13a`
 
+<a id="f253"></a>
 ### F253 – java-llama.cpp: Zahlenfelder mit falschem Typ werden auf den Chat-Routen still übergangen (`max_tokens: "100"` = ohne Obergrenze)
 - **Zeit:** 2026-10-21 14:28 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (neu `optionalNumber`; `applyCommonFields`, `applyLogprobs`, `readMaxTokens`, `applyReasoningControls`, `withInt`, `withFloat`), `AnthropicApiSupport.java` (`toOpenAiChatRequest`, `copyNumber`), `ResponsesApiSupport.java` (`copyNumber`), `OllamaApiSupport.java` (`copyNumber`, `copyNumPredict`, `copyLlamaCppOptions`), `README.md`
@@ -2302,6 +2310,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5abe67e`
 
+<a id="f254"></a>
 ### F254 – java-llama.cpp: Anthropics benanntes `tool_choice` lässt jedes Werkzeug zu, ein `tool_choice`-Objekt anderen Typs läuft still als `auto`
 - **Zeit:** 2026-10-21 14:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`toOpenAiChatRequest`, `toOpenAiToolChoice`), `OpenAiRequestMapper.java` (`namedToolChoice`, Klassen-Javadoc), `ResponsesApiSupport.java` (Kommentar), `README.md`
@@ -2314,6 +2323,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `cb0b97f`
 
+<a id="f255"></a>
 ### F255 – java-llama.cpp: upstreams Abweisung „logprobs is not supported with tools + stream“ ist über den Chat-Mapper unerreichbar
 - **Zeit:** 2026-10-21 14:40 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLogprobs`, Klassen-Javadoc), `llama/spotbugs-exclude.xml` (Kommentar der WEM-Unterdrückung), `README.md`
@@ -2326,6 +2336,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `de3c64f`
 
+<a id="f256"></a>
 ### F256 – java-llama.cpp: Anthropic-`base64`-Bild ohne `media_type` wird immer `image/png`, upstream `image/jpeg`
 - **Zeit:** 2026-10-21 14:46 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`imageUrl`), neu `ImageMediaTypes.java`, `OllamaApiSupport.java` (`toImageDataUrl` nutzt den gemeinsamen Helfer), `README.md`
@@ -2338,6 +2349,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `80d2d9c`
 
+<a id="f257"></a>
 ### F257 – java-llama.cpp: Anthropic-Bildquelle `file` (Files-API) und jede andere unbekannte Quelle werden still verworfen
 - **Zeit:** 2026-10-21 14:53 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`imageUrl`, `appendOpenAiMessages`, `toolResultContent`), `README.md`
@@ -2350,6 +2362,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `baecd5a`
 
+<a id="f258"></a>
 ### F258 – java-llama.cpp: die rohen Completion-Pfade weisen upstreams multimodales Prompt-Objekt ab, obwohl ein Projektor geladen ist
 - **Zeit:** 2026-10-21 15:40 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`populate_completion_task`, `model_meta`), `llama/src/main/java/net/ladenthin/llama/value/ModelMeta.java` (`getMediaMarker`), `llama/src/test/cpp/tiny_llama_gguf.hpp`
@@ -2362,6 +2375,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `595a8be`
 
+<a id="f259"></a>
 ### F259 – java-llama.cpp: Ollama `/api/generate` mit `raw: true` verwirft `format` und `images` still
 - **Zeit:** 2026-10-21 15:54 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOpenAiCompletionRequest`, `toInfillRequest`, neu `formatSchema`, `copyFormatAsJsonSchema`, `hasImages`, `toRawMultimodalPrompt`), `OpenAiCompatServer.java` (`handleOllamaGenerate`), `OpenAiBackend.java` (neu `mediaMarker`), `LlamaModelBackend.java`, `README.md`
@@ -2374,6 +2388,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `e5d35b1`
 
+<a id="f260"></a>
 ### F260 – java-llama.cpp: Ollama `/api/generate` ohne `raw` verwirft `template` und `context` still
 - **Zeit:** 2026-10-21 15:58 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `refuseTemplateAndContext`, `TEMPLATE_UNSUPPORTED_MESSAGE`, `CONTEXT_UNSUPPORTED_MESSAGE`; Javadoc von `isRaw`), `OpenAiCompatServer.java` (`handleOllamaGenerate`), `README.md`
