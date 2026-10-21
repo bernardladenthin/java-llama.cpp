@@ -595,6 +595,11 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with chat messages replaced. Allows one optional system
      * message and one-or-more user/assistant message pairs.
      *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
+     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
+     *
      * @param systemMessage optional system message ({@code null} or empty allowed)
      * @param messages user/assistant message pairs (role -&gt; content)
      * @return a new instance; this instance is unchanged
@@ -613,6 +618,11 @@ public final class InferenceParameters extends JsonParameters {
      * {@code {}}, because chat templates that take object arguments parse the history's arguments
      * as JSON and an empty string would fail the whole request.
      *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
+     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
+     *
      * @param messages ordered messages, including any {@code "system"} prelude
      * @return a new instance; this instance is unchanged
      */
@@ -623,6 +633,11 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the {@code messages} array set from a pre-built JSON
      * string (e.g. {@link ChatRequest#buildMessagesJson()}).
+     *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
+     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
      *
      * @param messagesJson the JSON array string
      * @return a new instance; this instance is unchanged

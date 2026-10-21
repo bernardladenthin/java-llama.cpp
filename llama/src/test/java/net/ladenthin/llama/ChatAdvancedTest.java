@@ -13,9 +13,11 @@ import java.util.Collections;
 import java.util.List;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.Sampler;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.json.CompletionResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.CompletionResult;
 import net.ladenthin.llama.value.LlamaOutput;
 import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.AfterAll;
@@ -199,6 +201,42 @@ public class ChatAdvancedTest {
         }
 
         assertFalse(output.toString().isEmpty(), "generate() with messages must produce output");
+    }
+
+    /**
+     * On the raw completion path the messages become the prompt the chat template renders from them
+     * ({@link LlamaModel#applyTemplate(InferenceParameters)}), not an ignored field next to an empty
+     * prompt: the request evaluates exactly the tokens a completion of that rendered prompt does. The
+     * prompt token count is the full prompt whether or not the slot's cache served it.
+     */
+    @Test
+    public void testMessagesInCompleteWithStatsEvaluateTheTemplatedPrompt() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        InferenceParameters chat = InferenceParameters.empty().withMessages(null, messages);
+        String rendered = model.applyTemplate(chat);
+        assertTrue(rendered.contains("Write one word."), rendered);
+        long expected = model.completeWithStats(new InferenceParameters(rendered).withNPredict(1))
+                .getUsage()
+                .getPromptTokens();
+
+        CompletionResult result = model.completeWithStats(chat.withNPredict(1));
+
+        assertEquals(expected, result.getUsage().getPromptTokens(), result.getRawJson());
+    }
+
+    /** A prompt beside the messages is refused: one of the two would have to be dropped. */
+    @Test
+    public void testMessagesAndAPromptInCompleteAreAnInvalidRequest() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        InferenceParameters request = new InferenceParameters("def hello():")
+                .withMessages(null, messages)
+                .withNPredict(1);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> model.complete(request));
+
+        assertTrue(e.getMessage().contains("'prompt'"), "Error should name the prompt but was: " + e.getMessage());
     }
 
     // ------------------------------------------------------------------

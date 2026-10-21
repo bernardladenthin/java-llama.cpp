@@ -39,9 +39,9 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
 | `jllama_chat_completions_stream_request()` / `_receive()` / `jllama_task_release()` | a streamed one: a task id, then one `{"data": <chunk>, "stop": <bool>}` envelope per call until `stop` |
 | `jllama_chat_completions_request()` | a streamed chat completion whose results are llama.cpp's raw result objects (received with `jllama_completions_stream_receive`) |
-| `jllama_completions()`, `jllama_completions_oai()`, `jllama_infill()` | a raw `/completion` (an infill one when the body has the infill fields), an OpenAI `/v1/completions`, a fill-in-the-middle request, blocking |
+| `jllama_completions()`, `jllama_completions_oai()`, `jllama_infill()` | a raw `/completion` (an infill one when the body has the infill fields, the chat template rendered into the prompt when it has `messages`), an OpenAI `/v1/completions`, a fill-in-the-middle request, blocking |
 | `jllama_completions_oai_stream_request()` | a streamed OpenAI `/v1/completions` (the body as for `jllama_completions_oai()`), received with `jllama_chat_completions_stream_receive()`: `text_completion` chunks, the last with `usage` |
-| `jllama_completions_stream_request()` / `jllama_completions_stream_receive()` | a raw streamed completion (an infill one when the body has the infill fields): each result object with a `"stop"` key |
+| `jllama_completions_stream_request()` / `jllama_completions_stream_receive()` | a raw streamed completion (infill fields and `messages` as for `jllama_completions()`): each result object with a `"stop"` key |
 | `jllama_apply_template()` | the chat template applied to a messages body: the prompt text |
 | `jllama_embed()`, `jllama_embeddings()` | one embedding vector; an `/embeddings` or `/v1/embeddings` request (`--embedding`) |
 | `jllama_rerank()` | documents scored against a query (`--reranking`) |

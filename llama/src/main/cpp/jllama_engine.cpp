@@ -652,10 +652,38 @@ static void prepare_infill_prompt(jllama_context *jctx, const server_context_met
     }
 }
 
+// A raw completion request with "messages" completes the prompt the chat template renders from them,
+// as applyTemplate renders it; the other fields stay completion fields. The field used to be read on
+// the chat paths alone (oaicompat_chat_params_parse), so a raw completion ignored it and completed
+// the prompt next to it, mostly the empty one. A non-empty prompt or the infill fields beside the
+// messages are refused rather than one of the two dropped; an empty prompt is no prompt
+// (InferenceParameters("") writes one). The media files of array-form content come back in files.
+static void render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+    if (is_infill_request(data)) {
+        throw jllama_invalid_request(
+            "'messages' cannot be combined with 'input_prefix'/'input_suffix': send an infill request or a chat");
+    }
+    if (data.contains("prompt") && !(data.at("prompt").is_string() && data.at("prompt").get<std::string>().empty())) {
+        throw jllama_invalid_request(
+            "'messages' and 'prompt' cannot both be set: the messages are rendered into the prompt");
+    }
+    json body = data;
+    common_chat_session session; // the raw path parses no chat output; only the prompt is used
+    const json chat = parse_oai_chat_params(jctx, body, files, session);
+    if (!chat.contains("prompt") || !chat.at("prompt").is_string()) {
+        throw std::runtime_error("the chat template did not produce a string prompt");
+    }
+    data["prompt"] = chat.at("prompt");
+}
+
 // A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill
 // endpoint refuses it (no FIM tokens, a field missing), otherwise its prompt formatted the same way.
-// Returns the task type to post.
-static server_task_type prepare_raw_completion(jllama_context *jctx, json &data) {
+// One with "messages" completes their templated prompt. Returns the task type to post.
+static server_task_type prepare_raw_completion(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+    if (data.contains("messages")) {
+        render_messages_into_prompt(jctx, data, files);
+        return SERVER_TASK_TYPE_COMPLETION;
+    }
     if (!is_infill_request(data)) {
         return SERVER_TASK_TYPE_COMPLETION;
     }
@@ -676,14 +704,17 @@ std::string infill(jllama_context *jctx, const std::string &body_text) {
 
 std::string completions(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
-    const server_task_type type = prepare_raw_completion(jctx, data);
-    return safe_json_to_str(results_to_json(blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE)));
+    std::vector<raw_buffer> files;
+    const server_task_type type = prepare_raw_completion(jctx, data, files);
+    return safe_json_to_str(
+        results_to_json(blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files))));
 }
 
 int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
-    const server_task_type type = prepare_raw_completion(jctx, data);
-    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE);
+    std::vector<raw_buffer> files;
+    const server_task_type type = prepare_raw_completion(jctx, data, files);
+    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files));
 }
 
 int completions_oai_stream_request(jllama_context *jctx, const std::string &body_text) {

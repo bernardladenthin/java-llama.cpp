@@ -639,6 +639,53 @@ TEST_F(CApiFim, ARawCompletionWithOnlyOneInfillFieldIsRefused) {
     EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
 }
 
+TEST_F(CApi, ARawCompletionWithMessagesCompletesThePromptTheChatTemplateRenders) {
+    // The raw completion paths render "messages" through the chat template into the prompt, as
+    // jllama_apply_template does; they used to ignore the field and complete the prompt next to it.
+    const char *messages = R"([{"role":"user","content":"Hi there"}])";
+    Owned prompt;
+    ASSERT_EQ(jllama_apply_template(model_, (std::string(R"({"messages":)") + messages + "}").c_str(), &prompt.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned reference;
+    ASSERT_EQ(jllama_completions(model_,
+                                 json{{"prompt", prompt.str()}, {"n_predict", 1}, {"temperature", 0}}.dump().c_str(),
+                                 &reference.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int expected = json::parse(reference.str()).at("tokens_evaluated").get<int>();
+    EXPECT_GT(expected, 8); // "Hi there" and the template around it
+
+    const std::string request = std::string(R"({"messages":)") + messages + R"(,"n_predict":1,"temperature":0})";
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, request.c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), expected);
+    // An empty prompt beside the messages is no prompt (InferenceParameters("") writes one).
+    const std::string with_empty_prompt =
+        std::string(R"({"prompt":"","messages":)") + messages + R"(,"n_predict":1,"temperature":0})";
+    ASSERT_EQ(jllama_completions(model_, with_empty_prompt.c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesAndAPromptOrInfillFieldsIsRefused) {
+    Owned response;
+    int task = -1;
+    EXPECT_EQ(jllama_completions(model_, R"({"messages":[{"role":"user","content":"Hi"}],"prompt":"x"})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("'prompt'"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(
+        jllama_completions_stream_request(
+            model_, R"({"messages":[{"role":"user","content":"Hi"}],"input_prefix":"a","input_suffix":"b"})", &task),
+        JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(model_, R"({"messages":"no"})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
     Owned grammar;
     ASSERT_EQ(jllama_json_schema_to_grammar(R"({"type":"object","properties":{"a":{"type":"string"}}})", &grammar.s),
