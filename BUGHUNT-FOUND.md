@@ -2238,7 +2238,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `CApiReasoningBudget.ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText` (das Zufallsmodell mit `<think>`, `</think>` und `<tool>` als Kontroll-Token — die Fixture `write_tiny_llama_gguf` nimmt dafür eine optionale Liste —, das Thinking-Template aus F249, Budget 1, `ignore_eos`, Temperatur 0: der Chat-Weg als Bezug ohne `</think>` in der Antwort, der Rohweg blockierend mit `content`, der mit `</think>` beginnt, gestreamt derselbe Text; mit einem `logit_bias` auf `<tool>` ist der `content` ohne eigene `preserved_tokens` genau `</think>`, mit `"preserved_tokens": ["<tool>"]` genau `</think>` und elf `<tool>`). Java `ChatAdvancedTest#testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag` prüft zusätzlich, dass der Text mit `</think>` beginnt — rot vor dem Fix nur in CI mit Qwen3 (spezielles Token), lokal mit dem Byte-Tokenizer des Winzmodells in beiden Fällen grün. ctest `CApi|Lora` 68/68, `ChatAdvancedTest` 19/19 mit dem Winzmodell.
 - **Rot-Grün-Nachweis:** Vor dem Fix rot: „Expected equality of these values: blocking.rfind("</think>", 0) Which is: 18446744073709551615“ (`content` „,''''''''''“, elf Zeichen bei zwölf Token), „json::parse(unpreserved.str()).at("content").get<std::string>() Which is: """ und „Which is: "<tool><tool>…" expected Which is: "</think><tool><tool>…"“. Mit dem Fix grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d88214f`
 
 ## Offene Verdachte ohne Fund-ID
 
