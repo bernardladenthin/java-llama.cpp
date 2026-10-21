@@ -1320,6 +1320,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Entscheidung des Nutzers: bei Nicht-NULL immer freigeben. Nur noch `NULL` kehrt früh zurück; die Freigabefunktion ist über eine paketinterne Überladung `takeStrings(out, length, free)` einsetzbar.
 - **Tests:** `JllamaNativeTest#takeStringsFreesANonNullArrayEvenWhenItIsEmpty`, `#takeStringsDoesNotFreeANullArray`.
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Toolchain) und einem selbst gebauten `libjllama.so` (b11639, statisch): mit der alten Prüfung rot (1 von 9, der neue Test), mit dem Fix grün; `mvn -f llama-ffm/pom.xml verify` grün (29 Tests, 16 modellgestützte übersprungen, kein Modell).
+- **Nachtrag (Branch-Review 2026-10-20):** Die beiden Tests oben setzen die Anzahl auf 0 und erreichen weder die Leseschleife noch die Anzahl, mit der ein gefülltes Array freigegeben wird; der einzige Test mit Einträgen (`rpcServerDevicesResolveTheCpuAndRefuseAnUnknownName`) hat genau einen, sieht also keine Reihenfolge, und eine falsche Anzahl leckt nur innerhalb von `jllama_strings_free` (Fund J13-2). Neu, als Charakterisierung des unveränderten Verhaltens: `JllamaNativeTest#takeStringsReadsEveryEntryInOrderAndFreesTheArrayWithItsCount` (zwei Arena-Strings, aufzeichnende Freigabe; `["alpha", "beta"]` und `<Adresse>/2`). Gegenprobe rot: Freigabe mit 0 (`Expected: is <[…/2]> but: was <[…/0]>`), rückwärts gelesen (`Expected: is <[alpha, beta]> but: was <[beta, alpha]>`); unverändert 10/10 in der Klasse grün.
 - **Status:** gefixt
 - **Commit:** 631d0ab
 
