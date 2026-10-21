@@ -17,6 +17,7 @@ public class ModelFlagTest {
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
             {ModelFlag.NO_CONTEXT_SHIFT, "--no-context-shift"},
+            {ModelFlag.CONTEXT_SHIFT, "--context-shift"},
             {ModelFlag.SWA_FULL, "--swa-full"},
             {ModelFlag.NO_PERF, "--no-perf"},
             {ModelFlag.ESCAPE, "--escape"},
@@ -76,7 +77,7 @@ public class ModelFlagTest {
         //                     Use ModelParameters#setLoadMode.
         //   DUMP_KV_CACHE  -- removed upstream with no replacement.
         // src/test/cpp/test_model_flags.cpp enforces this against the real option table.
-        assertEquals(35, ModelFlag.values().length);
+        assertEquals(36, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

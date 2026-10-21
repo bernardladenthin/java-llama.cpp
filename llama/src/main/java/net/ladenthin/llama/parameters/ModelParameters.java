@@ -251,12 +251,29 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Disable context shift on infinite text generation (default: enabled).
+     * Disable context shift on infinite text generation ({@code --no-context-shift}, upstream's
+     * default): a slot stops when its context is full. Replaces an earlier {@link
+     * #enableContextShift()}.
      *
      * @return this builder
      */
     public ModelParameters disableContextShift() {
-        return setFlag(ModelFlag.NO_CONTEXT_SHIFT);
+        setFlag(ModelFlag.NO_CONTEXT_SHIFT);
+        return clearFlag(ModelFlag.CONTEXT_SHIFT);
+    }
+
+    /**
+     * Enable context shift on infinite text generation ({@code --context-shift}, default: disabled):
+     * when a slot's context is full, the oldest generated tokens after the kept prompt ({@link
+     * #setKeep(int)}) are dropped and generation continues, so a request without a token limit runs
+     * until it is stopped or cancelled. Upstream disables it again for a multimodal model and for a
+     * context whose memory cannot shift. Replaces an earlier {@link #disableContextShift()}.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableContextShift() {
+        setFlag(ModelFlag.CONTEXT_SHIFT);
+        return clearFlag(ModelFlag.NO_CONTEXT_SHIFT);
     }
 
     /**

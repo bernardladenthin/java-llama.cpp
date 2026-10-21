@@ -652,6 +652,26 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
+    public void testEnableContextShift() {
+        ModelParameters p = new ModelParameters().enableContextShift();
+        assertThat(p.parameters, hasKey("--context-shift"));
+        assertThat(p.parameters.get("--context-shift"), is(nullValue()));
+        assertThat(p.parameters, not(hasKey("--no-context-shift")));
+    }
+
+    @Test
+    public void testTheLaterContextShiftCallReplacesTheEarlierOne() {
+        // both flags in one argv would leave the parse order to decide; the later call wins instead
+        ModelParameters disabled = new ModelParameters().enableContextShift().disableContextShift();
+        assertThat(disabled.parameters, hasKey("--no-context-shift"));
+        assertThat(disabled.parameters, not(hasKey("--context-shift")));
+
+        ModelParameters enabled = new ModelParameters().disableContextShift().enableContextShift();
+        assertThat(enabled.parameters, hasKey("--context-shift"));
+        assertThat(enabled.parameters, not(hasKey("--no-context-shift")));
+    }
+
+    @Test
     public void testSetFlashAttnRendersEveryMode() {
         // Every mode the enum declares must reach argv as its own CLI string; a mode added later is
         // then covered without touching this test.
@@ -1142,6 +1162,7 @@ public class ModelParametersExtendedTest {
         assertThat(p.setGpuLayers(32), is(sameInstance(p)));
         assertThat(p.setFlashAttn(FlashAttn.AUTO), is(sameInstance(p)));
         assertThat(p.disableContextShift(), is(sameInstance(p)));
+        assertThat(p.enableContextShift(), is(sameInstance(p)));
         assertThat(p.setModelDraft("/draft.gguf"), is(sameInstance(p)));
         assertThat(p.disableLog(), is(sameInstance(p)));
     }
