@@ -63,9 +63,12 @@ final class AnthropicStreamTranslator {
     }
 
     /**
-     * Translate one OpenAI chunk into the SSE events it produces (text block start/delta), accumulating
-     * tool-call fragments and capturing the finish reason. Returns an empty string when the chunk yields
-     * no event (role-only / finish-only / tool-call-only chunks).
+     * Translate one OpenAI chunk into the SSE events it produces, accumulating tool-call fragments and
+     * capturing the finish reason: {@code reasoning_content} opens a {@code thinking} block (closing an
+     * open text block first) and adds a {@code thinking_delta}; non-empty {@code content} closes an open
+     * thinking block (an empty {@code signature_delta} + {@code content_block_stop}), opens a text block
+     * if none is open and adds a {@code text_delta}. Returns an empty string when the chunk yields no
+     * event (role-only / finish-only / tool-call-only chunks).
      *
      * @param openAiChunkJson one OpenAI {@code chat.completion.chunk}
      * @return zero or more framed SSE events, concatenated
@@ -120,8 +123,10 @@ final class AnthropicStreamTranslator {
     }
 
     /**
-     * The closing events: stop the open text block, emit a {@code tool_use} block per accumulated tool
-     * call, then {@code message_delta} (mapped stop reason) and {@code message_stop}.
+     * The closing events: close a thinking block that is still open (a reasoning-only answer, or
+     * reasoning followed directly by a tool call; an empty {@code signature_delta} +
+     * {@code content_block_stop}), stop the open text block, emit a {@code tool_use} block per
+     * accumulated tool call, then {@code message_delta} (mapped stop reason) and {@code message_stop}.
      *
      * @return the framed SSE events, concatenated
      */

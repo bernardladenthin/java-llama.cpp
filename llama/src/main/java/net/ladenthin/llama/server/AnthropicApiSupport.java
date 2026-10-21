@@ -20,11 +20,14 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Request mapping covers Anthropic's content-block model: a {@code system} string/blocks becomes an
  * OpenAI system message; message {@code content} that is a string or an array of {@code text} /
- * {@code tool_use} / {@code tool_result} blocks is flattened to OpenAI messages (a user message's
- * {@code tool_result} blocks become separate {@code role:"tool"} messages); Anthropic {@code tools}
- * ({@code name}/{@code description}/{@code input_schema}) become OpenAI function tools. Responses map the
- * other way: OpenAI {@code content} + {@code tool_calls} become Anthropic {@code text} +
- * {@code tool_use} content blocks.
+ * {@code image} / {@code thinking} / {@code tool_use} / {@code tool_result} blocks is mapped to OpenAI
+ * messages: text is flattened to a string, a message carrying an image keeps its blocks as {@code text}
+ * / {@code image_url} content parts (also inside a {@code tool_result}), thinking blocks become
+ * {@code reasoning_content}, and a user message's {@code tool_result} blocks become separate
+ * {@code role:"tool"} messages; Anthropic {@code tools} ({@code name}/{@code description}/
+ * {@code input_schema}) become OpenAI function tools. Responses map the other way:
+ * {@code reasoning_content} becomes a leading {@code thinking} block with an empty {@code signature},
+ * OpenAI {@code content} + {@code tool_calls} become {@code text} + {@code tool_use} content blocks.
  *
  * <p>Stateless and free of JNI / model dependencies; unit-testable with JSON literals. Streaming state
  * is held by {@link AnthropicStreamTranslator}.
