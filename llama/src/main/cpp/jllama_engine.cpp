@@ -367,6 +367,20 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
         }
     }
     task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
+    // The completion schema sets the sequence the reasoning budget forces only in the handler of
+    // reasoning_budget_message, so a request naming the end tags without a message armed a budget that
+    // forced nothing when it ran out. The chat paths always pass the message (the server's default,
+    // --reasoning-budget-message, empty unless set); a request without one gets the same default here.
+    common_params_sampling &sampling = task.params.sampling;
+    if (!sampling.reasoning_budget_end.empty() && sampling.reasoning_budget_forced.empty()) {
+        llama_tokens forced = sampling.reasoning_budget_end.front();
+        const std::string &message = jctx->params.sampling.reasoning_budget_message;
+        if (!message.empty()) {
+            const llama_tokens message_tokens = common_tokenize(jctx->vocab, message, false, true);
+            forced.insert(forced.begin(), message_tokens.begin(), message_tokens.end());
+        }
+        sampling.reasoning_budget_forced = std::move(forced);
+    }
     // Several completions of one prompt ("n", upstream's n_cmpl): upstream answers them in child tasks
     // the server creates, the engine posts this one task alone, so the others were dropped without a
     // word. Refused like several prompts.

@@ -806,18 +806,91 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the reasoning-token budget replaced. A value of {@code -1}
      * disables the budget.
      *
-     * <p>The budget counts the tokens between the thinking tags of the model's chat template and forces
-     * the end tag once it is spent. It acts on the chat paths and on {@code complete}/{@code generate}
-     * with messages ({@link #withMessages(java.util.List)}), which take the template's tags as the chat
-     * paths do. A template without thinking tags gives it nothing to act on, on either path, and the
-     * request runs unchanged. On {@code complete}/{@code generate} without messages it has no effect:
-     * the tags then have to be named in the request, which this builder does not offer.</p>
+     * <p>The budget counts the tokens between a start tag and an end tag and forces the first end tag
+     * once it is spent. On the chat paths and on {@code complete}/{@code generate} with messages
+     * ({@link #withMessages(java.util.List)}) the tags are the thinking tags of the model's chat template,
+     * as the chat paths take them; a template without thinking tags gives it nothing to act on there,
+     * and the request runs unchanged, unless the request names tags itself. On
+     * {@code complete}/{@code generate} without messages the request names them:
+     * {@link #withReasoningBudgetStartTag(String)} and {@link #withReasoningBudgetEndTags(String...)},
+     * optionally {@link #withReasoningBudgetMessage(String)}.</p>
      *
      * @param budgetTokens maximum reasoning tokens (-1 = unlimited)
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withReasoningBudgetTokens(int budgetTokens) {
         return withScalar(RequestField.REASONING_BUDGET_TOKENS, budgetTokens);
+    }
+
+    /**
+     * Returns a new request with the start tag of the reasoning budget replaced: the text that opens
+     * the section {@link #withReasoningBudgetTokens(int)} counts, e.g. {@code "<think>"}.
+     *
+     * <p>For {@code complete}/{@code generate} without messages, where nothing else names the tags.
+     * With messages, and on the chat paths, the thinking tags of the chat template win over the
+     * request's when the template declares any. The budget starts counting when the model
+     * <em>generates</em> the tag: a tag already at the end of the prompt is not seen (the prompt of a
+     * request with messages is, through the template's generation prompt), so for a model whose
+     * template opens the thinking block in the prompt send the request with messages. The tag is
+     * tokenized with special tokens parsed, so a tag the vocabulary holds as one token matches that
+     * token; such a tag is rendered as empty text unless it is a preserved token of the request
+     * (upstream's {@code preserved_tokens}). Example:</p>
+     * <pre>{@code
+     * new InferenceParameters(prompt)
+     *         .withReasoningBudgetTokens(256)
+     *         .withReasoningBudgetStartTag("<think>")
+     *         .withReasoningBudgetEndTags("</think>");
+     * }</pre>
+     *
+     * @param startTag the non-empty start tag
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code startTag} is empty
+     */
+    public InferenceParameters withReasoningBudgetStartTag(String startTag) {
+        if (startTag.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "reasoning_budget_start_tag must not be empty but was \"" + startTag + "\"");
+        }
+        return withRaw(RequestField.REASONING_BUDGET_START_TAG, toJsonString(startTag));
+    }
+
+    /**
+     * Returns a new request with the end tags of the reasoning budget replaced: any of them closes the
+     * counted section, and the first is the one forced when the budget is spent (preceded by the
+     * {@link #withReasoningBudgetMessage(String) message}). Same scope as
+     * {@link #withReasoningBudgetStartTag(String)}: for requests without messages, where a template with
+     * thinking tags does not supply them.
+     *
+     * @param endTags the end tags, at least one, none of them empty
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if no tag is given or one is empty
+     */
+    public InferenceParameters withReasoningBudgetEndTags(String... endTags) {
+        if (endTags.length == 0) {
+            throw new IllegalArgumentException(
+                    "reasoning_budget_end_tags needs at least one tag but got " + endTags.length);
+        }
+        for (int i = 0; i < endTags.length; i++) {
+            if (endTags[i].isEmpty()) {
+                throw new IllegalArgumentException("reasoning_budget_end_tags[" + i + "] must not be empty");
+            }
+        }
+        return withRaw(
+                RequestField.REASONING_BUDGET_END_TAGS,
+                serializer.buildStopStrings(endTags).toString());
+    }
+
+    /**
+     * Returns a new request with the message forced before the end tag when the reasoning budget is
+     * spent, e.g. {@code "Time is up, answering now."}; an empty message forces the bare end tag.
+     * Without this call the server's default applies ({@code --reasoning-budget-message}, empty unless
+     * set), on every path. It takes effect wherever the budget has tags, with or without messages.
+     *
+     * @param message the text forced before the end tag
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withReasoningBudgetMessage(String message) {
+        return withRaw(RequestField.REASONING_BUDGET_MESSAGE, toJsonString(message));
     }
 
     /**

@@ -1039,6 +1039,52 @@ TEST(CApiReasoningBudget, ARawCompletionWithMessagesRendersTheTemplatesSpecialTa
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiReasoningBudget, ARawCompletionWithoutMessagesForcesTheEndTagOfItsOwnTags) {
+    // A raw completion names the budget's tags itself. Upstream's completion schema sets the sequence
+    // the budget forces only in the handler of reasoning_budget_message, so tags without a message
+    // armed a budget that forced nothing; the chat paths always set the message (the server's
+    // default, empty unless --reasoning-budget-message names one). A logit bias makes the model write
+    // the start tag (a control token, preserved so it reads as text); a budget of zero then forces
+    // the end tag after each one.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-budget-raw", false, 4, {"<think>", "</think>"});
+    ASSERT_FALSE(path.empty());
+    const std::vector<std::string> args = {"jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    json request = {{"prompt", "Hi"},
+                    {"n_predict", 6},
+                    {"temperature", 0},
+                    {"ignore_eos", true},
+                    {"logit_bias", json::array({json::array({N_VOCAB, 100})})},
+                    {"preserved_tokens", json::array({"<think>", "</think>"})},
+                    {"reasoning_budget_tokens", 0},
+                    {"reasoning_budget_start_tag", "<think>"},
+                    {"reasoning_budget_end_tags", json::array({"</think>"})}};
+    Owned without_message;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &without_message.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(without_message.str()).at("content").get<std::string>(),
+              "<think></think><think></think><think></think>")
+        << without_message.str();
+
+    // A message is forced before the end tag, as on the chat paths.
+    request["reasoning_budget_message"] = "!";
+    request["n_predict"] = 3;
+    Owned with_message;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &with_message.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(with_message.str()).at("content").get<std::string>(), "<think>!</think>")
+        << with_message.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_F(CApi, ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget) {
     // A template that declares no thinking tags gives the budget nothing to act on, on the chat path
     // and on the raw paths alike: the request runs unchanged, without an error.

@@ -121,6 +121,15 @@ enum RequestField {
     /** Request key {@code prompt}, consumed by the OAI/task layer. */
     PROMPT("prompt", RequestContract.OAI_LAYER),
 
+    /** Request key {@code reasoning_budget_end_tags}. */
+    REASONING_BUDGET_END_TAGS("reasoning_budget_end_tags"),
+
+    /** Request key {@code reasoning_budget_message}. */
+    REASONING_BUDGET_MESSAGE("reasoning_budget_message"),
+
+    /** Request key {@code reasoning_budget_start_tag}. */
+    REASONING_BUDGET_START_TAG("reasoning_budget_start_tag"),
+
     /** Request key {@code reasoning_budget_tokens}. */
     REASONING_BUDGET_TOKENS("reasoning_budget_tokens"),
 

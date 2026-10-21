@@ -441,6 +441,49 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void testSetReasoningBudgetStartTag() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetStartTag("<think>");
+        assertThat(params.parameters.get("reasoning_budget_start_tag"), is("\"<think>\""));
+    }
+
+    @Test
+    public void testSetReasoningBudgetEndTags() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetEndTags("</think>", "\"done\"");
+        assertThat(params.parameters.get("reasoning_budget_end_tags"), is("[\"</think>\",\"\\\"done\\\"\"]"));
+    }
+
+    @Test
+    public void testSetReasoningBudgetMessage() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetMessage("Time is up.");
+        assertThat(params.parameters.get("reasoning_budget_message"), is("\"Time is up.\""));
+    }
+
+    @Test
+    public void testAnEmptyMessageForcesTheBareEndTag() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetMessage("");
+        assertThat(params.parameters.get("reasoning_budget_message"), is("\"\""));
+    }
+
+    @Test
+    public void testReasoningBudgetTagsMustNotBeEmpty() {
+        InferenceParameters params = new InferenceParameters("");
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetStartTag(""));
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetEndTags());
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetEndTags("</think>", ""));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_start_tag")));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_end_tags")));
+    }
+
+    @Test
+    public void testReasoningBudgetTagWithersReturnNewInstance() {
+        InferenceParameters params = new InferenceParameters("");
+        assertThat(params.withReasoningBudgetStartTag("<think>"), is(not(sameInstance(params))));
+        assertThat(params.withReasoningBudgetEndTags("</think>"), is(not(sameInstance(params))));
+        assertThat(params.withReasoningBudgetMessage("m"), is(not(sameInstance(params))));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_message")));
+    }
+
+    @Test
     public void testSetContinueFinalMessageTrue() {
         InferenceParameters params = new InferenceParameters("").withContinueFinalMessage(true);
         assertThat(params.parameters.get("continue_final_message"), is("true"));

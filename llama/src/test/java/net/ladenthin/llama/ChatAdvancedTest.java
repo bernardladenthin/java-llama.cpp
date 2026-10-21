@@ -349,6 +349,58 @@ public class ChatAdvancedTest {
         }
     }
 
+    /**
+     * Without messages, {@code complete()} and {@code generate()} take the budget's tags from the
+     * request: once the model writes the start tag, a budget of zero forces the first end tag. The
+     * test is independent of the model: a logit bias makes the model write one token over and over,
+     * and that token's text is the start tag, so the end tag follows it each time.
+     *
+     * <p>No {@code reasoning_budget_message} is set on purpose: upstream's completion schema sets the
+     * sequence it forces only in the handler of that field, so a request naming the tags without it
+     * armed a budget that forced nothing. The chat paths always set it (to the server's default);
+     * the engine now does the same for a raw request.</p>
+     */
+    @Test
+    public void testReasoningBudgetTagsWithoutMessagesForceTheEndTag() {
+        Assumptions.assumeTrue(
+                new File(TestConstants.REASONING_MODEL_PATH).exists(),
+                "Reasoning model not found, skipping the reasoning-budget case");
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel thinking = new LlamaModel(new ModelParameters()
+                .setCtxSize(256)
+                .setModel(TestConstants.REASONING_MODEL_PATH)
+                .setGpuLayers(gpuLayers)
+                .setFit(false))) {
+            int startToken = thinking.encode("Hello")[0];
+            String startTag = thinking.decode(startToken);
+            assertArrayEquals(new int[] {startToken}, thinking.encode(startTag), startTag);
+            InferenceParameters request = new InferenceParameters("Say something.")
+                    .withTokenIdBias(Collections.singletonMap(startToken, 100.0f))
+                    .withReasoningBudgetTokens(0)
+                    .withReasoningBudgetStartTag(startTag)
+                    .withReasoningBudgetEndTags("END")
+                    .withIgnoreEos(true)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f);
+
+            String completed = thinking.complete(request);
+
+            assertTrue(completed.startsWith(startTag + "END"), completed);
+            StringBuilder generated = new StringBuilder();
+            for (LlamaOutput output : thinking.generate(request)) {
+                generated.append(output.text);
+            }
+            assertEquals(completed, generated.toString());
+            // Without the tags the bias alone repeats the start tag, so the end tag above is the budget's.
+            String unbounded = thinking.complete(new InferenceParameters("Say something.")
+                    .withTokenIdBias(Collections.singletonMap(startToken, 100.0f))
+                    .withIgnoreEos(true)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f));
+            assertFalse(unbounded.contains("END"), unbounded);
+        }
+    }
+
     // ------------------------------------------------------------------
     // 5. Penalty params — repeatPenalty, frequencyPenalty, presencePenalty
     // ------------------------------------------------------------------
