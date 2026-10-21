@@ -1007,8 +1007,8 @@ path), all supporting tools and streaming:
 | Surface | Routes | For |
 |---|---|---|
 | **Ollama-native** | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/chat` (NDJSON streaming), `POST /api/generate` (through the chat template with `system`, as Ollama does -- a request's own `template` and a token `context` are refused there, since the model's chat template renders the prompt and no answer hands out a context; the bare prompt with `raw: true`, where `format` constrains the answer and each image goes where its `[img-N]` tag stands, as in Ollama -- an image no tag places is refused; FIM with `suffix`, which takes `format` too but no images; a `format` other than `"json"` or a schema object is refused; without a prompt and without a suffix Ollama's "model loaded" answer; unlike Ollama, a request with only a suffix stays fill-in-the-middle at the start of the file, and `keep_alive: 0` does not unload and is answered "load") | Copilot's built-in **Ollama** provider; Ollama-hardcoded tools |
-| **Anthropic Messages** | `POST /v1/messages` (SSE event stream) | Claude-shaped clients (Claude Code); Copilot `messages` apiType |
-| **OpenAI Responses** | `POST /v1/responses` (SSE event stream) | Copilot `responses` apiType; Responses-API clients |
+| **Anthropic Messages** | `POST /v1/messages` (SSE event stream), `POST /v1/messages/count_tokens` (`{"input_tokens": N}`, the prompt `/v1/messages` would evaluate; text only, a request with an image is answered 501) | Claude-shaped clients (Claude Code); Copilot `messages` apiType |
+| **OpenAI Responses** | `POST /v1/responses` (SSE event stream), `POST /v1/responses/input_tokens` (upstream's token count, `{"input_tokens": N, "object": "response.input_tokens"}`; the same for chat at `POST /v1/chat/completions/input_tokens`) | Copilot `responses` apiType; Responses-API clients |
 
 `/api/show` advertises the model's capabilities (`tools`, `insert`, and `vision` when `--mmproj` is set)
 and context length, which Copilot's Ollama provider reads to enable agent mode. The llama.cpp-native

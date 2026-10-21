@@ -90,6 +90,21 @@ public interface OpenAiBackend {
     }
 
     /**
+     * Count the prompt tokens of a chat request without generating -- the prompt the chat template
+     * renders from it, tokenized as a generation tokenizes it ({@code POST /v1/messages/count_tokens},
+     * {@code /v1/responses/input_tokens} and {@code /v1/chat/completions/input_tokens}, each translated
+     * to an OpenAI chat request first). The default throws {@link UnsupportedOperationException}, which
+     * the server answers {@code 501}; backends that can count override it.
+     *
+     * @param request the OpenAI {@code /v1/chat/completions} request
+     * @return the number of prompt tokens
+     * @throws IOException if the count fails in a way the caller should surface as a server error
+     */
+    default int countTokens(JsonNode request) throws IOException {
+        throw new UnsupportedOperationException("token counting is not supported by this backend");
+    }
+
+    /**
      * The placeholder a raw multimodal prompt puts where each image goes (llama.cpp's
      * {@code {"prompt_string": ..., "multimodal_data": [...]}} prompt object), which the server draws at
      * random per process. Asked only for a raw request that carries images. The default throws

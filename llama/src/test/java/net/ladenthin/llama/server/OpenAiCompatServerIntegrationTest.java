@@ -72,6 +72,47 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * The token-count routes count the prompt a generation of the same request evaluates: the chat
+     * template rendered over the request, tokenized as the generation tokenizes it. upstream serves all
+     * three; they answered 404 here.
+     */
+    @Test
+    public void theTokenCountRoutesCountThePromptAGenerationEvaluates() throws IOException {
+        String messages = "[{\"role\":\"user\",\"content\":\"Count the tokens of this sentence, please.\"}]";
+        String chat =
+                "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":1,\"temperature\":0,\"messages\":" + messages + "}";
+        int promptTokens = MAPPER.readTree(post(port, "/v1/chat/completions", chat, "").body)
+                .path("usage")
+                .path("prompt_tokens")
+                .asInt(-1);
+        assertThat(promptTokens, greaterThan(0));
+
+        Response chatCount = post(port, "/v1/chat/completions/input_tokens", chat, "");
+        assertThat(chatCount.body, chatCount.code, is(200));
+        assertThat(MAPPER.readTree(chatCount.body).path("input_tokens").asInt(-1), is(promptTokens));
+
+        String anthropic =
+                "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":1,\"temperature\":0,\"messages\":" + messages + "}";
+        JsonNode usage =
+                MAPPER.readTree(post(port, "/v1/messages", anthropic, "").body).path("usage");
+        int anthropicPrompt = usage.path("input_tokens").asInt(-1)
+                + usage.path("cache_read_input_tokens").asInt(0);
+        Response anthropicCount = post(port, "/v1/messages/count_tokens", anthropic, "");
+        assertThat(anthropicCount.body, anthropicCount.code, is(200));
+        assertThat(MAPPER.readTree(anthropicCount.body).path("input_tokens").asInt(-1), is(anthropicPrompt));
+
+        String responses = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":1,\"temperature\":0,"
+                + "\"input\":\"Count the tokens of this sentence, please.\"}";
+        int responsesPrompt = MAPPER.readTree(post(port, "/v1/responses", responses, "").body)
+                .path("usage")
+                .path("input_tokens")
+                .asInt(-1);
+        Response responsesCount = post(port, "/v1/responses/input_tokens", responses, "");
+        assertThat(responsesCount.body, responsesCount.code, is(200));
+        assertThat(MAPPER.readTree(responsesCount.body).path("input_tokens").asInt(-1), is(responsesPrompt));
+    }
+
     @Test
     public void nonStreamingChatReturnsValidCompletion() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":16,"

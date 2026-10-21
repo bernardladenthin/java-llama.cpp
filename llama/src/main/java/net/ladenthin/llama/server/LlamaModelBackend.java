@@ -5,6 +5,7 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -34,6 +35,8 @@ import net.ladenthin.llama.parameters.InferenceParameters;
  * {@link net.ladenthin.llama.exception.LlamaException} stays a {@code 500}.
  */
 final class LlamaModelBackend implements OpenAiBackend {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final LlamaModel model;
     private final OpenAiRequestMapper mapper;
@@ -114,6 +117,43 @@ final class LlamaModelBackend implements OpenAiBackend {
             }
             throw e;
         }
+    }
+
+    @Override
+    public int countTokens(JsonNode request) throws IOException {
+        if (hasMediaContent(request)) {
+            // upstream counts an image's embeddings with the projector, which only its worker reaches
+            throw new UnsupportedOperationException(
+                    "counting the tokens of image, audio or video input is not supported");
+        }
+        // the prompt a generation evaluates: the chat template rendered over the request, tokenized with
+        // the special tokens added and parsed, as upstream's handle_count_tokens does
+        String prompt = model.applyTemplate(mapper.toInferenceParameters(request));
+        JsonNode tokens = OBJECT_MAPPER
+                .readTree(model.handleTokenize(prompt, true, false))
+                .path("tokens");
+        if (!tokens.isArray()) {
+            throw new IOException("the tokenizer answered without a token array");
+        }
+        return tokens.size();
+    }
+
+    /**
+     * Whether a chat request carries a content part that is not text (an image, audio or a video).
+     *
+     * @param request the OpenAI chat request
+     * @return {@code true} if any message's {@code content} array has a part whose {@code type} is not
+     *     {@code "text"}
+     */
+    static boolean hasMediaContent(JsonNode request) {
+        for (JsonNode message : request.path("messages")) {
+            for (JsonNode part : message.path("content")) {
+                if (part.isObject() && !"text".equals(part.path("type").asText(""))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override

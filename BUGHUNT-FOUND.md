@@ -183,6 +183,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F258](#f258) — mittel — *gefixt*
 - [F259](#f259) — niedrig bis mittel — *gefixt*
 - [F260](#f260) — niedrig — *gefixt*
+- [F261](#f261) — niedrig bis mittel — *gefixt*
 
 ## Funde
 
@@ -1112,6 +1113,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#aSubPathOfARouteIsNotHandledByTheRoute`; `#upstreamsRerankingAliasStillAnswers` schützt den Alias und den abschließenden Schrägstrich (ohne Fix grün)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <404> but: was <200>“), mit Fix grün (49/49 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1, Bericht vor dem Lauf gelöscht), nach `pop` grün. Alle 25 Testklassen des Pakets `server` grün, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün. Der Agent (`llama-atmosphere-agent`) ruft keine Unterpfade auf.
 - **Offen (nicht geändert):** upstream bietet `/v1/messages/count_tokens` und die `input_tokens`-Routen tatsächlich an; sie hier nachzubauen bräuchte eine Tokenzählung über das Backend (`OpenAiBackend` hat keine) – ein API-Zusatz.
+- **Nachtrag (Branch-Review 2026-10-21, Abschluss vor 6.0.0):** Die Zählrouten upstreams sind mit F261 bedient (`/v1/messages/count_tokens`, `/v1/responses/input_tokens`, `/v1/chat/completions/input_tokens`); `#aSubPathOfARouteIsNotHandledByTheRoute` prüft das Präfix-Matching seitdem an `/v1/messages/batches` und `/v1/chat/completions/other`.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `909edc5`
 
@@ -2376,6 +2378,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit den Meldungskonstanten als Stummel) rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithATemplateOrAContextIsRefused:553 {"model":"test-model","prompt":"why?","template":"{{ .Prompt }}","stream":false} Expected: is <400> but: was <200>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 77/77, `OllamaApiSupportTest` 54/54.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b99a25b`
+
+### F261 – java-llama.cpp: `POST /v1/messages/count_tokens` und die `input_tokens`-Routen antworten 404; upstream zählt dort die Prompt-Token
+- **Zeit:** 2026-10-21 16:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (neu `handleCountTokens` mit den drei Routen und ihren Kurzformen, `PATH_MESSAGES_COUNT_TOKENS`, `PATH_RESPONSES_INPUT_TOKENS`, `PATH_CHAT_COMPLETIONS_INPUT_TOKENS`), `OpenAiBackend.java` (neu `countTokens`), `LlamaModelBackend.java` (`countTokens`, `hasMediaContent`), `README.md`
+- **Schwere:** niedrig bis mittel (Claude Code fragt `count_tokens` vor langen Anfragen; ein 404 lässt es schätzen bzw. die Funktion ausfallen)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Open points from the bug hunt“; Brief JR-19), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F112 hatte verhindert, dass `/v1/messages/count_tokens` über das Präfix-Matching eine ganze Generierung durch `/v1/messages` lief; seitdem antwortete die Route 404.
+- **Beschreibung:** upstream bedient drei Zählrouten (`tools/server/server.cpp:181-185`, `handle_count_tokens` in `server-context.cpp`, b11639): `/v1/messages/count_tokens` (Anthropic, `{"input_tokens": N}`), `/v1/responses/input_tokens` und `/v1/chat/completions/input_tokens` (dazu `"object": "response.input_tokens"`). Jede übersetzt den Körper wie ihre generierende Route, rendert das Chat-Template (`oaicompat_chat_params_parse`) und tokenisiert den Prompt mit `add_special` und `parse_special`. Hier gab es keine davon.
+- **Fix:** `OpenAiBackend#countTokens(JsonNode)` (Standard: `UnsupportedOperationException` → 501, wie upstream für eine fehlende Fähigkeit), in `LlamaModelBackend` über denselben Weg wie die Generierung: `mapper.toInferenceParameters` → `LlamaModel#applyTemplate` → `handleTokenize(prompt, true, false)`. Die drei Routen (plus `/messages/count_tokens`, `/responses/input_tokens`, `/chat/completions/input_tokens` nach der Kurzform-Regel des Servers) übersetzen mit `AnthropicApiSupport`/`ResponsesApiSupport` wie ihre Elternrouten; eine Übersetzung oder Zählung, die ablehnt, ist 400, eine fehlende Fähigkeit 501 (`not_supported_error` bzw. Anthropics `api_error`), jeweils in der Fehlerform der Route. Abweichung von upstream: eine Anfrage mit Bild, Audio oder Video zählt upstream mit dem Projektor (`process_mtmd_prompt`), den diese Engine nicht erreicht; statt zu wenig zu zählen, antwortet die Route 501 „counting the tokens of image, audio or video input is not supported“. Abweichung vom Brief: die dritte upstream-Route (`/v1/chat/completions/input_tokens`) mit aufgenommen; `OpenAiCompatServerHttpTest#aSubPathOfARouteIsNotHandledByTheRoute` (F112) prüft jetzt `/v1/messages/batches` und `/v1/chat/completions/other`, da die alte Beispielroute bedient wird.
+- **Tests:** `OpenAiCompatServerHttpTest#theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest` (alle sechs Pfade, Antwortform, die übersetzte Anfrage erreicht das Backend, nichts generiert), `#theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape` (400 bei abgelehnter Übersetzung, 501 ohne Zählfähigkeit in Anthropic- und OpenAI-Form), `#aSubPathOfARouteIsNotHandledByTheRoute` (angepasst); `LlamaModelBackendTest#aRequestWithAnImageAudioOrVideoPartCountsAsMedia`; `OpenAiCompatServerIntegrationTest#theTokenCountRoutesCountThePromptAGenerationEvaluates` (modellgestützt: die Zählung jeder Route gleicht dem `usage` einer Generierung derselben Anfrage).
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Server (mit `countTokens` als Stummel) rot: „OpenAiCompatServerHttpTest.theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest:345 /v1/messages/count_tokens Expected: is <200> but: was <404>“, „theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape:386 {"error":{"message":"Not found: /v1/messages/count_tokens",…}} Expected: is <400> but: was <404>“, „OpenAiCompatServerIntegrationTest.theTokenCountRoutesCountThePromptAGenerationEvaluates:92 … Not found: /v1/chat/completions/input_tokens … Expected: is <200> but: was <404>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 79/79, `LlamaModelBackendTest` 5/5, `OpenAiCompatServerIntegrationTest` 15/15 (Winzmodell als Reasoning-Modell), `AnthropicApiSupportTest` 46/46, `ResponsesApiSupportTest` 70/70.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

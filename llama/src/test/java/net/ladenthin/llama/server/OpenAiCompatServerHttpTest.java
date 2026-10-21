@@ -316,10 +316,87 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     @Test
     public void aSubPathOfARouteIsNotHandledByTheRoute() throws IOException {
         // The JDK server matches contexts by prefix, so /v1/messages/count_tokens (Claude Code counts
-        // tokens there) ran a whole generation through the /v1/messages handler instead of a 404.
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+        // tokens there) ran a whole generation through the /v1/messages handler instead of a 404. That
+        // route is served now; any other sub-path still is no part of its parent.
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"m\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
-            assertThat(post(server.getPort(), "/v1/messages/count_tokens", body, "").code, is(404));
+            assertThat(post(server.getPort(), "/v1/messages/batches", body, "").code, is(404));
+            assertThat(post(server.getPort(), "/v1/chat/completions/other", CHAT_BODY, "").code, is(404));
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
+    /**
+     * upstream counts the prompt tokens of a request without generating on three routes:
+     * {@code /v1/messages/count_tokens} (Anthropic, {@code {"input_tokens": N}}),
+     * {@code /v1/responses/input_tokens} and {@code /v1/chat/completions/input_tokens} (with
+     * {@code "object":"response.input_tokens"}). All three answered 404 here (F112 kept them from running
+     * a generation through the parent route). Each translates its body as its generating route does.
+     */
+    @Test
+    public void theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest() throws IOException {
+        CountingBackend backend = new CountingBackend(42);
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String anthropic = "{\"model\":\"m\",\"system\":\"be brief\","
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            for (String path : new String[] {"/v1/messages/count_tokens", "/messages/count_tokens"}) {
+                Response response = post(server.getPort(), path, anthropic, "");
+                assertThat(path, response.code, is(200));
+                assertThat(path, READER.readTree(response.body), is(READER.readTree("{\"input_tokens\":42}")));
+                JsonNode messages = backend.request.path("messages");
+                assertThat(path, messages.path(0).path("role").asText(), is("system"));
+                assertThat(path, messages.path(1).path("content").asText(), is("hi"));
+            }
+            String responses = "{\"model\":\"m\",\"instructions\":\"be brief\",\"input\":\"hi\"}";
+            for (String path : new String[] {"/v1/responses/input_tokens", "/responses/input_tokens"}) {
+                Response response = post(server.getPort(), path, responses, "");
+                assertThat(path, response.code, is(200));
+                assertThat(
+                        path,
+                        READER.readTree(response.body),
+                        is(READER.readTree("{\"input_tokens\":42,\"object\":\"response.input_tokens\"}")));
+                assertThat(
+                        path,
+                        backend.request.path("messages").path(1).path("content").asText(),
+                        is("hi"));
+            }
+            for (String path : new String[] {"/v1/chat/completions/input_tokens", "/chat/completions/input_tokens"}) {
+                Response response = post(server.getPort(), path, CHAT_BODY, "");
+                assertThat(path, response.code, is(200));
+                assertThat(
+                        path,
+                        READER.readTree(response.body),
+                        is(READER.readTree("{\"input_tokens\":42,\"object\":\"response.input_tokens\"}")));
+                assertThat(path, backend.request, is(READER.readTree(CHAT_BODY)));
+            }
+            assertThat("nothing was generated", backend.generated, is(false));
+        }
+    }
+
+    /**
+     * A request the translation or the count refuses is the client's fault, a backend without a count
+     * answers 501 (upstream's answer for a capability the server lacks), as do images, whose tokens the
+     * count cannot see.
+     */
+    @Test
+    public void theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new CountingBackend(1), config()).start()) {
+            Response bad = post(server.getPort(), "/v1/messages/count_tokens", "{\"max_tokens\":\"x\"}", "");
+            assertThat(bad.body, bad.code, is(400));
+            assertThat(READER.readTree(bad.body).path("error").path("type").asText(), is("invalid_request_error"));
+        }
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            Response anthropic = post(
+                    server.getPort(),
+                    "/v1/messages/count_tokens",
+                    "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+                    "");
+            assertThat(anthropic.body, anthropic.code, is(501));
+            assertThat(READER.readTree(anthropic.body).path("type").asText(), is("error"));
+            Response chat = post(server.getPort(), "/v1/chat/completions/input_tokens", CHAT_BODY, "");
+            assertThat(chat.body, chat.code, is(501));
+            assertThat(READER.readTree(chat.body).path("error").path("type").asText(), is("not_supported_error"));
         }
     }
 
@@ -1401,6 +1478,35 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         public void stream(JsonNode request, ChunkSink sink) throws IOException {
             this.called = "stream";
             this.request = request;
+            super.stream(request, sink);
+        }
+    }
+
+    /** Backend that counts every request as {@code count} tokens and records it; generation is flagged. */
+    static final class CountingBackend extends FakeBackend {
+        private final int count;
+        volatile JsonNode request = READER.createObjectNode();
+        volatile boolean generated;
+
+        CountingBackend(int count) {
+            this.count = count;
+        }
+
+        @Override
+        public int countTokens(JsonNode request) {
+            this.request = request;
+            return count;
+        }
+
+        @Override
+        public String complete(JsonNode request) {
+            generated = true;
+            return super.complete(request);
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            generated = true;
             super.stream(request, sink);
         }
     }

@@ -10,6 +10,8 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
@@ -22,6 +24,25 @@ import org.junit.jupiter.api.Test;
  * Lambdas stand in for the model call, so no model is loaded.
  */
 public class LlamaModelBackendTest {
+
+    /**
+     * The token count renders the chat template and tokenizes the text; an image's embeddings are counted
+     * only by the projector, so a request with media is refused (501) rather than undercounted.
+     */
+    @Test
+    public void aRequestWithAnImageAudioOrVideoPartCountsAsMedia() throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        String[] media = {"image_url", "input_audio", "video_url"};
+        for (String type : media) {
+            JsonNode request = mapper.readTree("{\"messages\":[{\"role\":\"system\",\"content\":\"s\"},"
+                    + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"t\"},{\"type\":\""
+                    + type + "\"}]}]}");
+            assertThat(type, LlamaModelBackend.hasMediaContent(request), is(true));
+        }
+        JsonNode text = mapper.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"t\"},"
+                + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"t\"}]}]}");
+        assertThat(LlamaModelBackend.hasMediaContent(text), is(false));
+    }
 
     @Test
     public void everyChunkReachesTheSinkInOrder() throws IOException {

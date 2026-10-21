@@ -29,6 +29,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.value.SlotMetrics;
@@ -52,6 +53,9 @@ import org.slf4j.LoggerFactory;
  *       on the last) when {@code stream:true} and non-streaming otherwise.</li>
  *   <li>{@code POST /v1/embeddings} — embeddings (requires the model to be loaded in embedding
  *       mode).</li>
+ *   <li>{@code POST /v1/messages/count_tokens}, {@code POST /v1/responses/input_tokens} and
+ *       {@code POST /v1/chat/completions/input_tokens} — the prompt tokens of the request of the route
+ *       before them, counted without generating ({@link OpenAiBackend#countTokens}).</li>
  *   <li>{@code GET /v1/models} — advertises the single configured model.</li>
  *   <li>{@code GET /metrics} — server and per-slot token/cache counters as JSON.</li>
  *   <li>{@code GET /slots} — the per-slot metrics array as JSON.</li>
@@ -101,6 +105,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
      */
     public static final String PATH_INFILL = "/infill";
 
+    /** Anthropic's token count of a {@code /v1/messages} request, without generating. */
+    public static final String PATH_MESSAGES_COUNT_TOKENS = "/v1/messages/count_tokens";
+
+    /** The token count of a {@code /v1/responses} request, without generating (upstream's route). */
+    public static final String PATH_RESPONSES_INPUT_TOKENS = "/v1/responses/input_tokens";
+
+    /** The token count of a {@code /v1/chat/completions} request, without generating (upstream's route). */
+    public static final String PATH_CHAT_COMPLETIONS_INPUT_TOKENS = "/v1/chat/completions/input_tokens";
+
     /** The model-list route. */
     public static final String PATH_MODELS = "/v1/models";
 
@@ -139,6 +152,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     private static final int HTTP_NOT_FOUND = 404;
     private static final int HTTP_METHOD_NOT_ALLOWED = 405;
     private static final int HTTP_SERVER_ERROR = 500;
+    private static final int HTTP_NOT_IMPLEMENTED = 501;
     private static final int HTTP_PAYLOAD_TOO_LARGE = 413;
 
     private static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
@@ -154,6 +168,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
+    /** upstream's error type for a capability the server lacks (HTTP 501). */
+    private static final String ERROR_TYPE_NOT_SUPPORTED = "not_supported_error";
     /** Anthropic's error type for a request that is the client's fault (HTTP 400). */
     private static final String ANTHROPIC_ERROR_REQUEST = "invalid_request_error";
     /** Anthropic's error type for an unexpected server-side failure (HTTP 500). */
@@ -224,6 +240,13 @@ public final class OpenAiCompatServer implements AutoCloseable {
         register("/messages", this::handleAnthropicMessages);
         register(PATH_RESPONSES, this::handleResponses);
         register("/responses", this::handleResponses);
+        // upstream's token counts: the request of the route above, counted without generating
+        register(PATH_MESSAGES_COUNT_TOKENS, this::handleAnthropicCountTokens);
+        register("/messages/count_tokens", this::handleAnthropicCountTokens);
+        register(PATH_RESPONSES_INPUT_TOKENS, this::handleResponsesInputTokens);
+        register("/responses/input_tokens", this::handleResponsesInputTokens);
+        register(PATH_CHAT_COMPLETIONS_INPUT_TOKENS, this::handleChatInputTokens);
+        register("/chat/completions/input_tokens", this::handleChatInputTokens);
         // Ollama-native surface (Copilot's built-in Ollama provider + Ollama-hardcoded tools).
         register(PATH_OLLAMA_VERSION, this::handleOllamaVersion);
         register(PATH_OLLAMA_TAGS, this::handleOllamaTags);
@@ -850,6 +873,77 @@ public final class OpenAiCompatServer implements AutoCloseable {
             }
         } finally {
             exchange.close();
+        }
+    }
+
+    // ----- token counts (upstream's handle_count_tokens) -----
+
+    private void handleAnthropicCountTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, true, AnthropicApiSupport::toOpenAiChatRequest);
+    }
+
+    private void handleResponsesInputTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, false, ResponsesApiSupport::toOpenAiChatRequest);
+    }
+
+    private void handleChatInputTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, false, request -> request);
+    }
+
+    /**
+     * Count the prompt tokens of a request without generating, as upstream's {@code handle_count_tokens}:
+     * the body is translated as its generating route translates it, and the answer is
+     * {@code {"input_tokens": N}}, with {@code "object": "response.input_tokens"} on the OpenAI routes.
+     * A request the translation or the count refuses is {@code 400}, a backend that cannot count
+     * {@code 501}, both in the route's error shape.
+     */
+    private void handleCountTokens(HttpExchange exchange, boolean anthropic, UnaryOperator<JsonNode> toChatRequest)
+            throws IOException {
+        try {
+            JsonNode request = requirePostJson(exchange);
+            if (request == null) {
+                return;
+            }
+            final int count;
+            try {
+                count = backend.countTokens(toChatRequest.apply(request));
+            } catch (IllegalArgumentException | InvalidRequestException e) {
+                sendCountError(exchange, anthropic, HTTP_BAD_REQUEST, message(e));
+                return;
+            } catch (UnsupportedOperationException e) {
+                sendCountError(exchange, anthropic, HTTP_NOT_IMPLEMENTED, message(e));
+                return;
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("token count failed", e);
+                sendCountError(exchange, anthropic, HTTP_SERVER_ERROR, message(e));
+                return;
+            }
+            ObjectNode body = OBJECT_MAPPER.createObjectNode().put("input_tokens", count);
+            if (!anthropic) {
+                body.put("object", "response.input_tokens");
+            }
+            sendJson(exchange, HTTP_OK, body.toString());
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void sendCountError(HttpExchange exchange, boolean anthropic, int status, String message)
+            throws IOException {
+        if (anthropic) {
+            sendJson(
+                    exchange,
+                    status,
+                    anthropicError(
+                            message, status == HTTP_BAD_REQUEST ? ANTHROPIC_ERROR_REQUEST : ANTHROPIC_ERROR_SERVER));
+        } else if (status == HTTP_BAD_REQUEST) {
+            sendError(exchange, status, ERROR_TYPE_REQUEST, message);
+        } else {
+            sendError(
+                    exchange,
+                    status,
+                    status == HTTP_NOT_IMPLEMENTED ? ERROR_TYPE_NOT_SUPPORTED : ERROR_TYPE_SERVER,
+                    message);
         }
     }
 
