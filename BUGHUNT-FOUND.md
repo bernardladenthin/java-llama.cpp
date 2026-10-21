@@ -341,6 +341,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestTurnsImageBlocksIntoImageUrlParts` (vorher rot, nachher 12/12); `OpenAiCompatServerHttpTest` 44/44 grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3d38dd0`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J4-5):** Die `url`-Quelle und der Rückfall für eine andere Quelle hatten keinen Test (nur `base64`). `AnthropicApiSupportTest#requestTurnsUrlImageSourcesIntoImageUrlParts` pinnt die URL selbst als `image_url`, in einer Nachricht und in einem `tool_result`; `#anUnsupportedImageSourceLeavesTheMessageText` (Quelle `ftp`) die Textform der Nachricht und den Text eines `tool_result`, das nur ein solches Bild trägt. Gegenprobe rot: ohne den `url`-Zweig („Expected: is "image_url" but: was """), mit `url`-Übernahme für jede Quelle („Expected: is <true> but: was <false>“); mit dem Code grün (`AnthropicApiSupportTest` 36/36). Die Quelle `file` (Files-API) und die Vorgabe `image/png` statt upstreams `image/jpeg` für ein `base64` ohne `media_type` sind nicht Teil dieses Nachtrags.
 
 <a id="f30"></a>
 ### F30 – java-llama.cpp: Fehlgeschlagener `RpcServer.start` lässt den Server weiterlaufen, wenn der Stopp vor dem Bind kommt
@@ -668,6 +669,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (2026-10-18):** wirkt erst zusammen mit [F77](#f77): der Chat-Mapper, durch den jede übersetzte Anfrage läuft, verwarf das erzeugte Feld bis dahin.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `262b41d`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J4-5):** Die Vorgabe 10000 und die Wirkungslosigkeit anderer Typen hatten keinen Test (nur `enabled` mit 1024). `AnthropicApiSupportTest#enabledThinkingWithoutBudgetUsesUpstreamsDefault` pinnt 10000, `#disabledThinkingSetsNoBudget` (`type` `disabled` mit `budget_tokens` 1024) das Fehlen von `thinking_budget_tokens`. Gegenprobe rot: Vorgabe 0 statt 10000 („Expected: is <10000> but: was <0>“), Budget für jeden `thinking`-Block statt nur `enabled` („Expected: is <false> but: was <true>“); mit dem Code grün (`AnthropicApiSupportTest` 36/36).
 
 <a id="f77"></a>
 ### F77 – java-llama.cpp: `OpenAiRequestMapper` verwirft `chat_template_kwargs`, `reasoning_effort` und das Reasoning-Budget jedes Chat-Requests
@@ -841,6 +843,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** dass der Cache danach tatsächlich trifft (`cached_tokens` > 0 in der zweiten Runde), zeigt nur ein modellgestützter Lauf.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `70779b3`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J4-5):** Die Wächter („nur wenn nach den fünf Zeichen ein `;` folgt“) hatten keinen Test; der Test oben nimmt nur wohlgeformte Kopfzeilen. `AnthropicApiSupportTest#aSystemTextThatIsNoWellFormedBillingHeaderIsLeftAlone` gibt `normalizeBillingHeader` einen Text ohne Kopfzeile, eine Kopfzeile ohne `cch=`, einen Stempel am Textende und einen Stempel ohne folgendes `;` und verlangt jeden unverändert zurück. Gegenprobe rot: ohne `end >= length` („StringIndexOutOfBounds Index 56 out of bounds for length 56“), ohne `charAt(end) != ';'` („Expected: is "x-anthropic-billing-header: cch=a5145 You are Claude Code." but: was "x-anthropic-billing-header: cch=fffff You are Claude Code."“); der Wächter `stamp < 0` ist eine äquivalente Mutante (ohne ihn liegt `end` im festen Präfix, dessen Zeichen dort kein `;` ist), kein Test kann ihn unterscheiden. Mit dem Code grün (`AnthropicApiSupportTest` 36/36). Wie upstream bleibt der Text still unverändert; upstream protokolliert zusätzlich `LOG_ERR`.
 
 <a id="f91"></a>
 ### F91 – java-llama.cpp: Responses-Verlauf spaltet jede Assistenten-Runde in Denk- und Antwortnachricht

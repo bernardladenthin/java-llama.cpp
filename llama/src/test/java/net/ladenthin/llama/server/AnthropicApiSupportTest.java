@@ -137,6 +137,76 @@ public class AnthropicApiSupportTest {
         assertThat(openAi.path("thinking_budget_tokens").asInt(), is(1024));
     }
 
+    @Test
+    public void enabledThinkingWithoutBudgetUsesUpstreamsDefault() throws IOException {
+        // upstream's convert_anthropic_to_oai: json_value(thinking, "budget_tokens", 10000)
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"enabled\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("thinking_budget_tokens").asInt(), is(10000));
+    }
+
+    @Test
+    public void disabledThinkingSetsNoBudget() throws IOException {
+        // Only type "enabled" sets a budget, as upstream; a disabled block must not limit the reasoning.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"disabled\",\"budget_tokens\":1024},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.has("thinking_budget_tokens"), is(false));
+    }
+
+    @Test
+    public void requestTurnsUrlImageSourcesIntoImageUrlParts() throws IOException {
+        // A url source is passed on as the image_url itself, as upstream's convert_anthropic_to_oai does,
+        // in a user message and inside a tool_result.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://x/a.png\"}}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://x/b.png\"}}]}]}]}"))
+                .path("messages");
+        JsonNode content = messages.path(0).path("content");
+        assertThat(content.path(1).path("type").asText(), is("image_url"));
+        assertThat(content.path(1).path("image_url").path("url").asText(), is("https://x/a.png"));
+        JsonNode tool = messages.path(2);
+        assertThat(tool.path("role").asText(), is("tool"));
+        assertThat(tool.path("content").path(0).path("image_url").path("url").asText(), is("https://x/b.png"));
+    }
+
+    @Test
+    public void anUnsupportedImageSourceLeavesTheMessageText() throws IOException {
+        // A source that is neither base64 nor url gives no image part (upstream pushes nothing either):
+        // the message keeps its textual form, and a tool_result holding only such an image its text.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"ftp\",\"url\":\"ftp://x/a.png\"}}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"ftp\",\"url\":\"ftp://x/b.png\"}}]}]}]}"))
+                .path("messages");
+        JsonNode content = messages.path(0).path("content");
+        assertThat(content.isTextual(), is(true));
+        assertThat(content.asText(), is("what is this?"));
+        JsonNode toolContent = messages.path(2).path("content");
+        assertThat(toolContent.isTextual(), is(true));
+        assertThat(toolContent.asText(), is(""));
+    }
+
+    @Test
+    public void aSystemTextThatIsNoWellFormedBillingHeaderIsLeftAlone() {
+        // normalizeBillingHeader rewrites only "cch=" followed by five characters and a ';', as upstream's
+        // normalize_anthropic_billing_header; each of its guards must return the text untouched.
+        String[] untouched = {
+            "You are Claude Code.",
+            "x-anthropic-billing-header: nothing",
+            "x-anthropic-billing-header: cc_entrypoint=cli; cch=a5145",
+            "x-anthropic-billing-header: cch=a5145 You are Claude Code."
+        };
+        for (String text : untouched) {
+            assertThat(text, AnthropicApiSupport.normalizeBillingHeader(text), is(text));
+        }
+    }
+
     /**
      * Separate text blocks of one message must stay separate words. Anthropic clients split a turn into
      * several blocks (a reminder block, then the user's own text); llama.cpp's own {@code /v1/messages}
