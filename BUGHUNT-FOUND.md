@@ -2307,7 +2307,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#logprobsWithToolsAndStreamIsRefusedLikeUpstream` (Meldung wörtlich), `#logprobsWithToolsOrStreamAloneIsAccepted` (ohne `stream`, ohne `tools`, mit leerem `tools`, mit ganzzahligem `logprobs`; vorher und nachher grün); `OpenAiCompatServerHttpTest#logprobsWithToolsOnAStreamedChatIsA400LikeUpstream` (gestreamt 400 mit der Meldung und nichts generiert, derselbe Body blockierend 200 über `complete`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „OpenAiRequestMapperTest.logprobsWithToolsAndStreamIsRefusedLikeUpstream:310 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „OpenAiCompatServerHttpTest.logprobsWithToolsOnAStreamedChatIsA400LikeUpstream:992 Expected: is <400> but: was <200>“; mit dem Fix grün (`OpenAiRequestMapperTest` 57/57, `OpenAiCompatServerHttpTest` 73/73, `AnthropicApiSupportTest` 42/42, `ResponsesApiSupportTest` 70/70, `OllamaApiSupportTest` 49/49). `spotless:apply` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `de3c64f`
 
 ## Offene Verdachte ohne Fund-ID
 
