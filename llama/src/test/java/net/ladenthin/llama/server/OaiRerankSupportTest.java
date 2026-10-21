@@ -172,6 +172,22 @@ public class OaiRerankSupportTest {
     }
 
     @Test
+    public void readDocumentsFallsBackToTextsWhenDocumentsIsNull() throws IOException {
+        // upstream's json_value treats an explicit null as absent and serves the request from "texts";
+        // ours selected the null and refused the request.
+        JsonNode request = read("{\"query\":\"q\",\"documents\":null,\"texts\":[\"a\"]}");
+        String[] documents = assertDoesNotThrow(() -> OaiRerankSupport.readDocuments(request));
+        assertThat(documents.length, is(1));
+        assertThat(documents[0], is("a"));
+    }
+
+    @Test
+    public void readDocumentsThrowsWhenDocumentsIsNullWithoutTexts() throws IOException {
+        JsonNode request = read("{\"query\":\"q\",\"documents\":null}");
+        assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
+    }
+
+    @Test
     public void teiRequestGetsTheTeiArrayWithScoreLikeUpstream() throws IOException {
         // upstream answers a request with "texts" as a bare array of {index, score}, best first.
         JsonNode out = read(OaiRerankSupport.toResponse(

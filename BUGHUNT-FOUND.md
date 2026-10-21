@@ -153,6 +153,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F228](#f228) — niedrig — *gefixt*
 - [F229](#f229) — niedrig — *gefixt*
 - [F230](#f230) — niedrig — *gefixt*
+- [F231](#f231) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1874,6 +1875,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <2> but: was <-1>“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`OaiRerankSupportTest` 19/19, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5781ef5`
+
+### F231 – java-llama.cpp: `/v1/rerank`: ein explizites `"documents": null` neben `texts` wird abgewiesen statt aus `texts` bedient
+- **Zeit:** 2026-10-21 00:19 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`readDocuments`)
+- **Schwere:** niedrig (still abweichend von upstream; ein Client muss `null` neben `texts` senden)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J6-4). Seit F111 (`texts` von text-embeddings-inference akzeptiert); der Kommentar behauptete Parität mit upstream.
+- **Beschreibung:** `readDocuments` wählte `request.has("documents") ? documents : texts`. Jacksons `has()` ist auch für einen expliziten `null`-Wert wahr, also nahm `{"documents":null,"texts":["a"]}` den `NullNode` und warf „'documents' (or TEI's 'texts') must be a non-empty array“ (400). Upstream liest `json_value(body, "documents", json_value(body, "texts", {}))` (`server-context.cpp:5753`, b11639), und `json_value` behandelt `null` wie „fehlt“ (`server-common.h:43-46`) – die Anfrage wird dort aus `texts` bedient.
+- **Fix:** `hasNonNull("documents")`; Kommentar und Javadoc nennen den Rückfall bei `null`. Die Formatwahl in `toResponse` (`request.has("texts")`) bleibt, weil upstreams `body.contains("texts")` ein `null` ebenfalls mitzählt. Ein `documents` falschen Typs bleibt ein 400 (upstream fiele still auf `texts` zurück; das wäre ein stiller Rückfall).
+- **Tests:** `OaiRerankSupportTest#readDocumentsFallsBackToTextsWhenDocumentsIsNull`, `#readDocumentsThrowsWhenDocumentsIsNullWithoutTexts`.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: 'documents' (or TEI's 'texts') must be a non-empty array“), mit ihm grün (`OaiRerankSupportTest` 21/21, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

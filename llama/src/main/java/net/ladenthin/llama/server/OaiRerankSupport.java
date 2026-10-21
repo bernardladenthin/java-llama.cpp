@@ -50,11 +50,13 @@ final class OaiRerankSupport {
      *
      * @param request the parsed rerank request
      * @return the documents, in request order
-     * @throws IllegalArgumentException if {@code documents} is absent, empty, or holds an unsupported entry
+     * @throws IllegalArgumentException if {@code documents} (or, when it is absent or {@code null}, TEI's
+     *     {@code texts}) is absent, empty, or holds an unsupported entry
      */
     static String[] readDocuments(JsonNode request) {
-        // Hugging Face text-embeddings-inference names them "texts"; upstream reads it when "documents" is absent.
-        JsonNode documents = request.has("documents") ? request.path("documents") : request.path("texts");
+        // Hugging Face text-embeddings-inference names them "texts"; upstream reads it when "documents" is
+        // absent or null (its json_value treats an explicit null as absent).
+        JsonNode documents = request.hasNonNull("documents") ? request.path("documents") : request.path("texts");
         if (!documents.isArray() || documents.size() == 0) {
             throw new IllegalArgumentException("'documents' (or TEI's 'texts') must be a non-empty array");
         }
