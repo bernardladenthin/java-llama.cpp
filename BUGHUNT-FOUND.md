@@ -1899,7 +1899,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OaiRerankSupportTest#toOaiResponseRefusesANativeBodyThatIsNotAJsonArray` (ersetzt `#toOaiResponseOnMalformedNativeBodyYieldsEmptyResults`), `#toTeiResponseRefusesANativeBodyThatIsNotAJsonArray`; je `"not json"`, `""` und `"{}"`, und die Meldung zitiert den Körper.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („not json ==> Expected java.io.IOException to be thrown, but nothing was thrown.“, in beiden Tests); eine Zwischenfassung, die nur im `catch` warf, blieb für den leeren Körper rot („Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“) – die zusätzlichen Fälle pinnen also den ganzen Fix. Mit dem Fix grün (`OaiRerankSupportTest` 22/22, `OpenAiCompatServerHttpTest` 69/69, `LlamaArchitectureTest` 13/13); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `5c5a892`
 
 ## Offene Verdachte ohne Fund-ID
 
