@@ -296,7 +296,7 @@ public final class RouterClient {
 
     @Override
     public String toString() {
-        return "RouterClient(http://" + host + ":" + port + ")";
+        return "RouterClient(http://" + urlHost(host) + ":" + port + ")";
     }
 
     private static String readFully(@Nullable InputStream stream) throws IOException {

@@ -338,4 +338,12 @@ public class RouterClientTest {
                 new RouterClient("127.0.0.1", 8080, "super-secret").toString(),
                 is("RouterClient(http://127.0.0.1:8080)"));
     }
+
+    @Test
+    public void toStringBracketsAnIpv6HostAsTheRequestUrlDoes() {
+        // The rendered target URL used the raw host, so "::1" printed the invalid authority
+        // "http://::1:8080" while the request went to http://[::1]:8080.
+        assertThat(new RouterClient("::1", 8080).toString(), is("RouterClient(http://[::1]:8080)"));
+        assertThat(new RouterClient("[::1]", 8080).toString(), is("RouterClient(http://[::1]:8080)"));
+    }
 }
