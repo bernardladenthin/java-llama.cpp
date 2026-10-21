@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
@@ -83,7 +84,20 @@ public class LlamaLoader {
      */
     private static final Object INITIALIZE_LOCK = new Object();
 
-    private static boolean extracted = false;
+    /**
+     * Whether a library was loaded; from then on {@link #initialize()} does nothing. Only read and
+     * written under the lock.
+     */
+    private static boolean loaded = false;
+
+    /** {@code net.ladenthin.llama.lib.path} at the successful load, to name a later change. */
+    private static @Nullable String loadedLibPath;
+
+    /** {@code net.ladenthin.llama.backend} at the successful load, to name a later change. */
+    private static @Nullable String loadedBackend;
+
+    /** The last ignored change {@link #initialize()} reported, so a repeated call does not repeat it. */
+    private static @Nullable String reportedChange;
 
     /** Whether {@link #initialize()} is running; only read and written under the lock. */
     private static boolean initializing = false;
@@ -242,7 +256,7 @@ public class LlamaLoader {
      * The parsed {@link #BACKEND_BUILD_FILE} of the library that was loaded, empty before a load and
      * for a library loaded from a directory that carries none. Set by the branch that loaded it --
      * only after its {@code System.load} succeeded, so a refused or failed start leaves it as it was --
-     * on every successful load (a later {@link #initialize()} runs the search again), read by {@link
+     * once per JVM (after a successful load {@link #initialize()} does nothing), read by {@link
      * #getBuildInfo()}.
      */
     private static volatile Map<String, String> loadedBuild = Collections.emptyMap();
@@ -287,10 +301,18 @@ public class LlamaLoader {
     private LlamaLoader() {}
 
     /**
-     * Loads the llama and jllama shared libraries
+     * Loads the native library: from {@code net.ladenthin.llama.lib.path}, {@code java.library.path} or
+     * the natives jars on the classpath (see the class description).
+     *
+     * <p>Idempotent: after the first successful load every further call returns at once. A JVM cannot
+     * unload a library, so a {@code net.ladenthin.llama.lib.path} or {@code net.ladenthin.llama.backend}
+     * changed after the load can no longer take effect; such a change is named once on stderr instead
+     * of loading a second copy of the library. A load that failed is tried again by the next call.
+     *
+     * @throws UnsatisfiedLinkError if no library could be loaded; the message names every place tried
      */
     public static void initialize() {
-        runOnceOnThisThread(LlamaLoader::load);
+        runOnceOnThisThread(LlamaLoader::loadOnce);
     }
 
     /**
@@ -321,9 +343,83 @@ public class LlamaLoader {
         }
     }
 
-    private static void load() {
+    private static void loadOnce() {
+        if (loaded) {
+            reportIgnoredChange();
+            return;
+        }
+        String libPath = systemProperties.getLibPath();
+        String backend = systemProperties.getBackend();
         loadNativeLibrary("jllama");
-        extracted = true;
+        loaded = true;
+        loadedLibPath = libPath;
+        loadedBackend = backend;
+        reportedChange = null;
+    }
+
+    /**
+     * Names a {@code lib.path} or {@code backend} property that changed after the library was loaded,
+     * once per distinct change: it can only take effect in a new JVM.
+     */
+    private static void reportIgnoredChange() {
+        StringBuilder change = new StringBuilder();
+        appendChange(change, LlamaSystemProperties.PREFIX + ".lib.path", loadedLibPath, systemProperties.getLibPath());
+        appendChange(change, LlamaSystemProperties.PREFIX + ".backend", loadedBackend, systemProperties.getBackend());
+        String text = change.toString();
+        if (text.isEmpty() || text.equals(reportedChange)) {
+            return;
+        }
+        reportedChange = text;
+        System.err.println("[jllama] the native library is already loaded in this JVM, so " + text
+                + " takes effect only in a new JVM");
+    }
+
+    private static void appendChange(
+            StringBuilder change, String property, @Nullable String atLoad, @Nullable String now) {
+        if (Objects.equals(atLoad, now)) {
+            return;
+        }
+        if (change.length() > 0) {
+            change.append(" and ");
+        }
+        change.append(property)
+                .append('=')
+                .append(now == null ? "<unset>" : now)
+                .append(" (")
+                .append(atLoad == null ? "unset" : atLoad)
+                .append(" at the load)");
+    }
+
+    /**
+     * For the loader tests: forgets the successful load and its build info, so the next
+     * {@link #initialize()} searches again (the library already loaded stays loaded -- a JVM cannot
+     * unload it). The tests drive {@link #initialize()} against fixture trees in a fork that may
+     * already have loaded the real library.
+     *
+     * @return what puts the state back as it was, which a test runs when it is done
+     */
+    static Runnable resetForTesting() {
+        synchronized (INITIALIZE_LOCK) {
+            final boolean wasLoaded = loaded;
+            final String libPath = loadedLibPath;
+            final String backend = loadedBackend;
+            final String reported = reportedChange;
+            final Map<String, String> build = loadedBuild;
+            loaded = false;
+            loadedLibPath = null;
+            loadedBackend = null;
+            reportedChange = null;
+            loadedBuild = Collections.emptyMap();
+            return () -> {
+                synchronized (INITIALIZE_LOCK) {
+                    loaded = wasLoaded;
+                    loadedLibPath = libPath;
+                    loadedBackend = backend;
+                    reportedChange = reported;
+                    loadedBuild = build;
+                }
+            };
+        }
     }
 
     /**
@@ -622,9 +718,8 @@ public class LlamaLoader {
         // The temp-directory cleanup runs here, before the first extraction, and nowhere earlier:
         // it needs the module selection (the backend filter), which must not be able to fail a
         // start that never reaches the jars -- a lib.path start with a stale filter property.
-        if (!extracted) {
-            cleanup(extractionDirectoriesOfThisClasspath());
-        }
+        // (Only reached while nothing is loaded: initialize() does nothing after a successful load.)
+        cleanup(extractionDirectoriesOfThisClasspath());
         String nativeResourcePath = getNativeResourcePath();
         String library = null;
         for (String backend : LIBRARY_BACKENDS) {

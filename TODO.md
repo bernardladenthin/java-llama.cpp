@@ -529,12 +529,6 @@ The review of the bug-hunt branch confirmed its findings; the fixes are F213 …
 addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
 scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
 
-**Java API (`LlamaModel`, `LlamaLoader`)**
-- **A second successful `LlamaLoader.initialize()` runs the search again** (F245): if
-  `net.ladenthin.llama.lib.path` or the backend filter changed in between, it loads a second copy of
-  the library and replaces the build info. Whether `initialize()` should do nothing after its first
-  success is a design decision; `BackendLoadTest` relies on repeated loads.
-
 **Ollama routes**
 - **`/api/generate` with `raw: true` drops `format` and `images` without a word** (F215). Ollama keeps
   both. Either map them (`format` as `json_schema`, `images` as multimodal data, as the non-raw path

@@ -55,8 +55,11 @@ public class BackendLoadTest {
     /** What {@link LlamaLoader#getBuildInfo()} reported before the first test of this class. */
     private static Map<String, String> buildInfoBeforeThisClass;
 
-    /** What {@link LlamaLoader#getBuildInfo()} reported before the current test. */
+    /** What {@link LlamaLoader#getBuildInfo()} reported at the start of the current test (after the reset). */
     private Map<String, String> buildInfoBeforeThisTest;
+
+    /** Puts back the loader state the reset before the current test found. */
+    private Runnable restoreLoaderState;
 
     @TempDir
     Path tempDir;
@@ -68,6 +71,9 @@ public class BackendLoadTest {
 
     @BeforeEach
     public void redirectLoaderToFixtures() {
+        // initialize() does nothing once a library is loaded, and an earlier test class of this fork
+        // may have loaded the real one: every test starts from "nothing loaded"
+        restoreLoaderState = LlamaLoader.resetForTesting();
         buildInfoBeforeThisTest = LlamaLoader.getBuildInfo();
         previousArch = System.getProperty(ARCH_PROP);
         previousTmpDir = System.getProperty(TMPDIR_PROP);
@@ -79,7 +85,7 @@ public class BackendLoadTest {
 
     @AfterEach
     public void restoreProperties() {
-        LlamaLoader.restoreBuildInfo(buildInfoBeforeThisTest);
+        restoreLoaderState.run();
         restore(ARCH_PROP, previousArch);
         restore(TMPDIR_PROP, previousTmpDir);
         restore(BACKEND_PROP, previousBackend);
@@ -265,6 +271,28 @@ public class BackendLoadTest {
     }
 
     /**
+     * Once a library is loaded, {@link LlamaLoader#initialize()} does nothing: a changed property can
+     * no longer take effect (the JVM cannot unload a library), and a second search used to load a
+     * second copy and replace the build info. Here the module filter changes between the two calls,
+     * which would select another set of modules and therefore another extraction directory.
+     */
+    @Test
+    @Order(1)
+    public void aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores() throws IOException {
+        assumeLinuxFixtureTree();
+        assumeX86_64();
+        System.setProperty(ARCH_PROP, "backendtest-ok");
+        System.setProperty(BACKEND_PROP, "cpu");
+        LlamaLoader.initialize();
+        Path first = theExtractionDir();
+        System.setProperty(BACKEND_PROP, "cuda13,vulkan");
+        String stderr = captureStderr(LlamaLoader::initialize);
+        assertEquals(java.util.Collections.singletonList(first), extractionDirs(), "a second start extracted again");
+        assertTrue(stderr.contains(BACKEND_PROP + "=cuda13,vulkan"), stderr);
+        assertTrue(stderr.contains("already loaded"), stderr);
+    }
+
+    /**
      * Runs after the two dummy loads above: they really load a library and publish the fixture's
      * build file ({@code bTEST}), which must not outlive them. In a shared fork a real library loaded
      * by an earlier test class would otherwise be reported as {@code bTEST} from here on, and
@@ -273,10 +301,27 @@ public class BackendLoadTest {
     @Test
     @Order(2)
     public void theDummyLoadsLeaveTheBuildInfoOfThisJvmAsTheyFoundIt() {
+        // the reset before this test forgot the state the earlier tests put back: look at that state
+        restoreLoaderState.run();
         assertEquals(
                 buildInfoBeforeThisClass,
                 LlamaLoader.getBuildInfo(),
                 "build info after the dummy loads: " + LlamaLoader.getBuildInfo() + ", before: "
                         + buildInfoBeforeThisClass);
+    }
+
+    private static String captureStderr(Runnable body) {
+        java.io.PrintStream previous = System.err;
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (java.io.PrintStream capture =
+                new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8.name())) {
+            System.setErr(capture);
+            body.run();
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            System.setErr(previous);
+        }
+        return new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
     }
 }

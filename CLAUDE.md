@@ -1663,8 +1663,10 @@ loading thread — the lock is reentrant, so a second complete load ran while th
 `System.load`, clearing the temp files and, with every GPU jar on the classpath, extracting every
 backend again over the library being loaded. The RPC smoke timed out on it (the doubled extraction
 of the CUDA/ROCm/SYCL libraries, then still complete libraries); it now waits 300 s like the other
-smoke and fails if the backend is selected more than once. Only the *nested* call is skipped — later calls still run the body,
-which `BackendLoadTest` relies on.
+smoke and fails if the backend is selected more than once. Since 6.0.0 `initialize()` is also idempotent
+after its first success (a changed `lib.path` or `backend` is named once on stderr and takes effect only
+in a new JVM; F264); `BackendLoadTest` drives repeated loads through the package-private
+`LlamaLoader.resetForTesting()`.
 **Single instance per process** (ggml keeps the server state in globals). `startLocal` binds
 loopback only; `startOnNetwork` is the explicit, warned opt-in, and binding needs an IPv4 literal
 (the server uses `inet_addr`). Endpoints on the client side are `value.RpcEndpoint`

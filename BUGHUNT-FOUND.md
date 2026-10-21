@@ -186,6 +186,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F261](#f261) — niedrig bis mittel — *gefixt*
 - [F262](#f262) — niedrig — *gefixt*
 - [F263](#f263) — niedrig — *gefixt*
+- [F264](#f264) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2194,6 +2195,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Offen:** Ein zweiter erfolgreicher `initialize()` lädt in der Produktion weiter erneut und überschreibt die Build-Info, wenn sich dazwischen `net.ladenthin.llama.lib.path` oder der Backend-Filter ändert (dann käme eine zweite Kopie der Bibliothek in den Prozess). Ob `initialize()` nach dem ersten Erfolg nichts mehr tun soll, ist eine Entwurfsfrage (`BackendLoadTest` braucht das wiederholte Laden), nicht Teil dieses Funds.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3e49d39`
+- **Nachtrag (Branch-Review 2026-10-20/21):** Der offene Punkt ist als [F264](#f264) entschieden: `initialize()` ist nach dem ersten Erfolg idempotent; `BackendLoadTest` setzt den Loader über `LlamaLoader.resetForTesting()` vor jedem Test zurück und stellt Ladezustand und Build-Info danach wieder her.
 
 ### F246 – java-llama.cpp: `complete()`/`generate()` mit `withInputPrefix`/`withInputSuffix` verwerfen Präfix und Suffix still und vervollständigen den leeren Prompt
 - **Zeit:** 2026-10-21 10:57 UTC
@@ -2421,6 +2423,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Parser rot: „ChatStreamChunkParserTest.feed_anEnvelopeTheNativeSideDoesNotWrite_isRejectedNamingIt:78 this is not json ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „feed_aLongBrokenEnvelopeIsNamedByABoundedExcerpt:88 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix grün: `ChatStreamChunkParserTest` 5/5, `LlamaModelStreamEnvelopeTest` 3/3 (vor `feedStreamEnvelope` nicht kompilierbar), `LlamaArchitectureTest` 13/13. Dass die native Seite den strikten Vertrag erfüllt, zeigen die modellgestützten Stream-Tests mit dem Winzmodell: `OpenAiCompatServerIntegrationTest` 15/15, `OpenAiServerCompletionIntegrationTest` 12 (2 übersprungen, FIM).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `8771717`
+
+<a id="f264"></a>
+### F264 – java-llama.cpp: ein zweites erfolgreiches `LlamaLoader.initialize()` durchläuft die Suche erneut — eine zweite Bibliothekskopie, eine ersetzte Build-Info
+- **Zeit:** 2026-10-21 17:24 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/LlamaLoader.java` (`initialize`, neu `loadOnce`, `reportIgnoredChange`, `resetForTesting`; das Feld `extracted` ist `loaded`), `llama/src/test/java/net/ladenthin/llama/loader/BackendLoadTest.java`, `CLAUDE.md` (RPC-Abschnitt)
+- **Schwere:** niedrig (braucht eine zwischen zwei Aufrufen geänderte `net.ladenthin.llama.lib.path` bzw. einen geänderten Backend-Filter)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Java API“; Brief JR-13), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F245 hatte die Test-Isolation der Build-Info behoben und das Verhalten in der Produktion als Entwurfsfrage offen gelassen.
+- **Beschreibung:** `initialize()` lief bei jedem Aufruf (nur der verschachtelte Aufruf aus `JNI_OnLoad` kehrte früh zurück) die ganze Suche erneut: mit einer inzwischen geänderten `lib.path` oder einem anderen Backend-Filter lud er eine zweite Kopie der Bibliothek (bzw. extrahierte eine zweite Modulkombination in ein eigenes Verzeichnis) und ersetzte die Build-Info, obwohl die JVM die erste Bibliothek nie entladen kann und die native Seite weiter sie benutzt.
+- **Fix:** `initialize()` ist nach dem ersten Erfolg idempotent: `loadOnce` merkt sich den Erfolg (`loaded`, unter dem Initialisierungs-Lock) samt `lib.path` und Backend-Filter zum Ladezeitpunkt; ein weiterer Aufruf lädt nichts und nennt eine inzwischen geänderte Eigenschaft einmal auf stderr („[jllama] the native library is already loaded in this JVM, so net.ladenthin.llama.backend=cuda13,vulkan (cpu at the load) takes effect only in a new JVM“), ein unveränderter Aufruf bleibt still. Ein gescheiterter Versuch wird beim nächsten Aufruf wiederholt. Für die Loader-Tests ein paketprivater Hook `resetForTesting()`, der Erfolgsmerker und Build-Info vergisst (die geladene Bibliothek bleibt geladen) und einen `Runnable` zurückgibt, der den Zustand wiederherstellt; `BackendLoadTest` setzt vor jedem Test zurück und stellt danach wieder her (statt bisher nur die Build-Info). Javadoc von `initialize()` beschreibt den Vertrag. Abweichung vom Brief: statt eines DEBUG-Logs „already loaded“ bei jedem Aufruf meldet der Loader nur eine Änderung, die nicht mehr wirken kann — der Loader schreibt bewusst nur auf stderr (kein SLF4J; ein Router-Worker wertet stdout aus), und `initialize()` wird von jeder Einstiegsklasse aufgerufen, ein Hinweis je Aufruf wäre Rauschen.
+- **Tests:** `BackendLoadTest#aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores` (Linux x86-64: erster Aufruf mit Filter `cpu` lädt die Dummy-Bibliothek, zweiter mit `cuda13,vulkan` extrahiert nichts und nennt die Änderung auf stderr); `#theDummyLoadsLeaveTheBuildInfoOfThisJvmAsTheyFoundIt` prüft den wiederhergestellten Zustand.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Loader rot: „BackendLoadTest.aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores:284 a second start extracted again ==> expected: <[…/jllama-backend-cpu-1a146e4d916-3aa8]> but was: <[…/jllama-backend-cpu-1a146e4d916-3aa8, …/jllama-backend-cpu-1a146e4d916-3aa8-me7c14cbc]>“; mit dem Fix grün: `BackendLoadTest` 10/10, `LlamaLoaderTest` 67/67, `NativeLibraryLoadSmokeTest` 7/7, `LlamaArchitectureTest` 13/13, dazu `BackendLoadTest,LlamaLoggerTest,NativeLibraryLoadSmokeTest` in einer gemeinsamen Fork in beiden Reihenfolgen (`-Dsurefire.runOrder=alphabetical` und `reversealphabetical`) grün — die echte Bibliothek wird nach den Fixture-Läufen weiter geladen bzw. bleibt geladen.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
