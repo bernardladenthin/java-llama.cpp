@@ -4,6 +4,7 @@
 
 package net.ladenthin.llama.langchain4j;
 
+import static java.util.stream.Collectors.joining;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
@@ -13,6 +14,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.CompleteToolCall;
 import dev.langchain4j.model.chat.response.PartialThinking;
@@ -75,6 +77,21 @@ class StreamingChunkAssemblerTest {
     private static String contentChunk(String content) {
         return "{\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,"
                 + "\"delta\":{\"content\":\"" + content + "\"},\"finish_reason\":null}]}";
+    }
+
+    /**
+     * langchain4j's contract for the partial events of one call: concatenated, the argument fragments
+     * are the complete call's arguments, and each carries the complete call's id and name.
+     */
+    private static void assertPartialsMakeUpTheCompleteCall(RecordingHandler handler) {
+        ToolExecutionRequest complete = handler.completeToolCalls.get(0).toolExecutionRequest();
+        assertThat(
+                handler.partialToolCalls.stream().map(PartialToolCall::partialArguments).collect(joining()),
+                is(complete.arguments()));
+        for (PartialToolCall partial : handler.partialToolCalls) {
+            assertThat(partial.id(), is(complete.id()));
+            assertThat(partial.name(), is(complete.name()));
+        }
     }
 
     @Test
@@ -143,6 +160,14 @@ class StreamingChunkAssemblerTest {
 
         assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("get_weather"));
         assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{}"));
+        // The header delta is withheld; the id and name it carried go with the first argument fragment.
+        assertThat(handler.partialToolCalls.size(), is(1));
+        assertThat(handler.partialToolCalls.get(0).index(), is(0));
+        assertThat(handler.partialToolCalls.get(0).id(), is("call_1"));
+        assertThat(handler.partialToolCalls.get(0).name(), is("get_weather"));
+        assertThat(handler.partialToolCalls.get(0).partialArguments(), is("{}"));
+        assertThat(handler.completeToolCalls.size(), is(1));
+        assertPartialsMakeUpTheCompleteCall(handler);
     }
 
     /**
@@ -163,6 +188,14 @@ class StreamingChunkAssemblerTest {
 
         assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("get_weather"));
         assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{\"city\":1}"));
+        // Every partial that is reported carries the final id and name. Which fragments are reported
+        // here is not pinned: the prefix that arrives before the name is not reported at all, so the
+        // partials do not make up the arguments yet (assertPartialsMakeUpTheCompleteCall is red).
+        assertThat(handler.completeToolCalls.size(), is(1));
+        for (PartialToolCall partial : handler.partialToolCalls) {
+            assertThat(partial.id(), is("call_1"));
+            assertThat(partial.name(), is("get_weather"));
+        }
     }
 
     @Test
