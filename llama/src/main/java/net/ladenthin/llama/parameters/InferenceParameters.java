@@ -904,10 +904,14 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request projecting llama.cpp's native result onto the given fields
-     * ({@code response_fields}; dot-separated paths such as {@code timings.predicted_n}). It applies to
-     * the native answer, and with {@link #withVerbose(boolean)} to the {@code __verbose} object of an
-     * OpenAI answer, which then carries only these fields instead of the prompt and the generation
-     * settings. Empty input is a no-op.
+     * ({@code response_fields}). A nested field is named by its slash-separated path, such as
+     * {@code timings/predicted_n}, as upstream's {@code json_get_nested_values} splits it; the
+     * projected key is that whole path, so {@code "timings/predicted_n"} yields
+     * {@code {"timings/predicted_n": 12}}, not a nested {@code timings} object. A path the result does
+     * not contain -- a dotted {@code timings.predicted_n} is one such key -- is dropped without an
+     * error, as upstream does. It applies to the native answer, and with {@link #withVerbose(boolean)}
+     * to the {@code __verbose} object of an OpenAI answer, which then carries only these fields instead
+     * of the prompt and the generation settings. Empty input is a no-op.
      *
      * @param fields the fields to keep
      * @return a new instance with the projection set, or {@code this} if {@code fields} is empty

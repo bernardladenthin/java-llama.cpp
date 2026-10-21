@@ -272,8 +272,10 @@ the first two items break every existing consumer at upgrade.
   `logit_bias` with it, and `n_probs` with `withNProbs`, on every chat route.
 - **`InferenceParameters.withResponseFields(String...)`** (request field `response_fields`,
   `RequestField.RESPONSE_FIELDS`): upstream's projection of the native answer, and with `withVerbose`
-  of the `__verbose` object of an OpenAI answer, onto dot-separated paths. The OpenAI mapper forwards
-  a client's `response_fields` and answers `400` for anything but an array of strings.
+  of the `__verbose` object of an OpenAI answer, onto slash-separated paths (`timings/predicted_n`);
+  the projected key is the whole path, and a path the result lacks is dropped without an error, as
+  upstream does. The OpenAI mapper forwards a client's `response_fields` and answers `400` for
+  anything but an array of strings.
 - **`RouterModel.getAliases()` and `isNamed(String)`**: the aliases `GET /models` lists for a model
   (`--alias` of a preset), parsed by `RouterModelsResponseParser`; `RouterClient.findModel` and
   `awaitModelLoaded` match a model by its id or any alias, as the router resolves the name of a
