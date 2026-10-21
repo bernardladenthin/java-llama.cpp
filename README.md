@@ -1035,6 +1035,9 @@ where it does; where llama-server would drop part of a request without a word, t
   that is neither a string nor an object (on Anthropic, one that is no object).
 - `logprobs: true` on a streamed chat request with tools is refused with llama-server's own message
   (`logprobs is not supported with tools + stream`); blocking, or without tools, it is answered.
+- An Anthropic `base64` image without `media_type` is named by its bytes (PNG, JPEG, GIF, WebP) and as
+  `image/jpeg` otherwise; llama-server names every such image `image/jpeg`. The type is informational,
+  llama.cpp decodes the image by its content.
 
 Embed it in your app:
 

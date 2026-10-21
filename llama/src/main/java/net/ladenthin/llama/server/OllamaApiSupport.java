@@ -248,25 +248,16 @@ final class OllamaApiSupport {
 
     /**
      * Turns an Ollama image (bare base64, or already a data URL) into the data URL an OpenAI
-     * {@code image_url} part carries. The MIME type is read from the encoded magic bytes; llama.cpp
-     * decodes by content and only requires the {@code data:image/...;base64,} shape, so an unknown
-     * format falls back to {@code image/png}.
+     * {@code image_url} part carries. The MIME type is read from the encoded magic bytes
+     * ({@link ImageMediaTypes#ofBase64}); llama.cpp decodes by content and only requires the
+     * {@code data:image/...;base64,} shape, so an unknown format falls back to {@code image/png}.
      */
     private static String toImageDataUrl(String image) {
         if (image.startsWith("data:")) {
             return image;
         }
-        String mimeType;
-        if (image.startsWith("/9j/")) {
-            mimeType = "image/jpeg";
-        } else if (image.startsWith("R0lGOD")) {
-            mimeType = "image/gif";
-        } else if (image.startsWith("UklGR")) {
-            mimeType = "image/webp";
-        } else {
-            mimeType = "image/png";
-        }
-        return "data:" + mimeType + ";base64," + image;
+        String mimeType = ImageMediaTypes.ofBase64(image);
+        return "data:" + (mimeType != null ? mimeType : "image/png") + ";base64," + image;
     }
 
     /**

@@ -154,6 +154,50 @@ public class AnthropicApiSupportTest {
         assertThat(openAi.has("thinking_budget_tokens"), is(false));
     }
 
+    private static String imageUrlOf(String source) throws IOException {
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                        + "\"content\":[{\"type\":\"image\",\"source\":" + source + "}]}]}"))
+                .path("messages");
+        return messages.path(0)
+                .path("content")
+                .path(0)
+                .path("image_url")
+                .path("url")
+                .asText();
+    }
+
+    @Test
+    public void aBase64ImageWithoutMediaTypeIsNamedByItsBytes() throws IOException {
+        // Without media_type the data URL named every image image/png. The type is read from the
+        // encoded magic bytes as on the Ollama route (PNG, JPEG, GIF, WebP).
+        String[][] images = {
+            {"iVBORw0KGgoAAAANSUhEUg", "image/png"},
+            {"/9j/4AAQSkZJRgABAQ", "image/jpeg"},
+            {"R0lGODlhAQABAIAAAP", "image/gif"},
+            {"UklGRh4AAABXRUJQVlA4", "image/webp"}
+        };
+        for (String[] image : images) {
+            assertThat(
+                    image[1],
+                    imageUrlOf("{\"type\":\"base64\",\"data\":\"" + image[0] + "\"}"),
+                    is("data:" + image[1] + ";base64," + image[0]));
+        }
+    }
+
+    @Test
+    public void aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream() throws IOException {
+        // upstream's server_chat_convert_anthropic_to_oai defaults media_type to image/jpeg
+        // (tools/server/server-chat.cpp:423, b11639)
+        assertThat(imageUrlOf("{\"type\":\"base64\",\"data\":\"AAAAAAAA\"}"), is("data:image/jpeg;base64,AAAAAAAA"));
+    }
+
+    @Test
+    public void anExplicitMediaTypeWinsOverTheBytes() throws IOException {
+        assertThat(
+                imageUrlOf("{\"type\":\"base64\",\"media_type\":\"image/webp\",\"data\":\"iVBORw0KGgo\"}"),
+                is("data:image/webp;base64,iVBORw0KGgo"));
+    }
+
     @Test
     public void requestTurnsUrlImageSourcesIntoImageUrlParts() throws IOException {
         // A url source is passed on as the image_url itself, as upstream's convert_anthropic_to_oai does,

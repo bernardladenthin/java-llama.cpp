@@ -561,8 +561,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   `server-chat.cpp:417-441`/`:478-494`, b11639). Pinned and documented since the branch review by
   `AnthropicApiSupportTest#aFileImageSourceIsDroppedLikeUpstream`; refusing it with a `400` instead
   would deviate from upstream and stays a decision.
-- **A `base64` image without `media_type` defaults to `image/png` here and to `image/jpeg` upstream**
-  (F29); neither aligned nor pinned by a test. A decision first.
 - **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in
   the upstream inventory ("Upstream submissions", last bullet) for the day after the release.
 

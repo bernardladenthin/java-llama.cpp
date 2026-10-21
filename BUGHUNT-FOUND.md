@@ -178,6 +178,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F253](#f253) — niedrig bis mittel — *gefixt*
 - [F254](#f254) — niedrig — *gefixt*
 - [F255](#f255) — niedrig — *gefixt*
+- [F256](#f256) — niedrig — *gefixt*
 
 ## Funde
 
@@ -361,6 +362,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `3d38dd0`
 - **Nachtrag (Branch-Review 2026-10-20, Fund J4-5):** Die `url`-Quelle und der Rückfall für eine andere Quelle hatten keinen Test (nur `base64`). `AnthropicApiSupportTest#requestTurnsUrlImageSourcesIntoImageUrlParts` pinnt die URL selbst als `image_url`, in einer Nachricht und in einem `tool_result`; `#anUnsupportedImageSourceLeavesTheMessageText` (Quelle `ftp`) die Textform der Nachricht und den Text eines `tool_result`, das nur ein solches Bild trägt. Gegenprobe rot: ohne den `url`-Zweig („Expected: is "image_url" but: was """), mit `url`-Übernahme für jede Quelle („Expected: is <true> but: was <false>“); mit dem Code grün (`AnthropicApiSupportTest` 36/36). Die Quelle `file` (Files-API) und die Vorgabe `image/png` statt upstreams `image/jpeg` für ein `base64` ohne `media_type` sind nicht Teil dieses Nachtrags.
 - **Nachtrag (Branch-Review 2026-10-20, Fund JF-3):** Die Quelle `file` (Files-API, `{"type":"file","file_id":…}`) pinnt jetzt `AnthropicApiSupportTest#aFileImageSourceIsDroppedLikeUpstream`: in einer Nachricht und in einem `tool_result` entsteht kein `image_url`-Teil, die Nachricht behält ihre Textform (`what is this?`), das `tool_result` seinen Text (`done`), nichts wirft. Das ist upstreams Verhalten bei b11639: `server_chat_convert_anthropic_to_oai` (`tools/server/server-chat.cpp:417-441`, im `tool_result` `:478-494`; der Brief nannte `server-common.cpp`) kennt nur `base64` und `url` und verwirft alles andere still; der Kommentar im Test nennt die Stellen. Gegenprobe mit einer Mutation, die `imageUrl` für `file` eine leere URL liefern lässt (nicht committet): rot (`AnthropicApiSupportTest.aFileImageSourceIsDroppedLikeUpstream:210 Expected: is <true> but: was <false>`, der Inhalt war ein Array mit `image_url`); am HEAD grün (37/37). Die Vorgabe für `base64` ohne `media_type` (`image/png` hier, `image/jpeg` upstream, `server-chat.cpp:423`/`:483`) bleibt eine Entscheidung, TODO.md beschreibt beide Punkte zutreffend.
+- **Nachtrag (Branch-Review 2026-10-21, Abschluss vor 6.0.0):** Ein `base64`-Bild ohne `media_type` heißt nicht mehr immer `image/png`: F256 erkennt PNG/JPEG/GIF/WebP an den Bytes und fällt wie upstream auf `image/jpeg` zurück.
 
 <a id="f30"></a>
 ### F30 – java-llama.cpp: Fehlgeschlagener `RpcServer.start` lässt den Server weiterlaufen, wenn der Stopp vor dem Bind kommt
@@ -2308,6 +2310,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „OpenAiRequestMapperTest.logprobsWithToolsAndStreamIsRefusedLikeUpstream:310 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „OpenAiCompatServerHttpTest.logprobsWithToolsOnAStreamedChatIsA400LikeUpstream:992 Expected: is <400> but: was <200>“; mit dem Fix grün (`OpenAiRequestMapperTest` 57/57, `OpenAiCompatServerHttpTest` 73/73, `AnthropicApiSupportTest` 42/42, `ResponsesApiSupportTest` 70/70, `OllamaApiSupportTest` 49/49). `spotless:apply` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `de3c64f`
+
+### F256 – java-llama.cpp: Anthropic-`base64`-Bild ohne `media_type` wird immer `image/png`, upstream `image/jpeg`
+- **Zeit:** 2026-10-21 14:46 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`imageUrl`), neu `ImageMediaTypes.java`, `OllamaApiSupport.java` (`toImageDataUrl` nutzt den gemeinsamen Helfer), `README.md`
+- **Schwere:** niedrig (die Data-URL trug für ein JPEG, GIF oder WebP den falschen Typ; llama.cpp dekodiert nach Inhalt, der Typ ist nur eine Angabe – aber falsch und von upstream verschieden)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Anthropic Messages“, zweiter Punkt; Brief JR-9), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F29 führte die Bildblöcke mit dem Rückfall `image/png` ein.
+- **Beschreibung:** `imageUrl` las `source.path("media_type").asText("image/png")`: ohne `media_type` hieß jedes Bild `image/png`. upstream (`server_chat_convert_anthropic_to_oai`, `tools/server/server-chat.cpp:423` und `:483`, b11639) nimmt `json_value(source, "media_type", std::string("image/jpeg"))`, also `image/jpeg`. Die Ollama-Route erkennt den Typ schon an den kodierten Magic-Bytes (`toImageDataUrl`).
+- **Fix:** Ein gemeinsamer Helfer `ImageMediaTypes.ofBase64` (PNG `iVBORw0KGgo`, JPEG `/9j/`, GIF `R0lGOD`, WebP `UklGR`, sonst `null`; die ersten drei Bytes bestimmen die ersten vier Base64-Zeichen, verglichen wird also das kodierte Präfix). Anthropic: ein nicht leeres `media_type` bleibt maßgeblich, ohne es entscheiden die Bytes, unerkannt `image/jpeg` wie upstream. Ollama nutzt denselben Helfer mit seinem bisherigen Rückfall `image/png` (Verhalten unverändert).
+- **Tests:** `AnthropicApiSupportTest#aBase64ImageWithoutMediaTypeIsNamedByItsBytes` (PNG, JPEG, GIF, WebP), `#aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream`, `#anExplicitMediaTypeWinsOverTheBytes`; die Ollama-Bildtests bleiben grün.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „aBase64ImageWithoutMediaTypeIsNamedByItsBytes:180 image/jpeg Expected: is "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ" but: was "data:image/png;base64,/9j/4AAQSkZJRgABAQ"“ und „aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream:191 Expected: is "data:image/jpeg;base64,AAAAAAAA" but: was "data:image/png;base64,AAAAAAAA"“ (die PNG-Zeile war vorher zufällig grün und ist jetzt gepinnt); mit dem Fix grün (`AnthropicApiSupportTest` 45/45, `OllamaApiSupportTest` 49/49, `OpenAiCompatServerHttpTest` 73/73, `LlamaArchitectureTest` 13/13). `spotless:apply` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

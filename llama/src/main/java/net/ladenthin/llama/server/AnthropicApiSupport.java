@@ -296,13 +296,21 @@ final class AnthropicApiSupport {
 
     /**
      * The OpenAI {@code image_url} URL for an Anthropic image {@code source}: a data URL for a base64
-     * source, the URL itself for a url source, {@code null} for anything else.
+     * source, the URL itself for a url source, {@code null} for anything else. A base64 source without
+     * {@code media_type} is named by its encoded magic bytes ({@link ImageMediaTypes#ofBase64}), and as
+     * {@code image/jpeg} when they are not recognised, upstream's default
+     * ({@code server_chat_convert_anthropic_to_oai}, {@code tools/server/server-chat.cpp:423}, b11639).
      */
-    private static @org.jspecify.annotations.Nullable String imageUrl(JsonNode source) {
+    private static @Nullable String imageUrl(JsonNode source) {
         String sourceType = source.path("type").asText("");
         if ("base64".equals(sourceType) && source.path("data").isTextual()) {
-            return "data:" + source.path("media_type").asText("image/png") + ";base64,"
-                    + source.path("data").asText();
+            String data = source.path("data").asText();
+            String mediaType = source.path("media_type").asText("");
+            if (mediaType.isEmpty()) {
+                String sniffed = ImageMediaTypes.ofBase64(data);
+                mediaType = sniffed != null ? sniffed : "image/jpeg";
+            }
+            return "data:" + mediaType + ";base64," + data;
         }
         if ("url".equals(sourceType) && source.path("url").isTextual()) {
             return source.path("url").asText();
