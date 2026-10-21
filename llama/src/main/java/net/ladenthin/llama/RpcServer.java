@@ -364,8 +364,11 @@ public final class RpcServer implements AutoCloseable {
 
     /**
      * Stops the server: the client being served is disconnected, the port is released. Idempotent.
-     * Waits up to 30 seconds for the server thread; should it still be alive then, a warning is
-     * logged and no other server can start in this process until that thread has ended.
+     * The native stop waits up to 30 seconds for the native server to end and throws when it has not;
+     * otherwise this waits up to 30 seconds for the server thread and logs a warning should it still be
+     * alive then. Either way no other server can start in this process until that thread has ended.
+     *
+     * @throws LlamaException when the native server has not ended 30 seconds after the stop
      */
     @Override
     public void close() {
