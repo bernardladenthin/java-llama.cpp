@@ -2375,7 +2375,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithATemplateOrAContextIsRefused` (`template`, `context: [1,2,3]`, `template` neben `suffix` → 400 mit der Meldung, das Backend wird nicht gerufen; leeres `template` und `context: []` → 200 über das Chat-Template).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit den Meldungskonstanten als Stummel) rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithATemplateOrAContextIsRefused:553 {"model":"test-model","prompt":"why?","template":"{{ .Prompt }}","stream":false} Expected: is <400> but: was <200>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 77/77, `OllamaApiSupportTest` 54/54.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `b99a25b`
 
 ## Offene Verdachte ohne Fund-ID
 
