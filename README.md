@@ -1038,6 +1038,10 @@ where it does; where llama-server would drop part of a request without a word, t
 - An Anthropic `base64` image without `media_type` is named by its bytes (PNG, JPEG, GIF, WebP) and as
   `image/jpeg` otherwise; llama-server names every such image `image/jpeg`. The type is informational,
   llama.cpp decodes the image by its content.
+- An Anthropic image whose source is neither `base64` nor `url` (the Files API's `file`, which a local
+  server cannot fetch) or lacks its `data` / `url` is refused (`image source type 'file' is not
+  supported; send base64 or url`), in a message and inside a `tool_result`; llama-server drops such an
+  image without a word, and the model answers as if none had been sent.
 
 Embed it in your app:
 

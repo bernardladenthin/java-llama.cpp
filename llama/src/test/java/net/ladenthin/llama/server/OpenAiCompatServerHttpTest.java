@@ -999,6 +999,24 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /** An Anthropic image the server cannot fetch is a 400, streamed or not, before anything is generated. */
+    @Test
+    public void aFileImageSourceOnTheAnthropicRouteIsA400() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String stream : new String[] {"false", "true"}) {
+                String body = "{\"model\":\"test-model\",\"max_tokens\":8,\"stream\":" + stream
+                        + ",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what?\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_1\"}}]}]}";
+                Response response = post(server.getPort(), "/v1/messages", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(body, response.body, containsString("\"type\":\"invalid_request_error\""));
+                assertThat(body, response.body, containsString("image source type 'file' is not supported"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {

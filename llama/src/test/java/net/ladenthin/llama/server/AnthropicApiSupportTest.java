@@ -218,44 +218,57 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
-    public void anUnsupportedImageSourceLeavesTheMessageText() throws IOException {
-        // A source that is neither base64 nor url gives no image part (upstream pushes nothing either):
-        // the message keeps its textual form, and a tool_result holding only such an image its text.
-        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
-                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
-                        + "{\"type\":\"image\",\"source\":{\"type\":\"ftp\",\"url\":\"ftp://x/a.png\"}}]},"
-                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
-                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
-                        + "{\"type\":\"image\",\"source\":{\"type\":\"ftp\",\"url\":\"ftp://x/b.png\"}}]}]}]}"))
-                .path("messages");
-        JsonNode content = messages.path(0).path("content");
-        assertThat(content.isTextual(), is(true));
-        assertThat(content.asText(), is("what is this?"));
-        JsonNode toolContent = messages.path(2).path("content");
-        assertThat(toolContent.isTextual(), is(true));
-        assertThat(toolContent.asText(), is(""));
+    public void aFileImageSourceIsRefused() throws IOException {
+        // A Files-API source ({type:file, file_id}) has nothing a local server could fetch. Upstream's
+        // server_chat_convert_anthropic_to_oai (tools/server/server-chat.cpp:417-441 for a message,
+        // :478-494 inside a tool_result, b11639) drops it without an error, and the model answered as if
+        // no image had been sent; it is refused instead, in a message and inside a tool_result.
+        String[] requests = {
+            "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011a\"}}]}]}",
+            "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\","
+                    + "\"name\":\"read\",\"input\":{}}]},"
+                    + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                    + "{\"type\":\"text\",\"text\":\"done\"},"
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011b\"}}]}]}]}"
+        };
+        for (String json : requests) {
+            JsonNode request = read(json);
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), json);
+            assertThat(e.getMessage(), is("image source type 'file' is not supported; send base64 or url"));
+        }
     }
 
     @Test
-    public void aFileImageSourceIsDroppedLikeUpstream() throws IOException {
-        // A Files-API source ({type:file, file_id}) has nothing a local server could fetch. Upstream's
-        // server_chat_convert_anthropic_to_oai (tools/server/server-chat.cpp:417-441 for a message,
-        // :478-494 inside a tool_result, b11639) converts only base64 and url sources and drops it
-        // without an error; this pins the same behaviour: no image_url part, the message keeps its text.
-        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
-                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
-                        + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011a\"}}]},"
-                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
-                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
-                        + "{\"type\":\"text\",\"text\":\"done\"},"
-                        + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011b\"}}]}]}]}"))
-                .path("messages");
-        JsonNode content = messages.path(0).path("content");
-        assertThat(content.isTextual(), is(true));
-        assertThat(content.asText(), is("what is this?"));
-        JsonNode toolContent = messages.path(2).path("content");
-        assertThat(toolContent.isTextual(), is(true));
-        assertThat(toolContent.asText(), is("done"));
+    public void anImageSourceOfAnUnknownTypeIsRefused() throws IOException {
+        // Neither base64 nor url gave no image part, and the message went on as text without a word.
+        for (String type : new String[] {"ftp", ""}) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":["
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"" + type + "\",\"url\":\"ftp://x/a.png\"}}]}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), type);
+            assertThat(e.getMessage(), is("image source type '" + type + "' is not supported; send base64 or url"));
+        }
+    }
+
+    @Test
+    public void anImageSourceWithoutItsDataOrUrlIsRefused() throws IOException {
+        String[][] cases = {
+            {
+                "{\"type\":\"base64\",\"media_type\":\"image/png\"}",
+                "image source of type 'base64' needs a string 'data' (got missing)"
+            },
+            {"{\"type\":\"base64\",\"data\":7}", "image source of type 'base64' needs a string 'data' (got number)"},
+            {"{\"type\":\"url\"}", "image source of type 'url' needs a string 'url' (got missing)"}
+        };
+        for (String[] c : cases) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":["
+                    + "{\"type\":\"image\",\"source\":" + c[0] + "}]}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), c[0]);
+            assertThat(e.getMessage(), is(c[1]));
+        }
     }
 
     @Test

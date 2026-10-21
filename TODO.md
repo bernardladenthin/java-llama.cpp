@@ -557,10 +557,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   current contract or change it with a red/green test.
 
 **Anthropic Messages**
-- **The image source `file` (Files API) is dropped without a word**, here and upstream (F29;
-  `server-chat.cpp:417-441`/`:478-494`, b11639). Pinned and documented since the branch review by
-  `AnthropicApiSupportTest#aFileImageSourceIsDroppedLikeUpstream`; refusing it with a `400` instead
-  would deviate from upstream and stays a decision.
 - **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in
   the upstream inventory ("Upstream submissions", last bullet) for the day after the release.
 
