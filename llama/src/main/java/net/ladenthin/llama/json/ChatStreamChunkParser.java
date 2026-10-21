@@ -21,9 +21,10 @@ import java.util.function.Consumer;
  *
  * <p>{@code data} is exactly what an OpenAI streaming chat result's {@code to_json()}
  * produced: a single {@code chat.completion.chunk} object for a partial token, or a JSON
- * array of chunk objects for the final step (final delta chunk plus an optional usage
- * chunk). This parser emits each chunk as its own JSON string so a caller can forward it
- * verbatim as one SSE {@code data:} event.
+ * array of chunk objects for the final step (any remaining tool-call delta chunks, the
+ * chunk carrying {@code finish_reason}, then an optional usage chunk). This parser emits
+ * each chunk as its own JSON string so a caller can forward it verbatim as one SSE
+ * {@code data:} event.
  *
  * <p>Stateless and free of JNI / native / model dependencies — testable with JSON string
  * literals alone (see {@code ChatStreamChunkParserTest}). This is the Java analogue of

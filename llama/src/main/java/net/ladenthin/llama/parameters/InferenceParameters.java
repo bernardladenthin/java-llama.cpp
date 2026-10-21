@@ -891,9 +891,21 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request asking for llama.cpp's debug object ({@code verbose}, default false). When
-     * true, the answer -- the last chunk of a stream -- carries a {@code __verbose} object with the
-     * native result: the formatted prompt, the generation settings, the stop type and the matched stop
-     * word ({@code stopping_word}), among others.
+     * true, an OpenAI-shaped answer carries a {@code __verbose} object with the native result: the
+     * formatted prompt, the generation settings, the stop type and the matched stop word
+     * ({@code stopping_word}), among others. Where it sits depends on the answer:
+     *
+     * <ul>
+     *   <li>blocking: on the answer object;
+     *   <li>streamed chat completion: on the first chunk of the final result -- a remaining tool-call
+     *       delta if there is one, else the chunk carrying {@code finish_reason} -- and never on a
+     *       trailing {@code stream_options.include_usage} chunk, so a consumer scans every chunk
+     *       rather than the last;
+     *   <li>streamed text completion ({@code /v1/completions}): on every chunk.
+     * </ul>
+     *
+     * <p>It has no effect on the raw (non-OpenAI) answer, which is the native object itself. See
+     * {@link #withResponseFields(String...)} to narrow it.
      *
      * @param verbose whether to include the {@code __verbose} object
      * @return a new instance; this instance is unchanged
