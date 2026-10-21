@@ -59,12 +59,15 @@ the first two items break every existing consumer at upgrade.
    absolute Windows path, which llama.cpp's `FNAME:SCALE` format cannot express (load the adapter with
    `addLoraAdapter` and set its scale with `LlamaModel.setLoraAdapter`, or use a relative path); an
    empty or blank JSON fragment (`withJsonSchema("")`, `withToolsJson("")`, ...) and a `NaN` or
-   `+Infinity` token bias are refused instead of being sent as `null` or dropped.
+   `+Infinity` token bias are refused instead of being sent as `null` or dropped; so are a
+   `ToolDefinition` parameter schema that is not exactly one JSON value (it was sent as a string,
+   which llama.cpp then refused without naming the tool) and an empty path for `addLoraAdapter` /
+   `addControlVector`.
 9. **The repeatable adapter options add up.** A second `addLoraAdapter`, `addLoraScaledAdapter`,
    `addControlVector` or `addControlVectorScaled` call adds to the first instead of replacing it, as
    their Javadoc always said; code that relied on the last call winning now loads every adapter.
 10. **One request, one prompt, one completion.** Several prompts in one request
-    (`"prompt": ["a", "b"]`) and `"n"` above 1 are refused as invalid requests
+    (`"prompt": ["a", "b"]`) and an `"n"` other than 1 are refused as invalid requests
     (`InvalidRequestException`, `400` in the servers) on every native path -- `LlamaModel.handle*` and
     the streams, the C API, `llama-ffm` and every route of `OpenAiCompatServer` -- where the first prompt
     and a single choice used to be answered without a word. Send separate requests; a token array is
@@ -79,7 +82,12 @@ the first two items break every existing consumer at upgrade.
     leading or trailing whitespace, and a model file name with a comma is advertised with `_` in its
     place; `/api/generate` without `"raw": true` applies the model's chat template, as Ollama does
     (send `raw: true` for a bare completion); a route answers its own path only, so a sub-path such as
-    `/v1/messages/count_tokens` is `404`; a negative rerank `top_n` is `400`.
+    `/v1/messages/count_tokens` is `404`; a negative rerank `top_n` is `400`. Values the translations
+    used to replace or drop without a word are refused with `400`, as upstream or the protocol does
+    (see Fixed): a `max_tokens` below `-1`, `top_logprobs` without `logprobs: true`, a `tool_choice`
+    naming a tool the request does not carry, an Anthropic `max_tokens` that is not a number, and on
+    `/v1/responses` an input item of an unknown type, an `input_image` without a URL and a
+    `function_call` whose `arguments` is not a string.
 
 ### Added
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
@@ -285,6 +293,10 @@ the first two items break every existing consumer at upgrade.
   of one slot and the slot count of the loaded model, which `OpenAiCompatServer.main` now passes.
 - **`RerankResponseParser.toDocumentScores(...)`**: the document-to-score map of a rerank result in
   the order of the documents (see Fixed).
+- **`ModelParameters.enableContextShift()`** (`--context-shift`, `ModelFlag.CONTEXT_SHIFT`): llama.cpp
+  has context shifting off by default, so a slot stops when its context is full; this turns it on.
+  `disableContextShift()` said the default was "enabled"; its Javadoc now names upstream's default, and
+  each of the two methods replaces an earlier call of the other, so the later call wins.
 
 ### Changed
 - Dependencies and build tooling bumped in step with the sibling repositories: Jackson 2.22.3 ->
@@ -317,6 +329,9 @@ the first two items break every existing consumer at upgrade.
   - `JsonParameters` refuses an empty or blank fragment (`withJsonSchema("")`,
     `withResponseFormat("")`, `withToolsJson("")`, ...), which the strict reader parsed to nothing and
     the request carried as `"key": null`, i.e. generation ran without the schema the caller set.
+  - `ModelParameters.addLoraAdapter("")` and `addControlVector("")` are refused ("`--lora` needs a
+    non-empty file path"): an empty path was silently overwritten by the next call, or reached
+    llama.cpp, which failed the load with a message that did not name the option.
   - `OpenAiServerConfig.Builder.heartbeatMillis` refuses a value of `0` or below: as the period of the
     heartbeat timer it made every streamed request fail with `200` and an
     `IllegalArgumentException` error event, reported as the client's fault.
@@ -330,7 +345,17 @@ the first two items break every existing consumer at upgrade.
   in order, releasing the requests already submitted when a submission fails; `chatBatch`, whose
   native call submits and waits in one, runs each request on a daemon thread of its own, at most 64
   at once, and throws the first failure of any kind only after every request has finished (an
-  `Error` used to end the wait while other requests still ran).
+  `Error` used to end the wait while other requests still ran). In all three, an `Error` -- an
+  `OutOfMemoryError` while a large request is rendered or its result read -- no longer skips the
+  release of the requests already submitted or the receiving of the others, and every failure after
+  the first is attached to it as a suppressed exception instead of being dropped.
+- **`llama-langchain4j` reports a streamed tool call complete when the next one starts.**
+  `onCompleteToolCall` of every call came only at the end of the stream, after the partial calls of
+  the following ones; it now fires for the earlier calls as soon as a call with a higher index
+  arrives, as langchain4j's own OpenAI integration does, so a handler can run a tool while the model
+  still streams the next. A call that has no name yet stays open until the stream ends, and a
+  fragment that would change a call already reported complete fails the stream through `onError`
+  (an `IllegalStateException` naming the index) instead of silently diverging from the reported call.
 - **Ollama `/api/generate` follows Ollama's semantics.** It completed every prompt raw; now a request
   with `suffix` is fill-in-the-middle as before, one with `"raw": true` a bare completion (a `system`,
   `template` or `context` next to it is refused with 400, as Ollama does), and any other goes through
@@ -338,7 +363,11 @@ the first two items break every existing consumer at upgrade.
   and `think` honoured, answering `thinking` next to `response`. A request with neither a prompt nor
   a suffix -- how clients preload a model -- is answered at once with Ollama's load response
   (`done: true`, empty `response`, `done_reason` `"load"`; a single object even when streamed)
-  instead of answering an empty user turn.
+  instead of answering an empty user turn. Three deliberate differences from Ollama remain: a request
+  with a suffix but no prompt stays fill-in-the-middle at the start of the file (Ollama answers it
+  with the load response), an empty `"suffix": ""` counts as a suffix, and `keep_alive: 0` does not
+  unload the model and is answered `"load"` (Ollama unloads and answers `"unload"`). `/api/chat`
+  without messages is answered the same way, as Ollama preloads with it; it was refused with `400`.
 - **`OpenAiCompatServer --model-id` / `--model-alias` take a value llama.cpp keeps as one alias.**
   llama.cpp splits `--alias` at commas and strips every part, so `--model-id my,model` was advertised
   as `my,model` in `/v1/models` and named `model` in every answer, and a blank id fell back to the
@@ -769,14 +798,23 @@ the first two items break every existing consumer at upgrade.
     `thinking_budget_tokens` were dropped; they follow the rules of upstream's chat parser now.
   - **llama.cpp's own sampling fields are forwarded**: `min_p`, `typical_p`, `repeat_penalty`,
     `repeat_last_n`, `top_n_sigma`, `xtc_*`, `dynatemp_*`, `min_keep`, `n_keep`, `ignore_eos`,
-    `grammar` and `json_schema` (unless a `grammar` is given), and `n_predict`, which wins over
-    `max_tokens` / `max_completion_tokens` as upstream; so are `logit_bias` and `n_probs`, and
-    `logprobs: true` becomes `n_probs` (`top_logprobs`, else 20, as upstream).
+    `grammar` and `json_schema` (both together are refused with upstream's `400`, as llama-server
+    does; the schema used to be dropped next to a grammar), and `n_predict`, which wins over
+    `max_tokens` / `max_completion_tokens` as upstream; so are `logit_bias` and `n_probs`.
+  - **`logprobs` is read as upstream's chat parser reads it**: `logprobs: true` becomes `n_probs`
+    (`top_logprobs`, else 20), a number is `n_probs` itself (`"logprobs": 2` asked for 20 and
+    overrode an `n_probs` next to it), and `top_logprobs` without `logprobs: true` is `400` with
+    upstream's message, as is a `logprobs` that is neither a boolean nor a number; both were dropped
+    or misread without a word.
   - **`id_slot: -1` means any slot**, upstream's default, instead of a `400`; and `max_tokens: 0` is
-    passed on as upstream reads it instead of meaning "no limit".
+    passed on as upstream reads it instead of meaning "no limit". A `max_tokens` (or `n_predict`,
+    `max_completion_tokens`) below `-1` is answered with upstream's `400` and an `n` other than 1 is
+    `400`; both ran with the defaults (no limit, one answer) without a word.
   - **A `tool_choice` naming a function** (`{"type": "function", ...}`, also the Responses form) became
-    `auto`, so the model could answer without calling it; it is `required` now, the closest value
-    llama.cpp knows.
+    `auto`, so the model could answer without calling it, or any other tool. Only the named tool is
+    passed on now, with `required`, so the model must call exactly that one (llama.cpp knows no
+    named choice; the template therefore no longer shows the model the other tools). A name no tool
+    of the request carries, and a `function` choice without a name, are `400`.
 - **Ollama routes (`/api/*`).**
   - **Images reach the model.** `/api/chat` ignored a message's `images`, although `/api/show`
     advertises `vision` with `--mmproj`; they become `image_url` parts (the MIME type from the magic
@@ -785,9 +823,11 @@ the first two items break every existing consumer at upgrade.
     `type`, which llama.cpp's parser requires, so every request carrying one was refused with `400`;
     `"function"` is set now. A tool result's `tool_name` becomes the `name` llama.cpp reads, and a
     tool call without arguments is answered with `"arguments": {}` instead of `null`.
-  - **`think` works**: `false` switches thinking off, a level string (`"low"`, ...) is passed as
-    `reasoning_effort`. The thinking itself is answered as `message.thinking`, blocking and per stream
-    line, and `thinking` in the history goes back to the model as `reasoning_content`; both were lost.
+  - **`think` works**: `false` switches thinking off, `true` switches it on even on a server started with
+    thinking disabled (as `enable_thinking: true` does on the OpenAI route), a level string (`"low"`,
+    ...) is passed as `reasoning_effort`. The thinking itself is answered as `message.thinking`, blocking
+    and per stream line, and `thinking` in the history goes back to the model as `reasoning_content`;
+    both were lost.
   - **The sampling options are forwarded on all three routes** (`/api/chat`, `/api/generate`, and
     fill-in-the-middle with `suffix`, which took only `temperature` and `num_predict`):
     `temperature`, `top_p`, `top_k`, `seed`, `stop`, `repeat_penalty`, `repeat_last_n`, `min_p`,
@@ -802,6 +842,10 @@ the first two items break every existing consumer at upgrade.
     0.6.4, and the route said `0.1.0`, so the whole Copilot path failed at that check.
   - **`/api/show` names the context length where Continue reads it**: `parameters` carries
     `num_ctx <n>`.
+  - **A malformed `/api/chat` is answered with `400`.** A `messages` element that is not an object
+    (a string, `null`, an array) ended the request with a closed connection and no status line, and
+    a `messages` that is not an array was read as "no messages"; both are refused with upstream's
+    message and the element's index now.
 - **Anthropic Messages (`/v1/messages`).**
   - **Images reach the model**: `image` blocks of a message (`base64` or `url` source) and of a
     `tool_result` become `image_url` parts; both were dropped.
@@ -827,6 +871,13 @@ the first two items break every existing consumer at upgrade.
   - **The stop word is fetched alone**: the translated request asks for
     `response_fields: ["stopping_word"]` with `verbose`, instead of upstream's whole debug object with
     the rendered prompt.
+  - **A streamed answer opens one content block at a time.** When the model thought again after
+    text, the new `thinking` block was opened while the text block was still open, and the text that
+    followed was sent to the earlier block after the later one had stopped; the text block is closed
+    first now, so thinking and text alternate as separate blocks, as Claude itself streams them.
+  - **A `max_tokens` that is not a number is `400`** (the Messages API types it as an integer, and
+    upstream's schema refuses it); `"max_tokens": "100"` ran with the default 4096. A missing or
+    `null` value still gets 4096, and the refusal comes before a stream starts.
 - **OpenAI Responses (`/v1/responses`).**
   - **Images and tool output parts reach the model**: `input_image` parts of a message and an
     array-valued `function_call_output` (`input_text` / `input_image`) were flattened to their text or
@@ -840,13 +891,21 @@ the first two items break every existing consumer at upgrade.
   - **Reasoning works in both directions**: `reasoning.effort` is passed on (`"none"` switches
     thinking off), and the answer carries the reasoning as a `reasoning` item first, streamed as
     `response.reasoning_text.delta`s.
-  - **The request fields the chat path reads are passed on** -- `top_k`, `seed`, `stop`, the
-    penalties, `chat_template_kwargs`, `response_format`, the cache fields and llama.cpp's sampling
-    fields; only `temperature`, `top_p` and `max_output_tokens` got through. **`text.format`
-    (structured output) becomes `response_format`**, so a JSON schema constrains the answer.
+  - **The request fields the chat path reads are passed on** -- `top_k`, `seed`, `stop`, the penalties,
+    `chat_template_kwargs`, `response_format`, the cache fields, llama.cpp's sampling fields and
+    `logit_bias` / `n_probs`; only `temperature`, `top_p` and `max_output_tokens` got through.
+    **`text.format` (structured output) becomes `response_format`**, so a JSON schema constrains the
+    answer.
   - **What cannot be served is refused with `400`** instead of answered as if it were absent:
-    `previous_response_id` (there is no response store; send the earlier turns in `input`) and
-    `input_file` parts, both with upstream's message.
+    `previous_response_id` (there is no response store; send the earlier turns in `input`),
+    `input_file` parts, an `input_image` without a URL (a `file_id` only), a tool output part that
+    is neither `input_text` nor `input_image`, a `function_call` whose `arguments` is not a string
+    (an object became `"{}"`), and an input item of an unknown type (`custom_tool_call`,
+    `item_reference`, ..., which became an empty user message), each with upstream's message.
+  - **An answer cut off by `max_output_tokens` is `incomplete`**, blocking and streamed: `status`
+    `incomplete` with `incomplete_details.reason` `max_output_tokens`, the message item `incomplete`
+    and `response.incomplete` as the last event, where it was reported `completed`. llama.cpp
+    reports a full context the same way, so the reason is the closest the API defines.
   - **A streamed failure ends with `response.failed`** (with `error.code` / `error.message`) before
     the `error` event; Responses clients such as Codex read the message only from there and reported
     "stream closed before response.completed".
@@ -855,8 +914,12 @@ the first two items break every existing consumer at upgrade.
 - **Reranking.** `/rerank` accepts Hugging Face text-embeddings-inference requests (`texts` instead of
   `documents`) and answers them in TEI's form, as upstream; `top_n: 0` returns no result instead of
   all, a negative `top_n` is `400`, and the OpenAI-shaped answer carries `usage` (the native rerank
-  result passes `tokens_evaluated` on). `LlamaModel.rerank(String, String...)` returns its map in the
-  order of the documents instead of hash order.
+  result passes `tokens_evaluated` on). A `top_n` written as a decimal (`2.0`, as a Python client
+  sends `len(docs) / 2`) is read like upstream's integer cast instead of keeping every result, so a
+  negative one is `400` in both spellings; `"documents": null` next to `texts` is served from
+  `texts`; and a native answer that is not a JSON array is a `500` with the reason instead of an
+  empty result list. `LlamaModel.rerank(String, String...)` returns its map in the order of the
+  documents instead of hash order.
 - **Java API.**
   - **`InferenceParameters.withMessages(List<ChatMessage>)` keeps `tool_calls` and `tool_call_id`**,
     which only `ChatRequest` added, so a tool round built through it sent an assistant turn without
@@ -867,8 +930,11 @@ the first two items break every existing consumer at upgrade.
     `withGrammar(g).withGrammar(null)` still sent the grammar.
   - **JSON values are taken as given or refused, never cut short.** A `ToolDefinition` schema with
     trailing content (`{"type":"object"} {"required":["x"]}`) was sent as its first value, and a
-    `chat_template_kwargs` value holding two JSON values as the first of them; both now take the
-    documented fallback to a string, as does an empty schema or kwarg value, which became `null`.
+    `chat_template_kwargs` value holding two JSON values as the first of them. A schema that is not
+    exactly one JSON value -- trailing content, an empty or an unparsable string -- is refused now
+    with an `IllegalArgumentException` naming the tool (a tool without parameters declares
+    `{"type":"object","properties":{}}`); a `chat_template_kwargs` value that is not one JSON value,
+    an empty one included, is passed on as a string, where an empty value became `null`.
   - **`LlamaIterator` stays finished after `cancel()` from another thread**; a result that arrived
     afterwards revived it, and the next `next()` failed with "Task not found".
   - **`TextToSpeech.close()` waits for a running `synthesize()`** instead of freeing the engine under
@@ -876,13 +942,21 @@ the first two items break every existing consumer at upgrade.
   - **`NativeServer` start, `isRunning()` and `close()` are serialized**: two `close()` calls at once
     (a shutdown hook and try-with-resources) could stop and free the native server twice, and
     `isRunning()` could read a freed handle.
-  - **A failed `RpcServer.start` stops the server.** A stop that arrived before the native server
-    bound its socket was lost, so after a start timeout or an interrupt the server kept listening on a
-    daemon thread although `start` had thrown; the stop is now repeated until the thread ends.
+  - **A failed `RpcServer.start` stops the server.** A stop that arrived before the native server bound
+    its socket was lost, so after a start timeout or an interrupt the server kept listening on a daemon
+    thread although `start` had thrown; the stop is now repeated until the thread ends. If the thread
+    still lives 30 s after the stop, `start` says so (instead of "could not listen ... is the port
+    already in use?") and the single-instance slot stays taken until the thread ends -- it used to be
+    freed, so a second server could start on the same process-wide state. `close()` holds it the same
+    way; it throws a `LlamaException` when the native server has not ended 30 s after the stop, and logs
+    a warning when only the thread is still alive then. The C API and `llama-ffm` keep such a stop as
+    well: `jllama_rpc_server_stop` / `FfmRpcServer.stop` during a running serve hold the request until
+    the serve returns (failing after 30 s), and a stop with no serve running stays a no-op.
   - **`RouterClient`**: `awaitModelLoaded` with `Long.MAX_VALUE` overflowed into an immediate timeout,
     and with `0` reported a timeout without asking; it polls at least once now, counts a `sleeping`
     model as loaded (as the router itself does), and finds a model by its alias; an IPv6 literal host
-    (`"::1"`) is bracketed in the URL instead of failing with `MalformedURLException`.
+    (`"::1"`) is bracketed in the URL instead of failing with `MalformedURLException`, and in
+    `toString()` too.
   - **`LlamaTrainer.finetune` accepts any Unicode**: a character outside the Basic Multilingual Plane
     (an emoji) in the training text or a path failed the whole run with "invalid training config".
   - **`GgufInspector.read` rejects nested arrays with an `IOException`**, as llama.cpp's reader does; a
@@ -890,13 +964,18 @@ the first two items break every existing consumer at upgrade.
   - **`Session.fork` refuses a negative slot id before touching the model**, with the constructor's
     `IllegalArgumentException`, instead of writing the slot file and failing in `restoreSlot`.
   - **An offline load (`--offline`) of a path the file system cannot represent** throws the documented
-    `ModelUnavailableException` instead of an `InvalidPathException`; and `ChatStreamChunkParser` treats
+    `ModelUnavailableException` instead of an `InvalidPathException`; a path the JVM cannot encode in
+    its file-name charset -- a non-ASCII model name in a JVM running with the POSIX locale
+    (`LC_ALL=C`) -- is no longer reported as missing although the file exists, but left to the native
+    loader, which reads paths as UTF-8 and loads it; and `ChatStreamChunkParser` treats
     an empty envelope as the end of the stream, as its Javadoc says.
 - **`LlamaLoader` deletes only its own files from the temp directory.** The clean-up of the pre-6.0.0
   layout deleted, recursively, every entry of `java.io.tmpdir` (or `net.ladenthin.llama.tmpdir`) whose
   name starts with `jllama`, `llama` or `ggml` -- a `/tmp/llama.cpp` checkout, a `/tmp/ggml-models/`
-  folder, a downloaded `/tmp/llama-2-7b.Q4_K_M.gguf`. It removes regular files with a library suffix
-  (`.so`, `.dll`, `.dylib`, `.jnilib`, `.metal`) now, nothing else.
+  folder, a downloaded `/tmp/llama-2-7b.Q4_K_M.gguf`. It removes the regular files the old layout
+  wrote now -- the library names with a library suffix (`.so`, `.dll`, `.dylib`, `.jnilib`, `.metal`)
+  and, once they are ten minutes old, the `<name>.<digits>.tmp` copies an interrupted extraction of
+  that layout left -- and nothing else.
 - **`llama-ffm`.** `FfmTextToSpeech.close()` waits for a running `synthesize()` and
   `FfmNativeServer.close()` for a running `isRunning()`, as their JNI twins do, instead of freeing the
   native object under them; and an empty, non-null string array returned by the library is freed.
@@ -926,7 +1005,11 @@ the first two items break every existing consumer at upgrade.
   the model name resolves to the path for a local file. `OpenAiCompatServer` now always sets the alias
   from the advertised id, so the two agree and no local path reaches an answer. An embedding caller that
   loads its own `LlamaModel` still has to set `ModelParameters.setAlias(…)` itself — the server cannot,
-  the model is already loaded; `OpenAiServerConfig.getModelId()` says so.
+  the model is already loaded; `OpenAiServerConfig.getModelId()` says so. The Atmosphere agent's
+  in-process server had the same gap: its answers named the absolute model path while `/v1/models`
+  listed `--model-id` (default `local-model`); it sets the alias now, and with `--model` refuses a
+  `--model-id` with a comma, an empty one and one with leading or trailing whitespace, as
+  `OpenAiServerCli` does.
 - **A streamed `/v1/completions` is upstream's stream.** `OpenAiCompatServer` built the chunks of a
   streamed completion itself from the Java generator: no `usage` on the last chunk, no probabilities
   (a request for them was refused with a pointer to `stream: false`), and a prompt given as a token
@@ -951,20 +1034,24 @@ the first two items break every existing consumer at upgrade.
   `llama-ffm`, `LlamaModel.handle*`, both `/v1/completions` routes and the chat paths; the server's
   request mapper had dropped `n` on the chat routes as well. It is an invalid request now, checked in
   one place for the blocking, streamed and chat paths.
-- **`/v1/messages` reports the matched stop word as `stop_sequence`**, blocking and streamed, as
-  upstream does (`stop_reason` stays `end_turn`); it was always `null`. The OpenAI answer the route
-  translates from does not carry the word, so the translated request asks for llama.cpp's `verbose`
+- **`/v1/messages` reports the matched stop word as `stop_sequence`**, blocking and streamed, and
+  `stop_reason` is `"stop_sequence"` then, as the Messages API specifies (upstream reports `end_turn`
+  there); the word was always `null`, and an answer stopped by it said `end_turn`. The OpenAI answer the
+  route translates from does not carry the word, so the translated request asks for llama.cpp's `verbose`
   answer and reads `__verbose.stopping_word`, which never reaches the client. New
-  `InferenceParameters.withVerbose(boolean)` (`RequestField.VERBOSE`), and the OpenAI mapper forwards
-  a client's `verbose`.
+  `InferenceParameters.withVerbose(boolean)` (`RequestField.VERBOSE`), and the OpenAI mapper forwards a
+  client's `verbose`.
 - **A streamed request that fails before its first chunk is answered with the error status.**
   `OpenAiCompatServer` sent `200` and the stream's headers before the engine ran, so a request
   llama.cpp refused at once arrived as `200` with an error event -- on all five streaming routes
   (`/v1/chat/completions`, `/v1/completions`, `/api/chat`, `/v1/messages`, `/v1/responses`). Upstream's
   server reads the first result before it starts a stream; this one now does the same: the response
   starts with the first write (a chunk, the protocol's opening events or a heartbeat), and a failure
-  before it is `400` or `500` with the route's own error body, as without `stream`. A failure after the
-  stream started is still an event. One visible effect: the Atmosphere agent now reports such a failure
+  before it is `400` or `500` with the route's own error body, as without `stream` -- an `IOException`
+  an `OpenAiBackend` reports before the first chunk included, which was taken for a client that had
+  gone away and ended the request with a closed connection and no status line. A failure after the
+  stream started is still an error event; an `IOException` there still counts as the client having
+  gone away and ends the stream. One visible effect: the Atmosphere agent now reports such a failure
   instead of ending the turn with an empty answer.
 - **Error messages with a 4-byte character reach Java intact.** The JNI shells handed messages to
   `ThrowNew` and `NewStringUTF`, which read Modified UTF-8; a message quoting a path or request text
@@ -983,7 +1070,10 @@ the first two items break every existing consumer at upgrade.
   llama.cpp's own LoRA test pair: a third, unrelated text until the slot was erased). Upstream clears
   the cache when a request names its own adapters but not when the server's adapters change; the patch
   applies the same rule there, which also fixes upstream's `POST /lora-adapters` on the embedded
-  server. `setLoraAdapters`' Javadoc no longer tells callers to erase the slots; it names the one cache
+  server. Every slot starts with the server's adapters, so a slot's first request on a server
+  started with `--lora` keeps a prompt restored into it (`restoreSlot`) or loaded from the prompt
+  cache instead of treating it as computed without adapters and throwing it away.
+  `setLoraAdapters`' Javadoc no longer tells callers to erase the slots; it names the one cache
   that still does not record adapters, the host-memory prompt cache (`setCacheRamMib(0)` disables it).
 - **`ServerMetrics.getCumulativeUsage()` counts the cached prompt tokens.** It returned
   `Usage(processed, predicted)`, so `getPromptTokens()` was the evaluated tokens only and
