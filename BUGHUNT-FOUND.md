@@ -2012,7 +2012,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `LoraCacheFreshSlot.AStateRestoredIntoANeverUsedSlotIsKept` (neue Fixture: zufälliges Modell und zufällige LoRA, `-np 2`, `--cache-ram 0`, `--slot-save-path`; Anfrage auf Slot 0, Slot 0 speichern, in den nie benutzten Slot 1 wiederherstellen, dieselbe Anfrage auf Slot 1: `timings.prompt_n` ≤ 2 und dieselbe Antwort wie auf Slot 0). Der vom Reviewer vorgeschlagene Test (`-np 2`, LRU, zweimal derselbe Prompt) wäre leer gewesen, weil der erste Zustand dabei nie in den RAM-Cache gelangt; deshalb der Weg über Speichern/Wiederherstellen, den der Praxis-Skeptiker beschrieben hat. Alle 646 C++-Tests grün.
 - **Rot-Grün-Nachweis:** Ohne den `init()`-Hunk rot („Expected: (prompt_n) <= (2), actual: 77 vs 2“, `cache_n` 0: der wiederhergestellte Prompt war geleert), mit ihm grün (`LoraCache*` 5/5).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `166a267`
 
 ## Offene Verdachte ohne Fund-ID
 
