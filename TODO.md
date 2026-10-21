@@ -534,12 +534,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   `net.ladenthin.llama.lib.path` or the backend filter changed in between, it loads a second copy of
   the library and replaces the build info. Whether `initialize()` should do nothing after its first
   success is a design decision; `BackendLoadTest` relies on repeated loads.
-- **With `messages`, a special thinking end tag is empty in the raw text** (F249): the raw paths now
-  take the template's reasoning-budget fields, but not the session's `preserved_tokens`, so a tag
-  the vocabulary holds as one special token is rendered as an empty piece; the budget still works
-  (`ChatAdvancedTest` checks the tokens for that reason), only the tag is invisible in `content`.
-  `preserved_tokens` is a completion-schema field, so carrying it over beside the budget fields is the
-  obvious fix; it needs its own red/green test on a model whose tag is a special token.
 
 **Ollama routes**
 - **`/api/generate` with `raw: true` drops `format` and `images` without a word** (F215). Ollama keeps

@@ -186,7 +186,9 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
  * chat template renders from them (as jllama_apply_template), stopping also at the stop strings the
  * template adds of its own, as the chat paths do; a template with thinking tags gives
  * `reasoning_budget_tokens` its tags and the generation prompt, as the chat paths do (without tags the
- * budget has nothing to act on, there as here). A non-empty `prompt`, the infill fields or a chat
+ * budget has nothing to act on, there as here), and the tokens the template preserves (its thinking
+ * tags, say) are rendered as text even where the vocabulary holds them as special tokens, beside the
+ * request's own `preserved_tokens`. A non-empty `prompt`, the infill fields or a chat
  * field this path cannot apply (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
  * `top_logprobs`, `thinking_budget_tokens`) beside them are JLLAMA_STATUS_INVALID_REQUEST, the
  * message naming the field: send those as a chat completion.

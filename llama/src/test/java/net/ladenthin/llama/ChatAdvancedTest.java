@@ -306,7 +306,13 @@ public class ChatAdvancedTest {
      * <p>The reasoning model is used because its tokenizer gives a tag the same tokens inside the
      * prompt and on its own, which is what the budget sampler matches; a SentencePiece tokenizer puts a
      * space before a tag tokenized on its own, and the budget then never starts, on the chat paths too.
-     * The tokens are compared rather than the text because a special end tag renders as no text.
+     * The tokens are compared first, then the text: the template's tags are preserved tokens of its chat
+     * session, so the end tag reads as text in the content even where the vocabulary holds it as one
+     * special token (Qwen3, CI's reasoning model). Before the raw paths took the session's preserved
+     * tokens over, such an end tag was rendered as an empty piece there; with the local random model,
+     * whose byte tokenizer has no special tags, the text check passes either way, and the C++ case
+     * {@code CApiReasoningBudget.ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText} pins
+     * it on a vocabulary with special tags.
      */
     @Test
     public void testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag() throws Exception {
@@ -334,6 +340,7 @@ public class ChatAdvancedTest {
                     new ObjectMapper().readTree(completed.getRawJson()).path("tokens");
             assertTrue(tokens.size() > 0, completed.getRawJson());
             assertEquals(endTag[0], tokens.get(0).asInt(), completed.getRawJson());
+            assertTrue(completed.getText().startsWith("</think>"), completed.getRawJson());
             StringBuilder generated = new StringBuilder();
             for (LlamaOutput output : thinking.generate(request)) {
                 generated.append(output.text);

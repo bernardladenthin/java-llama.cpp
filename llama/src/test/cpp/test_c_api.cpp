@@ -909,6 +909,68 @@ TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfThe
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiReasoningBudget, ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText) {
+    // A vocabulary that holds the thinking tags as control tokens, as reasoning models' vocabularies
+    // do: a control token is rendered as an empty piece unless the request preserves it. The chat
+    // parser's session preserves the template's tags (the chat path renders them and the parser
+    // takes them out of the answer); the raw paths took the budget from the parser but not the
+    // preserved tokens, so the forced end tag was an invisible empty piece in the raw content.
+    const std::string path =
+        write_tiny_llama_gguf("jllama-c-api-budget-special", false, 4, {"<think>", "</think>", "<tool>"});
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_with_chat_template(path, THINKING_TEMPLATE);
+    ASSERT_NE(model, nullptr);
+    const json request = budget_request(1);
+
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(
+        json::parse(chat.str()).at("choices").at(0).at("message").value("content", std::string()).find("</think>"),
+        std::string::npos)
+        << chat.str();
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const std::string blocking = json::parse(completion.str()).at("content").get<std::string>();
+    EXPECT_EQ(blocking.rfind("</think>", 0), 0u) << completion.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::string streamed;
+    bool stop = false;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned chunk;
+        ASSERT_EQ(jllama_completions_stream_receive(model, task, &chunk.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        streamed += json::parse(chunk.str()).value("content", std::string());
+    }
+    EXPECT_TRUE(stop);
+    EXPECT_EQ(streamed, blocking);
+
+    // The request's own preserved tokens stay in force beside the template's: a third control token
+    // the template does not name, made the greedy choice after the forced end tag by a logit bias, is
+    // rendered as text when the request preserves it, and the template's end tag still is.
+    json with_own = request;
+    with_own["logit_bias"] = json::array({json::array({N_VOCAB + 2, 100})});
+    Owned unpreserved;
+    ASSERT_EQ(jllama_completions(model, with_own.dump().c_str(), &unpreserved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(unpreserved.str()).at("content").get<std::string>(), "</think>") << unpreserved.str();
+    with_own["preserved_tokens"] = json::array({"<tool>"});
+    Owned own;
+    ASSERT_EQ(jllama_completions(model, with_own.dump().c_str(), &own.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::string expected = "</think>";
+    for (int i = 1; i < 12; ++i) {
+        expected += "<tool>";
+    }
+    EXPECT_EQ(json::parse(own.str()).at("content").get<std::string>(), expected) << own.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_F(CApi, ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget) {
     // A template that declares no thinking tags gives the budget nothing to act on, on the chat path
     // and on the raw paths alike: the request runs unchanged, without an error.

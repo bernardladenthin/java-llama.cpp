@@ -99,9 +99,12 @@ inline void confine_output_to_ascii(ggml_tensor *output) {
 // load it, apply its fallback chat template and generate tokens. With fim, the byte tokens 1, 2 and
 // 3 are declared its fill-in-the-middle prefix, suffix and middle tokens, which is all llama.cpp needs
 // to format an infill prompt (the bytes never occur in the tests' text). The end-of-generation token
-// is the byte eos, '>' unless a test needs to generate that character as text.
+// is the byte eos, '>' unless a test needs to generate that character as text. Each string of special
+// is appended to the vocabulary as one control token (ids 256, 257, ...), the way a model's vocabulary
+// holds its chat-template tags; their output rows are scaled down like every non-printable byte's, so
+// they are generated only when a sampler forces them.
 inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false,
-                                         uint32_t eos = '>') {
+                                         uint32_t eos = '>', const std::vector<std::string> &special = {}) {
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
     const std::string path = (std::filesystem::temp_directory_path() /
@@ -120,12 +123,15 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD_DIM);
 
-    const std::vector<std::string> tokens = byte_tokens();
+    std::vector<std::string> tokens = byte_tokens();
+    tokens.insert(tokens.end(), special.begin(), special.end());
+    const int n_vocab = static_cast<int>(tokens.size());
     std::vector<const char *> token_ptrs;
     for (const std::string &s : tokens) {
         token_ptrs.push_back(s.c_str());
     }
     std::vector<int32_t> token_types(N_VOCAB, 1); // LLAMA_TOKEN_TYPE_NORMAL
+    token_types.resize(n_vocab, 3);               // LLAMA_TOKEN_TYPE_CONTROL
     const char *no_merges[] = {"Ġ Ġ"};
     gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
     gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
@@ -142,9 +148,9 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
 
     ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
-    add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, N_VOCAB}, 0.1f);
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {N_EMBD}, 1.0f);
-    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, N_VOCAB}, 0.1f));
+    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, n_vocab}, 0.1f));
     for (int il = 0; il < N_LAYER; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
         add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);

@@ -412,23 +412,27 @@ void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
     rd.post_tasks(std::move(tasks), session);
 }
 
-// The generation prompt is what the sampler of a chat task is primed with (apply_chat_session sets
-// it, common_sampler_init feeds it to the reasoning budget), so a template that opens the thinking
-// block in the generation prompt starts the budget counting at the first generated token. A raw task
-// posts no session, so the prompt of a raw completion with "messages" is set here. An output-format
-// grammar (json_schema) is primed with the same prompt, which it cannot accept; beside one the
-// prompt is left unset, and the budget then counts only from a start tag the model writes itself.
-static void prime_reasoning_budget(server_task &task, const std::string &generation_prompt) {
-    if (!generation_prompt.empty() && !common_grammar_needs_prefill(task.params.sampling.grammar)) {
-        task.params.sampling.generation_prompt = generation_prompt;
+// A raw task posts no session, so what apply_chat_session gives a chat task is applied here for a raw
+// completion with "messages". The generation prompt is what the sampler of a chat task is primed with
+// (common_sampler_init feeds it to the reasoning budget), so a template that opens the thinking block
+// in the generation prompt starts the budget counting at the first generated token. An output-format
+// grammar (json_schema) is primed with the same prompt, which it cannot accept; beside one the prompt
+// is left unset, and the budget then counts only from a start tag the model writes itself. The
+// template's preserved tokens join the request's own (the schema has put those in already): the chat
+// path drops a request's preserved_tokens because the session owns them, but on a raw completion the
+// field is a completion field of its own, so both are kept.
+static void apply_raw_chat_sampling(server_task &task, const raw_chat_sampling &raw_chat) {
+    if (!raw_chat.generation_prompt.empty() && !common_grammar_needs_prefill(task.params.sampling.grammar)) {
+        task.params.sampling.generation_prompt = raw_chat.generation_prompt;
     }
+    task.params.sampling.preserved_tokens.insert(raw_chat.preserved_tokens.begin(), raw_chat.preserved_tokens.end());
 }
 
 std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files,
                                                         const common_chat_session &session,
-                                                        const std::string &generation_prompt) {
+                                                        const raw_chat_sampling &raw_chat) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = jctx->server.get_response_reader();
     server_task task(task_type);
@@ -439,7 +443,7 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
         throw jllama_invalid_request(e.what());
     }
     task.apply_chat_session(session);
-    prime_reasoning_budget(task, generation_prompt);
+    apply_raw_chat_sampling(task, raw_chat);
     task.params.res_type = res_type;
     name_completion_task(task, meta);
     std::vector<server_task> tasks;
@@ -452,7 +456,7 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
 
 int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
                       std::vector<raw_buffer> files, const common_chat_session &session,
-                      const std::string &generation_prompt) {
+                      const raw_chat_sampling &raw_chat) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = std::make_shared<server_response_reader>(jctx->server.get_response_reader());
     const int tid = rd->get_new_id();
@@ -461,7 +465,7 @@ int streaming_request(jllama_context *jctx, const json &data, server_task_type t
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.apply_chat_session(session);
-        prime_reasoning_budget(task, generation_prompt);
+        apply_raw_chat_sampling(task, raw_chat);
         task.params.res_type = res_type;
         name_completion_task(task, meta);
         std::vector<server_task> tasks;
@@ -736,9 +740,10 @@ static constexpr const char *REASONING_BUDGET_FIELDS[] = {"reasoning_budget_toke
 // CHAT_ONLY_FIELDS beside the messages are refused rather than dropped; an empty prompt is no prompt
 // (InferenceParameters("") writes one). The media files of array-form content come back in files.
 // The template's stop strings and its reasoning budget are carried over (add_template_stops,
-// REASONING_BUDGET_FIELDS); when the budget is, the template's generation prompt is returned, which the
-// chat paths hand to the sampler and the raw paths have to (see prime_reasoning_budget), else "".
-static std::string render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+// REASONING_BUDGET_FIELDS), and what the chat paths hand to the sampler is returned for the raw paths to
+// apply (see apply_raw_chat_sampling): the template's preserved tokens, and its generation prompt when
+// the budget is carried over.
+static raw_chat_sampling render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
     for (const char *field : CHAT_ONLY_FIELDS) {
         if (data.contains(field) && !data.at(field).is_null()) {
             throw jllama_invalid_request(std::string("'") + field +
@@ -762,25 +767,30 @@ static std::string render_messages_into_prompt(jllama_context *jctx, json &data,
     }
     data["prompt"] = chat.at("prompt");
     add_template_stops(jctx, data, session.additional_stops());
+    raw_chat_sampling raw_chat;
+    common_params_sampling applied; // the session's sampler fields, as apply_chat_session takes them
+    session.apply_sampling(applied);
+    raw_chat.preserved_tokens = std::move(applied.preserved_tokens);
     if (!chat.contains("reasoning_budget_end_tags")) {
-        return std::string();
+        return raw_chat;
     }
     for (const char *field : REASONING_BUDGET_FIELDS) {
         if (chat.contains(field)) {
             data[field] = chat.at(field);
         }
     }
-    return session.generation_prompt();
+    raw_chat.generation_prompt = session.generation_prompt();
+    return raw_chat;
 }
 
 // A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill
 // endpoint refuses it (no FIM tokens, a field missing), otherwise its prompt formatted the same way.
-// One with "messages" completes their templated prompt, and generation_prompt receives what
+// One with "messages" completes their templated prompt, and raw_chat receives what
 // render_messages_into_prompt returns. Returns the task type to post.
 static server_task_type prepare_raw_completion(jllama_context *jctx, json &data, std::vector<raw_buffer> &files,
-                                               std::string &generation_prompt) {
+                                               raw_chat_sampling &raw_chat) {
     if (data.contains("messages")) {
-        generation_prompt = render_messages_into_prompt(jctx, data, files);
+        raw_chat = render_messages_into_prompt(jctx, data, files);
         return SERVER_TASK_TYPE_COMPLETION;
     }
     if (!is_infill_request(data)) {
@@ -804,18 +814,18 @@ std::string infill(jllama_context *jctx, const std::string &body_text) {
 std::string completions(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
     std::vector<raw_buffer> files;
-    std::string generation_prompt;
-    const server_task_type type = prepare_raw_completion(jctx, data, files, generation_prompt);
+    raw_chat_sampling raw_chat;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, raw_chat);
     return safe_json_to_str(results_to_json(
-        blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, generation_prompt)));
+        blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, raw_chat)));
 }
 
 int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
     std::vector<raw_buffer> files;
-    std::string generation_prompt;
-    const server_task_type type = prepare_raw_completion(jctx, data, files, generation_prompt);
-    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, generation_prompt);
+    raw_chat_sampling raw_chat;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, raw_chat);
+    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, raw_chat);
 }
 
 int completions_oai_stream_request(jllama_context *jctx, const std::string &body_text) {
