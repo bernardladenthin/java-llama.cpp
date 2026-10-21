@@ -25,8 +25,10 @@ import org.jspecify.annotations.Nullable;
  * item without {@code type} is a message, any other type is refused with 400 as upstream refuses it) is
  * flattened to OpenAI messages; Responses function tools ({@code {type:"function",name,description,parameters}}) become OpenAI
  * function tools. Responses replies wrap the assistant turn in a {@code response} object whose
- * {@code output} array holds a {@code message} item (with {@code output_text} content) and one
- * {@code function_call} item per tool call.
+ * {@code output} array holds, in this order, a {@code reasoning} item (only when the model reasoned, with
+ * {@code reasoning_text} content), a {@code message} item (only when there is text, with
+ * {@code output_text} content) and one {@code function_call} item per tool call; the order and the
+ * omission of an empty message follow upstream's {@code to_json_oaicompat_resp}.
  *
  * <p>Stateless and free of JNI / model dependencies; unit-testable with JSON literals. Streaming state is
  * held by {@link ResponsesStreamTranslator}.
