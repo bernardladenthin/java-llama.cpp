@@ -20,8 +20,11 @@ public final class OpenAiServerConfig {
     /** Default bind address: loopback only, so the endpoint is not exposed off-host. */
     public static final String DEFAULT_HOST = "127.0.0.1";
 
-    /** Default TCP port. */
-    public static final int DEFAULT_PORT = 8080;
+    /**
+     * Default TCP port: llama.cpp's own (9931 since b11521, upstream #30159), so that both servers of
+     * this library -- this one and {@link NativeServer} -- listen on the same port unless told otherwise.
+     */
+    public static final int DEFAULT_PORT = 9931;
 
     /** Default advertised model id (the {@code id} echoed by {@code GET /v1/models}). */
     public static final String DEFAULT_MODEL_ID = "local-model";

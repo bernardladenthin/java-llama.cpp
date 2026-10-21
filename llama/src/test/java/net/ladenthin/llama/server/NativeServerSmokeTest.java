@@ -84,6 +84,6 @@ public class NativeServerSmokeTest {
     public void attachMode_nullModelRejected() {
         assertThrows(
                 NullPointerException.class,
-                () -> new NativeServer((net.ladenthin.llama.LlamaModel) null, "--port", "8080"));
+                () -> new NativeServer((net.ladenthin.llama.LlamaModel) null, "--port", "9931"));
     }
 }

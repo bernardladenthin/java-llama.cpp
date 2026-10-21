@@ -58,7 +58,7 @@ try (FfmLlamaModel model = FfmLlamaModel.load(new ModelParameters().setModel("mo
     String metrics = model.metrics();
 
     // The embedded llama-server over the loaded model, WebUI included:
-    try (FfmNativeServer server = FfmNativeServer.startAttached(model, "--port", "8080")) {
+    try (FfmNativeServer server = FfmNativeServer.startAttached(model, "--port", "9931")) {
         // ... serve ...
     }
 }

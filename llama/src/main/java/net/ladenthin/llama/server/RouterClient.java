@@ -36,8 +36,8 @@ import org.jspecify.annotations.Nullable;
  *
  * <pre>{@code
  * NativeServer.setWorkerCommand(javaBin, "-cp", classpath, "net.ladenthin.llama.server.NativeServer");
- * try (NativeServer router = new NativeServer("--models-dir", dir, "--port", "8080").start()) {
- *     RouterClient client = new RouterClient(8080);
+ * try (NativeServer router = new NativeServer("--models-dir", dir, "--port", "9931").start()) {
+ *     RouterClient client = new RouterClient(9931);
  *     List<RouterModel> models = client.listModels();
  *     client.loadModel(models.get(0).getId());
  *     client.awaitModelLoaded(models.get(0).getId(), 240_000L);

@@ -62,8 +62,8 @@ import org.jspecify.annotations.Nullable;
  * <p>Typical use:</p>
  * <pre>{@code
  * try (NativeServer server = new NativeServer(
- *         "-m", "models/model.gguf", "--host", "127.0.0.1", "--port", "8080", "-c", "65536").start()) {
- *     // Server (and WebUI at http://127.0.0.1:8080/) runs on a native worker thread.
+ *         "-m", "models/model.gguf", "--host", "127.0.0.1", "--port", "9931", "-c", "65536").start()) {
+ *     // Server (and WebUI at http://127.0.0.1:9931/) runs on a native worker thread.
  *     // Readiness: poll GET /health until it returns {"status":"ok"}.
  *     Thread.currentThread().join();
  * }
@@ -184,7 +184,7 @@ public final class NativeServer implements AutoCloseable {
      * Call {@link #start()} to launch the server.</p>
      *
      * @param args the llama-server command-line arguments (e.g. {@code "-m", "model.gguf",
-     *             "--port", "8080"}); must not be {@code null} and must not contain {@code null}
+     *             "--port", "9931"}); must not be {@code null} and must not contain {@code null}
      *             elements
      */
     public NativeServer(String... args) {
@@ -235,7 +235,7 @@ public final class NativeServer implements AutoCloseable {
      * @param model the loaded model whose native server context this server should serve; must
      *              not be {@code null} and must not be closed while the server runs
      * @param args  the HTTP-side llama-server arguments (e.g. {@code "--host", "127.0.0.1",
-     *              "--port", "8080"}); must not be {@code null} or contain {@code null} elements
+     *              "--port", "9931"}); must not be {@code null} or contain {@code null} elements
      */
     public NativeServer(LlamaModel model, String... args) {
         Objects.requireNonNull(model, "model");
@@ -385,7 +385,7 @@ public final class NativeServer implements AutoCloseable {
      * {@code java -cp <jar> net.ladenthin.llama.server.OpenAiCompatServer …}.</p>
      *
      * @param args the llama-server command-line arguments, forwarded verbatim (e.g. {@code -m
-     *             model.gguf --host 127.0.0.1 --port 8080}); pass {@code --help} for the full
+     *             model.gguf --host 127.0.0.1 --port 9931}); pass {@code --help} for the full
      *             llama-server option list
      * @throws InterruptedException if interrupted while waiting for the server to exit
      */

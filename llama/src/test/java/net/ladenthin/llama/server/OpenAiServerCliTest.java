@@ -322,6 +322,7 @@ public class OpenAiServerCliTest {
         assertThat(usage, containsString("/v1/chat/completions"));
         assertThat(usage, containsString("/v1/embeddings"));
         assertThat(usage, containsString("/health"));
+        assertThat(usage, containsString("(default: 9931)"));
     }
 
     @Test

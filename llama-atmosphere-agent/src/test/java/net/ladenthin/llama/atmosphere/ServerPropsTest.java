@@ -16,11 +16,11 @@ class ServerPropsTest {
     void propsIsTriedNextToTheV1RoutesFirst() {
         // llama-server serves /props at the root; this project's server serves it under both.
         assertThat(
-                ServerProps.candidates("http://127.0.0.1:8080/v1"),
-                is(List.of("http://127.0.0.1:8080/props", "http://127.0.0.1:8080/v1/props")));
+                ServerProps.candidates("http://127.0.0.1:9931/v1"),
+                is(List.of("http://127.0.0.1:9931/props", "http://127.0.0.1:9931/v1/props")));
         assertThat(
-                ServerProps.candidates("http://127.0.0.1:8080/v1/"),
-                is(List.of("http://127.0.0.1:8080/props", "http://127.0.0.1:8080/v1/props")));
+                ServerProps.candidates("http://127.0.0.1:9931/v1/"),
+                is(List.of("http://127.0.0.1:9931/props", "http://127.0.0.1:9931/v1/props")));
         assertThat(ServerProps.candidates("http://host/api"), is(List.of("http://host/api/props")));
     }
 

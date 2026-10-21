@@ -21,7 +21,7 @@ public class OpenAiServerExample {
     public static void main(String... args) throws IOException, InterruptedException {
         String modelPath =
                 TestConstants.resolveModelProperty("net.ladenthin.llama.server.model", TestConstants.MODEL_PATH);
-        int port = Integer.getInteger("net.ladenthin.llama.server.port", 8080);
+        int port = Integer.getInteger("net.ladenthin.llama.server.port", 9931);
 
         // Two parallel slots let the editor's chat and its background title/summary requests run
         // concurrently instead of serializing behind one another.

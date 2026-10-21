@@ -106,7 +106,7 @@ public final class ModelEndpoint implements AutoCloseable {
     /**
      * The OpenAI-compatible base URL.
      *
-     * @return e.g. {@code http://127.0.0.1:8080/v1}
+     * @return e.g. {@code http://127.0.0.1:9931/v1}
      */
     public String baseUrl() {
         return baseUrl;

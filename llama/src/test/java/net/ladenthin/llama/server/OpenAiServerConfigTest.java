@@ -35,6 +35,16 @@ public class OpenAiServerConfigTest {
         assertThat(config.isAuthenticationEnabled(), is(false));
     }
 
+    /**
+     * Both servers listen on llama.cpp's default port: {@code NativeServer} has since b11521 (upstream
+     * #30159), and this one said 8080, so the two transports of one library defaulted differently.
+     */
+    @Test
+    public void theDefaultPortIsLlamaCppsDefaultPort() {
+        assertThat(OpenAiServerConfig.DEFAULT_PORT, is(9931));
+        assertThat(OpenAiServerConfig.builder().build().getPort(), is(9931));
+    }
+
     @Test
     public void modelFtypeIsConfigurableAndNullBecomesEmpty() {
         assertThat(

@@ -308,7 +308,7 @@ public final class AgentOptions {
                 "",
                 "Endpoint (exactly one):",
                 "  --base-url <url>        OpenAI-compatible base URL of a running server,",
-                "                          e.g. http://127.0.0.1:8080/v1 (java-llama.cpp NativeServer",
+                "                          e.g. http://127.0.0.1:9931/v1 (java-llama.cpp NativeServer",
                 "                          started with --jinja, OpenAiCompatServer, or llama-server)",
                 "  --model <file.gguf>     load this GGUF in-process and serve it to the agent",
                 "  --ngl <n>               GPU layers for --model (default 0 = CPU only)",

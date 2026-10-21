@@ -37,9 +37,9 @@ class AgentOptionsTest {
 
     @Test
     void baseUrlModeWithDefaults() {
-        AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://127.0.0.1:8080/v1/"});
+        AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://127.0.0.1:9931/v1/"});
 
-        assertThat(options.getBaseUrl(), is("http://127.0.0.1:8080/v1"));
+        assertThat(options.getBaseUrl(), is("http://127.0.0.1:9931/v1"));
         assertThat(options.getModelPath(), is(nullValue()));
         assertThat(options.getApiKey(), is(AgentOptions.DEFAULT_API_KEY));
         assertThat(options.getModelId(), is(AgentOptions.DEFAULT_MODEL_ID));

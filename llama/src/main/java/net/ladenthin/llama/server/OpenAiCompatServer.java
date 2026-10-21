@@ -71,7 +71,7 @@ import org.slf4j.LoggerFactory;
  * <pre>{@code
  * try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("models/model.gguf"));
  *      OpenAiCompatServer server = new OpenAiCompatServer(
- *              model, OpenAiServerConfig.builder().port(8080).modelId("local").build()).start()) {
+ *              model, OpenAiServerConfig.builder().port(9931).modelId("local").build()).start()) {
  *     Thread.currentThread().join();
  * }
  * }</pre>

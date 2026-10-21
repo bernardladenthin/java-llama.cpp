@@ -116,7 +116,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
 - **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
-- **Two runnable HTTP server modes, one entry point.** The classes jar's `Main-Class` is `ServerLauncher`, which dispatches on the `--jllama-openai-compat` flag. Without it, `jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 -m model.gguf --port 8080` runs the full upstream llama.cpp server (embedded **WebUI**, every llama-server flag forwarded) hosted inside `libjllama` over JNI — no separate `llama-server.exe`. With it, the same line plus `--jllama-openai-compat --model model.gguf --port 8080` runs the Java-transport, zero-extra-dependency **OpenAI-compatible** server (`OpenAiCompatServer`, streaming SSE) instead. Both are also runnable directly by class name via `java -cp … net.ladenthin.llama.server.{NativeServer,OpenAiCompatServer}`; see [Running the server from Maven Central](#running-the-server-from-maven-central).
+- **Two runnable HTTP server modes, one entry point.** The classes jar's `Main-Class` is `ServerLauncher`, which dispatches on the `--jllama-openai-compat` flag. Without it, `jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 -m model.gguf --port 9931` runs the full upstream llama.cpp server (embedded **WebUI**, every llama-server flag forwarded) hosted inside `libjllama` over JNI — no separate `llama-server.exe`. With it, the same line plus `--jllama-openai-compat --model model.gguf --port 9931` runs the Java-transport, zero-extra-dependency **OpenAI-compatible** server (`OpenAiCompatServer`, streaming SSE) instead. Both are also runnable directly by class name via `java -cp … net.ladenthin.llama.server.{NativeServer,OpenAiCompatServer}`; see [Running the server from Maven Central](#running-the-server-from-maven-central).
 - **Model metadata** access (`getModelMeta()`) and **server management** (metrics, slot save/restore, runtime thread reconfiguration).
 - **Conversation checkpoints** — `Session.checkpoint(...)` / `rewind(...)` / `fork(...)` branch and roll back a chat (KV-cache slot save/restore + transcript snapshot) without re-prefilling.
 - **GGUF metadata inspection** without loading the model (`GgufInspector` — pure Java, reads header + key/value table only, big-endian aware).
@@ -343,10 +343,10 @@ module jars, as `--deps`:
 
 ```bash
 # CPU only (Linux x86-64; cpu-windows-x86-64, metal-macos-aarch64, ... for the others)
-jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 -m model.gguf --port 8080
+jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 -m model.gguf --port 9931
 # with a GPU backend -- several may be named, ggml uses the ones whose runtime is installed
 jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64,net.ladenthin:llama:6.0.0:vulkan-linux-x86-64 \
-    net.ladenthin:llama:6.0.0 -m model.gguf --port 8080 -ngl 99
+    net.ladenthin:llama:6.0.0 -m model.gguf --port 9931 -ngl 99
 ```
 
 Every llama-server flag works, the WebUI included; add `--jllama-openai-compat` to run the Java
@@ -355,7 +355,7 @@ Every llama-server flag works, the WebUI included; add `--jllama-openai-compat` 
 profile per GPU module jar, named after its classifier:
 
 ```bash
-mvn -f examples/server/pom.xml exec:java -Dexec.args="-m model.gguf --port 8080"                      # CPU
+mvn -f examples/server/pom.xml exec:java -Dexec.args="-m model.gguf --port 9931"                      # CPU
 mvn -f examples/server/pom.xml -P cuda13-linux-x86-64 exec:java -Dexec.args="-m model.gguf -ngl 99"   # + CUDA
 # a local jar-with-dependencies of exactly that combination, for a machine without Maven
 mvn -f examples/server/pom.xml -P assembly,cuda13-linux-x86-64 package
@@ -1049,7 +1049,7 @@ Embed it in your app:
 // the alias is the name llama.cpp puts into every answer; set it to the id /v1/models advertises
 ModelParameters modelParams =
         new ModelParameters().setModel("models/model.gguf").setParallel(2).setAlias("local-model");
-OpenAiServerConfig config = OpenAiServerConfig.builder().port(8080).modelId("local-model").build();
+OpenAiServerConfig config = OpenAiServerConfig.builder().port(9931).modelId("local-model").build();
 try (LlamaModel model = new LlamaModel(modelParams);
      OpenAiCompatServer server = new OpenAiCompatServer(model, config).start()) {
     Thread.currentThread().join(); // serve until interrupted
@@ -1063,11 +1063,11 @@ or name the class explicitly via `-cp`:
 ```bash
 # from Maven Central (JBang resolves the classes jar, the natives jar named and the Java deps)
 jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 --jllama-openai-compat \
-    --model models/Qwen3-0.6B-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --n-gpu-layers 99
+    --model models/Qwen3-0.6B-Q4_K_M.gguf --host 0.0.0.0 --port 9931 --n-gpu-layers 99
 
 # or name the class explicitly, with the jars on the classpath
 java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar:<deps>' \
-  net.ladenthin.llama.server.OpenAiCompatServer --model models/model.gguf --port 8080 --model-id local-model
+  net.ladenthin.llama.server.OpenAiCompatServer --model models/model.gguf --port 9931 --model-id local-model
 ```
 
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
@@ -1081,7 +1081,7 @@ works directly.
 Verify with curl (streaming chat):
 
 ```bash
-curl -N http://127.0.0.1:8080/v1/chat/completions \
+curl -N http://127.0.0.1:9931/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"local-model","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
@@ -1102,7 +1102,7 @@ endpoint (the host/port go here, not in the form):
       {
         "id": "local-model",
         "name": "Local model",
-        "url": "http://127.0.0.1:8080/v1/chat/completions",
+        "url": "http://127.0.0.1:9931/v1/chat/completions",
         "toolCalling": true,
         "vision": false,
         "maxInputTokens": 6144,
@@ -1132,8 +1132,8 @@ the native server (pass `--help` for the full llama-server option list):
 
 ```bash
 jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 \
-    -m models/model.gguf --host 127.0.0.1 --port 8080 -c 65536 --jinja
-# then open http://127.0.0.1:8080/ for the WebUI
+    -m models/model.gguf --host 127.0.0.1 --port 9931 -c 65536 --jinja
+# then open http://127.0.0.1:9931/ for the WebUI
 ```
 
 Or embed it:
@@ -1141,13 +1141,13 @@ Or embed it:
 ```java
 try (NativeServer server = new NativeServer(
         "-m", "gpt-oss-20b-UD-Q4_K_XL.gguf",
-        "--host", "127.0.0.1", "--port", "8080",
+        "--host", "127.0.0.1", "--port", "9931",
         "-c", "65536", "-b", "4096", "-ub", "2048",
         "--jinja", "-ngl", "0", "-t", "8", "-tb", "16",
         "-ctk", "q8_0", "-ctv", "q8_0",
         "--chat-template-kwargs", "{\"reasoning_effort\":\"low\"}",
         "--parallel", "1").start()) {
-    // Open http://127.0.0.1:8080/ in a browser for the WebUI; the OpenAI API is at /v1/... too.
+    // Open http://127.0.0.1:9931/ in a browser for the WebUI; the OpenAI API is at /v1/... too.
     Thread.currentThread().join();
 }
 ```
@@ -1171,7 +1171,7 @@ JNI calls and HTTP:
 
 ```java
 try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("models/model.gguf"));
-     NativeServer server = new NativeServer(model, "--host", "127.0.0.1", "--port", "8080").start()) {
+     NativeServer server = new NativeServer(model, "--host", "127.0.0.1", "--port", "9931").start()) {
     // HTTP (incl. WebUI in released jars) and direct Java calls share the same loaded model.
     String direct = model.complete(new InferenceParameters("2+2=").withNPredict(4));
     Thread.currentThread().join();
@@ -1200,7 +1200,7 @@ String javaBin = System.getProperty("java.home") + File.separator + "bin" + File
 NativeServer.setWorkerCommand(javaBin, "-cp", System.getProperty("java.class.path"),
         "net.ladenthin.llama.server.NativeServer");
 try (NativeServer router = new NativeServer(
-        "--host", "127.0.0.1", "--port", "8080", "--models-dir", "models").start()) {
+        "--host", "127.0.0.1", "--port", "9931", "--models-dir", "models").start()) {
     Thread.currentThread().join(); // each loaded model runs as a fresh worker JVM
 }
 ```
@@ -1212,7 +1212,7 @@ management endpoints, use `server.RouterClient` — a plain-HTTP typed client (w
 embedded router above or any external `llama-server` router):
 
 ```java
-RouterClient client = new RouterClient(8080);
+RouterClient client = new RouterClient(9931);
 List<RouterModel> models = client.listModels();          // GET /models, typed status per entry
 client.loadModel("Qwen3-0.6B-Q4_K_M");                   // POST /models/load (non-blocking)
 client.awaitModelLoaded("Qwen3-0.6B-Q4_K_M", 240_000L);  // poll until LOADED (or SLEEPING); fails fast if the
@@ -1233,8 +1233,8 @@ Against a router started with `--api-key`, pass the key — it is sent as
 `/models/unload` were always gated, and since llama.cpp b10519 the listing endpoints are too.
 
 ```java
-RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
-// or, for a remote router: new RouterClient("router.internal", 8080, key)
+RouterClient client = new RouterClient(9931, System.getenv("LLAMA_API_KEY"));
+// or, for a remote router: new RouterClient("router.internal", 9931, key)
 ```
 
 > [!NOTE]
@@ -1448,15 +1448,15 @@ backend):
 ```bash
 # 1. the server, from Maven Central
 jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 \
-    -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
+    -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 9931
 
 # 2. the agent, from the llama-atmosphere-agent/ folder — a you> prompt appears (/clear, /exit)
 mvn -q compile exec:java \
-    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
+    -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace /path/to/project --allow-shell"
 
 # a single turn instead of the prompt loop
 mvn -q compile exec:java \
-    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
+    -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
 
 # or without a separate server: load the GGUF in-process
 mvn -q compile exec:java \
