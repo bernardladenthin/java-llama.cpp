@@ -394,7 +394,9 @@ public final class NativeServer implements AutoCloseable {
         // the block (satisfies S2095 via the "close in a finally clause" option — try-with-resources
         // is not used because the shutdown hook must also call close() explicitly, which javac flags
         // under -Werror as an "explicit call to close() on an auto-closeable resource"). close() is
-        // idempotent (guards on a zero handle), so the finally and the hook both firing is safe.
+        // idempotent and serialized on lifecycleLock (see close()), so the finally block and the
+        // shutdown hook may fire concurrently -- shutdown hooks run on their own thread -- and the
+        // native server is stopped exactly once.
         final NativeServer server = new NativeServer(args);
         try {
             // Signalled by the shutdown hook so the main thread wakes immediately on Ctrl-C / SIGTERM
