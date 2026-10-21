@@ -1886,7 +1886,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OaiRerankSupportTest#readDocumentsFallsBackToTextsWhenDocumentsIsNull`, `#readDocumentsThrowsWhenDocumentsIsNullWithoutTexts`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: 'documents' (or TEI's 'texts') must be a non-empty array“), mit ihm grün (`OaiRerankSupportTest` 21/21, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `893ede3`
 
 ## Offene Verdachte ohne Fund-ID
 
