@@ -2495,7 +2495,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented` (`FakeBackend` behält die Default-Methode; Status 501 und die Meldung).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented:591 {"error":"raw prompts with images are not supported by this backend"} Expected: is <501> but: was <500>“; mit dem Fix grün, `OpenAiCompatServerHttpTest` 81/81, `OllamaApiSupportTest` 54/54.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `a4edb90`
 
 ## Offene Verdachte ohne Fund-ID
 
