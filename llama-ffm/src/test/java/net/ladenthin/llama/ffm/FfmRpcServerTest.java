@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -22,6 +23,11 @@ class FfmRpcServerTest {
 
     /** Ports are tried from a range, so parallel jobs on one runner do not collide. */
     private static final int ATTEMPTS = 50;
+
+    @BeforeAll
+    static void nativesLoadable() {
+        FfmTestSupport.assumeNativesLoadable();
+    }
 
     @Test
     void aStopWhileNoServeRunsDoesNotStopTheNextServeAndAStopEndsIt() throws Exception {
