@@ -344,6 +344,37 @@ class StreamingChunkAssemblerTest {
         assertThat(response.tokenUsage(), is(nullValue()));
     }
 
+    /**
+     * With {@code include_usage} (which the adapter requests) upstream sends the usage in a chunk of
+     * its own after the finish chunk, with an empty {@code choices} array as the OpenAI spec asks,
+     * carrying {@code timings} as well ({@code to_json_oaicompat_chat_stream} in
+     * {@code tools/server/server-task.cpp}). The usage must be read from it, and the finish reason
+     * of the chunk before must survive a chunk that has no choice.
+     */
+    @Test
+    void usageChunkWithEmptyChoicesCarriesTokenUsage() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assembler.accept(contentChunk("ok"));
+        assembler.accept("{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"delta\":{}}],"
+                + "\"created\":1760000000,\"id\":\"chatcmpl-abc\",\"model\":\"m\","
+                + "\"system_fingerprint\":\"b11639-a0e6dc738\",\"object\":\"chat.completion.chunk\"}");
+        assembler.accept("{\"choices\":[],\"created\":1760000000,\"id\":\"chatcmpl-abc\",\"model\":\"m\","
+                + "\"system_fingerprint\":\"b11639-a0e6dc738\",\"object\":\"chat.completion.chunk\","
+                + "\"usage\":{\"completion_tokens\":3,\"prompt_tokens\":7,\"total_tokens\":10,"
+                + "\"prompt_tokens_details\":{\"cached_tokens\":0}},"
+                + "\"timings\":{\"cache_n\":0,\"prompt_n\":7,\"predicted_n\":3}}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(response.tokenUsage().inputTokenCount(), is(7));
+        assertThat(response.tokenUsage().outputTokenCount(), is(3));
+        // "length", not "stop": no finish reason maps to STOP, so a reset would hide behind "stop".
+        assertThat(response.finishReason(), is(FinishReason.LENGTH));
+        assertThat(handler.partials, contains("ok"));
+        assertThat(response.aiMessage().text(), is("ok"));
+    }
+
     @Test
     void unparseableChunkFailsLoud() {
         StreamingChunkAssembler assembler = new StreamingChunkAssembler(new RecordingHandler());
