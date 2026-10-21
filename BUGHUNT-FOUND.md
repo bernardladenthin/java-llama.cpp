@@ -2167,7 +2167,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne das Zurücksetzen rot: `theDummyLoadsLeaveTheBuildInfoOfThisJvmAsTheyFoundIt` mit „build info after the dummy loads: {llama.cpp=bTEST, backend=cpu, kind=library}, before: {} ==> expected: <{}> but was: <{llama.cpp=bTEST, backend=cpu, kind=library}>“; die beiden Reproduktionen am HEAD rot mit „llama.cpp tag of {llama.cpp=bTEST, backend=cpu, kind=library} ==> expected: <b11639> but was: <bTEST>“ und „llama.cpp tag of {} ==> expected: <b11639> but was: <null>“. Mit dem Fix alle grün, ebenso `BackendLoadTest,LlamaLoaderTest,NativeLibraryLoadSmokeTest` und die Reproduktion des Briefs (dort bleibt nur `ChatAdvancedTest#testMessagesInGenerate` rot, weil das Zufallsmodell nichts Lesbares erzeugt — unabhängig davon).
 - **Offen:** Ein zweiter erfolgreicher `initialize()` lädt in der Produktion weiter erneut und überschreibt die Build-Info, wenn sich dazwischen `net.ladenthin.llama.lib.path` oder der Backend-Filter ändert (dann käme eine zweite Kopie der Bibliothek in den Prozess). Ob `initialize()` nach dem ersten Erfolg nichts mehr tun soll, ist eine Entwurfsfrage (`BackendLoadTest` braucht das wiederholte Laden), nicht Teil dieses Funds.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3e49d39`
 
 ## Offene Verdachte ohne Fund-ID
 
