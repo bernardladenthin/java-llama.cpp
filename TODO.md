@@ -523,6 +523,105 @@ they are not rediscovered:
   Ollama itself unloads there and answers `done_reason "unload"`; this server does not claim an
   unload it did not do.
 
+### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
+
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F243 and the dated
+addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
+scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
+
+**Ollama routes**
+- **`/api/generate` with `raw: true` drops `format` and `images` without a word** (F215). Ollama keeps
+  both. Either map them (`format` as `json_schema`, `images` as multimodal data, as the non-raw path
+  does) or refuse them with `400`; today neither happens.
+- **`/api/generate` without `raw` drops `template` and `context` without a word** (F215); Ollama
+  applies them. The chat-template path has no slot for a caller's template or a token context, so the
+  honest options are a `400` or a documented deviation.
+- **A non-text `prompt` (`["a"]`, `{}`) on `/api/generate` is answered `200` with `done_reason
+  "load"`** (F205): `isLoadOnly` treats every non-textual prompt as absent. Ollama's field is a string;
+  the fix is a `400` for a present, non-null, non-text prompt (`requireTextualPrompt`), with a
+  model-free `OllamaApiSupportTest` case and an HTTP test, red/green.
+
+**Server transport**
+- **After a stream started, a backend `IOException` is taken for a disconnect** (F214): it is logged
+  at DEBUG and the stream ends without an error event. A third-party `OpenAiBackend` may report a
+  generation failure that way; a quiet error event (`writeQuietly` of the route's error event) would
+  cost nothing when the client really is gone. Optional, outside what F182 promised.
+- **Decision open: should a malformed stream envelope fail instead of ending the stream?**
+  `ChatStreamChunkParser.feed` treats an unparseable or empty envelope as the end of the stream, and
+  `StreamingChunkAssembler` follows it, so a broken envelope looks like a short answer. One reviewer:
+  the path is not reachable from `LlamaModel`, whose native side always writes a well-formed envelope,
+  so hardening buys nothing. The other: throw an `IllegalArgumentException` naming the envelope
+  instead of a silent end, as the rerank and tool-schema readers now do (F232, F233). Decide, then either pin the
+  current contract or change it with a red/green test.
+
+**Chat mapper (`OpenAiRequestMapper`, every chat route)**
+- **A non-numeric `max_tokens` (`"100"`) is read as `-1`, i.e. no limit** (F223 names it): upstream's
+  schema answers `400`. The Anthropic route now refuses it before the mapper; the OpenAI route itself
+  does not.
+- **A non-numeric `n` or `n_probs` (a string) is ignored** where upstream's schema answers `400`.
+  Pre-existing, not a regression of the branch.
+- **Upstream's "logprobs is not supported with tools + stream" refusal is unreachable** (F220): the
+  mapper turns `logprobs` into `n_probs` and does not see `stream`.
+- **Anthropic `{"type":"tool","name":…}` still means `required` over all tools, and a `tool_choice`
+  object of another type (`allowed_tools`, `mcp`, …) falls back to `auto` without a word** on the chat
+  and Responses paths (F227). The named-function narrowing of F227 is the model for the first; the
+  second needs a decision between `400` and a documented fallback.
+
+**Anthropic Messages**
+- **The image source `file` (Files API) is dropped without a word**, here and upstream (F29). Pin it
+  in a test (`aFileImageSourceIsDroppedLikeUpstream`) or refuse it; a decision first.
+- **A `base64` image without `media_type` defaults to `image/png` here and to `image/jpeg` upstream**
+  (F29); neither aligned nor pinned by a test. A decision first.
+- **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221) is one line in
+  each of upstream's `to_json_anthropic*` plus an assertion in `test_compat_anthropic.py`; add it to
+  the upstream inventory below for the day after the release.
+
+**Decided deviations, recorded so they are not rediscovered** (no action): unknown part types inside
+a Responses `message` are not refused, because the same branch carries assistant `output_text` /
+`refusal` parts (F224); upstream's stricter Responses role checks are not adopted (F228); a boolean or
+string rerank `top_n` and one outside the `int` range keep every result, where upstream converts
+`true` to 1 and wraps the cast (F230); a `documents` of the wrong type stays `400` rather than
+falling back to `texts` (F231); `chat_template_kwargs` keeps its string fallback, because a string
+literal is a valid kwarg value while a tool schema must be an object (F233); a stop issued before
+the serving thread has entered `jllama_rpc_server_serve` cannot be told from "nothing running" and
+stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer` does (F241).
+
+**Tests**
+- **The model-backed `ErrorHandlingTest` case for a 4-byte character in a refusal is missing**:
+  `handleChatCompletions` with a `response_format` of type `😀` must throw `InvalidRequestException`
+  with `but got: 😀` in the message. The model-free half (a failed `LlamaModel` call keeps a 4-byte
+  character) is pinned.
+- **The argument prefix that arrives before a tool call's name never reaches `onPartialToolCall`**
+  (`StreamingChunkAssembler`; documented in its Javadoc since this pass). If it is fixed, the contract
+  assertion `assertPartialsMakeUpTheCompleteCall` in `toolCallDeltaBeforeItsName_doesNotFailTheStream`
+  lands in the same commit; today it is red (`Expected: is "{\"city\":1}" but: was "ty\":1}"`).
+- **`LoraCacheFreshSlot` writes `slot0.bin` into the test's working directory**, not under its
+  `--slot-save-path`: `engine::slot_action` uses the file name as the path, as
+  `LlamaModel.saveSlot(int, String filepath)` documents. Probably the test should pass a path under
+  the save directory; needs a decision.
+- **`RpcClient.AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt` fails under
+  `--gtest_repeat=2`** in one process (also filtered alone); it passes in a normal `ctest` run. The
+  test drives ggml's process-wide registry directly; find out which state the first run leaves.
+- **Three FIM tests fail against a model without FIM tokens** (`500`):
+  `OpenAiServerCompletionIntegrationTest#infillReturnsContent`, `#ollamaGenerateWithSuffixUsesInfill`
+  and `ErrorHandlingTest#testHandleInfillMissingInputSuffix`. Not a defect -- CI's model has the
+  tokens -- but they should self-skip on a model without them, as the model-gated tests do.
+- **`MemoryManagementTest` (context 32) assumes a context shift** that llama.cpp no longer makes by
+  default (`ctx_shift = false` at b11639); check whether it still tests what it says, and use the new
+  `enableContextShift()` if it should.
+- **`llama-ffm`'s `FfmRpcServerTest` has no natives assumption**: without a native library it fails
+  instead of skipping like the module's other tests.
+- **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
+  `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
+  its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.
+- **The agent's 4xx path is tested without retries**: the tests run with `RetryPolicy.NONE`, so
+  nothing pins that Atmosphere skips retrying a `4xx` (optional).
+
+**Atmosphere agent**
+- **`AgentOptions.withWorkspace` copies only `baseUrl`, `modelPath` and `workspace`**: the copy falls
+  back to the default `modelId` and every other option's default. Noticed while fixing F243, not
+  changed.
+
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
 **Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and
