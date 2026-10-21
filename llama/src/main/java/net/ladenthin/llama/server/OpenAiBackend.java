@@ -104,9 +104,10 @@ public interface OpenAiBackend {
      * in reranking mode; otherwise the native call fails and the caller surfaces a server error.
      *
      * @param request the parsed rerank request ({@code query} string + {@code documents} array, optional
-     *                {@code top_n})
+     *                {@code top_n}; or TEI's {@code texts} array, optional {@code return_text})
      * @return the rerank response serialized as JSON ({@code results}/{@code data} of
-     *         {@code {index, relevance_score}})
+     *         {@code {index, relevance_score}} plus {@code usage}; for a request with {@code texts} TEI's
+     *         bare array of {@code {index, score}}, with {@code text} on {@code return_text})
      * @throws IOException if reranking fails in a way the caller should surface as a server error
      */
     String rerank(JsonNode request) throws IOException;

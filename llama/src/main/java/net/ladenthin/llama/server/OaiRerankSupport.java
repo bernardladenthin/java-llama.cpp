@@ -16,11 +16,16 @@ import org.jspecify.annotations.Nullable;
 /**
  * Pure request-parsing and response-shaping helpers for the {@code POST /v1/rerank} route.
  *
- * <p>Reads the Jina/Cohere-style rerank request ({@code query} + {@code documents} [+ {@code top_n}]) and
- * reshapes the native llama.cpp rerank array ({@code [{document,index,score}]}) into the OpenAI-style
- * rerank response. The response carries both a {@code results} array (the standard llama.cpp/Jina shape)
- * and a {@code data} alias of the same entries, because Continue expects {@code data} and errors on
- * {@code results} (continuedev/continue #6478).
+ * <p>Reads either the Jina/Cohere-style rerank request ({@code query} + {@code documents} [+
+ * {@code top_n}]) or Hugging Face text-embeddings-inference's ({@code query} + {@code texts} [+
+ * {@code top_n}, {@code return_text}]) and reshapes the native llama.cpp rerank array
+ * ({@code [{document,index,score}]}). {@link #toResponse} picks the answer by the presence of
+ * {@code texts}, as upstream's {@code format_response_rerank} does. The OpenAI-style answer carries a
+ * {@code results} array (the standard llama.cpp/Jina shape), a {@code data} alias of the same entries,
+ * because Continue expects {@code data} and errors on {@code results} (continuedev/continue #6478), and a
+ * {@code usage} object ({@code prompt_tokens} = {@code total_tokens} = the sum of the documents'
+ * {@code tokens_evaluated}). The TEI answer is a bare array of {@code {index, score}}, best first, plus
+ * {@code text} when {@code return_text} is true.
  *
  * <p>Stateless and free of JNI / model dependencies, so each helper is unit-testable with JSON literals.
  */

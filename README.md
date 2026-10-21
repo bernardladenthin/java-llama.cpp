@@ -967,7 +967,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/chat/completions` | `LlamaModel.streamChatCompletion` (streaming SSE) / `chatComplete` (blocking) |
 | `POST /v1/completions` | `LlamaModel.streamCompletionsOai` (streaming SSE) / `handleCompletionsOai` (blocking) |
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
-| `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data`) |
+| `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
