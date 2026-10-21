@@ -2321,7 +2321,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aBase64ImageWithoutMediaTypeIsNamedByItsBytes` (PNG, JPEG, GIF, WebP), `#aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream`, `#anExplicitMediaTypeWinsOverTheBytes`; die Ollama-Bildtests bleiben grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „aBase64ImageWithoutMediaTypeIsNamedByItsBytes:180 image/jpeg Expected: is "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ" but: was "data:image/png;base64,/9j/4AAQSkZJRgABAQ"“ und „aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream:191 Expected: is "data:image/jpeg;base64,AAAAAAAA" but: was "data:image/png;base64,AAAAAAAA"“ (die PNG-Zeile war vorher zufällig grün und ist jetzt gepinnt); mit dem Fix grün (`AnthropicApiSupportTest` 45/45, `OllamaApiSupportTest` 49/49, `OpenAiCompatServerHttpTest` 73/73, `LlamaArchitectureTest` 13/13). `spotless:apply` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `80d2d9c`
 
 ## Offene Verdachte ohne Fund-ID
 
