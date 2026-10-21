@@ -313,6 +313,13 @@ public class ChatAdvancedTest {
      * whose byte tokenizer has no special tags, the text check passes either way, and the C++ case
      * {@code CApiReasoningBudget.ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText} pins
      * it on a vocabulary with special tags.
+     *
+     * <p>The prompt cache is off for the request. With it, the second generation reuses the first one's
+     * prompt and re-evaluates only its last token: a batch of one token against the first generation's
+     * batch of the whole prompt, and the matrix multiplications of the two batch shapes round
+     * differently enough to flip a near-tie under greedy sampling. The Windows x86-64 job of PR #554
+     * answered {@code "2 + 2 = 4."} blocking and {@code "The question ..."} streamed from the same
+     * request; with the prompt evaluated the same way twice, the two texts are the same computation.
      */
     @Test
     public void testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag() throws Exception {
@@ -331,6 +338,7 @@ public class ChatAdvancedTest {
                     .withReasoningBudgetTokens(1)
                     .withNPredict(N_PREDICT)
                     .withTemperature(0.0f)
+                    .withCachePrompt(false)
                     .withReturnTokens(true);
             int[] endTag = thinking.encode("</think>");
 
