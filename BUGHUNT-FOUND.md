@@ -159,6 +159,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F234](#f234) — niedrig — *gefixt*
 - [F235](#f235) — niedrig — *gefixt*
 - [F236](#f236) — niedrig — *gefixt*
+- [F237](#f237) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1957,6 +1958,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix drei rot („Expected: is <1> but: was <0>“ für die Länge von `getSuppressed()`, „Expected: is [<java.lang.IllegalStateException: second>] but: was []“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.IllegalArgumentException>“ für die Freigabe); die beiden Identitätstests der Schleifen sind gegen den alten Code grün (dort gab es kein `addSuppressed`) und wurden gegen ein `suppress` ohne Identitätsprüfung rot gezeigt (dieselbe IAE-Meldung). Mit dem Fix grün (`BatchDispatchTest` 18/18); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4b410d1`
+
+### F237 – java-llama.cpp: `RpcServer` gibt den Einzelinstanz-Platz nach 30 s frei, obwohl der Server-Thread noch lebt, und meldet „could not listen“
+- **Zeit:** 2026-10-21 01:42 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/RpcServer.java` (`start`, `stopAndJoin`, `close`, neu `releaseSlotShare`)
+- **Schwere:** niedrig (nur wenn der Server-Thread den Stopp mehr als 30 s überlebt, etwa eine Geräteinitialisierung vor dem Bind, die länger als Start- und Stopp-Frist zusammen dauert)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J9-4). F30 hat den Stopp eines fehlgeschlagenen Starts wiederholt, bis der Thread endet, das Warten aber auf `STOP_TIMEOUT_MILLIS` begrenzt und den Fall danach nicht behandelt; `close()` hatte dieselbe Form schon vor dem Branch (`joinQuietly`, dann `ACTIVE.set(false)`).
+- **Beschreibung:** `stopAndJoin` lief, bis der Thread endete oder 30 s vergangen waren, und gab nichts zurück. `start` warf danach immer „RPC server could not listen on … (is the port already in use?)“, und sein `finally` gab den Platz frei, auch wenn der Thread noch lebte. Patch 0015 setzt das Stopp-Flag erst beim Bind zurück, ein solcher Thread kann also danach noch binden und lauschen, mit dem prozessweiten ggml-rpc-Zustand (`g_rpc_server_wake`, `g_rpc_server_client`), während ein zweiter `start` auf dieselben Globals zugelassen wurde: genau der verwaiste Server, den F30 ausschließen sollte, ohne Logzeile und mit einer Meldung, die das Gegenteil sagt. `close()` gab den Platz nach seinem 30-s-Join ebenso frei.
+- **Fix:** Der Platz hat jetzt zwei Halter, sobald der Thread läuft: den Thread selbst (er lässt in einem `finally` nach `serve()` los) und den Start bzw. danach das `RpcServer`-Objekt (sein `close()` lässt los); erst der letzte gibt ihn frei (`releaseSlotShare`). `stopAndJoin` gibt zurück, ob der Thread geendet hat; wenn nicht, wirft `start` `LlamaException("RPC server on <endpoint> did not come up and its thread did not end within <n> ms after the stop; RPC servers stay unavailable in this process until it ends")` und loggt denselben Text als Warnung. `close()` warnt in diesem Fall („RPC server thread on … is still alive … ms after the stop …“) und wirft nicht. Zwei Halter statt „der Thread gibt frei“, weil ein noch offenes `RpcServer`, dessen `close()` die Globals stoppt, sonst einen neueren Server beenden könnte, nachdem sein eigener Thread von selbst geendet hat. Die Stopp-Frist geht als zusätzlicher `long` durch die paketinterne `start`-Überladung und in `close()`, damit die Tests sie kurz wählen; die öffentlichen Fabriken nutzen weiter 30 s.
+- **Tests:** `RpcServerLifecycleTest#aServerThatIgnoresTheStopIsReportedAndKeepsTheSlot` (ein Backend, dessen `serve` den Stopp ignoriert, Start-Frist 100 ms, Stopp-Frist 200 ms: die Meldung nennt den überlebenden Thread, ein zweiter Start wirft `IllegalStateException`, nach dem Ende des Threads ist der Platz frei), `#aCloseThatTheServerThreadOutlivesKeepsTheSlot` (dasselbe für `close()`), `#aServerThreadThatEndsOnItsOwnKeepsTheSlotUntilClose` (der Platz bleibt bis `close()` belegt, auch wenn der Thread schon geendet hat; gegen den alten Code grün, er pinnt die Zwei-Halter-Regel).
+- **Rot-Grün-Nachweis:** Zuerst nur die Stopp-Frist als Parameter eingeführt (verhaltensneutral), dann rot: „Expected: a string containing "its thread did not end within 200 ms after the stop" but: was "RPC server could not listen on 127.0.0.1:50052 (is the port already in use?)"“ und „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix grün (`RpcServerLifecycleTest` 18/18, `RpcServerTest` 9/9 gegen die native Bibliothek, `RpcServerOptionsTest` 9/9); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

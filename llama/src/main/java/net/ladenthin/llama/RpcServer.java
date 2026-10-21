@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.value.RpcEndpoint;
@@ -71,6 +72,12 @@ public final class RpcServer implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RpcServer.class);
 
+    /**
+     * The single-instance slot. It is held until the server thread has ended <em>and</em> the start
+     * failed or {@link #close()} ran: ggml-rpc keeps the server state in process globals, so a second
+     * server must not start while the thread of the first can still bind, and a still-open
+     * {@code RpcServer} whose {@code close()} would stop the globals must not see a newer server.
+     */
     private static final AtomicBoolean ACTIVE = new AtomicBoolean();
 
     /**
@@ -102,13 +109,23 @@ public final class RpcServer implements AutoCloseable {
     private final Thread thread;
     private final Backend backend;
     private final List<String> devices;
+    private final long stopTimeoutMillis;
+    private final AtomicInteger slotHolders;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private RpcServer(RpcEndpoint endpoint, Thread thread, Backend backend, List<String> devices) {
+    private RpcServer(
+            RpcEndpoint endpoint,
+            Thread thread,
+            Backend backend,
+            List<String> devices,
+            long stopTimeoutMillis,
+            AtomicInteger slotHolders) {
         this.endpoint = endpoint;
         this.thread = thread;
         this.backend = backend;
         this.devices = devices;
+        this.stopTimeoutMillis = stopTimeoutMillis;
+        this.slotHolders = slotHolders;
     }
 
     /**
@@ -221,6 +238,21 @@ public final class RpcServer implements AutoCloseable {
             List<String> devices,
             Backend backend,
             long startTimeoutMillis) {
+        return start(endpoint, threads, cacheDir, devices, backend, startTimeoutMillis, STOP_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * The lifecycle on an explicit backend, start timeout and stop timeout; the stop timeout bounds
+     * the wait of a failed start and of {@link #close()} for the server thread.
+     */
+    static RpcServer start(
+            RpcEndpoint endpoint,
+            int threads,
+            @Nullable Path cacheDir,
+            List<String> devices,
+            Backend backend,
+            long startTimeoutMillis,
+            long stopTimeoutMillis) {
         if (threads < 1) {
             throw new IllegalArgumentException("threads must be at least 1, was " + threads);
         }
@@ -229,6 +261,10 @@ public final class RpcServer implements AutoCloseable {
             throw new IllegalStateException("cannot start an RPC server on " + endpoint
                     + ": an RpcServer is already running in this process; close it first");
         }
+        // two holders of the slot once the thread runs: the thread itself and this start (later the
+        // RpcServer, whose close() releases that share); the last one to let go frees the slot
+        AtomicInteger slotHolders = new AtomicInteger(2);
+        boolean threadStarted = false;
         boolean started = false;
         try {
             // resolved before the thread starts, so an unknown name fails here and not in the thread
@@ -241,24 +277,42 @@ public final class RpcServer implements AutoCloseable {
                             backend.serve(endpoint.getHost(), endpoint.getPort(), threads, cache, deviceList);
                         } catch (Throwable t) {
                             failure.set(t);
+                        } finally {
+                            releaseSlotShare(slotHolders);
                         }
                     },
                     "jllama-rpc-server-" + endpoint.getPort());
             thread.setDaemon(true);
             thread.start();
+            threadStarted = true;
             if (!awaitListening(thread, backend, startTimeoutMillis)) {
-                stopAndJoin(thread, backend, STOP_TIMEOUT_MILLIS);
+                if (!stopAndJoin(thread, backend, stopTimeoutMillis)) {
+                    String message = "RPC server on " + endpoint + " did not come up and its thread did not end"
+                            + " within " + stopTimeoutMillis + " ms after the stop; RPC servers stay unavailable"
+                            + " in this process until it ends";
+                    LOGGER.warn(message);
+                    throw new LlamaException(message);
+                }
                 Throwable cause = failure.get();
                 throw new LlamaException("RPC server could not listen on " + endpoint
                         + (cause == null ? " (is the port already in use?)" : ": " + cause.getMessage()));
             }
-            RpcServer server = new RpcServer(endpoint, thread, backend, served);
+            RpcServer server = new RpcServer(endpoint, thread, backend, served, stopTimeoutMillis, slotHolders);
             started = true;
             return server;
         } finally {
-            if (!started) {
+            if (!threadStarted) {
                 ACTIVE.set(false);
+            } else if (!started) {
+                releaseSlotShare(slotHolders);
             }
+        }
+    }
+
+    /** Lets go of one share of the single-instance slot; the last share frees it. */
+    private static void releaseSlotShare(AtomicInteger slotHolders) {
+        if (slotHolders.decrementAndGet() == 0) {
+            ACTIVE.set(false);
         }
     }
 
@@ -310,6 +364,8 @@ public final class RpcServer implements AutoCloseable {
 
     /**
      * Stops the server: the client being served is disconnected, the port is released. Idempotent.
+     * Waits up to 30 seconds for the server thread; should it still be alive then, a warning is
+     * logged and no other server can start in this process until that thread has ended.
      */
     @Override
     public void close() {
@@ -318,9 +374,16 @@ public final class RpcServer implements AutoCloseable {
         }
         try {
             backend.stop();
-            joinQuietly(thread, STOP_TIMEOUT_MILLIS);
+            joinQuietly(thread, stopTimeoutMillis);
+            if (thread.isAlive()) {
+                LOGGER.warn(
+                        "RPC server thread on {} is still alive {} ms after the stop; RPC servers stay"
+                                + " unavailable in this process until it ends",
+                        endpoint,
+                        stopTimeoutMillis);
+            }
         } finally {
-            ACTIVE.set(false);
+            releaseSlotShare(slotHolders);
         }
     }
 
@@ -520,10 +583,13 @@ public final class RpcServer implements AutoCloseable {
      * Stops a server thread that did not come up and waits for it to end. The stop is repeated while
      * the thread lives: the native server clears its stop flag when it binds the socket, so a stop that
      * arrives before the bind (a slow device initialization, an interrupted start) is lost, and the
-     * server would go on listening after the start has failed and released the single-instance slot.
-     * An interrupt of the calling thread does not cut the wait short; it is restored afterwards.
+     * server would go on listening after the start has failed. An interrupt of the calling thread does
+     * not cut the wait short; it is restored afterwards.
+     *
+     * @return whether the thread has ended; when it has not, it keeps the single-instance slot until it
+     *     does, and the caller reports that
      */
-    private static void stopAndJoin(Thread thread, Backend backend, long timeoutMillis) {
+    private static boolean stopAndJoin(Thread thread, Backend backend, long timeoutMillis) {
         boolean interrupted = Thread.interrupted();
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         try {
@@ -540,6 +606,7 @@ public final class RpcServer implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
+        return !thread.isAlive();
     }
 
     private static void joinQuietly(Thread thread, long millis) {
