@@ -1956,7 +1956,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BatchDispatchTest#submitAllThenReceive_failedReceive_stillReceivesTheOthersThenThrowsTheFirstFailure` (erweitert: `"second"` hängt unterdrückt am ersten), `#runEachOnItsOwnThread_laterFailuresAreSuppressedOnTheFirst` (der Fehler von Anfrage 1 kommt an, der von Anfrage 2 hängt daran), `#submitAllThenReceive_aReleaseThatThrowsTheSubmissionFailure_isNotSuppressedOnItself` (beide Freigaben laufen, dieselbe Instanz ohne unterdrückte kommt an), `#submitAllThenReceive_theSameFailureForTwoReceives_isNotSuppressedOnItself` und `#runEachOnItsOwnThread_theSameFailureForTwoRequests_isNotSuppressedOnItself` (dieselbe Instanz zweimal: sie kommt ohne unterdrückte an, alle Aufgaben werden empfangen).
 - **Rot-Grün-Nachweis:** Ohne den Fix drei rot („Expected: is <1> but: was <0>“ für die Länge von `getSuppressed()`, „Expected: is [<java.lang.IllegalStateException: second>] but: was []“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.IllegalArgumentException>“ für die Freigabe); die beiden Identitätstests der Schleifen sind gegen den alten Code grün (dort gab es kein `addSuppressed`) und wurden gegen ein `suppress` ohne Identitätsprüfung rot gezeigt (dieselbe IAE-Meldung). Mit dem Fix grün (`BatchDispatchTest` 18/18); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `4b410d1`
 
 ## Offene Verdachte ohne Fund-ID
 
