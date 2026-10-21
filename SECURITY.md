@@ -39,8 +39,8 @@ Default embargo: **90 days** from the date the report is acknowledged, or until 
 **In scope:**
 
 - The Java API surface (`net.ladenthin.llama.*`).
-- The project's JNI layer (`src/main/cpp/jllama.cpp`, `utils.hpp`, `json_helpers.hpp`, `jni_helpers.hpp`).
-- The project's native build glue (`CMakeLists.txt`, `.github/build_*.sh`, dockcross scripts) — including issues that result in unsafe linkage, missing hardening flags, or supply-chain risk in our build pipeline.
+- The project's native layer under `llama/src/main/cpp/`: the JNI shells (`jllama.cpp`, `native_server.cpp`, `rpc_bridge.cpp`), the C API (`jllama_api.h`/`.cpp`) and the engine behind both (`jllama_engine.cpp`, the helper headers), and the llama.cpp patches this project carries (`llama/patches/`).
+- The project's native build glue (`llama/CMakeLists.txt`, `llama/cmake/`, `.github/build*.sh`, dockcross scripts) — including issues that result in unsafe linkage, missing hardening flags, or supply-chain risk in our build pipeline.
 - Maven Central artefact integrity (signing, publishing workflow).
 
 **Out of scope:**
