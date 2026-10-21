@@ -157,6 +157,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F232](#f232) — niedrig — *gefixt*
 - [F233](#f233) — niedrig — *gefixt*
 - [F234](#f234) — niedrig — *gefixt*
+- [F235](#f235) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1931,6 +1932,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`ModelParametersTest` 98/98, `ModelParametersExtendedTest` 151/151, `WireNameRegistryTest` 8/8); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b8c3992`
+
+### F235 – java-llama.cpp: `submitAllThenReceive` gibt bei einem `Error` nichts frei und bricht das Empfangen ab
+- **Zeit:** 2026-10-21 01:27 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/BatchDispatch.java` (`submitAllThenReceive`), `llama/spotbugs-exclude.xml` (Kommentare zu `BatchDispatch`)
+- **Schwere:** niedrig (nur über einen `Error` wie `OutOfMemoryError` oder `StackOverflowError` erreichbar; native Fehler kommen als `LlamaException`)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J9-1). Eingeführt mit F167 (`BatchDispatch`); F200 hat die Schwestermethode `runEachOnItsOwnThread` für `Error` festgezogen, diese Methode nicht.
+- **Beschreibung:** Beide Schleifen von `submitAllThenReceive` fingen nur `RuntimeException`. Ein `Error` beim Einreichen (`LlamaModel.completeBatch`/`completeBatchWithStats` rendern im Submit-Lambda `req.withStream(false).toJson()`, ein großer Prompt kann dort `OutOfMemoryError` werfen) lief an der Freigabe vorbei: die schon eingereichten Aufgaben generierten weiter, ihre Reader blieben bis `close()` in `jctx->readers`. Ein `Error` beim Empfangen (etwa beim Parsen eines großen Ergebnisses) übersprang alle folgenden Empfänge, also genau das Reader-Leck, das der Kommentar „Keep receiving the rest so no sibling task is left unread“ ausschließt. Beides widersprach der Javadoc der Methode und der von `completeBatch`.
+- **Fix:** Die Einreichschleife fängt `Throwable`, gibt die eingereichten Aufgaben frei (auch die innere Freigabe fängt `Throwable`, damit ein `Error` einer Freigabe die übrigen nicht überspringt; er hängt als unterdrückt an) und wirft dieselbe Instanz per präzisem Rethrow weiter, ohne `throws`-Klausel und ohne `instanceof`-Kette. Die Empfangsschleife hält ein `Throwable failure`, empfängt alle Aufgaben und wirft den ersten Fehler über `asRuntimeException` (eine `RuntimeException` unverändert, ein `Error` unverändert). Javadoc und die beiden SpotBugs-Kommentare sagen jetzt „ein `Error` eingeschlossen“.
+- **Tests:** `BatchDispatchTest#submitAllThenReceive_failedSubmissionWithAnError_releasesTheTasksAlreadySubmitted` (die dritte Einreichung wirft einen `AssertionError`; dieselbe Instanz kommt an, 10 und 20 sind freigegeben), `#submitAllThenReceive_aReleaseThatThrowsAnError_doesNotStopTheOtherReleases` (die Freigabe von 10 wirft einen `AssertionError`; 20 wird trotzdem freigegeben, der `Error` hängt unterdrückt an der Einreichfehlermeldung), `#submitAllThenReceive_anErrorFromAReceive_stillReceivesTheOthersThenThrowsIt` (der Empfang von 1 wirft einen `AssertionError`; 1, 2, 3 werden empfangen, dieselbe Instanz kommt an).
+- **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot („Expected: iterable containing [<10>, <20>] but: no item was <10>“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.AssertionError>“, „Expected: iterable containing [<1>, <2>, <3>] but: no item was <2>“), mit ihm grün (`BatchDispatchTest` 14/14); `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

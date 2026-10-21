@@ -413,7 +413,8 @@ SPDX-License-Identifier: MIT
     <!--
         BatchDispatch (behind LlamaModel.completeBatch / completeBatchWithStats / chatBatch) receives or
         joins EVERY request before re-throwing the first captured failure, and a failed submission
-        re-throws after releasing the tasks already submitted — so a partial failure never abandons
+        re-throws after releasing the tasks already submitted (a failure, an Error included, in both
+        cases) — so a partial failure never abandons
         sibling requests running unobserved. Re-throwing the captured RuntimeException is the intended
         behaviour; fb-contrib flags any `throw <RuntimeException>` as THROWS_METHOD_THROWS_RUNTIMEEXCEPTION.
     -->
@@ -441,8 +442,9 @@ SPDX-License-Identifier: MIT
 
     <!--
         BatchDispatch.asRuntimeException unwraps an ExecutionException of a java.util.function.Function,
-        whose cause can only be a RuntimeException or an Error: the two instanceof checks are that
-        unwrapping, not type-based dispatch that polymorphism could replace.
+        whose cause can only be a RuntimeException or an Error, and re-throws the first failure of
+        submitAllThenReceive's receive loop, which is one of the two as well: the two instanceof checks
+        are that unwrapping, not type-based dispatch that polymorphism could replace.
     -->
     <Match>
         <Class name="net.ladenthin.llama.BatchDispatch"/>

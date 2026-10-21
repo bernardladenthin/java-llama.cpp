@@ -42,9 +42,10 @@ final class BatchDispatch {
      * Submits every request on the calling thread, then receives the results in input order.
      *
      * <p>The native scheduler runs as many of the submitted tasks at once as it has slots. When a
-     * submission fails, the tasks already submitted are released before the failure propagates, so no
-     * slot keeps working for a result nobody will read. A failed receive does not stop the others from
-     * being received; the first failure propagates after all of them.
+     * submission fails, an {@link Error} included, the tasks already submitted are released before the
+     * failure propagates, so no slot keeps working for a result nobody will read. A failed receive, an
+     * {@link Error} included, does not stop the others from being received; the first failure
+     * propagates after all of them.
      *
      * @param requests the requests in order
      * @param submit   submits one request and returns its task id
@@ -61,31 +62,34 @@ final class BatchDispatch {
             for (R request : requests) {
                 taskIds.add(submit.applyAsInt(request));
             }
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
+            // An Error included (an OutOfMemoryError while a prompt is rendered): it is not handled,
+            // only the tasks already submitted are released before it propagates unchanged. The try
+            // block throws nothing checked, so the precise rethrow needs no throws clause.
             for (int taskId : taskIds) {
                 try {
                     release.accept(taskId);
-                } catch (RuntimeException suppressed) {
-                    e.addSuppressed(suppressed);
+                } catch (Throwable suppressed) {
+                    t.addSuppressed(suppressed);
                 }
             }
-            throw e;
+            throw t;
         }
         final List<T> out = new ArrayList<T>(taskIds.size());
-        RuntimeException failure = null;
+        Throwable failure = null;
         for (int taskId : taskIds) {
             try {
                 out.add(receive.apply(taskId));
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
                 // Keep receiving the rest so no sibling task is left unread (a native reader leak)
-                // before propagating the first failure.
+                // before propagating the first failure, an Error included.
                 if (failure == null) {
                     failure = e;
                 }
             }
         }
         if (failure != null) {
-            throw failure;
+            throw asRuntimeException(failure);
         }
         return out;
     }
@@ -158,6 +162,11 @@ final class BatchDispatch {
         }
     }
 
+    /**
+     * Returns an unchecked failure as is and throws an {@link Error} as is, so the caller can write
+     * {@code throw asRuntimeException(failure)}; anything else (a checked cause, which a
+     * {@link Function} or an {@link IntFunction} cannot throw) is wrapped.
+     */
     private static RuntimeException asRuntimeException(Throwable cause) {
         if (cause instanceof RuntimeException) {
             return (RuntimeException) cause;

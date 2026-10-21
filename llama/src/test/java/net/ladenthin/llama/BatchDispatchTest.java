@@ -90,6 +90,84 @@ public class BatchDispatchTest {
     }
 
     @Test
+    public void submitAllThenReceive_failedSubmissionWithAnError_releasesTheTasksAlreadySubmitted() {
+        // Only a RuntimeException used to release them: an Error (an OutOfMemoryError while a prompt
+        // is rendered to JSON) left the tasks submitted before it running with nobody reading them.
+        List<Integer> released = new ArrayList<>();
+        AssertionError failure = new AssertionError("native failure");
+
+        AssertionError thrown = assertThrows(
+                AssertionError.class,
+                () -> BatchDispatch.submitAllThenReceive(
+                        Arrays.asList(1, 2, 3),
+                        request -> {
+                            if (request == 3) {
+                                throw failure;
+                            }
+                            return request * 10;
+                        },
+                        taskId -> "",
+                        released::add));
+
+        assertThat(thrown, is(failure));
+        assertThat(released, contains(10, 20));
+    }
+
+    @Test
+    public void submitAllThenReceive_aReleaseThatThrowsAnError_doesNotStopTheOtherReleases() {
+        List<Integer> released = new ArrayList<>();
+        IllegalStateException failure = new IllegalStateException("third submission refused");
+        AssertionError releaseFailure = new AssertionError("release failed");
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> BatchDispatch.submitAllThenReceive(
+                        Arrays.asList(1, 2, 3),
+                        request -> {
+                            if (request == 3) {
+                                throw failure;
+                            }
+                            return request * 10;
+                        },
+                        taskId -> "",
+                        taskId -> {
+                            released.add(taskId);
+                            if (taskId == 10) {
+                                throw releaseFailure;
+                            }
+                        }));
+
+        assertThat(thrown, is(failure));
+        assertThat(released, contains(10, 20));
+        assertThat(thrown.getSuppressed(), is(new Throwable[] {releaseFailure}));
+    }
+
+    @Test
+    public void submitAllThenReceive_anErrorFromAReceive_stillReceivesTheOthersThenThrowsIt() {
+        // An Error from one receive (an OutOfMemoryError while a large result is parsed) used to skip
+        // every later receive, so their native readers were never drained.
+        List<Integer> received = new ArrayList<>();
+        AssertionError failure = new AssertionError("parse failed");
+
+        AssertionError thrown = assertThrows(
+                AssertionError.class,
+                () -> BatchDispatch.submitAllThenReceive(
+                        Arrays.asList(1, 2, 3),
+                        request -> request,
+                        taskId -> {
+                            received.add(taskId);
+                            if (taskId == 1) {
+                                throw failure;
+                            }
+                            return "";
+                        },
+                        taskId -> {}));
+
+        assertThat(thrown, is(failure));
+        assertThat(received, contains(1, 2, 3));
+    }
+
+    @Test
     public void submitAllThenReceive_failedReceive_stillReceivesTheOthersThenThrowsTheFirstFailure() {
         List<Integer> received = new ArrayList<>();
         IllegalStateException first = new IllegalStateException("first");
