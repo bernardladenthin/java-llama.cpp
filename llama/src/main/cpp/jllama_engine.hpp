@@ -61,6 +61,15 @@ namespace jllama::engine {
  */
 void free(jllama_context *jctx);
 
+/**
+ * Refuses an operation on a model loaded with --vocab-only, which has the tokenizer but no server
+ * context and no inference loop: throws std::runtime_error naming `operation` ("<operation> is not
+ * available in vocab-only mode ..."). Such a model answers the model meta, tokenize and detokenize
+ * only. The C API runs this before every other operation on a model (jllama_api.cpp), so the JNI,
+ * FFM and C callers get the same refusal.
+ */
+void require_server(const jllama_context *jctx, const char *operation);
+
 /** Leaves the idle-sleep state (if any) and re-reads what a sleep/resume cycle replaces. */
 void wake_server(jllama_context *jctx);
 

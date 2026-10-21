@@ -109,7 +109,10 @@ JLLAMA_API void jllama_string_free(char *s);
 /**
  * Loads a model from llama-server's command line: argv[0] is a program name (any), the rest the
  * flags llama-server accepts (`-m <gguf>`, `-c`, `-ngl`, ...; `--vocab-only` loads the tokenizer
- * only). `progress` may be null. On JLLAMA_STATUS_OK, *out holds the handle.
+ * only). `progress` may be null. On JLLAMA_STATUS_OK, *out holds the handle. A vocab-only model
+ * answers jllama_model_meta, jllama_tokenize, jllama_tokenize_json, jllama_detokenize and
+ * jllama_detokenize_json; every other call on it is JLLAMA_STATUS_ERROR with "<function> is not
+ * available in vocab-only mode ..." as jllama_last_error().
  */
 JLLAMA_API jllama_status jllama_model_load(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                            void *progress_user_data, jllama_model **out);

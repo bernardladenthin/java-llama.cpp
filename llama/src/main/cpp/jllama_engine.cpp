@@ -301,6 +301,14 @@ void free(jllama_context *jctx) {
     delete jctx;
 }
 
+void require_server(const jllama_context *jctx, const char *operation) {
+    if (jctx->vocab_only) {
+        throw std::runtime_error(std::string(operation != nullptr ? operation : "This operation") +
+                                 " is not available in vocab-only mode: the model was loaded with --vocab-only, "
+                                 "which loads the tokenizer only (model meta, tokenize, detokenize)");
+    }
+}
+
 // Wake the server from the idle-sleep state and re-sync the state this layer caches from the model.
 //
 // Upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees the model and context and
@@ -1173,9 +1181,7 @@ std::string systemone(jllama_context *jctx, const std::string &body) {
     // parsing, the per-model prompt layout, the shared-prefix grouping and the answer formatting live
     // in server_decision_context, private to server_context_impl and reachable only through
     // server_routes. The handler waits for the server to leave sleep itself (create_response()).
-    if (!jctx->routes) {
-        throw std::runtime_error("systemone is not available in vocab-only mode");
-    }
+    require_server(jctx, "systemone");
     const std::function<bool()> should_stop = [jctx] { return jctx->closing.load(); };
     const server_http_req req{{}, {}, "/v1/systemone", "", body, {}, should_stop};
     server_http_res_ptr res;

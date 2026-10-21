@@ -519,21 +519,11 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F265 and the dated
-addenda in the ledger (F250 … F265 closed every open point of this list on 2026-10-21, before
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F266 and the dated
+addenda in the ledger (F250 … F266 closed every open point of this list on 2026-10-21, before
 6.0.0, by the owner's decision). What is still open, or what the reviewers raised outside the
 findings' scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when
 it is done.
-
-**Java API**
-- **A model loaded with `ModelParameters.setVocabOnly()` ends the JVM on a server operation**
-  (`BUGHUNT-FOUND.md`, "Offene Verdachte ohne Fund-ID", found 2026-10-21 while making the
-  model-bound tests skip): `applyTemplate(...)` and `complete(...)` crash with `SIGSEGV` in
-  `llama_vocab::token_bos()`, `getMetrics()` hangs. Only the model meta, `tokenize`/`detokenize`
-  and `/v1/systemone` check for it -- the last one refuses a vocab-only model with a
-  `LlamaException`. The fix is the same refusal, naming `--vocab-only`, in every engine function that
-  needs the server context, with a test per entry point; it needs a finding id and belongs before the
-  release.
 
 **Anthropic Messages**
 - **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in

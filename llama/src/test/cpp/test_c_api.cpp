@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <random>
 #include <regex>
 #include <set>
@@ -502,6 +503,209 @@ TEST_F(CApi, MetricsCarryTheCountersAndTheSlots) {
     ASSERT_TRUE(j.at("slots").is_array());
     EXPECT_EQ(j.at("slots").size(), 1u);
 }
+
+namespace {
+
+// The same random model loaded with --vocab-only: the tokenizer and nothing else, no server context,
+// no inference loop. Every operation that needs the server is refused with one message (F266); before,
+// they reached the never-loaded server_context and crashed the process (SIGSEGV in
+// llama_vocab::token_bos()) or waited forever for a result no loop would produce (metrics).
+class CApiVocabOnly : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-vocab-only");
+        ASSERT_FALSE(path_.empty());
+        const std::vector<std::string> args = {"jllama", "-m", path_, "--vocab-only"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+    static jllama_model *model_;
+};
+std::string CApiVocabOnly::path_;
+jllama_model *CApiVocabOnly::model_ = nullptr;
+
+// One operation that needs the server, called on a vocab-only model; returns its status.
+struct vocab_only_call {
+    const char *name;
+    jllama_status (*call)(jllama_model *model);
+};
+
+std::ostream &operator<<(std::ostream &os, const vocab_only_call &c) { return os << c.name; }
+
+jllama_status call_returning_string(jllama_status status, char *s) {
+    jllama_string_free(s);
+    return status;
+}
+
+const vocab_only_call VOCAB_ONLY_REFUSED[] = {
+    {"apply_template",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_apply_template(m, CHAT_REQUEST, &s), s);
+     }},
+    {"chat_completions",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_chat_completions(m, CHAT_REQUEST, &s), s);
+     }},
+    {"chat_completions_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_chat_completions_stream_request(m, CHAT_REQUEST, &task);
+     }},
+    {"chat_completions_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_chat_completions_request(m, CHAT_REQUEST, &task);
+     }},
+    {"chat_completions_stream_receive",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         bool stop = false;
+         return call_returning_string(jllama_chat_completions_stream_receive(m, 0, &s, &stop), s);
+     }},
+    {"completions",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_completions(m, R"({"prompt":"Hi","n_predict":2})", &s), s);
+     }},
+    {"completions_oai",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_completions_oai(m, R"({"prompt":"Hi","max_tokens":2})", &s), s);
+     }},
+    {"completions_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_completions_stream_request(m, R"({"prompt":"Hi","n_predict":2})", &task);
+     }},
+    {"completions_oai_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_completions_oai_stream_request(m, R"({"prompt":"Hi","max_tokens":2})", &task);
+     }},
+    {"completions_stream_receive",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         bool stop = false;
+         return call_returning_string(jllama_completions_stream_receive(m, 0, &s, &stop), s);
+     }},
+    {"task_release", [](jllama_model *m) { return jllama_task_release(m, 0); }},
+    {"infill",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_infill(m, R"({"input_prefix":"a","input_suffix":"b"})", &s), s);
+     }},
+    {"embed",
+     [](jllama_model *m) {
+         float *values = nullptr;
+         size_t count = 0;
+         const jllama_status status = jllama_embed(m, "Hi", &values, &count);
+         jllama_floats_free(values);
+         return status;
+     }},
+    {"embeddings",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_embeddings(m, R"({"content":"Hi"})", false, &s), s);
+     }},
+    {"rerank",
+     [](jllama_model *m) {
+         const char *docs[] = {"a", "b"};
+         char *s = nullptr;
+         return call_returning_string(jllama_rerank(m, "q", 2, docs, &s), s);
+     }},
+    {"metrics",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_metrics(m, &s), s);
+     }},
+    {"slot_action",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_slot_action(m, JLLAMA_SLOT_ERASE, 0, nullptr, &s), s);
+     }},
+    {"lora_adapters",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_lora_adapters(m, &s), s);
+     }},
+    {"set_lora_adapters",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_set_lora_adapters(m, "[]", &s), s);
+     }},
+    {"configure", [](jllama_model *m) { return jllama_configure(m, R"({"n_threads":2})"); }},
+    {"systemone",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_systemone(m, R"({"state":"x","questions":[]})", &s), s);
+     }},
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+    {"server_start_attached",
+     [](jllama_model *m) {
+         const char *argv[] = {"jllama", "--port", "0"};
+         jllama_server *server = nullptr;
+         const jllama_status status = jllama_server_start_attached(m, 3, argv, &server);
+         if (server != nullptr) {
+             jllama_server_stop(server);
+         }
+         return status;
+     }},
+#endif
+};
+
+class CApiVocabOnlyRefuses : public CApiVocabOnly, public ::testing::WithParamInterface<vocab_only_call> {};
+
+} // namespace
+
+TEST_F(CApiVocabOnly, TheTokenizerOperationsAnswer) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("n_vocab").get<int>(), N_VOCAB);
+    int *tokens = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tokenize(model_, "Hello", false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(count, 5u);
+    Owned text;
+    size_t length = 0;
+    ASSERT_EQ(jllama_detokenize(model_, tokens, count, &text.s, &length), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(std::string(text.s, length), "Hello");
+    jllama_tokens_free(tokens);
+    Owned with_pieces;
+    ASSERT_EQ(jllama_tokenize_json(model_, "Hi", false, true, &with_pieces.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(with_pieces.str()).at("tokens")[1].at("piece").get<std::string>(), "i");
+    const int ids[] = {'H', 'i'};
+    Owned detok;
+    ASSERT_EQ(jllama_detokenize_json(model_, ids, 2, &detok.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(detok.str()).at("content").get<std::string>(), "Hi");
+}
+
+TEST_P(CApiVocabOnlyRefuses, AnOperationThatNeedsTheServerIsRefusedWithTheVocabOnlyMessage) {
+    const vocab_only_call &c = GetParam();
+    EXPECT_EQ(c.call(model_), JLLAMA_STATUS_ERROR) << c.name;
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find(std::string("jllama_") + c.name + " is not available in vocab-only mode"), std::string::npos)
+        << error;
+    EXPECT_NE(error.find("--vocab-only"), std::string::npos) << error;
+}
+
+INSTANTIATE_TEST_SUITE_P(EveryServerOperation, CApiVocabOnlyRefuses, ::testing::ValuesIn(VOCAB_ONLY_REFUSED),
+                         [](const ::testing::TestParamInfo<vocab_only_call> &info) {
+                             return std::string(info.param.name);
+                         });
 
 TEST(CApiSlotFiles, ASlotFileIsNamedInsideTheSlotSaveDirectory) {
     // Upstream's slots route takes a file name, validates it (fs_validate_filename: no directory, no

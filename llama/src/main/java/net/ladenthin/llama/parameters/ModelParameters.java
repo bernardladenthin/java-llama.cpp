@@ -1793,8 +1793,15 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Only load the vocabulary for tokenization, no weights (default: false).
-     * A model loaded with this option can only be used for {@link net.ladenthin.llama.LlamaModel#encode(String)}
-     * and {@link net.ladenthin.llama.LlamaModel#decode(int[])}. Inference, embedding, and reranking will not work.
+     * <p>
+     * A model loaded with this option answers {@link net.ladenthin.llama.LlamaModel#encode(String)},
+     * {@link net.ladenthin.llama.LlamaModel#decode(int[])}, the tokenize/detokenize handlers and
+     * {@link net.ladenthin.llama.LlamaModel#getModelMeta()} (vocabulary type, size and special tokens).
+     * Everything that needs the inference server -- completions, chat, the chat template, embeddings,
+     * reranking, infilling, metrics, slots, LoRA adapters, {@code configureParallelInference} and the
+     * attached {@code NativeServer} -- throws a {@link net.ladenthin.llama.exception.LlamaException}
+     * saying it "is not available in vocab-only mode".
+     * </p>
      *
      * @return this builder
      */

@@ -30,6 +30,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef JLLAMA_VERSION_STRING
@@ -45,14 +46,22 @@ jllama_status fail(jllama_status status, const char *what) {
     return status;
 }
 
-// Runs `fn` inside the user-reference guard and maps what it throws to a status.
-template <typename Fn> jllama_status guarded(jllama_model *model, Fn &&fn) {
+// Runs `fn` inside the user-reference guard and maps what it throws to a status. `operation` is the
+// C entry point (__func__); a model loaded with --vocab-only has no server context, so an operation
+// that needs one is refused here, before `fn` reaches the never-loaded server_context (a SIGSEGV in
+// llama_vocab::token_bos(), or a wait for a result no inference loop produces, before F266). The
+// refusal is the default: only the operations guarded_tokenizer() runs answer a vocab-only model.
+template <typename Fn>
+jllama_status run_guarded(jllama_model *model, const char *operation, bool needs_server, Fn &&fn) {
     auto *jctx = reinterpret_cast<jllama_context *>(model);
     if (jctx == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model is null");
     }
     jllama_context_guard guard{acquire_jllama_context(jctx)};
     try {
+        if (needs_server) {
+            jllama::engine::require_server(jctx, operation);
+        }
         fn(jctx);
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
@@ -65,6 +74,16 @@ template <typename Fn> jllama_status guarded(jllama_model *model, Fn &&fn) {
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
     }
+}
+
+// An operation that needs the server context (and therefore a model loaded without --vocab-only).
+template <typename Fn> jllama_status guarded(jllama_model *model, const char *operation, Fn &&fn) {
+    return run_guarded(model, operation, true, std::forward<Fn>(fn));
+}
+
+// An operation the tokenizer alone answers: the model meta, tokenize and detokenize.
+template <typename Fn> jllama_status guarded_tokenizer(jllama_model *model, Fn &&fn) {
+    return run_guarded(model, nullptr, false, std::forward<Fn>(fn));
 }
 
 // A C argv as strings (a null element is "").
@@ -204,7 +223,7 @@ jllama_status jllama_chat_completions(jllama_model *model, const char *request_j
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::chat_completions(jctx, request_json));
     });
 }
@@ -214,7 +233,7 @@ jllama_status jllama_chat_completions_stream_request(jllama_model *model, const 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::chat_completions_stream_request(jctx, request_json, true);
     });
 }
@@ -226,7 +245,7 @@ jllama_status jllama_chat_completions_stream_receive(jllama_model *model, int ta
     }
     *envelope_json = nullptr;
     *stop = false;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         bool s = false;
         std::string envelope = jllama::engine::chat_completions_stream_receive(jctx, task_id, s);
         *envelope_json = copy_out(envelope);
@@ -235,7 +254,7 @@ jllama_status jllama_chat_completions_stream_receive(jllama_model *model, int ta
 }
 
 jllama_status jllama_task_release(jllama_model *model, int task_id) {
-    return guarded(model, [&](jllama_context *jctx) { jllama::engine::task_release(jctx, task_id); });
+    return guarded(model, __func__, [&](jllama_context *jctx) { jllama::engine::task_release(jctx, task_id); });
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -251,7 +270,8 @@ jllama_status jllama_model_meta(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::model_meta(jctx)); });
+    return guarded_tokenizer(
+        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::model_meta(jctx)); });
 }
 
 jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json) {
@@ -259,7 +279,7 @@ jllama_status jllama_completions(jllama_model *model, const char *request_json, 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::completions(jctx, request_json));
     });
 }
@@ -269,7 +289,7 @@ jllama_status jllama_completions_oai(jllama_model *model, const char *request_js
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::completions_oai(jctx, request_json));
     });
 }
@@ -279,8 +299,9 @@ jllama_status jllama_infill(jllama_model *model, const char *request_json, char 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::infill(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::infill(jctx, request_json));
+    });
 }
 
 jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id) {
@@ -288,7 +309,7 @@ jllama_status jllama_completions_stream_request(jllama_model *model, const char 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::completions_stream_request(jctx, request_json);
     });
 }
@@ -298,7 +319,7 @@ jllama_status jllama_completions_oai_stream_request(jllama_model *model, const c
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::completions_oai_stream_request(jctx, request_json);
     });
 }
@@ -308,7 +329,7 @@ jllama_status jllama_chat_completions_request(jllama_model *model, const char *r
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::chat_completions_stream_request(jctx, request_json, false);
     });
 }
@@ -319,7 +340,7 @@ jllama_status jllama_completions_stream_receive(jllama_model *model, int task_id
     }
     *response_json = nullptr;
     *stop = false;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         bool s = false;
         std::string response = jllama::engine::completions_stream_receive(jctx, task_id, s);
         *response_json = copy_out(response);
@@ -332,8 +353,9 @@ jllama_status jllama_apply_template(jllama_model *model, const char *request_jso
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and prompt must not be null");
     }
     *prompt = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *prompt = copy_out(jllama::engine::apply_template(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *prompt = copy_out(jllama::engine::apply_template(jctx, request_json));
+    });
 }
 
 jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count) {
@@ -342,7 +364,7 @@ jllama_status jllama_embed(jllama_model *model, const char *prompt, float **valu
     }
     *values = nullptr;
     *count = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         const std::vector<float> embedding = jllama::engine::embed(jctx, prompt);
         auto *out = static_cast<float *>(std::malloc(std::max<size_t>(embedding.size(), 1) * sizeof(float)));
         if (out == nullptr) {
@@ -359,7 +381,7 @@ jllama_status jllama_embeddings(jllama_model *model, const char *request_json, b
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::embeddings(jctx, request_json, oai_compat));
     });
 }
@@ -370,7 +392,7 @@ jllama_status jllama_rerank(jllama_model *model, const char *query, int n_docume
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "query, documents and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         std::vector<std::string> docs;
         docs.reserve(static_cast<size_t>(n_documents));
         for (int i = 0; i < n_documents; ++i) {
@@ -386,7 +408,7 @@ jllama_status jllama_tokenize(jllama_model *model, const char *text, bool add_sp
     }
     *tokens = nullptr;
     *count = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids = jllama::engine::tokenize(jctx, text, add_special);
         auto *out = static_cast<int *>(std::malloc(std::max<size_t>(ids.size(), 1) * sizeof(int)));
         if (out == nullptr) {
@@ -404,7 +426,7 @@ jllama_status jllama_tokenize_json(jllama_model *model, const char *text, bool a
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::tokenize_json(jctx, text, add_special, with_pieces));
     });
 }
@@ -415,7 +437,7 @@ jllama_status jllama_detokenize(jllama_model *model, const int *tokens, size_t c
     }
     *text = nullptr;
     *length = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids(tokens, tokens + count);
         const std::string bytes = jllama::engine::detokenize(jctx, ids);
         *text = copy_out(bytes);
@@ -428,7 +450,7 @@ jllama_status jllama_detokenize_json(jllama_model *model, const int *tokens, siz
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "tokens and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids(tokens, tokens + count);
         *response_json = copy_out(jllama::engine::detokenize_json(jctx, ids));
     });
@@ -439,7 +461,8 @@ jllama_status jllama_metrics(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::metrics(jctx)); });
+    return guarded(model, __func__,
+                   [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::metrics(jctx)); });
 }
 
 jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id, const char *filename,
@@ -462,7 +485,7 @@ jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int
     default:
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "Invalid slot action");
     }
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::slot_action(jctx, op, slot_id, filename != nullptr ? filename : ""));
     });
 }
@@ -472,7 +495,7 @@ jllama_status jllama_lora_adapters(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model,
+    return guarded(model, __func__,
                    [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::lora_adapters(jctx)); });
 }
 
@@ -481,7 +504,7 @@ jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "adapters_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::set_lora_adapters(jctx, adapters_json));
     });
 }
@@ -490,7 +513,7 @@ jllama_status jllama_configure(jllama_model *model, const char *config_json) {
     if (config_json == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
     }
-    return guarded(model, [&](jllama_context *jctx) { jllama::engine::configure(jctx, config_json); });
+    return guarded(model, __func__, [&](jllama_context *jctx) { jllama::engine::configure(jctx, config_json); });
 }
 
 jllama_status jllama_systemone(jllama_model *model, const char *request_json, char **response_json) {
@@ -498,8 +521,9 @@ jllama_status jllama_systemone(jllama_model *model, const char *request_json, ch
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::systemone(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::systemone(jctx, request_json));
+    });
 }
 
 jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar) {
@@ -568,7 +592,7 @@ jllama_status jllama_server_start_attached(jllama_model *model, int argc, const 
     if (argc < 1 || argv == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
     }
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *out = reinterpret_cast<jllama_server *>(jllama::server_engine::start_attached(jctx, to_strings(argc, argv)));
     });
 }

@@ -1130,6 +1130,13 @@ the first two items break every existing consumer at upgrade.
     also through `llama-langchain4j`. It reads the envelope strictly now and throws
     `ChatStreamChunkParser.MalformedEnvelopeException` naming the reason and an excerpt; `LlamaModel`'s
     streams turn it into a `LlamaException`, which `OpenAiCompatServer` answers with `500`.
+  - **A vocab-only model refuses what it cannot answer instead of ending the JVM.** A model loaded with
+    `ModelParameters.setVocabOnly()` has the tokenizer and no inference server, but only the model
+    meta, `encode`/`decode` and `/v1/systemone` knew it: `applyTemplate`, `complete`, `chatComplete`
+    and the other completion paths crashed the JVM (`SIGSEGV` in `llama_vocab::token_bos()`),
+    `getMetrics`, the slot actions and the LoRA calls waited forever. Every other operation now throws
+    a `LlamaException` "`<operation>` is not available in vocab-only mode", decided once in the C API,
+    so `llama-ffm` and C callers get the same `JLLAMA_STATUS_ERROR`.
 - **`LlamaLoader` deletes only its own files from the temp directory.** The clean-up of the pre-6.0.0
   layout deleted, recursively, every entry of `java.io.tmpdir` (or `net.ladenthin.llama.tmpdir`) whose
   name starts with `jllama`, `llama` or `ggml` -- a `/tmp/llama.cpp` checkout, a `/tmp/ggml-models/`
