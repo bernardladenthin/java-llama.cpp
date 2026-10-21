@@ -565,4 +565,42 @@ public class OllamaApiSupportTest {
             assertThat(openAi.toString(), kwargs.path("enable_thinking").asBoolean(), is(true));
         }
     }
+
+    /**
+     * {@code /api/generate} without {@code raw} goes through the chat template as a synthetic
+     * {@code /api/chat} request; the request's {@code model}, {@code options}, {@code format} and
+     * {@code think} must reach that request, or a generate call silently loses its sampling, its
+     * output format and its thinking switch.
+     */
+    @Test
+    public void generateWithoutRawCarriesOptionsFormatAndThinkIntoTheChatRequest() throws IOException {
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequestFromGenerate(read("{\"model\":\"m\",\"prompt\":\"q\","
+                + "\"system\":\"s\",\"format\":\"json\",\"think\":false,"
+                + "\"options\":{\"temperature\":0.2,\"num_predict\":16,\"stop\":[\"END\"]}}"));
+        assertThat(openAi.path("model").asText(), is("m"));
+        assertThat(openAi.path("temperature").asDouble(), is(0.2));
+        assertThat(openAi.path("max_tokens").asInt(), is(16));
+        assertThat(openAi.path("stop").get(0).asText(), is("END"));
+        assertThat(openAi.path("response_format").path("type").asText(), is("json_object"));
+        assertThat(openAi.path("reasoning_effort").asText(), is("none"));
+        JsonNode messages = openAi.path("messages");
+        assertThat(messages.size(), is(2));
+        assertThat(messages.get(0).path("role").asText(), is("system"));
+        assertThat(messages.get(0).path("content").asText(), is("s"));
+        assertThat(messages.get(1).path("role").asText(), is("user"));
+        assertThat(messages.get(1).path("content").asText(), is("q"));
+    }
+
+    @Test
+    public void generateWithASchemaFormatAndNoSystemIsOneUserMessageWithAJsonSchema() throws IOException {
+        String schema = "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"}}}";
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequestFromGenerate(
+                read("{\"model\":\"m\",\"prompt\":\"q\",\"format\":" + schema + "}"));
+        assertThat(openAi.path("response_format").path("type").asText(), is("json_schema"));
+        assertThat(openAi.path("response_format").path("json_schema").path("schema"), is(read(schema)));
+        JsonNode messages = openAi.path("messages");
+        assertThat(messages.size(), is(1));
+        assertThat(messages.get(0).path("role").asText(), is("user"));
+        assertThat(messages.get(0).path("content").asText(), is("q"));
+    }
 }
