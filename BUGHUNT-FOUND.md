@@ -164,6 +164,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F239](#f239) — niedrig — *gefixt*
 - [F240](#f240) — niedrig — *gefixt*
 - [F241](#f241) — niedrig bis mittel — *gefixt*
+- [F242](#f242) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2027,6 +2028,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (Branch-Review 2026-10-20):** Bei der Prüfung nachgezogen: das Javadoc von `RpcServer.close()` sagte weiter, nach 30 s werde nur gewarnt; seit diesem Fix wirft der native Stopp in dem Fall eine `LlamaException` aus `close()`. Das Javadoc beschreibt jetzt beide Fälle und hat ein `@throws`.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `1047673`
+
+### F242 – java-llama.cpp: `llama-langchain4j` meldet `onCompleteToolCall` eines parallelen Werkzeugaufrufs erst am Stream-Ende, nach den Teilstücken des nächsten
+- **Zeit:** 2026-10-21 02:47 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/StreamingChunkAssembler.java` (`acceptToolCallFragment`, neu `completeCallsBelow`, `complete`)
+- **Schwere:** niedrig (Reihenfolge der Ereignisse; die Methoden sind in langchain4j `@Experimental`, kein falsches Endergebnis)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J14-5). Vorbestehend seit dem gestreamten Werkzeugaufruf in `llama-langchain4j` (5.0.6); F128 hat am selben Zustandsautomaten nur die leeren Teilstücke abgefangen.
+- **Beschreibung:** `onCompleteToolCall` wurde nur in `complete()` gesendet, in einer Schleife über alle Aufrufe. Bei zwei parallelen Aufrufen sah ein Handler deshalb `partial(0)…, partial(1)…, complete(0), complete(1)`. langchain4j 1.22.0 beschreibt `onCompleteToolCall` als „Invoked when the model has finished streaming a single tool call“, und seine eigene OpenAI-Anbindung (`ChatCompletionEventDispatcher`) schließt einen Aufruf ab, sobald ein Fragment mit einem anderen Index eintrifft, also vor dem ersten Teilstück des nächsten. Ein Handler, der ein Werkzeug ausführt, sobald es vollständig ist, wartete so bis zum Ende des Streams. Upstream macht den frühen Abschluss sicher: `common_chat_msg_diff::compute_diffs` (b11639, `common/chat.cpp`) erweitert nur den letzten Aufruf der vorigen Nachricht und hängt neue Indizes aufsteigend an; ein Aufruf N bekommt nach dem Start von N+1 nichts mehr. Der vorhandene Test `assemblesParallelToolCallsByIndex` prüfte nur die Anzahl, und `RecordingHandler` hielt je Ereignistyp eine eigene Liste, sah die Reihenfolge also nicht.
+- **Fix:** Fassung des Praxis-Skeptikers. Je Aufruf ein Merker `completed`, im Assembler `highestIndex`. Trifft ein Fragment mit einem **höheren** Index ein (ein niedrigerer stößt nichts an), werden vorher alle offenen niedrigeren Aufrufe, die schon einen Namen haben, in Index-Reihenfolge abgeschlossen (`onCompleteToolCall`); ein Aufruf ohne Namen bleibt offen und wird von `complete()` gemeldet, damit nie ein `CompleteToolCall` mit leerem Namen ausgeht (der Fall von `filter_tool_calls`/F128, in dem der Name erst später kommt). Ein Fragment, das einen schon abgeschlossenen Aufruf ändert (nicht leere Argumente, ein anderer Name oder eine andere Id), ist eine Verletzung des nativen Vertrags und wirft `IllegalStateException` mit dem Index, die wie ein unparsbarer Chunk über `onError` ankommt; still zusammengeführt würde die endgültige `ToolExecutionRequest` von dem `CompleteToolCall` abweichen, den der Handler schon hat. `complete()` meldet nur die noch offenen Aufrufe, baut die `toolExecutionRequests` aber weiter aus allen in Index-Reihenfolge. Klassen-Javadoc nachgezogen.
+- **Tests:** `StreamingChunkAssemblerTest`: `RecordingHandler` führt zusätzlich eine geordnete Liste `toolCallEvents`; `assemblesParallelToolCallsByIndex` prüft jetzt die Reihenfolge (beide Aufrufe in einem Chunk); neu `completesEachToolCallAsSoonAsTheNextOneStarts` (drei Chunks, Ereignisse genau `partial:0, complete:0, partial:1, complete:1`, die `CompleteToolCall`-Nutzlasten gleich den endgültigen Requests), `defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts` (Aufruf 0 ohne Namen beim Start von 1: `partial:1, complete:0, complete:1`, Name aus dem späten Fragment; Regressionsschutz, vorher wie nachher grün), `argumentsForAToolCallThatIsAlreadyCompleteFailTheStream`. Modul `llama-langchain4j` 58/0/0/7 grün.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: `assemblesParallelToolCallsByIndex` und `completesEachToolCallAsSoonAsTheNextOneStarts` mit „Expected: iterable containing ["partial:0", "complete:0", "partial:1", "complete:1"] but: item 1: was "partial:1"“, `argumentsForAToolCallThatIsAlreadyCompleteFailTheStream` mit „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix alle 12 Tests der Klasse grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

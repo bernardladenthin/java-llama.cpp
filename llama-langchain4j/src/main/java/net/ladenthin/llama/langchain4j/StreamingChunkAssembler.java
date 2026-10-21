@@ -33,7 +33,9 @@ import java.util.TreeMap;
  *   <li>{@code delta.tool_calls[*]} fragments → accumulated per OpenAI {@code index} (id and
  *       name arrive on the first fragment, arguments split across fragments), each forwarded as
  *       {@link StreamingChatResponseHandler#onPartialToolCall(PartialToolCall)} and completed as
- *       {@link StreamingChatResponseHandler#onCompleteToolCall(CompleteToolCall)}
+ *       {@link StreamingChatResponseHandler#onCompleteToolCall(CompleteToolCall)} as soon as a
+ *       call with a higher index starts (llama.cpp only ever extends the last call of a message),
+ *       the last one, and any call that had no name yet at that point, by {@link #complete()}
  *   <li>{@code finish_reason} / trailing {@code usage} chunk → finish reason and
  *       {@link TokenUsage} on the final response
  * </ul>
@@ -51,12 +53,23 @@ final class StreamingChunkAssembler {
         String id = "";
         String name = "";
         final StringBuilder arguments = new StringBuilder();
+        /** Whether {@code onCompleteToolCall} was already sent for this call. */
+        boolean completed;
+
+        ToolExecutionRequest toRequest() {
+            return ToolExecutionRequest.builder()
+                    .id(id)
+                    .name(name)
+                    .arguments(arguments.toString())
+                    .build();
+        }
     }
 
     private final StreamingChatResponseHandler handler;
     private final StringBuilder text = new StringBuilder();
     private final StringBuilder thinking = new StringBuilder();
     private final Map<Integer, PartialTool> toolsByIndex = new TreeMap<>();
+    private int highestIndex = -1;
     private String finishReason = "";
     private TokenUsage tokenUsage;
 
@@ -114,20 +127,38 @@ final class StreamingChunkAssembler {
 
     private void acceptToolCallFragment(JsonNode fragment) {
         int index = fragment.path("index").asInt(0);
+        JsonNode function = fragment.path("function");
+        String idFragment = fragment.path("id").isTextual() ? fragment.path("id").asText() : "";
+        String nameFragment = function.path("name").isTextual() ? function.path("name").asText() : "";
+        String argumentsFragment =
+                function.path("arguments").isTextual() ? function.path("arguments").asText() : "";
         PartialTool tool = toolsByIndex.get(index);
+        if (tool != null && tool.completed) {
+            // The handler already holds this call's CompleteToolCall; merging a change would make the
+            // final request differ from it.
+            if (!argumentsFragment.isEmpty()
+                    || (!nameFragment.isEmpty() && !nameFragment.equals(tool.name))
+                    || (!idFragment.isEmpty() && !idFragment.equals(tool.id))) {
+                throw new IllegalStateException("A delta changes tool call " + index
+                        + ", which was already reported complete when tool call " + highestIndex
+                        + " started: " + fragment);
+            }
+            return;
+        }
+        if (index > highestIndex) {
+            completeCallsBelow(index);
+            highestIndex = index;
+        }
         if (tool == null) {
             tool = new PartialTool();
             toolsByIndex.put(index, tool);
         }
-        if (fragment.path("id").isTextual() && !fragment.path("id").asText().isEmpty()) {
-            tool.id = fragment.path("id").asText();
+        if (!idFragment.isEmpty()) {
+            tool.id = idFragment;
         }
-        JsonNode function = fragment.path("function");
-        if (function.path("name").isTextual() && !function.path("name").asText().isEmpty()) {
-            tool.name = function.path("name").asText();
+        if (!nameFragment.isEmpty()) {
+            tool.name = nameFragment;
         }
-        String argumentsFragment =
-                function.path("arguments").isTextual() ? function.path("arguments").asText() : "";
         tool.arguments.append(argumentsFragment);
         // PartialToolCall refuses empty arguments and a blank name, and llama.cpp sends both: the
         // first delta of a call usually carries id and name only, and its incremental parser may
@@ -144,8 +175,27 @@ final class StreamingChunkAssembler {
     }
 
     /**
-     * Finalize the stream: emit {@code onCompleteToolCall} for every accumulated call and
-     * build the final {@link ChatResponse} (text and/or tool execution requests, thinking,
+     * Completes every call below {@code index} that is still open and has a name, in index order:
+     * llama.cpp's {@code compute_diffs} only ever extends the last tool call of a message, so a call
+     * is final once one with a higher index starts. A call without a name stays open for
+     * {@link #complete()}, so that no {@link CompleteToolCall} with a blank name is sent.
+     */
+    private void completeCallsBelow(int index) {
+        for (Map.Entry<Integer, PartialTool> entry : toolsByIndex.entrySet()) {
+            if (entry.getKey() >= index) {
+                break;
+            }
+            PartialTool tool = entry.getValue();
+            if (!tool.completed && !tool.name.isEmpty()) {
+                tool.completed = true;
+                handler.onCompleteToolCall(new CompleteToolCall(entry.getKey(), tool.toRequest()));
+            }
+        }
+    }
+
+    /**
+     * Finalize the stream: emit {@code onCompleteToolCall} for every accumulated call not yet
+     * reported complete, in index order, and build the final {@link ChatResponse} (text and/or tool execution requests, thinking,
      * finish reason, token usage when the stream carried a usage chunk).
      *
      * @return the assembled final response for {@code onCompleteResponse}
@@ -162,12 +212,11 @@ final class StreamingChunkAssembler {
             List<ToolExecutionRequest> requests = new ArrayList<>(toolsByIndex.size());
             for (Map.Entry<Integer, PartialTool> entry : toolsByIndex.entrySet()) {
                 PartialTool tool = entry.getValue();
-                ToolExecutionRequest request = ToolExecutionRequest.builder()
-                        .id(tool.id)
-                        .name(tool.name)
-                        .arguments(tool.arguments.toString())
-                        .build();
-                handler.onCompleteToolCall(new CompleteToolCall(entry.getKey(), request));
+                ToolExecutionRequest request = tool.toRequest();
+                if (!tool.completed) {
+                    tool.completed = true;
+                    handler.onCompleteToolCall(new CompleteToolCall(entry.getKey(), request));
+                }
                 requests.add(request);
             }
             message.toolExecutionRequests(requests);

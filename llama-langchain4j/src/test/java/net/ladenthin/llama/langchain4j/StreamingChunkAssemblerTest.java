@@ -6,6 +6,7 @@ package net.ladenthin.llama.langchain4j;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
@@ -35,6 +36,8 @@ class StreamingChunkAssemblerTest {
         final List<String> thinking = new ArrayList<>();
         final List<PartialToolCall> partialToolCalls = new ArrayList<>();
         final List<CompleteToolCall> completeToolCalls = new ArrayList<>();
+        /** Every tool-call event in arrival order, e.g. {@code "partial:0"}, {@code "complete:0"}. */
+        final List<String> toolCallEvents = new ArrayList<>();
 
         @Override
         public void onPartialResponse(String partialResponse) {
@@ -49,11 +52,13 @@ class StreamingChunkAssemblerTest {
         @Override
         public void onPartialToolCall(PartialToolCall partialToolCall) {
             partialToolCalls.add(partialToolCall);
+            toolCallEvents.add("partial:" + partialToolCall.index());
         }
 
         @Override
         public void onCompleteToolCall(CompleteToolCall completeToolCall) {
             completeToolCalls.add(completeToolCall);
+            toolCallEvents.add("complete:" + completeToolCall.index());
         }
 
         @Override
@@ -172,8 +177,85 @@ class StreamingChunkAssemblerTest {
         ChatResponse response = assembler.complete();
 
         assertThat(handler.completeToolCalls.size(), is(2));
+        // Call 0 is complete once the fragment of call 1 arrives, even inside one chunk.
+        assertThat(handler.toolCallEvents, contains("partial:0", "complete:0", "partial:1", "complete:1"));
         assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("first"));
         assertThat(response.aiMessage().toolExecutionRequests().get(1).name(), is("second"));
+    }
+
+    /**
+     * llama.cpp only ever extends the last tool call of a message ({@code compute_diffs} in
+     * {@code common/chat.cpp}), so call 0 is final once call 1 starts. langchain4j's handler contract
+     * and its own OpenAI binding complete a call at that point, before the next call's first partial,
+     * so that a handler can run the tool at once.
+     */
+    @Test
+    void completesEachToolCallAsSoonAsTheNextOneStarts() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"id\":\"a\",\"function\":{\"name\":\"first\",\"arguments\":\"{\\\"x\\\":1}\"}}]},"
+                + "\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,"
+                + "\"id\":\"b\",\"function\":{\"name\":\"second\",\"arguments\":\"{\\\"y\\\":2}\"}}]},"
+                + "\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(handler.toolCallEvents, contains("partial:0", "complete:0", "partial:1", "complete:1"));
+        assertThat(handler.completeToolCalls.get(0).toolExecutionRequest(),
+                is(response.aiMessage().toolExecutionRequests().get(0)));
+        assertThat(handler.completeToolCalls.get(1).toolExecutionRequest(),
+                is(response.aiMessage().toolExecutionRequests().get(1)));
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{\"x\":1}"));
+        assertThat(response.aiMessage().toolExecutionRequests().get(1).arguments(), is("{\"y\":2}"));
+    }
+
+    /**
+     * A call that has no name yet when the next one starts is not completed early: a
+     * {@link CompleteToolCall} with a blank name would reach the handler. It is completed by
+     * {@code complete()}, with the name that arrived in the meantime.
+     */
+    @Test
+    void defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,"
+                + "\"id\":\"b\",\"function\":{\"name\":\"second\",\"arguments\":\"{}\"}}]},"
+                + "\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"id\":\"a\",\"function\":{\"name\":\"first\"}}]},\"finish_reason\":\"tool_calls\"}]}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(handler.toolCallEvents, contains("partial:1", "complete:0", "complete:1"));
+        assertThat(handler.completeToolCalls.get(0).toolExecutionRequest().name(), is("first"));
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("first"));
+        assertThat(response.aiMessage().toolExecutionRequests().get(1).name(), is("second"));
+    }
+
+    /**
+     * Arguments for a call that was already reported complete would make the final request differ
+     * from the {@link CompleteToolCall} the handler got; that is a native contract violation and
+     * fails the stream instead of being merged silently.
+     */
+    @Test
+    void argumentsForAToolCallThatIsAlreadyCompleteFailTheStream() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":["
+                + "{\"index\":0,\"id\":\"a\",\"function\":{\"name\":\"first\",\"arguments\":\"{\"}},"
+                + "{\"index\":1,\"id\":\"b\",\"function\":{\"name\":\"second\",\"arguments\":\"{}\"}}"
+                + "]},\"finish_reason\":null}]}");
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> assembler.accept(
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                        + "\"function\":{\"arguments\":\"}\"}}]},\"finish_reason\":null}]}"));
+
+        assertThat(e.getMessage(), containsString("tool call 0"));
     }
 
     @Test
