@@ -45,6 +45,9 @@ import org.jspecify.annotations.Nullable;
  */
 final class OpenAiRequestMapper {
 
+    /** The names of the output-token cap in the order upstream's schema reads them (see {@link #readMaxTokens}). */
+    private static final String[] TOKEN_CAP_FIELDS = {"n_predict", "max_completion_tokens", "max_tokens"};
+
     /** Upstream's {@code n_probs} for a chat request with {@code logprobs} but no {@code top_logprobs}. */
     private static final int DEFAULT_TOP_LOGPROBS = 20;
 
@@ -201,8 +204,9 @@ final class OpenAiRequestMapper {
         // one and "n" never reaches upstream from here, so every other value is refused rather than
         // silently answered once.
         JsonNode choices = optionalNumber(request, "n");
-        if (choices != null && choices.asInt() != 1) {
-            throw new IllegalArgumentException("'n' must be 1 (one answer is returned) but was " + choices.asInt());
+        int answers = choices != null ? choices.asInt() : 1;
+        if (answers != 1) {
+            throw new IllegalArgumentException("'n' must be 1 (one answer is returned) but was " + answers);
         }
         // logit_bias as upstream's schema reads it: [token, bias] pairs or OpenAI's object form.
         JsonNode logitBias = request.path("logit_bias");
@@ -226,8 +230,9 @@ final class OpenAiRequestMapper {
         params = withInt(params, request, "n_cache_reuse", InferenceParameters::withCacheReuse);
         // upstream's default -1 means "any slot"; leaving the field unset is the same request.
         JsonNode slotId = optionalNumber(request, "id_slot");
-        if (slotId != null && slotId.asInt() >= 0) {
-            params = params.withSlotId(slotId.asInt());
+        int slot = slotId != null ? slotId.asInt() : -1;
+        if (slot >= 0) {
+            params = params.withSlotId(slot);
         }
 
         params = withFloat(params, request, "temperature", InferenceParameters::withTemperature);
@@ -404,7 +409,7 @@ final class OpenAiRequestMapper {
      * @throws IllegalArgumentException when the first field present is not a number
      */
     private int readMaxTokens(JsonNode request) {
-        for (String field : new String[] {"n_predict", "max_completion_tokens", "max_tokens"}) {
+        for (String field : TOKEN_CAP_FIELDS) {
             JsonNode value = optionalNumber(request, field);
             if (value != null) {
                 return value.asInt();
