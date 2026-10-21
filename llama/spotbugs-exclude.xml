@@ -429,10 +429,12 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        BatchDispatch.runEachOnItsOwnThread creates its executor per call on purpose: it is sized to the
-        batch (one thread per request, so all of them reach the native scheduler at once; the common
-        ForkJoinPool capped that at availableProcessors() - 1) and shut down in finally when the call
-        returns. A shared field-held executor would either cap the batch again or keep idle threads.
+        BatchDispatch.runEachOnItsOwnThread creates its executor per call on purpose. The pool is sized
+        min(batch size, maxThreads), and chatBatch passes MAX_CHAT_THREADS = 64, so up to that many
+        requests reach the native scheduler at once and the rest start as threads free up (the common
+        ForkJoinPool used to cap this at availableProcessors() - 1). It is shut down in finally when
+        the call returns. A shared field-held executor would either cap every batch at a fixed size or
+        keep idle threads between calls.
     -->
     <Match>
         <Class name="net.ladenthin.llama.BatchDispatch"/>
