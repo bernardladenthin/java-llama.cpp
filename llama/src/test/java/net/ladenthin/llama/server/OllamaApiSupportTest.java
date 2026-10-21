@@ -253,6 +253,113 @@ public class OllamaApiSupportTest {
                                 "{\"model\":\"m\",\"prompt\":\"p\",\"suffix\":\"s\",\"options\":{\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,\"presence_penalty\":0.2,\"frequency_penalty\":0.3,\"num_keep\":8}}")));
     }
 
+    /**
+     * Ollama constrains a raw generation by {@code format} as it does a templated one; the raw route
+     * dropped it and completed unconstrained. upstream's completion schema reads {@code json_schema};
+     * {@code "json"} is a JSON object, as Ollama's own JSON grammar and upstream's {@code json_object}.
+     */
+    @Test
+    public void aRawGenerationTakesItsFormatAsTheJsonSchema() throws IOException {
+        JsonNode json =
+                OllamaApiSupport.toOpenAiCompletionRequest(read("{\"prompt\":\"p\",\"raw\":true,\"format\":\"json\"}"));
+        assertThat(json.path("json_schema"), is(read("{\"type\":\"object\"}")));
+        assertThat(json.has("response_format"), is(false));
+
+        String schema = "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}";
+        JsonNode schemaRequest = OllamaApiSupport.toOpenAiCompletionRequest(
+                read("{\"prompt\":\"p\",\"raw\":true,\"format\":" + schema + "}"));
+        assertThat(schemaRequest.path("json_schema"), is(read(schema)));
+
+        for (String unset : new String[] {"\"\"", "null"}) {
+            JsonNode none = OllamaApiSupport.toOpenAiCompletionRequest(
+                    read("{\"prompt\":\"p\",\"raw\":true,\"format\":" + unset + "}"));
+            assertThat(unset, none.has("json_schema"), is(false));
+        }
+    }
+
+    /**
+     * Ollama refuses a {@code format} that is neither {@code "json"} nor a schema object; the routes
+     * ignored it and generated unconstrained. An empty string and {@code null} mean "not set", as there.
+     */
+    @Test
+    public void aFormatThatIsNeitherJsonNorASchemaIsRefused() throws IOException {
+        for (String format : new String[] {"\"yaml\"", "1", "[\"json\"]", "true"}) {
+            IllegalArgumentException raw = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> OllamaApiSupport.toOpenAiCompletionRequest(
+                            read("{\"prompt\":\"p\",\"raw\":true,\"format\":" + format + "}")));
+            assertThat(
+                    raw.getMessage(), is("invalid format: " + format + "; expected \"json\" or a JSON Schema object"));
+            IllegalArgumentException chat = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> OllamaApiSupport.toOpenAiChatRequest(
+                            read("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"format\":" + format + "}")));
+            assertThat(chat.getMessage(), is(raw.getMessage()));
+        }
+        JsonNode none = OllamaApiSupport.toOpenAiChatRequest(
+                read("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"format\":\"\"}"));
+        assertThat(none.has("response_format"), is(false));
+    }
+
+    /**
+     * Ollama's raw prompt places its images with {@code [img-N]} tags (the runner splits the prompt
+     * there); llama.cpp's raw schema wants the server's media marker in their place and the bytes in
+     * {@code multimodal_data}, in the order of the markers. The raw route dropped the images.
+     */
+    @Test
+    public void aRawGenerationPutsItsImagesWhereTheirTagsAre() throws IOException {
+        JsonNode openAi = OllamaApiSupport.toOpenAiCompletionRequest(
+                read("{\"prompt\":\"a [img-1] b [img-0] c\",\"raw\":true,"
+                        + "\"images\":[\"AAAA\",\"data:image/png;base64,BBBB\"]}"),
+                "<m>");
+        assertThat(openAi.path("prompt").path("prompt_string").asText(), is("a <m> b <m> c"));
+        assertThat(openAi.path("prompt").path("multimodal_data"), is(read("[\"BBBB\",\"AAAA\"]")));
+
+        JsonNode noImages = OllamaApiSupport.toOpenAiCompletionRequest(
+                read("{\"prompt\":\"keep [img-0] as text\",\"raw\":true,\"images\":[]}"), "<m>");
+        assertThat(noImages.path("prompt").asText(), is("keep [img-0] as text"));
+    }
+
+    /**
+     * An image no tag places would go nowhere, and a tag naming no image has nothing to show; Ollama's
+     * runner refuses the second ("invalid image index") and ignores the first. Both are refused here.
+     */
+    @Test
+    public void aRawImageWithoutItsTagOrATagWithoutItsImageIsRefused() throws IOException {
+        IllegalArgumentException untagged = assertThrows(
+                IllegalArgumentException.class,
+                () -> OllamaApiSupport.toOpenAiCompletionRequest(
+                        read("{\"prompt\":\"a [img-0]\",\"raw\":true,\"images\":[\"AAAA\",\"BBBB\"]}"), "<m>"));
+        assertThat(untagged.getMessage(), is("image 1 is not placed in the raw prompt; put [img-1] where it goes"));
+        IllegalArgumentException unknown = assertThrows(
+                IllegalArgumentException.class,
+                () -> OllamaApiSupport.toOpenAiCompletionRequest(
+                        read("{\"prompt\":\"a [img-2]\",\"raw\":true,\"images\":[\"AAAA\"]}"), "<m>"));
+        assertThat(unknown.getMessage(), is("invalid image index: 2"));
+        IllegalArgumentException notText = assertThrows(
+                IllegalArgumentException.class,
+                () -> OllamaApiSupport.toOpenAiCompletionRequest(
+                        read("{\"prompt\":\"a [img-0]\",\"raw\":true,\"images\":[1]}"), "<m>"));
+        assertThat(notText.getMessage(), is("'images[0]' must be a base64 string"));
+    }
+
+    /**
+     * A {@code suffix} makes the request an infill, whose task reads {@code json_schema} as a completion
+     * does; its {@code format} was dropped. Images have no place in an infill prompt and are refused
+     * rather than dropped.
+     */
+    @Test
+    public void anInfillGenerationTakesItsFormatAndRefusesImages() throws IOException {
+        JsonNode infill =
+                OllamaApiSupport.toInfillRequest(read("{\"prompt\":\"def f(\",\"suffix\":\")\",\"format\":\"json\"}"));
+        assertThat(infill.path("json_schema"), is(read("{\"type\":\"object\"}")));
+        IllegalArgumentException images = assertThrows(
+                IllegalArgumentException.class,
+                () -> OllamaApiSupport.toInfillRequest(
+                        read("{\"prompt\":\"def f(\",\"suffix\":\")\",\"images\":[\"AAAA\"]}")));
+        assertThat(images.getMessage(), is("images are not supported with a suffix (fill-in-the-middle)"));
+    }
+
     @Test
     public void numPredictMinusTwoFillsTheContextAsUpstreamsMinusOne() throws IOException {
         // Ollama's -2 means "fill the context"; upstream's n_predict hard limit starts at -1 and rejects it.

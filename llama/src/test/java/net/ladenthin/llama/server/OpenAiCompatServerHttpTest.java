@@ -477,6 +477,54 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     /**
+     * The raw route dropped {@code format} and {@code images}: an unconstrained completion, and the
+     * images never reached the model. They now arrive as llama.cpp's raw schema reads them.
+     */
+    @Test
+    public void ollamaGenerateWithRawCarriesItsFormatAndImages() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"look [img-0] now\",\"raw\":true,"
+                    + "\"format\":\"json\",\"images\":[\"AAAA\"],\"stream\":false}";
+            Response response = post(server.getPort(), "/api/generate", body, "");
+
+            assertThat(response.body, response.code, is(200));
+            assertThat(backend.called, is("completions"));
+            assertThat(backend.request.path("json_schema"), is(READER.readTree("{\"type\":\"object\"}")));
+            assertThat(backend.request.path("prompt").path("prompt_string").asText(), is("look <m> now"));
+            assertThat(backend.request.path("prompt").path("multimodal_data"), is(READER.readTree("[\"AAAA\"]")));
+        }
+    }
+
+    /** A raw image no {@code [img-N]} tag places, or a format Ollama does not know, is the client's fault. */
+    @Test
+    public void ollamaGenerateWithAnUnplacedImageOrAnUnknownFormatIsABadRequest() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String[][] cases = {
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"look\",\"raw\":true,\"images\":[\"AAAA\"]}",
+                    "image 0 is not placed in the raw prompt; put [img-0] where it goes"
+                },
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"look\",\"raw\":true,\"format\":\"yaml\"}",
+                    "invalid format: \"yaml\"; expected \"json\" or a JSON Schema object"
+                },
+                {
+                    "{\"model\":\"test-model\",\"prompt\":\"look\",\"format\":\"yaml\",\"stream\":false}",
+                    "invalid format: \"yaml\"; expected \"json\" or a JSON Schema object"
+                }
+            };
+            for (String[] c : cases) {
+                Response response = post(server.getPort(), "/api/generate", c[0], "");
+                assertThat(c[0], response.code, is(400));
+                assertThat(c[0], READER.readTree(response.body).path("error").asText(), is(c[1]));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
+    /**
      * Ollama refuses {@code "raw": true} next to a {@code system}, {@code template} or {@code context}
      * with a 400, before its load answer and before fill-in-the-middle. The server dropped them silently
      * and completed the bare prompt.
@@ -1289,6 +1337,11 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     static final class RecordingBackend extends FakeBackend {
         volatile String called = "";
         volatile JsonNode request = READER.createObjectNode();
+
+        @Override
+        public String mediaMarker() {
+            return "<m>";
+        }
 
         @Override
         public String complete(JsonNode request) {

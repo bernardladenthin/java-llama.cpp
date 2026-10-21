@@ -306,6 +306,21 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         assertThat(json.path("eval_count").asInt(-1) > 0, is(true));
     }
 
+    /**
+     * {@code format} constrains a raw generation as it does a templated one: the grammar llama.cpp
+     * builds from the schema makes the first character an object's brace, whatever the model would have
+     * written. The raw route dropped {@code format} and completed the code unconstrained.
+     */
+    @Test
+    public void ollamaGenerateRawWithFormatJsonAnswersAJsonObject() throws IOException {
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":false,\"raw\":true,\"format\":\"json\","
+                + "\"prompt\":\"def add(a, b):\\n    return\",\"options\":{\"num_predict\":8,\"temperature\":0}}";
+        Response response = post(port, "/api/generate", body, "");
+        assertThat(response.body, response.code, is(200));
+        String text = MAPPER.readTree(response.body).path("response").asText();
+        assertThat(text, text.trim().startsWith("{"), is(true));
+    }
+
     @Test
     public void ollamaGenerateWithSuffixUsesInfill() throws IOException {
         FimAssumptions.assumeFimTokens(model);

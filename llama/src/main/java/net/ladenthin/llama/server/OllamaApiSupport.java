@@ -10,6 +10,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -30,6 +34,9 @@ final class OllamaApiSupport {
     private static final String[] GENERATE_CHAT_FIELDS = {"model", "options", "format", "think"};
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /** Ollama's placeholder for image {@code N} of a raw prompt; its runner splits the prompt there. */
+    private static final Pattern RAW_IMAGE_TAG = Pattern.compile("\\[img-(\\d+)\\]");
 
     /** Ollama's answer to {@code "raw": true} with a {@code system}, {@code template} or {@code context}. */
     static final String RAW_CONFLICT_MESSAGE = "raw mode does not support template, system, or context";
@@ -186,15 +193,49 @@ final class OllamaApiSupport {
         }
 
         // Ollama "format": "json" or a JSON schema → OpenAI response_format.
-        JsonNode format = ollamaRequest.path("format");
-        if (format.isTextual() && "json".equals(format.asText())) {
+        JsonNode schema = formatSchema(ollamaRequest);
+        if (schema != null && ollamaRequest.path("format").isTextual()) {
             openAi.putObject("response_format").put("type", "json_object");
-        } else if (format.isObject()) {
+        } else if (schema != null) {
             ObjectNode responseFormat = openAi.putObject("response_format");
             responseFormat.put("type", "json_schema");
-            responseFormat.putObject("json_schema").set("schema", format.deepCopy());
+            responseFormat.putObject("json_schema").set("schema", schema);
         }
         return openAi;
+    }
+
+    /**
+     * The JSON schema Ollama's {@code format} constrains the answer to: {@code "json"} is a JSON object
+     * (Ollama's own JSON grammar, upstream's {@code json_object}), an object is the schema itself, and an
+     * empty string, {@code null} or no field mean none, as in Ollama. Anything else is refused, as Ollama
+     * refuses it, rather than generating unconstrained.
+     *
+     * @param request the Ollama request
+     * @return the schema, or {@code null} when the request names no format
+     * @throws IllegalArgumentException if {@code format} is neither {@code "json"} nor a schema object
+     */
+    private static @Nullable JsonNode formatSchema(JsonNode request) {
+        JsonNode format = request.path("format");
+        if (format.isMissingNode()
+                || format.isNull()
+                || (format.isTextual() && format.asText().isEmpty())) {
+            return null;
+        }
+        if (format.isTextual() && "json".equals(format.asText())) {
+            return OBJECT_MAPPER.createObjectNode().put("type", "object");
+        }
+        if (format.isObject()) {
+            return format.deepCopy();
+        }
+        throw new IllegalArgumentException("invalid format: " + format + "; expected \"json\" or a JSON Schema object");
+    }
+
+    /** Set {@code json_schema}, which the completion schema of the raw and infill tasks reads, from {@code format}. */
+    private static void copyFormatAsJsonSchema(JsonNode request, ObjectNode to) {
+        JsonNode schema = formatSchema(request);
+        if (schema != null) {
+            to.set("json_schema", schema);
+        }
     }
 
     private static ObjectNode toOpenAiMessage(JsonNode ollamaMessage) {
@@ -698,8 +739,34 @@ final class OllamaApiSupport {
      * @return an OpenAI completion request object
      */
     static ObjectNode toOpenAiCompletionRequest(JsonNode request) {
+        return toOpenAiCompletionRequest(request, null);
+    }
+
+    /**
+     * Translate an Ollama {@code /api/generate} request into the internal OpenAI {@code /v1/completions}
+     * request shape, with its images. Ollama's raw prompt places image {@code N} with an
+     * {@code [img-N]} tag; llama.cpp's raw schema wants the server's media marker in its place and the
+     * bytes in {@code multimodal_data}, in the order of the markers, so the prompt becomes
+     * {@code {"prompt_string": ..., "multimodal_data": [...]}}. {@code format} becomes {@code json_schema}.
+     *
+     * @param request the parsed Ollama generate request
+     * @param mediaMarker the server's media marker; needed only when the request carries images
+     * @return an OpenAI completion request object
+     * @throws IllegalArgumentException if an image is not a string, no tag places it, a tag names no
+     *     image, or {@code format} is neither {@code "json"} nor a schema object
+     */
+    static ObjectNode toOpenAiCompletionRequest(JsonNode request, @Nullable String mediaMarker) {
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
-        openAi.put("prompt", request.path("prompt").asText(""));
+        String prompt = request.path("prompt").asText("");
+        if (hasImages(request)) {
+            if (mediaMarker == null) {
+                throw new IllegalStateException("a raw prompt with images needs the server's media marker");
+            }
+            openAi.set("prompt", toRawMultimodalPrompt(prompt, request.path("images"), mediaMarker));
+        } else {
+            openAi.put("prompt", prompt);
+        }
+        copyFormatAsJsonSchema(request, openAi);
         JsonNode options = request.path("options");
         copyNumber(options, "temperature", openAi, "temperature");
         copyNumber(options, "top_p", openAi, "top_p");
@@ -714,6 +781,83 @@ final class OllamaApiSupport {
     }
 
     /**
+     * Whether the {@code /api/generate} request carries images. A non-empty {@code images} array counts;
+     * {@code images} that is present but no array is refused.
+     *
+     * @param request the parsed Ollama generate request
+     * @return {@code true} if {@code images} is a non-empty array
+     * @throws IllegalArgumentException if {@code images} is neither an array nor {@code null}
+     */
+    static boolean hasImages(JsonNode request) {
+        JsonNode images = request.path("images");
+        if (images.isMissingNode() || images.isNull()) {
+            return false;
+        }
+        if (!images.isArray()) {
+            throw new IllegalArgumentException("'images' must be an array of base64 strings, got " + images);
+        }
+        return images.size() > 0;
+    }
+
+    /**
+     * llama.cpp's raw multimodal prompt for Ollama's raw prompt: every {@code [img-N]} tag replaced by
+     * the media marker and image {@code N} appended to {@code multimodal_data} in that order. Ollama's
+     * runner refuses a tag naming no image ("invalid image index") and leaves an image no tag places
+     * out; such an image is refused here instead of being dropped.
+     */
+    private static ObjectNode toRawMultimodalPrompt(String prompt, JsonNode images, String mediaMarker) {
+        List<String> data = new ArrayList<>(images.size());
+        for (int i = 0; i < images.size(); i++) {
+            JsonNode image = images.get(i);
+            if (!image.isTextual() || image.asText().isEmpty()) {
+                throw new IllegalArgumentException("'images[" + i + "]' must be a base64 string");
+            }
+            data.add(stripDataUrl(image.asText()));
+        }
+        boolean[] placed = new boolean[data.size()];
+        StringBuilder text = new StringBuilder(prompt.length());
+        ArrayNode media = OBJECT_MAPPER.createArrayNode();
+        Matcher tag = RAW_IMAGE_TAG.matcher(prompt);
+        int end = 0;
+        while (tag.find()) {
+            String digits = tag.group(1);
+            int index = imageIndex(digits != null ? digits : "", data.size());
+            text.append(prompt, end, tag.start()).append(mediaMarker);
+            media.add(data.get(index));
+            placed[index] = true;
+            end = tag.end();
+        }
+        text.append(prompt, end, prompt.length());
+        for (int i = 0; i < placed.length; i++) {
+            if (!placed[i]) {
+                throw new IllegalArgumentException(
+                        "image " + i + " is not placed in the raw prompt; put [img-" + i + "] where it goes");
+            }
+        }
+        ObjectNode multimodal = OBJECT_MAPPER.createObjectNode();
+        multimodal.put("prompt_string", text.toString());
+        multimodal.set("multimodal_data", media);
+        return multimodal;
+    }
+
+    private static int imageIndex(String digits, int images) {
+        // digits only, by the pattern; a number too long for an int names no image either
+        if (!digits.isEmpty() && digits.length() <= 9) {
+            int index = Integer.parseInt(digits);
+            if (index < images) {
+                return index;
+            }
+        }
+        throw new IllegalArgumentException("invalid image index: " + digits);
+    }
+
+    /** The base64 payload of a {@code data:} URL; any other string is taken as bare base64, as Ollama sends it. */
+    private static String stripDataUrl(String image) {
+        int comma = image.indexOf(',');
+        return image.startsWith("data:") && comma >= 0 ? image.substring(comma + 1) : image;
+    }
+
+    /**
      * Translate an Ollama {@code /api/generate} request with a {@code suffix} into the native infill
      * request shape ({@code input_prefix} / {@code input_suffix}).
      *
@@ -721,7 +865,11 @@ final class OllamaApiSupport {
      * @return a native {@code /infill} request object
      */
     static ObjectNode toInfillRequest(JsonNode request) {
+        if (hasImages(request)) {
+            throw new IllegalArgumentException("images are not supported with a suffix (fill-in-the-middle)");
+        }
         ObjectNode infill = OBJECT_MAPPER.createObjectNode();
+        copyFormatAsJsonSchema(request, infill);
         infill.put("input_prefix", request.path("prompt").asText(""));
         infill.put("input_suffix", request.path("suffix").asText(""));
         JsonNode options = request.path("options");

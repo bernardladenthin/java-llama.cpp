@@ -90,6 +90,19 @@ public interface OpenAiBackend {
     }
 
     /**
+     * The placeholder a raw multimodal prompt puts where each image goes (llama.cpp's
+     * {@code {"prompt_string": ..., "multimodal_data": [...]}} prompt object), which the server draws at
+     * random per process. Asked only for a raw request that carries images. The default throws
+     * {@link UnsupportedOperationException}; backends that take images override it.
+     *
+     * @return the media marker
+     * @throws IOException if the marker cannot be read
+     */
+    default String mediaMarker() throws IOException {
+        throw new UnsupportedOperationException("raw prompts with images are not supported by this backend");
+    }
+
+    /**
      * Generate embeddings ({@code POST /v1/embeddings}). Requires the model to have been loaded in
      * embedding mode; otherwise the native call fails and the caller surfaces a server error.
      *

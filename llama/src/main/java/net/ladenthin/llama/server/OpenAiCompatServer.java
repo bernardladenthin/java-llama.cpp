@@ -669,8 +669,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     generated = OllamaApiSupport.Generated.fromInfill(
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
                 } else if (OllamaApiSupport.isRaw(request)) {
+                    // the marker the raw prompt's images go to is the server's, asked only when there are any
+                    String marker = OllamaApiSupport.hasImages(request) ? backend.mediaMarker() : null;
                     generated = OllamaApiSupport.Generated.fromCompletion(
-                            backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request)));
+                            backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request, marker)));
                 } else {
                     // Ollama applies the chat template unless raw is true
                     generated = OllamaApiSupport.Generated.fromChat(

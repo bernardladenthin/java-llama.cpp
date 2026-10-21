@@ -117,6 +117,11 @@ final class LlamaModelBackend implements OpenAiBackend {
     }
 
     @Override
+    public String mediaMarker() {
+        return model.getModelMeta().getMediaMarker();
+    }
+
+    @Override
     public String embeddings(JsonNode request) {
         // oaiCompat=true so the response uses the OpenAI {"object":"list","data":[{embedding}]} shape.
         return model.handleEmbeddings(request.toString(), true);
