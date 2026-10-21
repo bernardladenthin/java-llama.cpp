@@ -552,9 +552,6 @@ the serving thread has entered `jllama_rpc_server_serve` cannot be told from "no
 stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer` does (F241).
 
 **Tests**
-- **`RpcClient.AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt` fails under
-  `--gtest_repeat=2`** in one process (also filtered alone); it passes in a normal `ctest` run. The
-  test drives ggml's process-wide registry directly; find out which state the first run leaves.
 - **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
   `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
   its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.

@@ -337,9 +337,38 @@ TEST(RpcClient, AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt) {
     ASSERT_TRUE(server.listening());
     const std::string endpoint = server.endpoint();
 
-    // the load that asks for it registers it and is left alone
+    // ggml's device registry is process-wide and has no unregister, so the RPC devices an earlier
+    // test of this process registered are still in it -- including this test's own from a previous
+    // iteration under --gtest_repeat, on another port (the loopback server picks one by the clock).
+    // To the load below those are stale servers it did not ask for, so the assertions are made
+    // relative to the registry as this test found it.
+    std::vector<std::string> stale_names;
+    for (const auto &info : jllama::rpc::registered_devices()) {
+        if (!info.endpoint.empty() && info.endpoint != endpoint) {
+            stale_names.push_back(info.name);
+        }
+    }
+
+    // the load that asks for it registers it; with nothing stale it is left alone, otherwise it gets
+    // an explicit device list naming its own server and none of the stale ones
     const auto with_rpc = jllama::rpc::prepare_argv({"llama", "--rpc", endpoint});
-    EXPECT_FALSE(jllama::rpc::has_device_option(with_rpc));
+    if (stale_names.empty()) {
+        EXPECT_FALSE(jllama::rpc::has_device_option(with_rpc));
+    } else {
+        ASSERT_TRUE(jllama::rpc::has_device_option(with_rpc));
+        const auto listed = jllama::rpc::split_endpoints(with_rpc.back());
+        std::string own_name;
+        for (const auto &info : jllama::rpc::registered_devices()) {
+            if (info.endpoint == endpoint) {
+                own_name = info.name;
+            }
+        }
+        ASSERT_FALSE(own_name.empty()) << endpoint;
+        EXPECT_NE(std::find(listed.begin(), listed.end(), own_name), listed.end()) << with_rpc.back();
+        for (const auto &name : stale_names) {
+            EXPECT_EQ(std::find(listed.begin(), listed.end(), name), listed.end()) << with_rpc.back();
+        }
+    }
 
     // a later load without --rpc gets an explicit device list that leaves the RPC device out
     const auto without = jllama::rpc::prepare_argv({"llama", "-m", "x.gguf"});
