@@ -2224,6 +2224,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Vor dem Fix rot: `ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate` mit „Expected equality of these values: blocking.rfind("</think>", 0) Which is: 18446744073709551615“ und „blocking.substr(blocking.size() - std::min(blocking.size(), answer.size())) Which is: "FFFF"“; Java mit „expected: <60> but was: <55>“ (`content` „7%j%j%j%j%“, `generation_prompt` „“). Mit dem Fix grün; ohne die `json_schema`-Ausnahme in `prime_reasoning_budget` rot mit „jllama_completions(model, with_schema.dump().c_str(), &constrained.s) Which is: 2“. `ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget` pinnt das unveränderte Verhalten und war vorher wie nachher grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `85f6afa`
+- **Nachtrag (Branch-Review 2026-10-21, Abschluss):** Offen und in `TODO.md` eingetragen: der Rohweg übernimmt neben den Budget-Feldern nicht die `preserved_tokens` der Session, deshalb erscheint ein End-Tag, das das Vokabular als ein spezielles Token führt, im `content` als leerer Text (das Budget greift trotzdem; der Java-Test prüft deshalb Token). `preserved_tokens` ist ein Schema-Feld; die Übernahme braucht einen eigenen Rot-Grün-Test. CHANGELOG ([Unreleased], Fixed und „Upgrading from 5.1“ Punkt 14) beschreibt den Fix. Reine Doku.
 
 ## Offene Verdachte ohne Fund-ID
 

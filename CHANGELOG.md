@@ -92,10 +92,11 @@ the first two items break every existing consumer at upgrade.
 14. **Infill fields and messages on the raw completion paths take effect or are refused.**
     `complete` / `completeWithStats` / `generate` with `withInputPrefix` or `withInputSuffix` now
     infill and need both fields and a model with FIM tokens; with `withMessages(...)` they render the
-    messages through the chat template, stop at the template's own stop strings, and refuse a
-    non-empty prompt, the infill fields or a chat-only field (`response_format`, `tools`,
-    `tool_choice`, `parallel_tool_calls`, `top_logprobs`, `thinking_budget_tokens`) next to them (see
-    Fixed). All of them used to be dropped without a word.
+    messages through the chat template, stop at the template's own stop strings, apply a reasoning
+    budget through the template's thinking tags, and refuse a non-empty prompt, the infill fields or
+    a chat-only field (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
+    `top_logprobs`, `thinking_budget_tokens`) next to them (see Fixed). All of them used to be
+    dropped without a word.
 
 ### Added
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
@@ -961,9 +962,14 @@ the first two items break every existing consumer at upgrade.
     `withToolsJson`, `withToolChoice`, `withParallelToolCalls`) -- with a message that names the field
     and points to the chat path; `json_schema`, `grammar` and `chat_template_kwargs` stay allowed. The
     completion also stops at the stop strings a chat template adds of its own (`</assistant>`,
-    `<|role_end|>`), next to the request's `stop`, as a chat completion does; it ran past them. A
-    `reasoning_budget_tokens` next to the messages does not yet pick up the template's thinking tags.
-    The same for the C API and `llama-ffm`.
+    `<|role_end|>`), next to the request's `stop`, as a chat completion does; it ran past them. And a
+    reasoning budget next to the messages (`withReasoningBudgetTokens`, `reasoning_budget_tokens`)
+    takes effect through the template's thinking tags, as on the chat paths: once it is spent, the
+    model is made to close its thinking block with the template's end tag (`</think>`); without the
+    tags, which the raw paths dropped, the budget did nothing. A template without thinking tags leaves
+    the request unchanged, as a chat completion does, and without messages the budget still has no
+    effect on the raw paths (the builder offers no tag fields). The same for the C API and
+    `llama-ffm`.
   - **JSON values are taken as given or refused, never cut short.** A `ToolDefinition` schema with
     trailing content (`{"type":"object"} {"required":["x"]}`) was sent as its first value, and a
     `chat_template_kwargs` value holding two JSON values as the first of them. A schema that is not
