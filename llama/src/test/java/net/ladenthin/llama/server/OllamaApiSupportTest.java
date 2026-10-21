@@ -146,6 +146,45 @@ public class OllamaApiSupportTest {
         assertThat(message.has("images"), is(false));
     }
 
+    /**
+     * The MIME type of a bare base64 image follows its magic bytes. llama.cpp decodes the payload by
+     * content, so a wrong subtype would still work; these cases keep the labels honest.
+     */
+    @Test
+    public void ollamaImageMimeTypeFollowsTheMagicBytes() throws IOException {
+        String[][] cases = {
+            {"/9j/4AAQ", "image/jpeg"},
+            {"R0lGODlh", "image/gif"},
+            {"UklGRh4A", "image/webp"},
+            {"AAAA", "image/png"}
+        };
+        for (String[] imageAndMimeType : cases) {
+            assertThat(
+                    imageAndMimeType[0],
+                    imageUrlOf(imageAndMimeType[0]),
+                    is("data:" + imageAndMimeType[1] + ";base64," + imageAndMimeType[0]));
+        }
+    }
+
+    /**
+     * An image that already is a data URL passes through unchanged: a second {@code data:} prefix makes
+     * llama.cpp reject the whole request ("Invalid uri-encoded base64 value"), so this is the case a
+     * client would notice.
+     */
+    @Test
+    public void ollamaImageThatIsAlreadyADataUrlIsPassedThrough() throws IOException {
+        String dataUrl = "data:image/jpeg;base64,/9j/4AAQ";
+        assertThat(imageUrlOf(dataUrl), is(dataUrl));
+    }
+
+    private static String imageUrlOf(String image) throws IOException {
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(read(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"what is this?\",\"images\":[\"" + image + "\"]}]}"));
+        JsonNode part = openAi.path("messages").get(0).path("content").get(1);
+        assertThat(part.path("type").asText(), is("image_url"));
+        return part.path("image_url").path("url").asText();
+    }
+
     @Test
     public void toOpenAiChatRequestMapsFormatJsonToResponseFormat() throws IOException {
         JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(
