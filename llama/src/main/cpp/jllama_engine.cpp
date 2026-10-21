@@ -412,10 +412,23 @@ void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
     rd.post_tasks(std::move(tasks), session);
 }
 
+// The generation prompt is what the sampler of a chat task is primed with (apply_chat_session sets
+// it, common_sampler_init feeds it to the reasoning budget), so a template that opens the thinking
+// block in the generation prompt starts the budget counting at the first generated token. A raw task
+// posts no session, so the prompt of a raw completion with "messages" is set here. An output-format
+// grammar (json_schema) is primed with the same prompt, which it cannot accept; beside one the
+// prompt is left unset, and the budget then counts only from a start tag the model writes itself.
+static void prime_reasoning_budget(server_task &task, const std::string &generation_prompt) {
+    if (!generation_prompt.empty() && !common_grammar_needs_prefill(task.params.sampling.grammar)) {
+        task.params.sampling.generation_prompt = generation_prompt;
+    }
+}
+
 std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files,
-                                                        const common_chat_session &session) {
+                                                        const common_chat_session &session,
+                                                        const std::string &generation_prompt) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = jctx->server.get_response_reader();
     server_task task(task_type);
@@ -426,6 +439,7 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
         throw jllama_invalid_request(e.what());
     }
     task.apply_chat_session(session);
+    prime_reasoning_budget(task, generation_prompt);
     task.params.res_type = res_type;
     name_completion_task(task, meta);
     std::vector<server_task> tasks;
@@ -437,7 +451,8 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
 }
 
 int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
-                      std::vector<raw_buffer> files, const common_chat_session &session) {
+                      std::vector<raw_buffer> files, const common_chat_session &session,
+                      const std::string &generation_prompt) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = std::make_shared<server_response_reader>(jctx->server.get_response_reader());
     const int tid = rd->get_new_id();
@@ -446,6 +461,7 @@ int streaming_request(jllama_context *jctx, const json &data, server_task_type t
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.apply_chat_session(session);
+        prime_reasoning_budget(task, generation_prompt);
         task.params.res_type = res_type;
         name_completion_task(task, meta);
         std::vector<server_task> tasks;
@@ -655,9 +671,10 @@ static void prepare_infill_prompt(jllama_context *jctx, const server_context_met
 // The request fields oaicompat_chat_params_parse consumes that have no effect on a raw completion:
 // response_format becomes the session's grammar, tools/tool_choice/parallel_tool_calls its tool-call
 // grammar with its triggers and preserved tokens, top_logprobs the n_probs of a chat answer and
-// thinking_budget_tokens an alias of reasoning_budget_tokens. The completion schema reads none of
-// them, and the raw paths take only the rendered prompt from the parser, so each used to be dropped
-// without a word. The fields that act while rendering (chat_template_kwargs, reasoning_effort,
+// thinking_budget_tokens an alias of reasoning_budget_tokens, which the raw paths take under its own
+// name. The completion schema reads none of them, and the raw paths take from the parser only the
+// rendered prompt, the template's stops and its reasoning budget, so each used to be dropped without
+// a word. The fields that act while rendering (chat_template_kwargs, reasoning_effort,
 // add_generation_prompt, continue_final_message) and the completion fields the schema reads itself
 // (json_schema, grammar, logprobs as n_probs, reasoning_budget_tokens, stop) stay allowed.
 static constexpr const char *CHAT_ONLY_FIELDS[] = {"response_format",     "tools",        "tool_choice",
@@ -701,13 +718,27 @@ static void add_template_stops(jllama_context *jctx, json &data, const std::vect
     data["stop"] = std::move(stops);
 }
 
+// The reasoning-budget fields oaicompat_chat_params_parse derives from a template that declares
+// thinking tags: the budget (the request's reasoning_budget_tokens, else the server's default), the
+// template's start and end tags, the message forced before the end tag and reasoning_control. The
+// completion schema reads each of them, so a raw completion with "messages" takes them as the chat
+// paths do -- the parser's values win over the request's, as in the parser's own copy of the request.
+// A template without thinking tags yields none of them, and the budget then has nothing to act on,
+// on the chat paths as here.
+static constexpr const char *REASONING_BUDGET_FIELDS[] = {"reasoning_budget_tokens", "reasoning_budget_start_tag",
+                                                          "reasoning_budget_end_tags", "reasoning_budget_message",
+                                                          "reasoning_control"};
+
 // A raw completion request with "messages" completes the prompt the chat template renders from them,
 // as applyTemplate renders it; the other fields stay completion fields. The field used to be read on
 // the chat paths alone (oaicompat_chat_params_parse), so a raw completion ignored it and completed
 // the prompt next to it, mostly the empty one. A non-empty prompt, the infill fields or one of
 // CHAT_ONLY_FIELDS beside the messages are refused rather than dropped; an empty prompt is no prompt
 // (InferenceParameters("") writes one). The media files of array-form content come back in files.
-static void render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+// The template's stop strings and its reasoning budget are carried over (add_template_stops,
+// REASONING_BUDGET_FIELDS); when the budget is, the template's generation prompt is returned, which the
+// chat paths hand to the sampler and the raw paths have to (see prime_reasoning_budget), else "".
+static std::string render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
     for (const char *field : CHAT_ONLY_FIELDS) {
         if (data.contains(field) && !data.at(field).is_null()) {
             throw jllama_invalid_request(std::string("'") + field +
@@ -731,14 +762,25 @@ static void render_messages_into_prompt(jllama_context *jctx, json &data, std::v
     }
     data["prompt"] = chat.at("prompt");
     add_template_stops(jctx, data, session.additional_stops());
+    if (!chat.contains("reasoning_budget_end_tags")) {
+        return std::string();
+    }
+    for (const char *field : REASONING_BUDGET_FIELDS) {
+        if (chat.contains(field)) {
+            data[field] = chat.at(field);
+        }
+    }
+    return session.generation_prompt();
 }
 
 // A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill
 // endpoint refuses it (no FIM tokens, a field missing), otherwise its prompt formatted the same way.
-// One with "messages" completes their templated prompt. Returns the task type to post.
-static server_task_type prepare_raw_completion(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+// One with "messages" completes their templated prompt, and generation_prompt receives what
+// render_messages_into_prompt returns. Returns the task type to post.
+static server_task_type prepare_raw_completion(jllama_context *jctx, json &data, std::vector<raw_buffer> &files,
+                                               std::string &generation_prompt) {
     if (data.contains("messages")) {
-        render_messages_into_prompt(jctx, data, files);
+        generation_prompt = render_messages_into_prompt(jctx, data, files);
         return SERVER_TASK_TYPE_COMPLETION;
     }
     if (!is_infill_request(data)) {
@@ -762,16 +804,18 @@ std::string infill(jllama_context *jctx, const std::string &body_text) {
 std::string completions(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
     std::vector<raw_buffer> files;
-    const server_task_type type = prepare_raw_completion(jctx, data, files);
-    return safe_json_to_str(
-        results_to_json(blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files))));
+    std::string generation_prompt;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, generation_prompt);
+    return safe_json_to_str(results_to_json(
+        blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, generation_prompt)));
 }
 
 int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
     json data = parse_json_body(body_text);
     std::vector<raw_buffer> files;
-    const server_task_type type = prepare_raw_completion(jctx, data, files);
-    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files));
+    std::string generation_prompt;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, generation_prompt);
+    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, generation_prompt);
 }
 
 int completions_oai_stream_request(jllama_context *jctx, const std::string &body_text) {

@@ -800,6 +800,129 @@ TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTe
     std::filesystem::remove(path, ignored);
 }
 
+namespace {
+
+// A ChatML template with a thinking block: it renders an assistant's reasoning_content between
+// "<think>" and "</think>" and opens the block in the generation prompt, the shape of the reasoning
+// templates that think by default. llama.cpp's template analysis derives the thinking tags
+// "<think>"/"</think>" from it, which the chat parser turns into the reasoning budget's tags.
+const char *THINKING_TEMPLATE =
+    "{%- for message in messages -%}"
+    "{{- '<|im_start|>' + message.role + '\\n' -}}"
+    "{%- if message.reasoning_content -%}"
+    "{{- '<think>\\n' + message.reasoning_content + '\\n</think>\\n\\n' -}}"
+    "{%- endif -%}"
+    "{{- message.content + '<|im_end|>\\n' -}}"
+    "{%- endfor -%}"
+    "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n<think>\\n' -}}{%- endif -%}";
+
+jllama_model *load_with_chat_template(const std::string &path, const std::string &tmpl) {
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    return model;
+}
+
+json budget_request(int budget) {
+    json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                    {"ignore_eos", true},
+                    {"n_predict", 12},
+                    {"temperature", 0}};
+    if (budget >= 0) {
+        request["reasoning_budget_tokens"] = budget;
+    }
+    return request;
+}
+
+} // namespace
+
+TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate) {
+    // The chat paths turn reasoning_budget_tokens into a budget over the thinking tags the template
+    // declares, and the sampler forces the end tag once the budget is spent. The raw completion paths
+    // rendered the messages and dropped the tags, so the same budget did nothing there. The random
+    // model gets an end-of-generation byte of its own, so the '>' of the end tag can be generated.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-budget", false, 4);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_with_chat_template(path, THINKING_TEMPLATE);
+    ASSERT_NE(model, nullptr);
+    const json request = budget_request(1);
+
+    // The reference: on the chat path the budget closes the thinking block the generation prompt
+    // opened (its "\n" after "<think>" spends the one token), and the chat parser takes the end tag
+    // off the answer. The raw paths complete the same tokens without the parser: the forced end tag,
+    // then the chat path's answer.
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string answer =
+        json::parse(chat.str()).at("choices").at(0).at("message").value("content", std::string());
+    EXPECT_EQ(answer.find("</think>"), std::string::npos) << chat.str();
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const std::string blocking = json::parse(completion.str()).at("content").get<std::string>();
+    EXPECT_EQ(blocking.rfind("</think>", 0), 0u) << completion.str();
+    EXPECT_GE(blocking.size(), answer.size()) << completion.str();
+    EXPECT_EQ(blocking.substr(blocking.size() - std::min(blocking.size(), answer.size())), answer)
+        << completion.str() << "\n"
+        << chat.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::string streamed;
+    bool stop = false;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned chunk;
+        ASSERT_EQ(jllama_completions_stream_receive(model, task, &chunk.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        streamed += json::parse(chunk.str()).value("content", std::string());
+    }
+    EXPECT_TRUE(stop);
+    EXPECT_EQ(streamed, blocking);
+
+    // An output-format grammar beside the budget cannot take the generation prompt the budget is
+    // primed with: the request runs under the grammar, and the budget waits for a start tag.
+    json with_schema = request;
+    with_schema["json_schema"] = json{{"type", "string"}};
+    with_schema["n_predict"] = 4;
+    Owned constrained;
+    ASSERT_EQ(jllama_completions(model, with_schema.dump().c_str(), &constrained.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(constrained.str()).at("content").get<std::string>().rfind("\"", 0), 0u) << constrained.str();
+
+    // Without a budget the random model does not close the block on its own: the end tag above is
+    // the budget's doing.
+    Owned unbounded;
+    ASSERT_EQ(jllama_completions(model, budget_request(-1).dump().c_str(), &unbounded.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(unbounded.str()).at("content").get<std::string>().find("</think>"), std::string::npos)
+        << unbounded.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget) {
+    // A template that declares no thinking tags gives the budget nothing to act on, on the chat path
+    // and on the raw paths alike: the request runs unchanged, without an error.
+    Owned without;
+    ASSERT_EQ(jllama_completions(model_, budget_request(-1).dump().c_str(), &without.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned with;
+    ASSERT_EQ(jllama_completions(model_, budget_request(1).dump().c_str(), &with.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(with.str()).at("content"), json::parse(without.str()).at("content")) << with.str();
+    EXPECT_EQ(json::parse(with.str()).at("content").get<std::string>().find("</think>"), std::string::npos)
+        << with.str();
+}
+
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
     Owned grammar;
     ASSERT_EQ(jllama_json_schema_to_grammar(R"({"type":"object","properties":{"a":{"type":"string"}}})", &grammar.s),

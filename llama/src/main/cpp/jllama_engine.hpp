@@ -87,19 +87,23 @@ void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
 /**
  * One completion task, posted and waited for; every result of it. Throws jllama_invalid_request
  * when the request does not parse, jllama_interrupted when free() cut the wait, std::runtime_error
- * for a failed result (jllama_invalid_request when the server reports it as 400).
+ * for a failed result (jllama_invalid_request when the server reports it as 400). A non-empty
+ * generation_prompt primes the sampler of a task without a session, as apply_chat_session does for
+ * one with (a raw completion with "messages" whose template has thinking tags).
  */
 [[nodiscard]] std::vector<server_task_result_ptr>
 blocking_completion(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
-                    std::vector<raw_buffer> files = {}, const common_chat_session &session = {});
+                    std::vector<raw_buffer> files = {}, const common_chat_session &session = {},
+                    const std::string &generation_prompt = {});
 
 /**
  * One streaming completion task, posted; its id, under which stream_next() yields the results and
  * task_release() drops it. Throws jllama_invalid_request when the request does not parse.
+ * generation_prompt as for blocking_completion.
  */
 [[nodiscard]] int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type,
                                     task_response_type res_type, std::vector<raw_buffer> files = {},
-                                    const common_chat_session &session = {});
+                                    const common_chat_session &session = {}, const std::string &generation_prompt = {});
 
 /**
  * The next result of a streaming task as JSON (header-only sentinels skipped), with `stop` set on

@@ -601,7 +601,8 @@ public final class InferenceParameters extends JsonParameters {
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
      * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
-     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
      * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
      * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
      * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
@@ -628,7 +629,8 @@ public final class InferenceParameters extends JsonParameters {
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
      * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
-     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
      * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
      * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
      * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
@@ -648,7 +650,8 @@ public final class InferenceParameters extends JsonParameters {
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
      * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
-     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
      * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
      * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
      * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
@@ -802,6 +805,13 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the reasoning-token budget replaced. A value of {@code -1}
      * disables the budget.
+     *
+     * <p>The budget counts the tokens between the thinking tags of the model's chat template and forces
+     * the end tag once it is spent. It acts on the chat paths and on {@code complete}/{@code generate}
+     * with messages ({@link #withMessages(java.util.List)}), which take the template's tags as the chat
+     * paths do. A template without thinking tags gives it nothing to act on, on either path, and the
+     * request runs unchanged. On {@code complete}/{@code generate} without messages it has no effect:
+     * the tags then have to be named in the request, which this builder does not offer.</p>
      *
      * @param budgetTokens maximum reasoning tokens (-1 = unlimited)
      * @return a new instance; this instance is unchanged

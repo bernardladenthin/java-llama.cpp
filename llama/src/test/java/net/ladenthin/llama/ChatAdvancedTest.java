@@ -6,6 +6,8 @@ package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -279,6 +281,65 @@ public class ChatAdvancedTest {
 
     private static InferenceParameters chatRequest(List<Pair<String, String>> messages) {
         return InferenceParameters.empty().withMessages(null, messages).withNPredict(1);
+    }
+
+    /**
+     * A ChatML template with a thinking block that it opens in the generation prompt: llama.cpp derives
+     * the thinking tags {@code <think>}/{@code </think>} from it, which the reasoning budget acts on.
+     */
+    private static final String THINKING_TEMPLATE = "{%- for message in messages -%}"
+            + "{{- '<|im_start|>' + message.role + '\\n' -}}"
+            + "{%- if message.reasoning_content -%}"
+            + "{{- '<think>\\n' + message.reasoning_content + '\\n</think>\\n\\n' -}}"
+            + "{%- endif -%}"
+            + "{{- message.content + '<|im_end|>\\n' -}}"
+            + "{%- endfor -%}"
+            + "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n<think>\\n' -}}{%- endif -%}";
+
+    /**
+     * Beside the messages, {@code complete()} and {@code generate()} keep the reasoning budget of a
+     * template with thinking tags, as the chat paths do: with a budget of one token, which the
+     * {@code "\n"} after the {@code <think>} of the generation prompt spends, the end tag is forced from
+     * the first generated token on. Both paths used to render the messages and drop the tags, so the
+     * budget did nothing there.
+     *
+     * <p>The reasoning model is used because its tokenizer gives a tag the same tokens inside the
+     * prompt and on its own, which is what the budget sampler matches; a SentencePiece tokenizer puts a
+     * space before a tag tokenized on its own, and the budget then never starts, on the chat paths too.
+     * The tokens are compared rather than the text because a special end tag renders as no text.
+     */
+    @Test
+    public void testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag() throws Exception {
+        Assumptions.assumeTrue(
+                new File(TestConstants.REASONING_MODEL_PATH).exists(),
+                "Reasoning model not found, skipping the reasoning-budget case");
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel thinking = new LlamaModel(new ModelParameters()
+                .setCtxSize(256)
+                .setModel(TestConstants.REASONING_MODEL_PATH)
+                .setGpuLayers(gpuLayers)
+                .setFit(false)
+                .setChatTemplate(THINKING_TEMPLATE))) {
+            InferenceParameters request = InferenceParameters.empty()
+                    .withMessages(null, Collections.singletonList(new Pair<>("user", "What is 2+2?")))
+                    .withReasoningBudgetTokens(1)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f)
+                    .withReturnTokens(true);
+            int[] endTag = thinking.encode("</think>");
+
+            CompletionResult completed = thinking.completeWithStats(request);
+
+            JsonNode tokens =
+                    new ObjectMapper().readTree(completed.getRawJson()).path("tokens");
+            assertTrue(tokens.size() > 0, completed.getRawJson());
+            assertEquals(endTag[0], tokens.get(0).asInt(), completed.getRawJson());
+            StringBuilder generated = new StringBuilder();
+            for (LlamaOutput output : thinking.generate(request)) {
+                generated.append(output.text);
+            }
+            assertEquals(completed.getText(), generated.toString());
+        }
     }
 
     // ------------------------------------------------------------------

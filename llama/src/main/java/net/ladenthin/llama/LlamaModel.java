@@ -155,9 +155,10 @@ public class LlamaModel implements AutoCloseable {
      * Two request shapes build the prompt instead: messages set with
      * {@link InferenceParameters#withMessages(java.util.List)} are rendered through the model's chat
      * template, as {@link #applyTemplate(InferenceParameters)} renders them, stopping also at the stop
-     * strings the template adds of its own (a non-empty prompt next to them is refused, and so is a chat
-     * field this path cannot apply: a response format or tools, which {@link #chatComplete} applies),
-     * and {@link InferenceParameters#withInputPrefix(String)} together with
+     * strings the template adds of its own and keeping a reasoning budget to the template's thinking
+     * tags (a non-empty prompt next to them is refused, and so is a chat field this path cannot apply: a
+     * response format or tools, which {@link #chatComplete} applies), and
+     * {@link InferenceParameters#withInputPrefix(String)} together with
      * {@link InferenceParameters#withInputSuffix(String)} is an infill request, formatted as
      * {@link #handleInfill(String)} formats it.
      *

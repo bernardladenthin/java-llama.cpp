@@ -525,17 +525,11 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F248 and the dated
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F249 and the dated
 addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
 scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
 
 **Java API (`LlamaModel`, `LlamaLoader`)**
-- **With `messages`, the raw completion paths do not derive the template's reasoning-budget tags**
-  (F247, F248): the chat parser turns `reasoning_budget_tokens` into a budget with the template's
-  thinking start/end tags; `render_messages_into_prompt` takes the prompt and the template's stop
-  strings and refuses the chat-only fields, but leaves `reasoning_budget_tokens` a completion field
-  without the tags, so the budget does nothing unless the caller names the tags itself (as without
-  `messages`). Either carry the tags over or refuse the budget beside `messages`.
 - **A second successful `LlamaLoader.initialize()` runs the search again** (F245): if
   `net.ladenthin.llama.lib.path` or the backend filter changed in between, it loads a second copy of
   the library and replaces the build info. Whether `initialize()` should do nothing after its first
