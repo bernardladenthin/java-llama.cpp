@@ -180,7 +180,9 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
 /**
  * A raw completion (llama.cpp's /completion body: `{"prompt": ..., "n_predict": ..., ...}`),
  * blocking; *response_json is the result object. A request takes one prompt and one completion:
- * several prompts or "n" > 1 are JLLAMA_STATUS_INVALID_REQUEST (send separate requests).
+ * several prompts or "n" > 1 are JLLAMA_STATUS_INVALID_REQUEST (send separate requests). A body with
+ * `input_prefix`/`input_suffix` is an infill one, prepared as for jllama_infill (both fields required,
+ * JLLAMA_STATUS_ERROR when the model has no FIM tokens).
  */
 JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json);
 
@@ -208,7 +210,7 @@ JLLAMA_API jllama_status jllama_infill(jllama_model *model, const char *request_
 
 /**
  * Starts a raw streaming completion (`"stream": true`; an infill one when the body carries
- * `input_prefix`/`input_suffix`) and returns its task id; receive with
+ * `input_prefix`/`input_suffix`, prepared as for jllama_completions) and returns its task id; receive with
  * jllama_completions_stream_receive. One prompt and one completion, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id);

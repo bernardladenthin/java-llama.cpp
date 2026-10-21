@@ -37,16 +37,29 @@ public final class FimAssumptions {
      * @param model the loaded model the test infills with
      */
     public static void assumeFimTokens(LlamaModel model) {
+        if (!hasFimTokens(model)) {
+            Assumptions.abort("model has no fill-in-the-middle tokens: " + NO_FIM_MESSAGE);
+        }
+    }
+
+    /**
+     * Whether {@code model} has FIM tokens, asked through the native FIM check as described above.
+     *
+     * @param model the loaded model
+     * @return {@code true} when the infill handler refuses the probe for its missing field,
+     *         {@code false} when it refuses it with {@link #NO_FIM_MESSAGE}
+     */
+    public static boolean hasFimTokens(LlamaModel model) {
         try {
             model.handleInfill("{}");
         } catch (InvalidRequestException e) {
             if (e.getMessage() != null && e.getMessage().contains("input_prefix")) {
-                return; // the FIM check passed; the probe was refused for the missing field
+                return true; // the FIM check passed; the probe was refused for the missing field
             }
             throw e;
         } catch (LlamaException e) {
             if (NO_FIM_MESSAGE.equals(e.getMessage())) {
-                Assumptions.abort("model has no fill-in-the-middle tokens: " + e.getMessage());
+                return false;
             }
             throw e;
         }

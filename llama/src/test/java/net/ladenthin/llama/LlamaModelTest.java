@@ -8,6 +8,7 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -39,6 +40,7 @@ public class LlamaModelTest {
     private static final String prefix = "def remove_non_ascii(s: str) -> str:\n    \"\"\" ";
     private static final String suffix = "\n    return result\n";
     private static final int nPredict = 10;
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * Minimum expected tokens when testing cancellation.
@@ -118,6 +120,7 @@ public class LlamaModelTest {
 
     @Test
     public void testGenerateInfill() {
+        FimAssumptions.assumeFimTokens(model);
         Map<Integer, Float> logitBias = new HashMap<>();
         logitBias.put(2, 2.0f);
         InferenceParameters params = new InferenceParameters("")
@@ -215,6 +218,7 @@ public class LlamaModelTest {
 
     @Test
     public void testCompleteInfillCustom() {
+        FimAssumptions.assumeFimTokens(model);
         Map<Integer, Float> logitBias = new HashMap<>();
         logitBias.put(2, 2.0f);
         InferenceParameters params = new InferenceParameters("")
@@ -228,6 +232,29 @@ public class LlamaModelTest {
 
         String output = model.complete(params);
         assertFalse(output.isEmpty());
+    }
+
+    /**
+     * {@code complete}/{@code completeWithStats}/{@code generate} with an input prefix and suffix
+     * evaluate the infill prompt {@code handleInfill} builds from the same fields (the FIM tokens
+     * around prefix and suffix), not the empty prompt next to them: the completion path dropped both
+     * fields without a word and completed {@code ""} ({@code tokens_evaluated} 0). The prompt token
+     * count is the full prompt whether or not the slot's cache served it, so it is compared exactly.
+     */
+    @Test
+    public void testCompleteWithStatsInfillEvaluatesTheInfillPrompt() throws Exception {
+        FimAssumptions.assumeFimTokens(model);
+        String infill = model.handleInfill("{\"input_prefix\":" + JSON.writeValueAsString(prefix) + ",\"input_suffix\":"
+                + JSON.writeValueAsString(suffix) + ",\"n_predict\":1}");
+        long expected = JSON.readTree(infill).path("tokens_evaluated").asLong();
+        assertTrue(expected > 0, "the infill endpoint evaluated no prompt: " + infill);
+
+        CompletionResult result = model.completeWithStats(new InferenceParameters("")
+                .withInputPrefix(prefix)
+                .withInputSuffix(suffix)
+                .withNPredict(1));
+
+        assertEquals(expected, result.getUsage().getPromptTokens(), result.getRawJson());
     }
 
     @Test

@@ -744,7 +744,10 @@ unknown tool names are returned to the model as valid `{"error":"..."}` tool-res
 
 ### Infilling
 
-You can simply set `InferenceParameters#withInputPrefix(String)` and `InferenceParameters#withInputSuffix(String)`.
+Set both `InferenceParameters#withInputPrefix(String)` and `InferenceParameters#withInputSuffix(String)`;
+`complete`, `completeWithStats` and `generate` then format the prompt around the model's fill-in-the-middle tokens,
+exactly as `handleInfill` does (an optional `withPrompt` is the text after the middle). A request with only one of
+the two fields is an `InvalidRequestException`, a model without FIM tokens a `LlamaException`.
 
 ### Embeddings & Reranking
 

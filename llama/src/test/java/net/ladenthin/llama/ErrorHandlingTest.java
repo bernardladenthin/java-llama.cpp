@@ -203,6 +203,43 @@ public class ErrorHandlingTest {
         }
     }
 
+    @Test
+    public void testCompleteWithOnlyAnInputSuffixIsAnInvalidRequest() {
+        // complete()/generate() take input_prefix/input_suffix as an infill request, which needs both;
+        // the completion path used to drop a lone field and complete the prompt next to it.
+        FimAssumptions.assumeFimTokens(model);
+        InferenceParameters request =
+                InferenceParameters.empty().withInputSuffix("return result").withNPredict(1);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> model.complete(request));
+
+        assertTrue(
+                e.getMessage().contains("input_prefix"), "Error should name input_prefix but was: " + e.getMessage());
+    }
+
+    @Test
+    public void testCompleteWithInfillFieldsOnAModelWithoutFimTokensIsRefused() {
+        // The draft model (AMD-Llama-135m, a Llama-2 vocabulary) has no FIM tokens; a model that has
+        // them skips this test. The refusal is handleInfill's, not an empty completion.
+        Assumptions.assumeTrue(new File(TestConstants.DRAFT_MODEL_PATH).exists(), "Draft model file not found");
+        try (LlamaModel noFim = new LlamaModel(new ModelParameters()
+                .setCtxSize(128)
+                .setModel(TestConstants.DRAFT_MODEL_PATH)
+                .setGpuLayers(Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL))
+                .setFit(false))) {
+            Assumptions.assumeFalse(FimAssumptions.hasFimTokens(noFim), "the draft model has FIM tokens");
+            InferenceParameters request = InferenceParameters.empty()
+                    .withInputPrefix("def hello():")
+                    .withInputSuffix("return result")
+                    .withNPredict(1);
+
+            LlamaException e = assertThrows(LlamaException.class, () -> noFim.complete(request));
+
+            assertEquals(FimAssumptions.NO_FIM_MESSAGE, e.getMessage());
+            assertFalse(e instanceof InvalidRequestException, "a missing model capability is no invalid request");
+        }
+    }
+
     // -------------------------------------------------------------------------
     // n_predict per request (F69)
     // -------------------------------------------------------------------------

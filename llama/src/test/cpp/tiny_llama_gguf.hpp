@@ -96,8 +96,10 @@ inline void confine_output_to_ascii(ggml_tensor *output) {
 }
 
 // A two-layer llama with random weights and the GPT-2 byte tokenizer: enough for the server to
-// load it, apply its fallback chat template and generate tokens.
-inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api") {
+// load it, apply its fallback chat template and generate tokens. With fim, the byte tokens 1, 2 and
+// 3 are declared its fill-in-the-middle prefix, suffix and middle tokens, which is all llama.cpp needs
+// to format an infill prompt (the bytes never occur in the tests' text).
+inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false) {
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
     const std::string path = (std::filesystem::temp_directory_path() /
@@ -130,6 +132,11 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     gguf_set_arr_str(g, "tokenizer.ggml.merges", no_merges, 1);
     gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
     gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", '>');
+    if (fim) {
+        gguf_set_val_u32(g, "tokenizer.ggml.fim_pre_token_id", 1);
+        gguf_set_val_u32(g, "tokenizer.ggml.fim_suf_token_id", 2);
+        gguf_set_val_u32(g, "tokenizer.ggml.fim_mid_token_id", 3);
+    }
 
     ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);

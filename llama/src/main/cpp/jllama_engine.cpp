@@ -604,12 +604,6 @@ std::string model_meta(jllama_context *jctx) {
     return safe_json_to_str(j);
 }
 
-std::string completions(jllama_context *jctx, const std::string &body_text) {
-    const json data = parse_json_body(body_text);
-    return safe_json_to_str(
-        results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE)));
-}
-
 std::string completions_oai(jllama_context *jctx, const std::string &body_text) {
     const json body = parse_json_body(body_text);
     json data;
@@ -622,15 +616,23 @@ std::string completions_oai(jllama_context *jctx, const std::string &body_text) 
         results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL)));
 }
 
-std::string infill(jllama_context *jctx, const std::string &body_text) {
-    // FIM token support via server_context_meta (populated from the same llama_vocab_fim_* calls
-    // inside server-context). Upstream answers 501 here, a server-side error.
-    auto meta = wake_and_get_meta(jctx);
+// The FIM check of llama.cpp's /infill handler (handle_infill). Upstream answers 501 here, a
+// server-side error. The tokens come from server_context_meta (populated from the same
+// llama_vocab_fim_* calls inside server-context).
+static void require_fim_tokens(const server_context_meta &meta) {
     if (meta.fim_pre_token == LLAMA_TOKEN_NULL || meta.fim_sub_token == LLAMA_TOKEN_NULL ||
         meta.fim_mid_token == LLAMA_TOKEN_NULL) {
         throw std::runtime_error("Model does not support fill-in-the-middle infill");
     }
-    json data = parse_json_body(body_text);
+}
+
+// The rest of handle_infill's preparation: both fields required, input_extra defaulted, and the
+// prompt formatted around the FIM tokens into data["prompt"] (an optional "prompt" of the request is
+// the text after the middle token). Shared by the infill endpoint and the raw completion paths,
+// which take input_prefix/input_suffix as an infill request -- upstream formats the infill prompt in
+// its HTTP handler alone and runs an infill task in the slot like a completion, so a completion
+// request carrying the fields used to complete its (mostly empty) prompt and drop both.
+static void prepare_infill_prompt(jllama_context *jctx, const server_context_meta &meta, json &data) {
     for (const char *field : {"input_prefix", "input_suffix"}) {
         if (!data.contains(field)) {
             throw jllama_invalid_request(std::string("\"") + field + "\" is required");
@@ -648,13 +650,39 @@ std::string infill(jllama_context *jctx, const std::string &body_text) {
     } catch (const std::exception &e) {
         rethrow_by_type(e);
     }
+}
+
+// A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill
+// endpoint refuses it (no FIM tokens, a field missing), otherwise its prompt formatted the same way.
+// Returns the task type to post.
+static server_task_type prepare_raw_completion(jllama_context *jctx, json &data) {
+    if (!is_infill_request(data)) {
+        return SERVER_TASK_TYPE_COMPLETION;
+    }
+    const auto meta = wake_and_get_meta(jctx);
+    require_fim_tokens(meta);
+    prepare_infill_prompt(jctx, meta, data);
+    return SERVER_TASK_TYPE_INFILL;
+}
+
+std::string infill(jllama_context *jctx, const std::string &body_text) {
+    const auto meta = wake_and_get_meta(jctx);
+    require_fim_tokens(meta);
+    json data = parse_json_body(body_text);
+    prepare_infill_prompt(jctx, meta, data);
     return safe_json_to_str(
         results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_INFILL, TASK_RESPONSE_TYPE_NONE)));
 }
 
+std::string completions(jllama_context *jctx, const std::string &body_text) {
+    json data = parse_json_body(body_text);
+    const server_task_type type = prepare_raw_completion(jctx, data);
+    return safe_json_to_str(results_to_json(blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE)));
+}
+
 int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
-    const json data = parse_json_body(body_text);
-    const server_task_type type = is_infill_request(data) ? SERVER_TASK_TYPE_INFILL : SERVER_TASK_TYPE_COMPLETION;
+    json data = parse_json_body(body_text);
+    const server_task_type type = prepare_raw_completion(jctx, data);
     return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE);
 }
 

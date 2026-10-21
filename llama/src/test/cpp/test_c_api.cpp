@@ -545,9 +545,98 @@ TEST_F(CApi, OperationsTheModelWasNotLoadedForAreServerErrors) {
     EXPECT_NE(std::string(jllama_last_error()).find("reranking"), std::string::npos);
     EXPECT_EQ(jllama_infill(model_, R"({"input_prefix":"a","input_suffix":"b"})", &response.s), JLLAMA_STATUS_ERROR);
     EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
+    // The infill fields on the completion paths are refused the same way instead of being dropped.
+    EXPECT_EQ(jllama_completions(model_, R"({"input_prefix":"a","input_suffix":"b"})", &response.s),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"input_prefix":"a","input_suffix":"b"})", &task),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
     EXPECT_NE(jllama_systemone(model_, R"({"state":"x","questions":[]})", &response.s), JLLAMA_STATUS_OK);
     EXPECT_EQ(response.s, nullptr);
     EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+}
+
+namespace {
+
+// Receives a raw streaming task until its stop and returns the last result, the one with the totals.
+json receive_to_stop(jllama_model *model, int task) {
+    bool stop = false;
+    json last;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned payload;
+        if (jllama_completions_stream_receive(model, task, &payload.s, &stop) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return json();
+        }
+        last = json::parse(payload.str());
+    }
+    EXPECT_TRUE(stop);
+    return last;
+}
+
+// The same random model with fill-in-the-middle tokens.
+class CApiFim : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-fim", true);
+        ASSERT_FALSE(path_.empty());
+        const std::vector<std::string> args = {"jllama", "-m", path_,         "-c", "128",
+                                               "-ngl",   "0",  "--no-warmup", "-t", "2"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+    static jllama_model *model_;
+};
+std::string CApiFim::path_;
+jllama_model *CApiFim::model_ = nullptr;
+
+const char *INFILL_REQUEST = R"({"input_prefix":"abcdefghij","input_suffix":"klmnopqrst","n_predict":1,)"
+                             R"("temperature":0})";
+
+} // namespace
+
+TEST_F(CApiFim, ARawCompletionWithInfillFieldsEvaluatesTheInfillPrompt) {
+    // The raw completion paths (LlamaModel.complete/generate stream, handleCompletions blocks) take
+    // input_prefix/input_suffix as an infill request; they used to post the empty prompt instead and
+    // drop both fields without a word (tokens_evaluated 0).
+    Owned infill;
+    ASSERT_EQ(jllama_infill(model_, INFILL_REQUEST, &infill.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const int expected = json::parse(infill.str()).at("tokens_evaluated").get<int>();
+    EXPECT_GE(expected, 23); // ten prefix and ten suffix bytes around the three FIM tokens
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, INFILL_REQUEST, &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, INFILL_REQUEST, &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), expected);
+}
+
+TEST_F(CApiFim, ARawCompletionWithOnlyOneInfillFieldIsRefused) {
+    Owned response;
+    int task = -1;
+    EXPECT_EQ(jllama_completions(model_, R"({"input_prefix":"abc","n_predict":1})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_suffix"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"input_suffix":"abc","n_predict":1})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
 }
 
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {

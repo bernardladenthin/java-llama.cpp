@@ -133,7 +133,11 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the infilling prefix replaced (default: empty).
+     * Returns a new request with the infilling prefix replaced (default: absent). Infilling needs
+     * both the prefix and the suffix: {@code complete}/{@code generate} format the prompt around the
+     * model's fill-in-the-middle tokens as {@code handleInfill} does, refuse a request without
+     * {@link #withInputSuffix(String)} with an {@code InvalidRequestException} and a model without
+     * FIM tokens with a {@code LlamaException}.
      *
      * @param inputPrefix the prefix for infilling; {@code null} clears
      * @return a new instance; this instance is unchanged
@@ -143,7 +147,11 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the infilling suffix replaced (default: empty).
+     * Returns a new request with the infilling suffix replaced (default: absent). Infilling needs
+     * both the prefix and the suffix: {@code complete}/{@code generate} format the prompt around the
+     * model's fill-in-the-middle tokens as {@code handleInfill} does, refuse a request without
+     * {@link #withInputPrefix(String)} with an {@code InvalidRequestException} and a model without
+     * FIM tokens with a {@code LlamaException}.
      *
      * @param inputSuffix the suffix for infilling; {@code null} clears
      * @return a new instance; this instance is unchanged
