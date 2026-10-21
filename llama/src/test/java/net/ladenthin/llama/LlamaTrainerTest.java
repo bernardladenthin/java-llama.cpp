@@ -54,11 +54,14 @@ class LlamaTrainerTest {
 
     /**
      * The configuration crosses with {@code GetStringUTFChars}, which hands out Modified UTF-8, and
-     * that is safe only because Jackson writes a supplementary-plane character as an escaped
-     * surrogate pair (two {@code \\u} escapes), so the JSON is ASCII where the two encodings differ.
-     * Should Jackson ever write the character raw, the native parser would receive two 3-byte
-     * surrogates, reject them as ill-formed UTF-8 and fail with {@code invalid training config}
-     * before looking at the model -- this test is what would say so.
+     * that is safe only because {@code TrainingParameters.toJson()} passes Jackson's output through
+     * {@code escapeNonAscii}, which writes every character at or above 0x80 as a {@code \\u} escape
+     * (Jackson's own {@code ESCAPE_NON_ASCII} is off by default and writes them raw), so the JSON is
+     * ASCII where the two encodings differ. Should that escaping be dropped or bypassed, the native
+     * parser would receive two 3-byte surrogates, reject them as ill-formed UTF-8 and fail with
+     * {@code invalid training config} before looking at the model -- this test is the end-to-end
+     * proof; {@code TrainingParametersTest#nonAsciiTextIsEscapedSoTheJsonCrossesJniIntact} is the
+     * unit guard.
      */
     @Test
     void aFourByteCharacterInTheTrainingTextReachesTheTrainer(@TempDir Path tmp) {
