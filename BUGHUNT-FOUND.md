@@ -346,6 +346,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `RpcServerLifecycleTest#aStopThatArrivesBeforeTheBindDoesNotLeaveTheServerRunning` (Fake-Backend, das wie der native Server das Stopp-Flag beim Binden zurücksetzt; ohne Fix rot nach 31 s, mit Fix 15/15 grün)
 - **Status:** gefixt
 - **Commit:** e824ae5
+- **Nachtrag (Branch-Review 2026-10-20):** Die Wiederholung des Stopps war auf `STOP_TIMEOUT_MILLIS` begrenzt; überlebte der Thread sie, gab `start` den Einzelinstanz-Platz trotzdem frei und meldete „could not listen“. Seit F237 behält ein überlebender Thread den Platz, bis er endet, und `start` meldet ihn (`RpcServerLifecycleTest#aServerThatIgnoresTheStopIsReportedAndKeepsTheSlot`).
 
 <a id="f36"></a>
 ### F36 – java-llama.cpp: `LlamaIterator` wird nach `cancel()` aus einem zweiten Thread durch ein spät eintreffendes Ergebnis wiederbelebt
@@ -442,6 +443,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („expected: <ModelUnavailableException> but was: <java.nio.file.InvalidPathException>“, Nul character not allowed), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f3b8aed`
+- **Nachtrag (Branch-Review 2026-10-20):** Jede `InvalidPathException` als „fehlt“ zu werten war zu weit: unter Linux wirft `Paths.get` auch für einen Nicht-ASCII-Namen in einer JVM mit POSIX-Locale, obwohl die Datei existiert. Seit F238 gilt das nur noch für das NUL-Zeichen und für Namen, die die JVM kodieren kann (`OfflineModelGuardTest`); der Test oben bleibt grün.
 
 <a id="f57"></a>
 ### F57 – java-llama.cpp: `ServerMetrics.getCumulativeUsage()` liefert ein `Usage` gegen dessen eigenen Vertrag
@@ -1289,6 +1291,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** mit dem alten Mechanismus (`supplyAsync` je Anfrage, keine Freigabe) rot (4 von 8; die übrigen 4 prüfen unverändertes Verhalten), mit dem Fix grün. Ein modellgestützter Lauf (J5-Probe) steht aus: erwartet `maxProcessingSlots=8` auch auf 4 Kernen für `completeBatch`.
 - **Status:** gefixt
 - **Commit:** 8130463
+- **Nachtrag (Branch-Review 2026-10-20):** `submitAllThenReceive` fing nur `RuntimeException`; ein `Error` übersprang Freigabe und restliche Empfänge (behoben als F235). Spätere Fehler eines Batches gingen ohne Spur verloren (behoben als F236, gilt auch für `runEachOnItsOwnThread`).
 
 <a id="f168"></a>
 ### F168 – java-llama.cpp: `JllamaNative.takeStrings` gibt ein leeres Nicht-NULL-Array nicht frei
