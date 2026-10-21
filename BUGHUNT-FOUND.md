@@ -2348,7 +2348,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `test_c_api.cpp`: `CApiVision.ModelMetaNamesTheMediaMarker`, `CApiVision.ARawCompletionTakesUpstreamsMultimodalPromptObject` (blockierend, gestreamt, OpenAI-Pfad: `tokens_evaluated` = Text-Tokens + 4 Bild-Embeddings), `CApiVision.AMultimodalPromptWhoseMarkersDoNotMatchItsImagesIsRefused` (kein Marker, zwei Marker für ein Bild, kein Base64, keine Daten, Bild am Ende), `CApi.AMultimodalPromptObjectOnAModelWithoutAProjectorIsTheCallersFault`; `ModelMetaTest#testGetMediaMarker`, `#testGetMediaMarkerEmptyWhenAbsent`; `MultimodalIntegrationTest#aRawCompletionTakesTheMultimodalPromptObject` (JNI, `handleCompletionsOai`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „test_c_api.cpp:775: Failure Value of: j.contains("media_marker") Expected: true“ und, mit dem Marker, „test_c_api.cpp:792: Failure Expected equality of these values: jllama_completions(model_, request.c_str(), &completion.s) Which is: 2 JLLAMA_STATUS_OK Which is: 0 … Multimodal data provided, but model does not support multimodal requests.“; der Java-Test mit einem Prompt, der auf das Bild endete, beendete die Test-JVM („server-context.cpp:4067: GGML_ASSERT(batch.size() > 0) failed“, Exit 134), bevor die Schutzprüfung da war. Mit dem Fix grün: `ctest -R CApi` 49/49, `ModelMetaTest` 20/20, `MultimodalIntegrationTest` mit dem Winzmodell und dem Winz-Projektor 5/6 – rot bleibt nur `#imageBytesAffectTheAnswer`, das echte Farberkennung braucht (Rauschen eines Zufallsmodells; mit SmolVLM in CI).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `595a8be`
 
 ## Offene Verdachte ohne Fund-ID
 
