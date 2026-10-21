@@ -152,6 +152,20 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        ChatStreamChunkParser.feed: an envelope of the native streaming layer that is not one well-formed
+        JSON value is reported as ChatStreamChunkParser.MalformedEnvelopeException (an
+        IllegalArgumentException quoting the envelope) instead of being taken for the end of the stream
+        (F263); LlamaModel turns it into a LlamaException. Jackson's readTree declares the checked
+        IOException, so the conversion is unavoidable; the cause is chained through. Same tradeoff as
+        ChatRequest.parseSchemaOrThrow above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.json.ChatStreamChunkParser"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="feed"/>
+    </Match>
+
+    <!--
         InferenceParameters and ModelParameters are fluent builders whose
         parameters field is a Map<String, String> serving as the CLI / JSON
         wire-format passed across JNI to nlohmann/json. Every setter

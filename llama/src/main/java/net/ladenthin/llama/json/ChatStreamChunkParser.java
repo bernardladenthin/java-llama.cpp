@@ -98,7 +98,7 @@ public class ChatStreamChunkParser {
                 : envelopeJson;
         return new MalformedEnvelopeException(
                 "malformed streaming envelope from the native layer (" + why + "), expected "
-                        + "{\"data\": <object or array>, \"stop\": <boolean>} but got: '" + excerpt + "'",
+                        + "{\"data\": an object or an array, \"stop\": a boolean} but got: '" + excerpt + "'",
                 cause);
     }
 

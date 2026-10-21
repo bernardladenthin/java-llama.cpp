@@ -416,7 +416,7 @@ public class LlamaLoader {
                     loadedLibPath = libPath;
                     loadedBackend = backend;
                     reportedChange = reported;
-                    loadedBuild = build;
+                    restoreBuildInfo(build);
                 }
             };
         }

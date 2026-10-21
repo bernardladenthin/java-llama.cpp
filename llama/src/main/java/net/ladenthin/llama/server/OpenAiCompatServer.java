@@ -1192,6 +1192,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
     // package-private for ResponseStreamTest
     static final class ResponseStream implements AutoCloseable {
 
+        /** How many causes {@link #isOwnWriteFailure(Throwable)} follows. */
+        private static final int MAX_CAUSE_DEPTH = 16;
+
         private final HttpExchange exchange;
         private final String contentType;
         private final Object lock = new Object();
@@ -1204,9 +1207,6 @@ public final class OpenAiCompatServer implements AutoCloseable {
         private boolean started;
 
         private boolean answered;
-
-        /** How many causes {@link #isOwnWriteFailure(Throwable)} follows. */
-        private static final int MAX_CAUSE_DEPTH = 16;
 
         /** The last exception a strict write threw: the stream's own failure, i.e. a client that went away. */
         private @Nullable IOException writeFailure;
