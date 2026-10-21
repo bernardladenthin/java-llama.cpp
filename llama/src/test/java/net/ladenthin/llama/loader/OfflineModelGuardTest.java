@@ -8,6 +8,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -96,8 +97,8 @@ public class OfflineModelGuardTest {
 
     @Test
     public void jnuEncoding_anAbsentOrUnknownNameFallsBackToTheDefaultCharset() {
-        assertThat(OfflineModelGuard.jnuEncoding(null), is(java.nio.charset.Charset.defaultCharset()));
-        assertThat(OfflineModelGuard.jnuEncoding("no-such-charset"), is(java.nio.charset.Charset.defaultCharset()));
-        assertThat(OfflineModelGuard.jnuEncoding("bad name!"), is(java.nio.charset.Charset.defaultCharset()));
+        assertThat(OfflineModelGuard.jnuEncoding(null), is(Charset.defaultCharset()));
+        assertThat(OfflineModelGuard.jnuEncoding("no-such-charset"), is(Charset.defaultCharset()));
+        assertThat(OfflineModelGuard.jnuEncoding("bad name!"), is(Charset.defaultCharset()));
     }
 }
