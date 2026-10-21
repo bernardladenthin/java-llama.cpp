@@ -160,6 +160,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F235](#f235) — niedrig — *gefixt*
 - [F236](#f236) — niedrig — *gefixt*
 - [F237](#f237) — niedrig — *gefixt*
+- [F238](#f238) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1970,6 +1971,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Zuerst nur die Stopp-Frist als Parameter eingeführt (verhaltensneutral), dann rot: „Expected: a string containing "its thread did not end within 200 ms after the stop" but: was "RPC server could not listen on 127.0.0.1:50052 (is the port already in use?)"“ und „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix grün (`RpcServerLifecycleTest` 18/18, `RpcServerTest` 9/9 gegen die native Bibliothek, `RpcServerOptionsTest` 9/9); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2eb3fff`
+
+### F238 – java-llama.cpp: `--offline` meldet eine vorhandene Modelldatei mit Nicht-ASCII-Namen als fehlend, wenn die JVM mit der POSIX-Locale läuft
+- **Zeit:** 2026-10-21 01:52 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/OfflineModelGuard.java` (`localFileExists`, neu `countsAsMissing`, `fileNameEncoding`, `jnuEncoding`)
+- **Schwere:** niedrig (braucht zugleich eine JVM ohne `LANG`/mit POSIX-Locale, einen Nicht-ASCII-Modellpfad und `--offline`; das ist allerdings genau die abgeschottete Container-Umgebung, für die `--offline` da ist)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J10-1). Eingeführt mit F56: dessen Fix machte jede `InvalidPathException` zu „fehlt“ und hatte nur das NUL-Zeichen im Blick. Vor dem Branch kam eine rohe `InvalidPathException` an, unhandlich, aber wahr.
+- **Beschreibung:** `localFileExists` schrieb `try { return Files.exists(Paths.get(model)); } catch (InvalidPathException e) { return false; }`, und die Javadoc begründete das mit „a path the file system cannot represent“. Unter Linux kodiert `UnixPath` den Namen aber mit `sun.jnu.encoding`, das der Locale folgt; mit `LC_ALL=C` ist das `ANSI_X3.4-1968`, und `Paths.get("…/größe.gguf")` wirft „Malformed input or input contains unmappable characters“, obwohl die Datei als UTF-8-Name auf der Platte liegt. Die native Seite hat diese Grenze nicht (`jllama.cpp` gibt das argv als `String.getBytes("UTF-8")` weiter, upstream öffnet mit `std::filesystem::u8path`), ohne `--offline` lädt dasselbe Modell also. Mit `--offline` warf der Wächter selbstsicher `ModelUnavailableException` „the configured model file does not exist“ für eine vorhandene Datei.
+- **Fix:** Die Entscheidung liegt in der paketinternen, reinen Funktion `countsAsMissing(model, charset, parse)`, in dieser Reihenfolge: ein NUL-Zeichen ist „fehlt“ (F56 bleibt; nativer Code schnitte den Pfad dort ab, auch wenn der Name zugleich nicht kodierbar ist); sonst entscheidet `Files.exists(parse(model))`; lehnt `parse` den Namen mit `InvalidPathException` ab, ist er nur dann „fehlt“, wenn der Zeichensatz ihn kodieren kann (die JVM konnte ihn schreiben, das Dateisystem hat ihn abgewiesen); kann er es nicht, geht der Pfad an den nativen Lader, der eine fehlende Datei selbst meldet. Der Zeichensatz ist `sun.jnu.encoding`, aufgelöst wie im JDK (`Charset.defaultCharset()`, wenn die Eigenschaft fehlt oder keinen unterstützten Zeichensatz nennt; nicht hart „UTF-8“), und unter Windows UTF-8, weil `WindowsPath` den UTF-16-String parst und `sun.jnu.encoding` nie liest, dort also jede Ablehnung die des Dateisystems ist (Präzisierung des Code-Skeptikers). Die Javadoc von `check` nennt den Fall.
+- **Tests:** `OfflineModelGuardTest` (neu, im `loader`-Paket, weil die Funktion paketintern ist): `countsAsMissing_aNameTheJvmEncodingCannotRepresent_isLeftToTheNativeLoader` (US-ASCII und ein Parser, der wie `UnixPath.encode` wirft: nicht „fehlt“), `…_aNameTheFileSystemRejects_isMissing`, `…_aNulCharacter_isMissing`, `…_aNulCharacterWinsOverAnUnencodableName`, `…_anExistingAndAMissingFile`, `fileNameEncoding_isTheJnuEncodingExceptOnWindows`, `jnuEncoding_isTheCharsetOfTheProperty`, `jnuEncoding_anAbsentOrUnknownNameFallsBackToTheDefaultCharset`; der F56-Test `LlamaModelOfflineTest#check_offlineAndUnrepresentablePath_throwsModelUnavailable` bleibt grün. Zusätzlich von Hand geprüft mit `LC_ALL=C` (`sun.jnu.encoding=ANSI_X3.4-1968`) und einer vorhandenen Datei `größe.gguf`: der alte Wächter warf `ModelUnavailableException`, der neue lässt durch; ein fehlender Nicht-ASCII-Name geht jetzt ebenfalls an den nativen Lader.
+- **Rot-Grün-Nachweis:** Zuerst die Funktion mit der alten Semantik herausgezogen (jede `InvalidPathException` heißt „fehlt“, Zeichensatz unbeachtet), dann rot: `countsAsMissing_aNameTheJvmEncodingCannotRepresent_isLeftToTheNativeLoader` „Expected: is <false> but: was <true>“; mit dem Fix grün (`OfflineModelGuardTest` 8/8, `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
