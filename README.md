@@ -897,16 +897,18 @@ A `Session` can be snapshotted and branched — the KV-cache slot state and the 
 together, so native state and history can never drift apart:
 
 ```java
+// The model is loaded with a slot directory (ModelParameters.setSlotSavePath("checkpoints")); a
+// checkpoint is a file name inside it, as for LlamaModel.saveSlot.
 try (Session session = new Session(model, 0, "You are terse.")) {
     session.send("My name is Alice.");
-    SessionCheckpoint cp = session.checkpoint("checkpoints/turn1.bin");
+    SessionCheckpoint cp = session.checkpoint("turn1.bin");
 
     session.send("Tell me a joke.");
     session.rewind(cp);                     // undo everything after the checkpoint
     session.send("Tell me a story instead."); // retry from the branch point
 
     // Branch into a second slot (model loaded with setParallel(2)+):
-    try (Session forked = session.fork(1, "checkpoints/branch.bin")) {
+    try (Session forked = session.fork(1, "branch.bin")) {
         forked.send("Answer as a pirate.");   // both sessions continue independently
     }
 }

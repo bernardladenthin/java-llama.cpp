@@ -2253,6 +2253,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Vor dem Fix rot (C++): `CApiSlotFiles` mit „std::filesystem::exists(dir / "slot0.bin") Actual: false Expected: true“ und „jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &refused.s) Which is: 0 JLLAMA_STATUS_INVALID_REQUEST“, `SlotActionsAndLoraAdapters` mit „jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "slot0.bin", &refused.s) Which is: 0 JLLAMA_STATUS_ERROR Which is: 1“; Java gegen die alte Bibliothek: `ChatScenarioTest.testSaveAndRestoreSlot:604 {"id_slot":0,"filename":"chat-scenario-slot.bin",…} ==> expected: <true> but was: <false>` und `ErrorHandlingTest.testSaveSlotWithoutSlotSavePathIsRefused:399 Expected net.ladenthin.llama.exception.LlamaException to be thrown, but nothing was thrown.` Mit dem Fix grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a1a5efb`
+- **Nachtrag (Branch-Review 2026-10-21, Prüfung):** Das Beispiel „Conversation checkpoints“ im README übergab noch Pfade (`checkpoints/turn1.bin`, `checkpoints/branch.bin`), die seit dem Fix als `InvalidRequestException` abgelehnt werden; es nennt jetzt das Slot-Verzeichnis (`setSlotSavePath`) und Dateinamen darin.
 
 ### F252 – java-llama.cpp: die Tag-Felder des Reasoning-Budgets fehlen im Builder, und ohne `reasoning_budget_message` erzwingt das Budget nichts
 - **Zeit:** 2026-10-21 13:58 UTC
