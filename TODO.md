@@ -583,18 +583,15 @@ the serving thread has entered `jllama_rpc_server_serve` cannot be told from "no
 stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer` does (F241).
 
 **Tests**
-- **The model-backed `ErrorHandlingTest` case for a 4-byte character in a refusal is missing**:
-  `handleChatCompletions` with a `response_format` of type `😀` must throw `InvalidRequestException`
-  with `but got: 😀` in the message. The model-free half (a failed `LlamaModel` call keeps a 4-byte
-  character) is pinned.
 - **The argument prefix that arrives before a tool call's name never reaches `onPartialToolCall`**
   (`StreamingChunkAssembler`; documented in its Javadoc since this pass). If it is fixed, the contract
   assertion `assertPartialsMakeUpTheCompleteCall` in `toolCallDeltaBeforeItsName_doesNotFailTheStream`
   lands in the same commit; today it is red (`Expected: is "{\"city\":1}" but: was "ty\":1}"`).
-- **`LoraCacheFreshSlot` writes `slot0.bin` into the test's working directory**, not under its
-  `--slot-save-path`: `engine::slot_action` uses the file name as the path, as
-  `LlamaModel.saveSlot(int, String filepath)` documents. Probably the test should pass a path under
-  the save directory; needs a decision.
+- **Decision open: should the C API resolve a slot file name under `--slot-save-path`?**
+  `engine::slot_action` uses the name as the path, as `LlamaModel.saveSlot(int, String filepath)`
+  documents; upstream's HTTP route prepends `slot_save_path` and validates the name. The
+  `LoraCacheFreshSlot` fixture therefore passes a path under its save directory and asserts the file
+  lands there (it used to write `slot0.bin` into the working directory).
 - **`RpcClient.AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt` fails under
   `--gtest_repeat=2`** in one process (also filtered alone); it passes in a normal `ctest` run. The
   test drives ggml's process-wide registry directly; find out which state the first run leaves.

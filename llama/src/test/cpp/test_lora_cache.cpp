@@ -256,8 +256,14 @@ jllama_model *LoraCacheFreshSlot::model_ = nullptr;
 TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     ASSERT_NE(model_, nullptr);
     const json first = complete_on(0);
-    slot_action(JLLAMA_SLOT_SAVE, 0, "slot0.bin");
-    slot_action(JLLAMA_SLOT_RESTORE, 1, "slot0.bin"); // slot 1 has never run a task
+    // The C API takes the file name as the path (LlamaModel.saveSlot(int, String filepath)); it does not
+    // prepend --slot-save-path the way upstream's HTTP route does, so the fixture names the file under it.
+    // TearDownTestSuite's remove_all(save_dir_) takes it away again.
+    const std::string state = (std::filesystem::path(save_dir_) / "slot0.bin").string();
+    slot_action(JLLAMA_SLOT_SAVE, 0, state.c_str());
+    ASSERT_TRUE(std::filesystem::exists(std::filesystem::path(save_dir_) / "slot0.bin"))
+        << "the saved state is not under " << save_dir_;
+    slot_action(JLLAMA_SLOT_RESTORE, 1, state.c_str()); // slot 1 has never run a task
 
     const json restored = complete_on(1);
 
