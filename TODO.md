@@ -1212,12 +1212,14 @@ three different subsystems and a combined report gets triaged as one.
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
 
-#### ~~A fifth: the ARM fp16 conversion~~ -- FILED as llama.cpp#30505
+#### ~~A fifth: the ARM fp16 conversion~~ -- MERGED as llama.cpp#30505 (b11761), patch 0019 dropped
 
-**Done 2026-10-14.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
-one commit, `+13/-3` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
-`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`; the full measurement
-record is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
+**Done 2026-10-14, merged 2026-10-20.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
+one commit, `+13/-3` in `ggml/src/ggml-cpu/simd-mappings.h`, merged as `119f68d7d` = **b11761** (the code lines
+as submitted, the comments shortened by the maintainers). Carried downstream until then as
+`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`, dropped at the b11761 bump
+(`docs/history/dropped-llama-patches.md`); the full measurement record is
+[`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
 
 **Rebased the same day, at the maintainer's request, and the rebase changed the change.** `#30343`
 (`685f70894`) landed 26 minutes before that request and takes back half of `#30270`: F16C keeps

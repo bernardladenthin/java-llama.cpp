@@ -10,14 +10,17 @@ Measured **2026-10-13**. One `#define` is missing from the NEON branch of
 `ggml/src/ggml-cpu/simd-mappings.h`, so `GGML_CPU_FP32_TO_FP16` falls through to a software bit
 manipulation while the branch's own single-instruction conversion sits there unused. Same shape of
 defect as the one [ggml-org/llama.cpp#30270](https://github.com/ggml-org/llama.cpp/pull/30270) fixed
-for x86 F16C on 2026-10-11 -- in the other direction, on a different architecture, still open.
+for x86 F16C on 2026-10-11 -- in the other direction, on a different architecture. **Merged upstream on
+2026-10-20 as [#30505](https://github.com/ggml-org/llama.cpp/pull/30505), first tagged at b11761**; the rest of
+this page is the record as it was written while the defect was open.
 
 Found while isolating that PR ([`upstream-f16c-30270.md`](upstream-f16c-30270.md)): a `#error` guard
 written to stop the omission recurring fired immediately on upstream's unmodified header.
 
-**Submitted upstream as [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505)**
-and carried here until it merges as
-[`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](../../llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch).
+**Submitted upstream as [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505)**, carried
+here as `llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch` until it merged (b11761; the
+patch was dropped at that bump, see [`docs/history/dropped-llama-patches.md`](../history/dropped-llama-patches.md)).
+The merged commit (`119f68d7d`) carries the same code lines; the maintainers shortened the comments.
 
 > **Read "One day later" before taking the guard or the F16C move in this page at face value.** The
 > PR was rebased on 2026-10-14 after upstream #30343 reverted half of #30270; the guard grew a
@@ -53,7 +56,7 @@ Read at b11576, all four branches:
 | `__riscv && __riscv_zfhmin` | yes | yes | yes |
 
 Two of four were incomplete. #30270 completed one of them -- from 88 lines below, outside the chain.
-The ARM one is open, in the direction that fix did not cover.
+The ARM one was open, in the direction that fix did not cover, until #30505 (b11761).
 
 **The sharpest way to state it:** the fallback reads
 `#define GGML_CPU_FP32_TO_FP16(x) GGML_COMPUTE_FP32_TO_FP16(x)`, and `GGML_COMPUTE_FP32_TO_FP16` is

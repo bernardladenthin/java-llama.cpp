@@ -11,6 +11,26 @@ themselves. Moved here from `CLAUDE.md`, which lists only the patches still carr
 records why the patch went and what guard, if any, stays behind -- read the matching note before
 reintroducing a patch for the same defect.
 
+**`0019` was dropped at the b11761 bump** (the first number that carries the fix is b11761). Upstream merged
+this project's own [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505) (commit
+[`119f68d7d`](https://github.com/ggml-org/llama.cpp/commit/119f68d7d441d66bdf8ebd117ca0deee2119fbcc),
+"ggml-cpu : select the NEON fp32->fp16 conversion", 2026-10-20, first tagged at **b11761**) -- the change the
+patch carried: the `__ARM_NEON` branch of `ggml/src/ggml-cpu/simd-mappings.h` selects `GGML_CPU_FP32_TO_FP16` as
+`GGML_CPU_COMPUTE_FP32_TO_FP16` (one `fcvt` instead of the portable bit manipulation: 2.45x-13.3x on five ARM
+core types, bit-exact over all 2^32 inputs, [`docs/benchmarks/arm-fp16-conversion.md`](../benchmarks/arm-fp16-conversion.md)),
+plus the `#error` pair that refuses a branch defining a `GGML_CPU_COMPUTE_*` macro without selecting it, with the
+`&& !defined(__F16C__)` carve-out for the exception #30343 documents. The merged commit carries the submitted code
+lines; the maintainers shortened the three comments, which is why the drop-check, and not a byte comparison, was
+the right test. **Here the applier fired**: the patch's `+` lines are in the tree, so its one hunk "does not
+apply" at b11761 -- the drop-check's one printed line (`git show b11761:ggml/src/ggml-cpu/simd-mappings.h | sed -n
+'/^#if defined(__ARM_NEON)/,/^#elif/p' | grep -n GGML_CPU_FP32_TO_FP16` prints line 37; at b11760 it printed
+nothing). Dropped, not refreshed, as its row said.
+
+**No guard stayed behind, and none was needed.** The patch added no callable: it changed a preprocessor
+selection, and the `#error` guard it introduced is upstream's own now, so a branch that defines a COMPUTE macro
+without selecting it fails to compile in upstream's tree. What stays is the measurement record (the benchmark
+page, with the merge noted at its head) and the TODO entry; the `0019` row of `CLAUDE.md`'s patch table went.
+
 **`0016` was dropped at the b11760 bump** (the first number that carries the architecture is b11709). Upstream
 merged [ggml-org/llama.cpp#30673](https://github.com/ggml-org/llama.cpp/pull/30673) (commit
 [`62318cd57`](https://github.com/ggml-org/llama.cpp/commit/62318cd57dc63900ecb153272c0b10f78550855d),

@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**12 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -32,7 +32,6 @@ match a binary to this page.
 | 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
-| 0019 | [`0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](#0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversionpatch) | ggml-cpu : select the NEON fp32->fp16 conversion | 1 | 2 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 
@@ -386,104 +385,6 @@ Drop this patch when upstream frees the AMX buffer with ggml_aligned_free() or _
 grep "free(buffer->context)" ggml/src/ggml-cpu/amx/amx.cpp at the new tag. NOTE THE INVERSION --
 a hit means the bare free() is STILL THERE and this patch is still needed; it is droppable when the
 grep prints NOTHING. Measured at b11639 (a0e6dc738): one hit, line 46, so the defect stands.
-```
-
-## 0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch
-
-**Files (1):** `ggml/src/ggml-cpu/simd-mappings.h`
-
-The patch's own header, verbatim:
-
-```text
-ggml-cpu : select the NEON fp32->fp16 conversion
-
-The __ARM_NEON branch of ggml/src/ggml-cpu/simd-mappings.h defines both
-GGML_CPU_COMPUTE_FP16_TO_FP32 and GGML_CPU_COMPUTE_FP32_TO_FP16 but selects only the first, so
-GGML_CPU_FP32_TO_FP16 falls through to GGML_COMPUTE_FP32_TO_FP16 at the end of that section --
-ggml-base's deliberately portable software bit manipulation, the one ggml.c uses everywhere
-because ggml-base may not assume CPU features -- while neon_compute_fp32_to_fp16, a one-line
-__fp16 conversion, stays defined and referenced by nothing. The whole purpose of the GGML_CPU_*
-pair is to be the accelerated variant; on ARM it was defined to be the unaccelerated one.
-
-__POWER9_VECTOR__ and __riscv_zfhmin select both macros, and the comment on that fallback has
-always said NEON does too ("so we define GGML_CPU_FP16_TO_FP32 and GGML_CPU_FP32_TO_FP16
-elsewhere for NEON. This is also true for POWER9."). Not a regression: the NEON selection is
-absent in all 25 most recent commits touching the file, back to 2025-04-10.
-
-Why it is felt on ARM and nowhere else: ggml_cpu_fp32_to_fp16 -- the from_float of GGML_TYPE_F16
--- has vector paths for F16C, RISC-V and s390x (the last added in llama.cpp #30157) and none for
-NEON, so there the whole function is the scalar loop through the macro.
-
-THE GUARD, AND WHY ITS FIRST HALF HAS A CARVE-OUT. In place of the stale fallback comment an
-#error pair refuses a branch that defines a COMPUTE macro without selecting it -- the omission
-that neither a build, a warning nor a test could see, because the fallback silently supplies a
-correct implementation, so the only symptom is a hardware instruction nothing ever reaches. The
-FP16->FP32 half carries `&& !defined(__F16C__)`, with the issue link on the condition line,
-because llama.cpp #30343 (upstream commit 685f70894) puts that one direction back on the lookup
-table on purpose: clang lowers the F16C intrinsic into the live accumulator register of the
-quantized dot products and serialises the loop, 45-65 % slower Q8_0/Q4_0 MUL_MAT_ID kernels.
-Without the carve-out the guard would fire on every x86 build with F16C -- here that is 11 of the
-14 x86-64 CPU variant modules. The FP32->FP16 half needs no exception: F16C, NEON (with this
-patch), POWER9 and riscv_zfhmin all select it. Should #30342 ever be resolved and the F16C
-selection come back, the carve-out becomes dead weight and should be deleted; that is what the
-link on that line is for.
-
-The guard's position -- immediately before the fallback rather than directly after the #elif
-chain -- was chosen by a mutation measurement, not by taste: before the fallback it catches 4 of
-4 correctness cases with no false alarms, while directly after the chain it misses one (a COMPUTE
-macro defined after the chain and never selected) and, since #30343, fails every x86 F16C build
-outright, because that commit leaves the F16C selection below the lookup-table declarations.
-
-THIS DIFF APPLIES BOTH AT THE PIN AND ON UPSTREAM MASTER, because it no longer touches the F16C
-block at all. An earlier version of this patch also moved #30270's two F16C selections into the
-__F16C__ branch; that was dropped when #30343 turned the block into a documented exception
-carrying an issue link. At the pinned tag #30343 is not in yet, so the F16C block there still
-selects both directions and the carve-out is inert -- x86 behaviour at the pin is exactly
-upstream's. Once the pin crosses 685f70894 the carve-out becomes load-bearing.
-
-WHY THIS PROJECT CARRIES IT. All 17 ARM artifacts shipped here -- cpu-linux-aarch64 (8 variants),
-cpu-android-aarch64 (7), cpu-windows-aarch64 and metal-macos-aarch64 -- contain no fcvt of any
-form in ggml_cpu_fp32_to_fp16, and neither do upstream's own llama-b11576-bin-ubuntu-arm64 and
--macos-arm64. A plain gcc with no flags defines __ARM_NEON and __ARM_FP16_FORMAT_IEEE on aarch64,
-so there is no opt-in and no way to miss it.
-
-MEASURED. The function runs 2.45x to 13.3x faster with the selection, across five ARM core types
-(Ampere eMAG, Cortex-A55, Neoverse-N1, Neoverse-V2, Apple M1), three operating systems and nine
-compiler builds, with the opposite direction measured in the same binary and run as a control that
-stays within 3.2 % everywhere. Bit-exact: both paths agree on every one of the 2^32 float32 bit
-patterns, differing only in NaN payload -- where the same comparison on x86 F16C gives the same
-numbers, so this brings ARM into agreement with what x86 already ships. It is NOT an inference
-speed-up: perf puts 83.9 % of an F16 pp512 run in tinyBLAS's gemm, which converts inside its own
-microkernel, and 0.03 % in this function. The full record, including the mutation measurement that
-chose the guard's position, is docs/benchmarks/arm-fp16-conversion.md.
-
-Built in upstream's own ARM release configuration (GGML_BACKEND_DL, GGML_CPU_ALL_VARIANTS,
-GGML_NATIVE=OFF): all eight variant modules compile, the guard fires nowhere, fcvt/fcvtn/fcvtn2
-appear in every one of them, reverting in the same tree puts that back to zero, and ctest gives
-52 of 54 with the two failures identical on unpatched master. Verified again with clang -E against
-the pinned source after the rebase: the guard is silent in all five configurations (x86 +F16C+AVX2,
-+F16C+AVX512, sse42, plain x86, NEON), and fires when the NEON selection is removed again.
-
-SUBMITTED UPSTREAM as ggml-org/llama.cpp#30505 (open), rebased onto master and byte-identical to
-this diff.
-
-On a bump, check whether upstream merged it. THE OUTPUT MUST BE READ, NOT TESTED -- run it against
-the branch, so that "nothing" is the answer while the patch is needed:
-
-  git show <pin>:ggml/src/ggml-cpu/simd-mappings.h \
-    | sed -n '/^#if defined(__ARM_NEON)/,/^#elif/p' | grep -n GGML_CPU_FP32_TO_FP16
-
-One line printed means upstream merged it; then DROP this patch rather than refreshing it -- the
-fail-loud applier detects "does not apply", never "upstream already fixed this".
-
-Do NOT reduce the looser form
-`git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
-to a true/false: it returns THREE hits at every tag so far -- __POWER9_VECTOR__, __riscv_zfhmin and
-the out-of-chain __F16C__ block -- and the first two carry the NEON line's four-space indentation, so
-a `grep -q` reports "upstream fixed it" at every tag and deletes a fix that is still needed.
-Measured at b11639 (a0e6dc738): hits at lines 71, 114 and 150, none of them inside the __ARM_NEON
-branch, while `git apply --check` of this patch is clean -- the two answers contradict each other,
-and the grep is the one that is wrong.
 ```
 
 ## 0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch
