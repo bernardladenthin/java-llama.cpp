@@ -62,6 +62,16 @@ public class LlamaModelTest {
     /** How long a cancel may take to reach the native task, as in OpenAiServerCompletionIntegrationTest. */
     private static final long CANCEL_TIMEOUT_MILLIS = 30_000L;
 
+    /**
+     * The prompt of the grammar tests. It must not be empty: an empty prompt is no token at all on a
+     * model that adds no BOS, and upstream then releases the slot and answers an empty result
+     * ({@code "empty prompt - releasing slot"}, {@code stop_type} {@code none}) without sampling, so
+     * the grammar is never exercised and only a model that adds a BOS (CodeLlama) produced anything.
+     * The tests also ignore EOS: the grammar admits EOS once it has matched a letter, and a model
+     * whose EOS is not a control token (a test model's plain byte token) then appends its text.
+     */
+    private static final String GRAMMAR_PROMPT = "Letters: ";
+
     private static LlamaModel model;
 
     @BeforeAll
@@ -173,8 +183,9 @@ public class LlamaModelTest {
 
     @Test
     public void testGenerateGrammar() {
-        InferenceParameters params = new InferenceParameters("")
+        InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
+                .withIgnoreEos(true)
                 .withNPredict(nPredict);
         StringBuilder sb = new StringBuilder();
         for (LlamaOutput output : model.generate(params)) {
@@ -221,8 +232,9 @@ public class LlamaModelTest {
 
     @Test
     public void testCompleteGrammar() {
-        InferenceParameters params = new InferenceParameters("")
+        InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
+                .withIgnoreEos(true)
                 .withNPredict(nPredict);
         String output = model.complete(params);
         assertTrue(output.matches("[ab]+"), output + " doesn't match [ab]+");
