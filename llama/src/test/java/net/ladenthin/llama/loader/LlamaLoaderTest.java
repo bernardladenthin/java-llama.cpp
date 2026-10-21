@@ -121,7 +121,8 @@ public class LlamaLoaderTest {
 
     @Test
     public void testShouldCleanPathGgmlPrefix() {
-        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/ggml.tmp")));
+        // the prefix predicate only; what cleanup() removes is isStaleExtraction's decision
+        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/ggml-metal.metal.4711.tmp")));
     }
 
     // -------------------------------------------------------------------------
@@ -689,6 +690,36 @@ public class LlamaLoaderTest {
         assertTrue(LlamaLoader.isStaleExtraction(flat, Collections.<String>emptySet(), now));
         assertTrue(LlamaLoader.isStaleExtraction(metal, Collections.<String>emptySet(), now));
         assertFalse(LlamaLoader.isStaleExtraction(unrelated, Collections.<String>emptySet(), now));
+    }
+
+    @Test
+    public void staleExtractionRemovesAnInterruptedCopyOfTheOldLayoutOnceItIsOld(@TempDir Path dir) throws IOException {
+        // Up to 5.1.0 every extraction went through Files.createTempFile(tmp, name + ".", ".tmp"), so a
+        // copy cut short left <name>.<digits>.tmp at the temp root. The old prefix filter removed it;
+        // the library-suffix rule of F09 kept it for good. A young one may belong to a pre-6.0.0 JVM
+        // that is copying right now (6.x never writes at the temp root), so it gets the same age as a
+        // directory of another build.
+        Instant now = Instant.now();
+        FileTime old = FileTime.from(now.minus(LlamaLoader.STALE_EXTRACTION_AGE).minusSeconds(1));
+        Path dll = Files.write(dir.resolve("jllama.dll.4711.tmp"), new byte[] {1});
+        Path metal = Files.write(dir.resolve("ggml-metal.metal.8133917650000000000.tmp"), new byte[] {1});
+        Path young = Files.write(dir.resolve("jllama.dll.4712.tmp"), new byte[] {1});
+        Path foreign = Files.write(dir.resolve("somefile.so.4711.tmp"), new byte[] {1});
+        Path model = Files.write(dir.resolve("jllama.gguf.4711.tmp"), new byte[] {1});
+        Path noDigits = Files.write(dir.resolve("jllama.dll.tmp"), new byte[] {1});
+        Path directory = Files.createDirectory(dir.resolve("jllama.dll.4713.tmp"));
+        for (Path path : new Path[] {dll, metal, foreign, model, noDigits, directory}) {
+            Files.setLastModifiedTime(path, old);
+        }
+        Set<String> keep = Collections.<String>emptySet();
+
+        assertTrue(LlamaLoader.isStaleExtraction(dll, keep, now));
+        assertTrue(LlamaLoader.isStaleExtraction(metal, keep, now));
+        assertFalse(LlamaLoader.isStaleExtraction(young, keep, now), "may still be copying");
+        assertFalse(LlamaLoader.isStaleExtraction(foreign, keep, now), "no cleanup prefix");
+        assertFalse(LlamaLoader.isStaleExtraction(model, keep, now), "not a library name");
+        assertFalse(LlamaLoader.isStaleExtraction(noDigits, keep, now), "not the createTempFile shape");
+        assertFalse(LlamaLoader.isStaleExtraction(directory, keep, now), "not a regular file");
     }
 
     @Test

@@ -161,6 +161,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F236](#f236) — niedrig — *gefixt*
 - [F237](#f237) — niedrig — *gefixt*
 - [F238](#f238) — niedrig — *gefixt*
+- [F239](#f239) — niedrig — *gefixt*
 
 ## Funde
 
@@ -218,6 +219,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** `cleanup()` lief bei jedem Start, der die Natives-Jars erreicht, über `java.io.tmpdir` (bzw. `net.ladenthin.llama.tmpdir`) und löschte **sofort und rekursiv** jeden Eintrag, dessen Name mit `jllama`, `llama` oder `ggml` beginnt und kein `jllama-backend-*`-Verzeichnis ist. Gedacht war das für die einzelnen Bibliotheksdateien des flachen Layouts vor 6.0.0 (so steht es in der Javadoc). Getroffen wurde aber auch z. B. ein `/tmp/llama.cpp`-Checkout, ein `/tmp/ggml-models/`-Ordner oder ein heruntergeladenes `/tmp/llama-2-7b.Q4_K_M.gguf`. Fix: Aus dem alten Layout werden nur noch **reguläre Dateien mit Bibliotheksendung** gelöscht (`.so`, `.dll`, `.dylib`, `.jnilib`, `.metal`).
 - **Reproduktion:** `LlamaLoaderTest#staleExtractionLeavesForeignEntriesWithAMatchingPrefixAlone` (vorher rot, danach grün); `LlamaLoaderTest` 63/63, inkl. der bestehenden Fälle `jllama-3f2a.so` / `ggml-metal.metal` (werden weiter gelöscht).
 - **Bitte prüfen:** Die genauen Dateinamen des alten Layouts konnte ich nicht verifizieren, weil der Clone flach ist und keine Historie vor 6.0.0 enthält. Falls es damals auch Endungen wie `.tmp` oder `.lck` gab, bleiben die jetzt liegen. Das ist harmlos, nur Restmüll.
+- **Nachtrag (Branch-Review 2026-10-20):** Am Tag `v5.1.0` geprüft: das alte Layout entpackte `System.mapLibraryName("jllama")` flach (`libjllama.so`, `libjllama.dylib`, `jllama.dll`), unter macOS dazu `ggml-metal.metal`, jede Kopie über `Files.createTempFile(dir, name + ".", ".tmp")`. `libjllama.so`/`libjllama.dylib` trugen nie ein Bereinigungspräfix und wurden von keiner Version entfernt; was dieser Fix entfernt, sind `jllama.dll` (und ältere `llama*`/`ggml*`-DLLs) und `ggml-metal.metal`. Die `<name>.<Ziffern>.tmp`-Reste einer abgebrochenen Kopie blieben seit diesem Fix liegen; seit F239 gehen sie wieder, sobald sie `STALE_EXTRACTION_AGE` alt sind. Das „Bitte prüfen“ ist damit erledigt.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `61ea8f5`
 
@@ -1983,6 +1985,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Zuerst die Funktion mit der alten Semantik herausgezogen (jede `InvalidPathException` heißt „fehlt“, Zeichensatz unbeachtet), dann rot: `countsAsMissing_aNameTheJvmEncodingCannotRepresent_isLeftToTheNativeLoader` „Expected: is <false> but: was <true>“; mit dem Fix grün (`OfflineModelGuardTest` 8/8, `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `8809fe4`
+
+### F239 – java-llama.cpp: der Loader lässt die `.tmp`-Reste unterbrochener Kopien des alten Layouts für immer liegen
+- **Zeit:** 2026-10-21 01:56 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/LlamaLoader.java` (`isStaleExtraction`, neu `isOlderThanTheStaleAge`, `FLAT_LAYOUT_TEMP_COPY`; Javadoc von `cleanup`, `isFlatLayoutLibraryName`, `FLAT_LAYOUT_SUFFIXES`)
+- **Schwere:** niedrig (Restmüll im Temp-Verzeichnis, nur nach einer abgebrochenen Kopie einer Version vor 6.0.0)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J10-2). Folge von F09, dessen „Bitte prüfen“ genau diesen Fall offen ließ; die Namen sind jetzt am Tag `v5.1.0` verifiziert.
+- **Beschreibung:** Bis 5.1.0 entpackte `LlamaLoader` `System.mapLibraryName("jllama")` flach ins Temp-Verzeichnis (`libjllama.so`, `libjllama.dylib`, `jllama.dll`), unter macOS dazu `ggml-metal.metal`, jede Kopie über `Files.createTempFile(dir, name + ".", ".tmp")` (die Zufallsmitte ist eine Dezimalzahl) und ein Verschieben an den Zielnamen. Eine JVM, die mitten in der Kopie starb, hinterließ `jllama.dll.<Ziffern>.tmp` bzw. `ggml-metal.metal.<Ziffern>.tmp`. Der alte Präfixfilter räumte die weg, die Bibliotheksendungs-Regel von F09 behielt sie (`.tmp` ist keine Bibliotheksendung). Außerdem stimmten die Javadocs nicht: `cleanup()` versprach die flachen Dateien `jllama*`, `llama*`, `ggml*` und `isFlatLayoutLibraryName` „a native library (.so, .dll, .dylib, .jnilib)“, obwohl `libjllama.so`/`libjllama.dylib` nie ein Bereinigungspräfix trugen und von keiner Version entfernt wurden.
+- **Fix:** `isStaleExtraction` erkennt im Zweig für reguläre Dateien die Endung `\.\d+\.tmp$` (genau die Form von `createTempFile`); bleibt davor ein Bibliotheksname des alten Layouts, wird die Datei entfernt, sobald sie `STALE_EXTRACTION_AGE` (10 min) alt ist, denn eine jüngere kann einer JVM vor 6.0.0 gehören, die gerade kopiert (6.x schreibt nie in die Wurzel des Temp-Verzeichnisses). Die Altersprüfung teilt sich `isOlderThanTheStaleAge` mit dem Verzeichniszweig. Die reinen Bibliotheksnamen gehen weiter sofort. Die drei Javadocs nennen die verifizierten Namen. `testShouldCleanPathGgmlPrefix` prüft jetzt einen echten Namen des alten Layouts (`ggml-metal.metal.4711.tmp`) und sagt, dass es nur das Präfix-Prädikat prüft.
+- **Tests:** `LlamaLoaderTest#staleExtractionRemovesAnInterruptedCopyOfTheOldLayoutOnceItIsOld` (alt: `jllama.dll.4711.tmp` und `ggml-metal.metal.<lange Zahl>.tmp` gehen; nicht: dieselbe Form ohne Alter, `somefile.so.4711.tmp` ohne Präfix, `jllama.gguf.4711.tmp` ohne Bibliotheksnamen, `jllama.dll.tmp` ohne Ziffern, ein Verzeichnis `jllama.dll.4713.tmp`).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („expected: <true> but was: <false>“ für `jllama.dll.4711.tmp`), mit ihm grün (`LlamaLoaderTest` 64/64); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün. Die CHANGELOG-Zeile zu F09 („removes regular files with a library suffix … nothing else“) ist damit unvollständig; sie bleibt für den CHANGELOG-Durchgang.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

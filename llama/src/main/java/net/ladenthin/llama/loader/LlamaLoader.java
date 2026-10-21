@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarFile;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import lombok.ToString;
@@ -259,9 +261,22 @@ public class LlamaLoader {
      */
     static final Duration STALE_EXTRACTION_AGE = Duration.ofMinutes(10);
 
-    /** File-name endings of what the flat layout before 6.0.0 extracted (see {@link #isFlatLayoutLibraryName}). */
+    /**
+     * File-name endings of what the flat layout before 6.0.0 extracted (see
+     * {@link #isFlatLayoutLibraryName}). Of those names only {@code jllama.dll}, the older Windows
+     * {@code llama*.dll}/{@code ggml*.dll} and {@code ggml-metal.metal} ever carried a cleanup prefix:
+     * the Linux and macOS library was {@code libjllama.so}/{@code libjllama.dylib}
+     * ({@code System.mapLibraryName}), which no cleanup removed, before 6.0.0 or after.
+     */
     private static final List<String> FLAT_LAYOUT_SUFFIXES =
             Collections.unmodifiableList(Arrays.asList(".so", ".dll", ".dylib", ".jnilib", ".metal"));
+
+    /**
+     * The tail an interrupted copy of the flat layout left: up to 5.1.0 every file was written through
+     * {@code Files.createTempFile(dir, name + ".", ".tmp")}, whose random middle part is a decimal
+     * number, and moved into place; a JVM that died mid-copy left {@code <name>.<digits>.tmp}.
+     */
+    private static final Pattern FLAT_LAYOUT_TEMP_COPY = Pattern.compile("\\.\\d+\\.tmp$");
 
     /** Shader source a non-embedding Metal build ships next to its library. */
     private static final String METAL_SOURCE_FILE = "ggml-metal.metal";
@@ -315,9 +330,13 @@ public class LlamaLoader {
      * start of the same build finds its files in place (every one is still compared with the jar byte
      * for byte before it is loaded, see {@link #extractFile}) and skips the copy -- 18 files, ~1 s with
      * an on-access scanner on Windows, on every JVM start before. What goes: the flat files of the
-     * layout before 6.0.0 ({@code jllama*}, {@code llama*}, {@code ggml*} directly in the temp dir; on
-     * Windows a loaded DLL was never removed at VM exit, bug #80) and the extraction directories of
-     * other builds once they are {@link #STALE_EXTRACTION_AGE} old -- a younger one may belong to a
+     * layout before 6.0.0 that carry a cleanup prefix, directly in the temp dir -- {@code jllama.dll}
+     * (and the older {@code llama*.dll}/{@code ggml*.dll}; on Windows a loaded DLL was never removed
+     * at VM exit, bug #80) and {@code ggml-metal.metal} at once, the {@code <name>.<digits>.tmp} an
+     * interrupted copy of one of them left once it is {@link #STALE_EXTRACTION_AGE} old; the Linux and
+     * macOS {@code libjllama.so}/{@code libjllama.dylib} never carried a prefix and stay, as they
+     * always did -- and the extraction directories of other builds (the 5.x {@code jllama-backend-*}
+     * ones included) once they are {@link #STALE_EXTRACTION_AGE} old -- a younger one may belong to a
      * JVM that is still extracting. Every delete is best-effort: a file a running JVM has loaded is
      * locked on Windows and stays, which is the right outcome.
      *
@@ -334,10 +353,11 @@ public class LlamaLoader {
 
     /**
      * Whether {@link #cleanup(Set)} removes {@code path}: a {@link #shouldCleanPath named} regular file
-     * with a {@link #isFlatLayoutLibraryName library name} (the pre-6.0.0 flat layout), or an extraction
-     * directory of a build not in {@code keep} whose last modification is more than
-     * {@link #STALE_EXTRACTION_AGE} before {@code now}. A directory whose modification time cannot be
-     * read is left alone.
+     * with a {@link #isFlatLayoutLibraryName library name} (the pre-6.0.0 flat layout); such a name
+     * followed by {@code .<digits>.tmp} (an interrupted copy of that layout) once it is
+     * {@link #STALE_EXTRACTION_AGE} old, since a younger one may belong to a pre-6.0.0 JVM that is
+     * copying right now; or an extraction directory of a build not in {@code keep} that old. An entry
+     * whose modification time cannot be read is left alone.
      *
      * @param path an entry of the temp directory
      * @param keep the extraction directory names this classpath's backends use
@@ -354,11 +374,24 @@ public class LlamaLoader {
             // The old flat layout extracted single library files. The temp directory is shared with
             // everything else on the machine, so only a regular file named like a native library goes:
             // a llama.cpp checkout or a downloaded model carries the same prefix and is not ours.
-            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && isFlatLayoutLibraryName(name);
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                return false;
+            }
+            Matcher tempCopy = FLAT_LAYOUT_TEMP_COPY.matcher(name);
+            if (tempCopy.find()) {
+                return isFlatLayoutLibraryName(name.substring(0, tempCopy.start()))
+                        && isOlderThanTheStaleAge(path, now);
+            }
+            return isFlatLayoutLibraryName(name);
         }
         if (keep.contains(name)) {
             return false;
         }
+        return isOlderThanTheStaleAge(path, now);
+    }
+
+    /** Whether {@code path} was last modified more than {@link #STALE_EXTRACTION_AGE} before {@code now}. */
+    private static boolean isOlderThanTheStaleAge(Path path, Instant now) {
         try {
             return Files.getLastModifiedTime(path)
                     .toInstant()
@@ -371,7 +404,9 @@ public class LlamaLoader {
 
     /**
      * Whether a temp-directory file name is one the layout before 6.0.0 extracted: a native library
-     * ({@code .so}, {@code .dll}, {@code .dylib}, {@code .jnilib}) or the Metal shader source.
+     * ({@code .so}, {@code .dll}, {@code .dylib}, {@code .jnilib}) or the Metal shader source. With the
+     * cleanup prefix that leaves {@code jllama.dll}, the older Windows {@code llama*.dll} and
+     * {@code ggml*.dll}, and {@code ggml-metal.metal}; see {@link #FLAT_LAYOUT_SUFFIXES}.
      *
      * @param name the file name, already known to carry a {@link #shouldCleanPath cleanup prefix}
      * @return whether the file is an extracted library of the old layout
