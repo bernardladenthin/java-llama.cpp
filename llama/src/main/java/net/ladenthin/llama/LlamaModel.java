@@ -835,11 +835,11 @@ public class LlamaModel implements AutoCloseable {
      *     template into the prompt) or both "input_prefix" and "input_suffix" (an infill request)
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
-     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size, several prompts in
-     *     one request (an array of strings or of token arrays) or {@code "n"} greater than 1 -- one prompt and
-     *     one completion per request, unlike upstream's server; send separate requests -- only one of
-     *     {@code "input_prefix"} and {@code "input_suffix"}, or a non-empty {@code "prompt"} or the infill fields
-     *     next to {@code "messages"}
+     *     {@code "prompt"} and neither {@code "messages"} nor the infill fields, a parameter outside its limits, a
+     *     prompt over the context size, several prompts in one request (an array of strings or of token arrays)
+     *     or {@code "n"} greater than 1 -- one prompt and one completion per request, unlike upstream's server;
+     *     send separate requests -- only one of {@code "input_prefix"} and {@code "input_suffix"}, or a non-empty
+     *     {@code "prompt"} or the infill fields next to {@code "messages"}
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the request carries the infill
      *     fields and the model has no fill-in-the-middle tokens
      */
