@@ -105,6 +105,43 @@ public class AnthropicStreamTranslatorTest {
     }
 
     @Test
+    public void reasoningFollowedByAToolCallIsClosedBeforeTheToolUseBlock() {
+        // The common agent turn of a reasoning model: thinking, then a tool call and no text. No content
+        // chunk closes the thinking block, so end() must, before the tool_use block opens; otherwise
+        // block 1 starts while block 0 is still open, without its signature_delta and stop.
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        String events = translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","
+                        + "\"function\":{\"name\":\"f\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}")
+                + translator.end();
+
+        int signature = events.indexOf("\"type\":\"signature_delta\"");
+        int thinkingStop = events.indexOf("\"type\":\"content_block_stop\",\"index\":0");
+        int toolStart = events.indexOf("\"index\":1,\"content_block\":{\"type\":\"tool_use\"");
+        assertThat("signature_delta is emitted", signature >= 0, is(true));
+        assertThat("the thinking block is stopped after its signature", thinkingStop > signature, is(true));
+        assertThat("the tool_use block opens at index 1 after the stop", toolStart > thinkingStop, is(true));
+        assertThat(events, containsString("\"stop_reason\":\"tool_use\""));
+    }
+
+    @Test
+    public void aThinkingOnlyAnswerIsClosedAtTheEnd() {
+        // A thinking-only answer (e.g. max_tokens spent inside the thinking block) has no content chunk
+        // either; end() closes the block with its signature before message_delta and opens no other.
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"hmm\"}}]}");
+        String end = translator.end();
+
+        int signature = end.indexOf("\"type\":\"signature_delta\"");
+        int thinkingStop = end.indexOf("\"type\":\"content_block_stop\",\"index\":0");
+        int messageDelta = end.indexOf("event: message_delta");
+        assertThat("end() emits the signature_delta", signature >= 0, is(true));
+        assertThat("then the stop of block 0", thinkingStop > signature, is(true));
+        assertThat("then message_delta", messageDelta > thinkingStop, is(true));
+        assertThat(end.contains("content_block_start"), is(false));
+    }
+
+    @Test
     public void reasoningAfterTextClosesTheTextBlockBeforeANewThinkingBlock() {
         // A parser can grow the reasoning after the content started (interleaved thinking: GPT-OSS,
         // Gemma 4). The blocks must still follow one another, each start, deltas, stop, as Claude itself

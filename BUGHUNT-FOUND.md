@@ -730,6 +730,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}" but: was ""“), mit Fix grün (5/5 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `AnthropicApiSupportTest` 16/16, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7fdc684`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J4-2):** Die zweite Hälfte des Fixes („oder der Stream endet“, das `closeThinkingBlock` in `end()`) hatte keinen Test: der Test oben schließt den Block über den Text. `AnthropicStreamTranslatorTest#reasoningFollowedByAToolCallIsClosedBeforeTheToolUseBlock` (Denken, dann nur ein Werkzeugaufruf: `signature_delta` < `content_block_stop` von Block 0 < `tool_use`-Block mit Index 1, `stop_reason` `tool_use`) und `#aThinkingOnlyAnswerIsClosedAtTheEnd` (nur Denken: `end()` liefert `signature_delta` und den Stopp von Block 0 vor `message_delta`, öffnet keinen weiteren Block) pinnen ihn. Gegenprobe ohne das `closeThinkingBlock` in `end()` rot („signature_delta is emitted / Expected: is <true> but: was <false>“, ebenso „end() emits the signature_delta“), mit ihm grün (`AnthropicStreamTranslatorTest` 11/11).
 
 <a id="f82"></a>
 ### F82 – java-llama.cpp: Responses-Antwort verwirft den Denkinhalt – kein `reasoning`-Item
