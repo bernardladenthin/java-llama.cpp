@@ -130,6 +130,9 @@ class LoraCache : public ::testing::Test {
         ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_ERASE, 0, nullptr, &response.s), JLLAMA_STATUS_OK)
             << jllama_last_error();
     }
+    // How many prompt tokens the request took from the slot's cache (upstream's n_past). Not
+    // tokens_cached: that is every token the slot holds afterwards, positive after any request.
+    static int cache_n(const json &response) { return response.at("timings").at("cache_n").get<int>(); }
     // The answer of the model with the current adapters, computed on an empty slot.
     static std::string fresh_answer() {
         erase_slot();
@@ -151,7 +154,8 @@ jllama_model *LoraCache::model_ = nullptr;
 TEST_F(LoraCache, TheAdapterChangesTheAnswerAndTheSlotReusesItsCache) {
     const std::string with_adapter = fresh_answer();
     const json again = complete();
-    EXPECT_GT(again.at("tokens_cached").get<int>(), 0) << again.dump();
+    EXPECT_GT(cache_n(again), 0) << again.dump();
+    EXPECT_LT(again.at("timings").at("prompt_n").get<int>(), again.at("tokens_evaluated").get<int>()) << again.dump();
     EXPECT_EQ(again.at("content").get<std::string>(), with_adapter);
 
     set_scale(0.0f);
@@ -161,27 +165,30 @@ TEST_F(LoraCache, TheAdapterChangesTheAnswerAndTheSlotReusesItsCache) {
 TEST_F(LoraCache, ASetLoraChangeIsNotAnsweredFromTheOldCache) {
     complete(); // the slot's cache is now computed with the adapter at scale 1
     set_scale(0.0f);
-    const std::string after_change = complete().at("content").get<std::string>();
+    const json after_change = complete();
 
-    EXPECT_EQ(after_change, fresh_answer());
+    EXPECT_EQ(cache_n(after_change), 0) << after_change.dump();
+    EXPECT_EQ(after_change.at("content").get<std::string>(), fresh_answer());
 }
 
 TEST_F(LoraCache, ASetLoraChangeBackIsNotAnsweredFromTheOldCache) {
     set_scale(0.0f);
     complete(); // cache computed without the adapter
     set_scale(1.0f);
-    const std::string after_change = complete().at("content").get<std::string>();
+    const json after_change = complete();
 
-    EXPECT_EQ(after_change, fresh_answer());
+    EXPECT_EQ(cache_n(after_change), 0) << after_change.dump();
+    EXPECT_EQ(after_change.at("content").get<std::string>(), fresh_answer());
 }
 
 TEST_F(LoraCache, TheServerAdaptersAfterARequestWithItsOwnAreNotAnsweredFromItsCache) {
     // A request with its own adapters (scale 0) fills the cache; the next request names none, so it
     // runs with the server's adapters (scale 1) and must not reuse what the first one computed.
     complete({{"lora", json::array({{{"id", 0}, {"scale", 0.0}}})}});
-    const std::string after_change = complete().at("content").get<std::string>();
+    const json after_change = complete();
 
-    EXPECT_EQ(after_change, fresh_answer());
+    EXPECT_EQ(cache_n(after_change), 0) << after_change.dump();
+    EXPECT_EQ(after_change.at("content").get<std::string>(), fresh_answer());
 }
 
 namespace {
