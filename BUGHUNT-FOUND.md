@@ -2025,7 +2025,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `CApiRpc.AStopBeforeTheBindFromTheServingThreadEndsTheServe` (Stopp aus dem Seam auf dem Serving-Thread), `CApiRpc.AStopBeforeTheBindFromAnotherThreadReturnsOnlyOnceTheServeHasEnded` (Serve im Seam festgehalten, Stopp von einem anderen Thread darf nicht vor dem Serve zurückkehren, danach endet der Serve), `CApiRpc.AStopWhileNoServeRunsDoesNotStopTheNextOne` (Schutz gegen einen klebenden Stopp), `FfmRpcServerTest.aStopWhileNoServeRunsDoesNotStopTheNextServeAndAStopEndsIt` (FFM über Loopback: ein vorheriger Stopp ohne Server hält den nächsten Serve nicht ab, ein Stopp beendet ihn; der Fall vor dem Bind braucht den Seam und ist in C++ gepinnt). Daneben grün: alle 649 C++-Tests, `RpcServerTest`, `RpcServerLifecycleTest`, `RpcServerOptionsTest`, `RpcIntegrationTest` (Winzmodell), `llama-ffm verify` 36/36.
 - **Rot-Grün-Nachweis:** Mit dem Seam, aber ohne den Fix rot: „Value of: run.returned_within(std::chrono::seconds(10)) Actual: false Expected: true — serve went on after a stop issued before the bind“ und „Value of: jllama_rpc_server_listening() Actual: true Expected: false“ (erster Test); „Value of: stop_changed.wait_for(lock, std::chrono::milliseconds(300), …) Actual: true Expected: false — the stop returned while serve had not even started the server“ (zweiter Test). Mit dem Fix grün (`CApiRpc*`/`Rpc*` 32/32, dreimal). Der dritte und der FFM-Test sind Regressionsschutz und vorher wie nachher grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `1047673`
 
 ## Offene Verdachte ohne Fund-ID
 
