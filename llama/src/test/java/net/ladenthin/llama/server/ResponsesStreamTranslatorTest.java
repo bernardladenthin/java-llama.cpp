@@ -5,10 +5,16 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -17,6 +23,30 @@ import org.junit.jupiter.api.Test;
  * Pure.
  */
 public class ResponsesStreamTranslatorTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** The {@code data:} payloads of the framed SSE events, in order. */
+    private static List<JsonNode> events(String sse) throws IOException {
+        List<JsonNode> events = new ArrayList<>();
+        for (String line : sse.split("\n")) {
+            if (line.startsWith("data: ")) {
+                events.add(MAPPER.readTree(line.substring("data: ".length())));
+            }
+        }
+        return events;
+    }
+
+    /** The first event of {@code type} whose {@code output_index} is {@code outputIndex}. */
+    private static JsonNode eventAt(List<JsonNode> events, String type, int outputIndex) {
+        for (JsonNode event : events) {
+            if (event.path("type").asText().equals(type)
+                    && event.path("output_index").asInt(-1) == outputIndex) {
+                return event;
+            }
+        }
+        throw new AssertionError("no " + type + " at output_index " + outputIndex);
+    }
 
     @Test
     public void beginEmitsResponseCreated() {
@@ -75,6 +105,75 @@ public class ResponsesStreamTranslatorTest {
                         && completed.indexOf("\"type\":\"reasoning\"") < completed.indexOf("\"type\":\"message\""),
                 is(true));
         assertThat(completed, containsString("\"type\":\"reasoning_text\",\"text\":\"6 times 7\""));
+    }
+
+    @Test
+    public void reasoningTextAndToolCallGetConsecutiveOutputIndicesAndSequenceNumbers() throws IOException {
+        // Responses clients key the items by output_index (the OpenAI SDK raises on a duplicate) and
+        // order the events by sequence_number; reasoning, message and function_call are items 0, 1, 2.
+        ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
+        List<JsonNode> events = events(translator.begin()
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"6 times 7\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"42\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","
+                        + "\"function\":{\"name\":\"f\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}")
+                + translator.end());
+
+        assertThat(events.size(), is(15));
+        List<Integer> sequence = new ArrayList<>();
+        List<Integer> expected = new ArrayList<>();
+        for (int i = 0; i < events.size(); i++) {
+            sequence.add(events.get(i).path("sequence_number").asInt(-1));
+            expected.add(i);
+        }
+        assertThat(sequence, is(expected));
+
+        String[] itemTypes = {"reasoning", "message", "function_call"};
+        for (int index = 0; index < itemTypes.length; index++) {
+            assertThat(
+                    eventAt(events, "response.output_item.added", index)
+                            .path("item")
+                            .path("type")
+                            .asText(),
+                    is(itemTypes[index]));
+            assertThat(
+                    eventAt(events, "response.output_item.done", index)
+                            .path("item")
+                            .path("type")
+                            .asText(),
+                    is(itemTypes[index]));
+        }
+
+        JsonNode reasoningDone = eventAt(events, "response.reasoning_text.done", 0);
+        assertThat(reasoningDone.path("item_id").asText(), is("rs_resp_1"));
+        assertThat(reasoningDone.path("content_index").asInt(-1), is(0));
+        assertThat(reasoningDone.path("text").asText(), is("6 times 7"));
+        assertThat(reasoningDone.path("sequence_number").asInt(-1), is(6));
+
+        JsonNode completed = events.get(events.size() - 1);
+        assertThat(completed.path("type").asText(), is("response.completed"));
+        List<String> outputTypes = new ArrayList<>();
+        for (JsonNode item : completed.path("response").path("output")) {
+            outputTypes.add(item.path("type").asText());
+        }
+        assertThat(outputTypes, contains("reasoning", "message", "function_call"));
+    }
+
+    @Test
+    public void failedContinuesTheSequenceNumber() throws IOException {
+        // response.failed ends a stream that already emitted events; its sequence_number follows them.
+        ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
+        List<JsonNode> events = events(translator.begin()
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"he\"}}]}")
+                + translator.failed("boom", "server_error"));
+
+        assertThat(events.size(), is(5));
+        JsonNode failed = events.get(4);
+        assertThat(failed.path("type").asText(), is("response.failed"));
+        assertThat(failed.path("sequence_number").asInt(-1), is(4));
+        assertThat(failed.path("response").path("status").asText(), is("failed"));
+        assertThat(failed.path("response").path("error").path("code").asText(), is("server_error"));
+        assertThat(failed.path("response").path("error").path("message").asText(), is("boom"));
     }
 
     @Test

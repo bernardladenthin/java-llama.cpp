@@ -757,6 +757,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "event: response.output_item.added" but: was ""“), mit Fix grün (5/5 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesApiSupportTest` 14/14, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (erst nach dem Helfer).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f327156`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J5-6):** `output_index`, die Fortlaufendheit der `sequence_number` und das Ereignis `response.reasoning_text.done` hatten keinen Test; die Clients ordnen die Items nach `output_index` (das OpenAI-SDK wirft bei einem doppelten). `ResponsesStreamTranslatorTest#reasoningTextAndToolCallGetConsecutiveOutputIndicesAndSequenceNumbers` (begin, Denken, Text, Werkzeugaufruf, end) zerlegt die `data:`-Zeilen und verlangt genau 15 Ereignisse mit `sequence_number` 0..14, `output_item.added`/`.done` für `reasoning`/`message`/`function_call` an den Indizes 0/1/2, `response.reasoning_text.done` mit `item_id` `rs_resp_1`, `content_index` 0, vollem Text und `sequence_number` 6 sowie die Reihenfolge der Items in `response.completed`. Gegenprobe rot: Nachricht ohne eigenen Index („no response.output_item.added at output_index 2“), `sequence = 0` am Anfang von `end()` („Expected: is <[0, 1, …, 14]> but: was <[0, 1, 2, 3, 4, 5, 0, 1, …, 8]>“), ohne `reasoning_text.done` („Expected: is <15> but: was <14>“); mit dem Code grün (9/9). upstream (b11639) gibt weder `output_index` noch `sequence_number` aus; der Maßstab ist die OpenAI-Form.
 
 <a id="f84"></a>
 ### F84 – java-llama.cpp: Anthropic-Verlauf verwirft `thinking`-Blöcke früherer Runden
@@ -1137,6 +1138,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "event: response.failed" but: was "event: response.created …"“), mit Fix grün (51/51 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (2), nach `pop` grün. Breite Liste (Server-Tests inkl. `ResponsesStreamTranslatorTest`, `LlamaArchitectureTest`) grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `bd3db6a`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J5-6):** Die laufende `sequence_number` des `response.failed` war nur über den Server und nur per Teilstring geprüft. `ResponsesStreamTranslatorTest#failedContinuesTheSequenceNumber` (begin, ein Textchunk, `failed("boom", "server_error")`) verlangt fünf Ereignisse, das letzte `response.failed` mit `sequence_number` 4, `status` `failed` und `error.code`/`error.message`. Gegenprobe mit `sequence = 0` in `failed()` rot („Expected: is <4> but: was <0>“), mit dem Code grün (`ResponsesStreamTranslatorTest` 9/9).
 
 <a id="f118"></a>
 ### F118 – java-llama.cpp: Anthropic-Serverfehler heißen `invalid_request_error`
