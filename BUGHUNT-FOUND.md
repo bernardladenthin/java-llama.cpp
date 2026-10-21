@@ -2389,7 +2389,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest` (alle sechs Pfade, Antwortform, die übersetzte Anfrage erreicht das Backend, nichts generiert), `#theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape` (400 bei abgelehnter Übersetzung, 501 ohne Zählfähigkeit in Anthropic- und OpenAI-Form), `#aSubPathOfARouteIsNotHandledByTheRoute` (angepasst); `LlamaModelBackendTest#aRequestWithAnImageAudioOrVideoPartCountsAsMedia`; `OpenAiCompatServerIntegrationTest#theTokenCountRoutesCountThePromptAGenerationEvaluates` (modellgestützt: die Zählung jeder Route gleicht dem `usage` einer Generierung derselben Anfrage).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server (mit `countTokens` als Stummel) rot: „OpenAiCompatServerHttpTest.theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest:345 /v1/messages/count_tokens Expected: is <200> but: was <404>“, „theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape:386 {"error":{"message":"Not found: /v1/messages/count_tokens",…}} Expected: is <400> but: was <404>“, „OpenAiCompatServerIntegrationTest.theTokenCountRoutesCountThePromptAGenerationEvaluates:92 … Not found: /v1/chat/completions/input_tokens … Expected: is <200> but: was <404>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 79/79, `LlamaModelBackendTest` 5/5, `OpenAiCompatServerIntegrationTest` 15/15 (Winzmodell als Reasoning-Modell), `AnthropicApiSupportTest` 46/46, `ResponsesApiSupportTest` 70/70.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `2c6e5c5`
 
 ## Offene Verdachte ohne Fund-ID
 
