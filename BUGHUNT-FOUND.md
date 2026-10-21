@@ -1928,7 +1928,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ModelParametersTest#anEmptyAdapterPathIsRefusedInsteadOfDropped` (`addLoraAdapter("").addLoraAdapter("b.gguf")` und `addControlVector("")` werfen mit der genauen Meldung; ein abgewiesener Wert lässt einen früheren `a.gguf` unverändert).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`ModelParametersTest` 98/98, `ModelParametersExtendedTest` 151/151, `WireNameRegistryTest` 8/8); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `b8c3992`
 
 ## Offene Verdachte ohne Fund-ID
 
