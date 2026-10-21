@@ -31,6 +31,12 @@ public class BatchDispatchTest {
     /** Upper bound for the waits below; reaching it is a failure, not a slow machine. */
     private static final long AWAIT_SECONDS = 10;
 
+    /**
+     * How long the requests inside the bound wait for one more to join them. Only the red case, a
+     * pool larger than the bound, depends on it; the requests inside the bound always time out here.
+     */
+    private static final long BEYOND_THE_BOUND_MILLIS = 200;
+
     @Test
     public void submitAllThenReceive_submitsEveryRequestBeforeTheFirstReceive() {
         List<String> events = new ArrayList<>();
@@ -355,6 +361,13 @@ public class BatchDispatchTest {
     public void runEachOnItsOwnThread_runsNoMoreRequestsAtOnceThanTheBound() {
         // One thread per request made the pool as large as the batch: ten thousand requests were ten
         // thousand threads, although the native scheduler runs only as many as it has slots.
+        // The first three requests wait until all three are inside, so the maximum reaches the bound
+        // without depending on how long a sleep overlaps. They then wait for a fourth one, which only
+        // a pool larger than the bound can start while they are still inside; with the bound they
+        // give up after the short wait and the queued requests pass both latches at once.
+        int bound = 3;
+        CountDownLatch boundReached = new CountDownLatch(bound);
+        CountDownLatch oneBeyondTheBound = new CountDownLatch(bound + 1);
         AtomicInteger running = new AtomicInteger();
         AtomicInteger mostAtOnce = new AtomicInteger();
         List<Integer> input = new ArrayList<>();
@@ -362,19 +375,24 @@ public class BatchDispatchTest {
             input.add(i);
         }
 
-        List<Integer> results = BatchDispatch.runEachOnItsOwnThread(input, 3, request -> {
+        List<Boolean> boundReachedInTime = BatchDispatch.runEachOnItsOwnThread(input, bound, request -> {
             mostAtOnce.accumulateAndGet(running.incrementAndGet(), Math::max);
+            boundReached.countDown();
+            oneBeyondTheBound.countDown();
             try {
-                Thread.sleep(20L);
+                boolean reached = boundReached.await(AWAIT_SECONDS, TimeUnit.SECONDS);
+                oneBeyondTheBound.await(BEYOND_THE_BOUND_MILLIS, TimeUnit.MILLISECONDS);
+                return reached;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                return false;
+            } finally {
+                running.decrementAndGet();
             }
-            running.decrementAndGet();
-            return request;
         });
 
-        assertThat(results, is(input));
-        assertThat(mostAtOnce.get(), is(3));
+        assertThat(boundReachedInTime, is(Collections.nCopies(input.size(), true)));
+        assertThat(mostAtOnce.get(), is(bound));
     }
 
     @Test
