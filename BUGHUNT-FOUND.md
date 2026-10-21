@@ -1996,7 +1996,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `LlamaLoaderTest#staleExtractionRemovesAnInterruptedCopyOfTheOldLayoutOnceItIsOld` (alt: `jllama.dll.4711.tmp` und `ggml-metal.metal.<lange Zahl>.tmp` gehen; nicht: dieselbe Form ohne Alter, `somefile.so.4711.tmp` ohne Präfix, `jllama.gguf.4711.tmp` ohne Bibliotheksnamen, `jllama.dll.tmp` ohne Ziffern, ein Verzeichnis `jllama.dll.4713.tmp`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („expected: <true> but was: <false>“ für `jllama.dll.4711.tmp`), mit ihm grün (`LlamaLoaderTest` 64/64); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün. Die CHANGELOG-Zeile zu F09 („removes regular files with a library suffix … nothing else“) ist damit unvollständig; sie bleibt für den CHANGELOG-Durchgang.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `4205d20`
 
 ## Offene Verdachte ohne Fund-ID
 
