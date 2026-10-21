@@ -10,7 +10,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -48,6 +53,14 @@ final class AnthropicApiSupport {
 
     /** Reasoning budget of an enabled {@code thinking} block without {@code budget_tokens} (upstream's default). */
     private static final int DEFAULT_THINKING_BUDGET_TOKENS = 10_000;
+
+    /**
+     * The keys of the converted body this translation needs for its own answer (the stop word comes
+     * out of the verbose object through the response-field projection); an {@code extra_params} entry
+     * of the same name is not merged over them.
+     */
+    private static final Set<String> RESERVED_KEYS =
+            Collections.unmodifiableSet(new HashSet<String>(Arrays.asList("verbose", "response_fields")));
 
     private AnthropicApiSupport() {}
 
@@ -123,10 +136,12 @@ final class AnthropicApiSupport {
         } else {
             openAi.put("max_tokens", DEFAULT_MAX_TOKENS);
         }
-        // Upstream passes these through and its schema refuses a value that is not a number.
+        // Upstream passes these through and its schema refuses a value that is not a number; id_slot since
+        // llama.cpp b11756 (#28554).
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");
         copyNumber(request, "top_k", openAi, "top_k");
+        copyNumber(request, "id_slot", openAi, "id_slot");
         if (request.path("stop_sequences").isArray()) {
             openAi.set("stop", request.path("stop_sequences").deepCopy());
         }
@@ -146,6 +161,17 @@ final class AnthropicApiSupport {
         JsonNode thinking = request.path("thinking");
         if ("enabled".equals(thinking.path("type").asText(""))) {
             openAi.put("thinking_budget_tokens", thinking.path("budget_tokens").asInt(DEFAULT_THINKING_BUDGET_TOKENS));
+        }
+        // As upstream since llama.cpp b11795 (#30856): llama.cpp's own sampling params (seed, min_p, ...) travel in
+        // an extra_params object and are merged into the converted body last, so they win over a translated key.
+        // The two keys this translation reserves for its own answer (verbose, response_fields) stay its own.
+        JsonNode extraParams = request.path("extra_params");
+        if (extraParams.isObject()) {
+            for (Map.Entry<String, JsonNode> field : extraParams.properties()) {
+                if (!RESERVED_KEYS.contains(field.getKey())) {
+                    openAi.set(field.getKey(), field.getValue().deepCopy());
+                }
+            }
         }
         return openAi;
     }

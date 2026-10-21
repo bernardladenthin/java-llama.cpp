@@ -35,6 +35,11 @@ public final class RouterModel {
     public enum Status {
         /** The model file is being downloaded. */
         DOWNLOADING,
+        /**
+         * A download that never finished (llama.cpp b11714): the router lists it without a worker, so it
+         * can be resumed or removed.
+         */
+        INCOMPLETE,
         /** The model file is downloaded but no worker has been started. */
         DOWNLOADED,
         /** No worker is running for this model. */
@@ -64,6 +69,8 @@ public final class RouterModel {
             switch (value) {
                 case "downloading":
                     return DOWNLOADING;
+                case "incomplete":
+                    return INCOMPLETE;
                 case "downloaded":
                     return DOWNLOADED;
                 case "unloaded":

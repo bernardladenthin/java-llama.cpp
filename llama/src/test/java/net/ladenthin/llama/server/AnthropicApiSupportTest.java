@@ -357,6 +357,54 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void requestPassesIdSlotLikeUpstream() throws IOException {
+        // upstream's converter passes id_slot through since llama.cpp b11756 (#28554), so a client can pin
+        // the slot of a conversation on this route as on /v1/chat/completions
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":8,\"id_slot\":2,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("id_slot").isIntegralNumber(), is(true));
+        assertThat(openAi.path("id_slot").asInt(-1), is(2));
+        JsonNode without = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(without.has("id_slot"), is(false));
+    }
+
+    @Test
+    public void requestMergesExtraParamsLastLikeUpstream() throws IOException {
+        // upstream since llama.cpp b11795 (#30856): llama.cpp's own sampling params travel in extra_params
+        // and are merged into the converted body after the translation, so they win over a translated key
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,\"temperature\":0.7,"
+                + "\"extra_params\":{\"seed\":42,\"min_p\":0.05,\"temperature\":0.1},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("seed").asInt(-1), is(42));
+        assertThat(openAi.path("min_p").asDouble(-1), is(0.05));
+        assertThat(openAi.path("temperature").asDouble(-1), is(0.1));
+        assertThat(openAi.has("extra_params"), is(false));
+    }
+
+    @Test
+    public void extraParamsCannotTakeTheKeysTheTranslationReservesForItsAnswer() throws IOException {
+        // the stop word of the Anthropic answer comes out of the verbose object through response_fields; an
+        // extra_params entry of either name would silently lose it
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,"
+                + "\"extra_params\":{\"verbose\":false,\"response_fields\":[\"content\"],\"top_k\":3},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("verbose").asBoolean(false), is(true));
+        assertThat(openAi.path("response_fields").size(), is(1));
+        assertThat(openAi.path("response_fields").get(0).asText(), is("stopping_word"));
+        assertThat(openAi.path("top_k").asInt(-1), is(3));
+    }
+
+    @Test
+    public void extraParamsThatIsNotAnObjectIsIgnoredLikeUpstream() throws IOException {
+        // upstream merges only an object (`is_object()`); anything else is left alone, not refused
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read(
+                "{\"max_tokens\":8,\"extra_params\":7," + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.has("extra_params"), is(false));
+        assertThat(openAi.path("max_tokens").asInt(-1), is(8));
+    }
+
+    @Test
     public void isStreamingDefaultsFalse() throws IOException {
         assertThat(AnthropicApiSupport.isStreaming(read("{}")), is(false));
         assertThat(AnthropicApiSupport.isStreaming(read("{\"stream\":true}")), is(true));

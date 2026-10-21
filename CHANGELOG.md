@@ -136,6 +136,20 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
+- **llama.cpp b11799** (from b11639, in three steps on the branch: b11760, b11761, b11799). What the range
+  brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
+  embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
+  `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
+  TTS-capable model lists `"audio"` in `ModelMeta.getOutputModalities()`; `HTTP_PROXY` / `HTTPS_PROXY` /
+  `NO_PROXY` honoured by the model download (b11699, #21752); logprobs with speculative decoding (b11776);
+  Kolibri-1 as upstream's own architecture (b11709, see its entry); the NEON fp32->fp16 selection upstream
+  (b11761, this project's #30505). Two patches dropped (`0016`, `0019`), `0007` refreshed.
+- **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
+  as `"incomplete"` without a worker; it was `UNKNOWN` here.
+- **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and
+  b11795, #30856): llama.cpp's own sampling parameters (`seed`, `min_p`, `repeat_penalty`, ...) travel in an
+  `extra_params` object and win over a translated key; the two keys the translation reserves for its own
+  answer (`verbose`, `response_fields`) stay its own.
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
   of `LlamaModel`, `LlamaQuantizer`, `NativeServer` (classic, attach and the router's worker
   command), `RpcServer`, `TextToSpeech` and `LlamaTrainer` is a plain C function with an opaque
@@ -376,6 +390,9 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
+- `TextToSpeech` follows llama.cpp b11796 (#30902): `mtmd_helper::gen_audio` is initialised explicitly and
+  the synthesis input starts from upstream's defaults (a `stream` flag joined the struct, off here). No
+  change to the Java API; a projector without audio generation is refused with a message, as before.
 - Dependencies and build tooling bumped in step with the sibling repositories: Jackson 2.22.3 ->
   2.22.4 (`jackson.version`, which the `jackson-bom` and the AAR pom follow), LogCaptor 2.12.7 ->
   2.13.0 (test; still requests log4j 2.26.1, so the log4j floor guard is unchanged); in the agent

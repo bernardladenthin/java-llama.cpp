@@ -564,6 +564,38 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
   `501` as `countTokens` is. `LlamaModelBackend` implements it, so the shipped backend is not
   affected; a `501` with the reason would match the other optional capabilities.
 
+### After the llama.cpp bump to b11799 (2026-10-21): what the range offers and is not wired yet
+
+The bump itself is done (b11639 -> b11760 -> b11761 -> b11799; patches `0016` and `0019` dropped, `0007`
+refreshed; `docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
+library does not expose, each a decision rather than an omission:
+
+- **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
+  `SERVER_TASK_TYPE_TTS` on a chat model loaded with a TTS mmproj and streams `server_task_result_tts` chunks
+  (`audio`, `sample_rate`, `final`; WAV or PCM per `out_type`). `NativeServer` serves it already (classic and
+  attach mode, the route is in `0007`'s common table). A `LlamaModel.tts(...)` over the C API and a
+  `/v1/audio/speech`-shaped route on `OpenAiCompatServer` would make it reachable without the native
+  frontend; `TextToSpeech` (its own context over `mtmd_helper::gen_audio`) stays the one-shot path. Not before
+  the release.
+- **Realtime transcription** (`/v1/realtime`, WebSocket, b11780, #30636: `mtmd_audio_stream`,
+  `SERVER_TASK_TYPE_TRANSCRIBE_RT`, `SERVER_CONTROL_ACTION_AUDIO_*`). Served by `NativeServer`; the JDK's
+  `com.sun.net.httpserver` has no WebSocket, so the Java transport cannot follow without a dependency. Not
+  planned.
+- **`server_context_meta::has_cap_chat` / `has_cap_tts` / `has_audio_stream`** are not in the meta JSON
+  (`ModelMeta` shows `"audio"` among the output modalities for a TTS-capable model, which covers the second).
+  Add a `capabilities` object when the first item lands; `value.*` is PIT-gated at 100 %, so each getter
+  needs its test.
+- **`--connect` / `--connect-code`** (b11744, #28277): the server spawns the separate `llama-connect`
+  binary (WebRTC tunnel to a browser outside the LAN). `LLAMA_CONNECT` stays OFF (a prebuilt download at
+  configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
+  flag answers with upstream's "not available" message. No plan to bundle a binary.
+
+And one CI drift to watch: upstream's SYCL release jobs moved from the oneAPI Base Toolkit to the Deep Learning
+Essentials + oneDNN installers (b11654, #30131) and build the Linux module with system OpenSSL (b11676,
+#30456). Ours stay on the apt packages (Linux) / the DLE 2025.3.3 installer (Windows) and ship the Linux SYCL
+module without HTTPS (`verify-native-deps.py` forbids a `libssl` import); nothing to do until a SYCL job
+breaks or the Linux module should fetch models over HTTPS.
+
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
 **Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and

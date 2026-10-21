@@ -143,6 +143,10 @@ full llama-server), marks ready immediately and blocks in ctx_http.join() until
 llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
 server_routes' constructor registers a sleeping-state callback on the model's task queue that
 outlives the attach call. Applies after 0001 and 0006.
+
+Refreshed at b11799: POST /tts (b11781, #26603) and the WebSocket /v1/realtime (b11780, #30636) joined
+the route table between the transcription and the Anthropic routes; both are in the removed block and
+in the helper, so attach mode serves them too.
 ```
 
 ## 0008-server-models-worker-cmd-override.patch
