@@ -45,7 +45,7 @@ final class BatchDispatch {
      * submission fails, an {@link Error} included, the tasks already submitted are released before the
      * failure propagates, so no slot keeps working for a result nobody will read. A failed receive, an
      * {@link Error} included, does not stop the others from being received; the first failure
-     * propagates after all of them.
+     * propagates after all of them, with the later failures attached to it as suppressed.
      *
      * @param requests the requests in order
      * @param submit   submits one request and returns its task id
@@ -70,7 +70,7 @@ final class BatchDispatch {
                 try {
                     release.accept(taskId);
                 } catch (Throwable suppressed) {
-                    t.addSuppressed(suppressed);
+                    suppress(t, suppressed);
                 }
             }
             throw t;
@@ -82,9 +82,12 @@ final class BatchDispatch {
                 out.add(receive.apply(taskId));
             } catch (Throwable e) {
                 // Keep receiving the rest so no sibling task is left unread (a native reader leak)
-                // before propagating the first failure, an Error included.
+                // before propagating the first failure, an Error included; the later ones are attached
+                // to it as suppressed.
                 if (failure == null) {
                     failure = e;
+                } else {
+                    suppress(failure, e);
                 }
             }
         }
@@ -101,7 +104,8 @@ final class BatchDispatch {
      * submission cannot be separated from the wait. One thread per request up to {@code maxThreads},
      * so that many reach the native scheduler at once and the rest start as threads free up; the
      * threads are daemons and end with the call. A failure, an {@link Error} included, propagates once
-     * every request has finished, the first one first.
+     * every request has finished: the first one in input order, with the later ones attached to it as
+     * suppressed.
      *
      * @param requests   the requests in order
      * @param maxThreads the most requests run at once, at least 1
@@ -142,9 +146,11 @@ final class BatchDispatch {
                     } catch (InterruptedException e) {
                         interrupted = true;
                     } catch (ExecutionException e) {
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
                         if (failure == null) {
-                            Throwable cause = e.getCause();
-                            failure = cause != null ? cause : e;
+                            failure = cause;
+                        } else {
+                            suppress(failure, cause);
                         }
                         break;
                     }
@@ -159,6 +165,20 @@ final class BatchDispatch {
             return out;
         } finally {
             executor.shutdown();
+        }
+    }
+
+    /**
+     * Attaches {@code later} to {@code failure} as suppressed. The same instance can fail two tasks (a
+     * shared or cached exception), and {@link Throwable#addSuppressed} refuses the exception itself
+     * with an {@link IllegalArgumentException}, which would escape the loop, leave the remaining tasks
+     * unread and hide the real failure; that case is skipped. Identity, not {@code equals}, because
+     * identity is what {@code addSuppressed} refuses.
+     */
+    @SuppressWarnings("ReferenceEquality")
+    private static void suppress(Throwable failure, Throwable later) {
+        if (later != failure) {
+            failure.addSuppressed(later);
         }
     }
 

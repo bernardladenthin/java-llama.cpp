@@ -158,6 +158,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F233](#f233) — niedrig — *gefixt*
 - [F234](#f234) — niedrig — *gefixt*
 - [F235](#f235) — niedrig — *gefixt*
+- [F236](#f236) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1944,6 +1945,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot („Expected: iterable containing [<10>, <20>] but: no item was <10>“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.AssertionError>“, „Expected: iterable containing [<1>, <2>, <3>] but: no item was <2>“), mit ihm grün (`BatchDispatchTest` 14/14); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `edad4ca`
+
+### F236 – java-llama.cpp: die Batch-Methoden verwerfen jeden Fehler nach dem ersten ohne Spur
+- **Zeit:** 2026-10-21 01:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/BatchDispatch.java` (`submitAllThenReceive`, `runEachOnItsOwnThread`, neu `suppress`), `LlamaModel.java` (Javadoc von `completeBatch`, `chatBatch`)
+- **Schwere:** niedrig (der Aufrufer sah von mehreren fehlgeschlagenen Anfragen eines Batches nur die erste)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J9-3). Das Verhalten ist älter als der Branch: `LlamaModel.completeBatch` hielt schon vor F167 nur den ersten `join()`-Fehler fest, F167 hat das unverändert nach `BatchDispatch` übernommen. Der Test `submitAllThenReceive_failedReceive_stillReceivesTheOthersThenThrowsTheFirstFailure` ließ die zweite Anfrage `"second"` werfen und prüfte nie, ob davon etwas ankommt.
+- **Beschreibung:** Die Empfangsschleife von `submitAllThenReceive` und die Warteschleife von `runEachOnItsOwnThread` schrieben `if (failure == null) failure = e;` und verwarfen jeden späteren Fehler; scheiterte in einem Batch Anfrage 1 als ungültig und Anfrage 3 an der Kontextgröße, sah der Aufrufer nur die erste. Der Freigabepfad derselben Klasse hängte spätere Fehler dagegen mit `addSuppressed` an, ohne Identitätsprüfung: wirft eine Freigabe dieselbe Instanz wie die Einreichung (eine geteilte oder zwischengespeicherte Ausnahme), lehnt `Throwable.addSuppressed` sie mit `IllegalArgumentException("Self-suppression not permitted")` ab; die entkam der Schleife, die übrigen Aufgaben wurden nicht freigegeben, und der Aufrufer sah die IAE statt des Fehlers.
+- **Fix:** Spätere Fehler hängen als unterdrückt am ersten, in beiden Schleifen (bei `runEachOnItsOwnThread` die ausgepackte Ursache der `ExecutionException`). Alle drei Stellen gehen über `suppress(failure, later)`, das dieselbe Instanz überspringt (Identität, weil `addSuppressed` genau sie ablehnt; `@SuppressWarnings("ReferenceEquality")` mit Begründung). Die Javadoc beider Methoden und von `completeBatch`/`chatBatch` nennt das.
+- **Tests:** `BatchDispatchTest#submitAllThenReceive_failedReceive_stillReceivesTheOthersThenThrowsTheFirstFailure` (erweitert: `"second"` hängt unterdrückt am ersten), `#runEachOnItsOwnThread_laterFailuresAreSuppressedOnTheFirst` (der Fehler von Anfrage 1 kommt an, der von Anfrage 2 hängt daran), `#submitAllThenReceive_aReleaseThatThrowsTheSubmissionFailure_isNotSuppressedOnItself` (beide Freigaben laufen, dieselbe Instanz ohne unterdrückte kommt an), `#submitAllThenReceive_theSameFailureForTwoReceives_isNotSuppressedOnItself` und `#runEachOnItsOwnThread_theSameFailureForTwoRequests_isNotSuppressedOnItself` (dieselbe Instanz zweimal: sie kommt ohne unterdrückte an, alle Aufgaben werden empfangen).
+- **Rot-Grün-Nachweis:** Ohne den Fix drei rot („Expected: is <1> but: was <0>“ für die Länge von `getSuppressed()`, „Expected: is [<java.lang.IllegalStateException: second>] but: was []“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.IllegalArgumentException>“ für die Freigabe); die beiden Identitätstests der Schleifen sind gegen den alten Code grün (dort gab es kein `addSuppressed`) und wurden gegen ein `suppress` ohne Identitätsprüfung rot gezeigt (dieselbe IAE-Meldung). Mit dem Fix grün (`BatchDispatchTest` 18/18); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

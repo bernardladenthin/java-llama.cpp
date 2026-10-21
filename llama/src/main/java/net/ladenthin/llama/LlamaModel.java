@@ -187,7 +187,8 @@ public class LlamaModel implements AutoCloseable {
      * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} gives it slots,
      * independent of the number of processors. With a default single-slot model the requests
      * still run, but sequentially. If a submission fails, the requests already submitted are
-     * released before the exception propagates.
+     * released before the exception propagates. If a request fails, the others are still received;
+     * the first failure propagates afterwards, with the later ones attached to it as suppressed.
      *
      * @param requests the inference parameter blocks (must be distinct instances)
      * @return the generated texts in input order
@@ -220,7 +221,9 @@ public class LlamaModel implements AutoCloseable {
      * in the same order. Each request runs on a thread of its own (the chat endpoint submits and
      * waits in one native call), up to 64 at once; the rest start as threads free up. Requires
      * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
-     * actual parallelism; otherwise the calls run sequentially on the single slot.
+     * actual parallelism; otherwise the calls run sequentially on the single slot. If a request
+     * fails, the call still waits for the others; the first failure in input order propagates
+     * afterwards, with the later ones attached to it as suppressed.
      *
      * @param requests the typed chat requests (must be distinct instances)
      * @return parsed responses in input order

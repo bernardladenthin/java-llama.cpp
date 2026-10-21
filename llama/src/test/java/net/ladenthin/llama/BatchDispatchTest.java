@@ -191,6 +191,61 @@ public class BatchDispatchTest {
 
         assertThat(thrown, is(first));
         assertThat(received, contains(1, 2, 3));
+        // the later failure used to be dropped without a trace
+        assertThat(thrown.getSuppressed().length, is(1));
+        assertThat(thrown.getSuppressed()[0].getMessage(), is("second"));
+    }
+
+    @Test
+    public void submitAllThenReceive_theSameFailureForTwoReceives_isNotSuppressedOnItself() {
+        // Throwable.addSuppressed refuses the exception itself: without the identity check the
+        // IllegalArgumentException would escape the loop and the third task would never be received.
+        List<Integer> received = new ArrayList<>();
+        IllegalStateException shared = new IllegalStateException("shared");
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> BatchDispatch.submitAllThenReceive(
+                        Arrays.asList(1, 2, 3),
+                        request -> request,
+                        taskId -> {
+                            received.add(taskId);
+                            if (taskId < 3) {
+                                throw shared;
+                            }
+                            return "";
+                        },
+                        taskId -> {}));
+
+        assertThat(thrown, is(shared));
+        assertThat(thrown.getSuppressed().length, is(0));
+        assertThat(received, contains(1, 2, 3));
+    }
+
+    @Test
+    public void submitAllThenReceive_aReleaseThatThrowsTheSubmissionFailure_isNotSuppressedOnItself() {
+        List<Integer> released = new ArrayList<>();
+        IllegalStateException failure = new IllegalStateException("native context closed");
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> BatchDispatch.submitAllThenReceive(
+                        Arrays.asList(1, 2, 3),
+                        request -> {
+                            if (request == 3) {
+                                throw failure;
+                            }
+                            return request * 10;
+                        },
+                        taskId -> "",
+                        taskId -> {
+                            released.add(taskId);
+                            throw failure;
+                        }));
+
+        assertThat(thrown, is(failure));
+        assertThat(thrown.getSuppressed().length, is(0));
+        assertThat(released, contains(10, 20));
     }
 
     @Test
@@ -248,6 +303,45 @@ public class BatchDispatchTest {
 
         assertThat(thrown, is(failure));
         assertThat(finished.size(), is(2));
+    }
+
+    @Test
+    public void runEachOnItsOwnThread_laterFailuresAreSuppressedOnTheFirst() {
+        // The futures are read in input order, so the first request's failure is the one thrown.
+        IllegalArgumentException first = new IllegalArgumentException("first");
+        IllegalStateException second = new IllegalStateException("second");
+
+        IllegalArgumentException thrown = assertThrows(
+                IllegalArgumentException.class,
+                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1, 2, 3), 3, request -> {
+                    if (request == 1) {
+                        throw first;
+                    }
+                    if (request == 2) {
+                        throw second;
+                    }
+                    return request;
+                }));
+
+        assertThat(thrown, is(first));
+        assertThat(thrown.getSuppressed(), is(new Throwable[] {second}));
+    }
+
+    @Test
+    public void runEachOnItsOwnThread_theSameFailureForTwoRequests_isNotSuppressedOnItself() {
+        IllegalStateException shared = new IllegalStateException("shared");
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1, 2, 3), 3, request -> {
+                    if (request < 3) {
+                        throw shared;
+                    }
+                    return request;
+                }));
+
+        assertThat(thrown, is(shared));
+        assertThat(thrown.getSuppressed().length, is(0));
     }
 
     @Test
