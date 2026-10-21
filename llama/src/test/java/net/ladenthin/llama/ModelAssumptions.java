@@ -34,6 +34,13 @@ public final class ModelAssumptions {
     /** The GGUF key with which an SPM model can turn the space before a prompt off. */
     static final String KEY_ADD_SPACE_PREFIX = "tokenizer.ggml.add_space_prefix";
 
+    /**
+     * The fewest parameters of the language model a test that asserts what a vision model sees accepts.
+     * CI's SmolVLM-500M-Instruct decodes with SmolLM2-360M, about 360 M parameters (the vision encoder
+     * sits in the mmproj and is not counted); a random test model has a few hundred thousand.
+     */
+    static final long MIN_PARAMETERS_OF_A_TRAINED_VISION_MODEL = 100_000_000L;
+
     private ModelAssumptions() {}
 
     /**
@@ -64,6 +71,24 @@ public final class ModelAssumptions {
                 "needs CI's CodeLlama-7B: the test asserts the space a SentencePiece tokenizer puts before a "
                         + "prompt; this model has vocab type " + meta.getVocabType()
                         + (spaceOff ? " with " + KEY_ADD_SPACE_PREFIX + " false" : ""));
+    }
+
+    /**
+     * Aborts the calling test unless the model is a trained vision-language model: a vision projector is
+     * loaded and the language model has at least {@link #MIN_PARAMETERS_OF_A_TRAINED_VISION_MODEL}
+     * parameters. A test that asserts what the model sees in an image (the colour of a picture) holds
+     * only for such a model; a random model with a random projector answers noise whatever the image.
+     *
+     * @param model the loaded model
+     */
+    public static void assumeTrainedVisionModel(LlamaModel model) {
+        ModelMeta meta = model.getModelMeta();
+        long parameters = meta.getNParams();
+        Assumptions.assumeTrue(
+                meta.supportsVision() && parameters >= MIN_PARAMETERS_OF_A_TRAINED_VISION_MODEL,
+                "needs CI's SmolVLM-500M: the test asserts what a trained vision-language model sees in an "
+                        + "image; this model has " + parameters + " parameters"
+                        + (meta.supportsVision() ? "" : " and no vision projector"));
     }
 
     /**

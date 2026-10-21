@@ -217,6 +217,7 @@ public class MultimodalIntegrationTest {
     @Timeout(value = 240_000, unit = TimeUnit.MILLISECONDS)
     @Test
     public void imageBytesAffectTheAnswer() throws Exception {
+        ModelAssumptions.assumeTrainedVisionModel(model); // naming a colour needs a trained model
         String red = identifyColor(RED_PNG);
         String blue = identifyColor(BLUE_PNG);
         assertTrue(red.contains("red"), "red image must be identified as red; got: " + red);
