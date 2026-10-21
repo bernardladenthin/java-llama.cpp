@@ -2450,7 +2450,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `StreamingChunkAssemblerTest#toolCallDeltaBeforeItsName_doesNotFailTheStream` prüft jetzt `assertPartialsMakeUpTheCompleteCall`; `#defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts` erwartet das nachgereichte Teilstück von Aufruf 0 (`{}`, Name `first`) vor dessen Abschluss.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Assembler rot: „StreamingChunkAssemblerTest.toolCallDeltaBeforeItsName_doesNotFailTheStream:197->assertPartialsMakeUpTheCompleteCall:90 Expected: is "{\"city\":1}" but: was "ty\":1}"“; mit dem Fix grün, `StreamingChunkAssemblerTest` 13/13 (die geänderte Erwartung in `defersCompletion…` war mit dem Fix zunächst rot: „Expected: iterable containing ["partial:1", "complete:0", "complete:1"] but: item 1: was "partial:0"“ — genau das nachgereichte Präfix).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `b528b4e`
 
 ## Offene Verdachte ohne Fund-ID
 
