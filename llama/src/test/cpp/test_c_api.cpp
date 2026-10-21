@@ -13,6 +13,7 @@
 // pinned here is the behaviour LlamaModel has.
 
 #include "jllama_api.h"
+#include "rpc_support.hpp"
 #include "tiny_llama_gguf.hpp"
 
 #include "build-info.h"
@@ -27,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <cstdlib>
@@ -675,6 +677,153 @@ TEST(CApiRpc, TheRpcServerServesTheCpuOverLoopbackAndStops) {
     EXPECT_TRUE(served);
     EXPECT_FALSE(jllama_rpc_server_listening());
     EXPECT_EQ(jllama_rpc_server_serve("127.0.0.1", 1, 2, nullptr, "no-such-device"), JLLAMA_STATUS_ERROR);
+}
+
+namespace {
+
+// A port of the range the serve test above uses (a fixed port would collide with parallel jobs).
+int rpc_test_port(int attempt) {
+    return 42000 + static_cast<int>(
+                       (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+}
+
+// jllama_rpc_server_serve() on a thread of its own, with a way to wait for it to return.
+class rpc_serve_run {
+  public:
+    explicit rpc_serve_run(int port)
+        : thread_([this, port]() {
+              const jllama_status status = jllama_rpc_server_serve("127.0.0.1", port, 2, nullptr, "CPU");
+              std::lock_guard<std::mutex> lock(mutex_);
+              status_ = status;
+              done_ = true;
+              ended_.notify_all();
+          }) {}
+    rpc_serve_run(const rpc_serve_run &) = delete;
+    rpc_serve_run &operator=(const rpc_serve_run &) = delete;
+    // A serve that is still running (the test failed) is stopped once it listens, so the thread ends.
+    ~rpc_serve_run() {
+        while (!returned_within(std::chrono::milliseconds(100))) {
+            jllama_rpc_server_stop();
+        }
+        thread_.join();
+    }
+
+    bool returned_within(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return ended_.wait_for(lock, timeout, [this]() { return done_; });
+    }
+    jllama_status status() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return status_;
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable ended_;
+    bool done_ = false;
+    jllama_status status_ = JLLAMA_STATUS_ERROR;
+    std::thread thread_; // last: it reads the members above
+};
+
+std::atomic<jllama_status> g_hook_stop_status{JLLAMA_STATUS_ERROR};
+
+// Holds the serving thread in the seam until released, so a stop from another thread lands while
+// serve runs and before ggml binds.
+struct held_serve {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool released = false;
+};
+held_serve g_held;
+
+// Resets the seam when a test ends, whatever its outcome.
+struct serve_hook_scope {
+    explicit serve_hook_scope(void (*hook)()) { jllama::rpc::set_serve_hook_for_testing(hook); }
+    ~serve_hook_scope() { jllama::rpc::set_serve_hook_for_testing(nullptr); }
+    serve_hook_scope(const serve_hook_scope &) = delete;
+    serve_hook_scope &operator=(const serve_hook_scope &) = delete;
+};
+
+} // namespace
+
+// ggml clears its stop flag when it binds the socket (patches/0015), so a stop issued before the
+// bind used to be lost and the server went on listening. A stop from the serving thread itself
+// (the seam stands for anything that runs there before the bind) must end the serve.
+TEST(CApiRpc, AStopBeforeTheBindFromTheServingThreadEndsTheServe) {
+    serve_hook_scope hook([]() { g_hook_stop_status.store(jllama_rpc_server_stop()); });
+    rpc_serve_run run(rpc_test_port(0));
+
+    EXPECT_TRUE(run.returned_within(std::chrono::seconds(10))) << "serve went on after a stop issued before the bind";
+    EXPECT_EQ(g_hook_stop_status.load(), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(run.status(), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
+// The same from another thread: the stop returns only once serve has returned, also when it was
+// issued before the bind.
+TEST(CApiRpc, AStopBeforeTheBindFromAnotherThreadReturnsOnlyOnceTheServeHasEnded) {
+    g_held.entered = false;
+    g_held.released = false;
+    serve_hook_scope hook([]() {
+        std::unique_lock<std::mutex> lock(g_held.mutex);
+        g_held.entered = true;
+        g_held.changed.notify_all();
+        g_held.changed.wait(lock, []() { return g_held.released; });
+    });
+    rpc_serve_run run(rpc_test_port(1));
+    {
+        std::unique_lock<std::mutex> lock(g_held.mutex);
+        ASSERT_TRUE(g_held.changed.wait_for(lock, std::chrono::seconds(10), []() { return g_held.entered; }));
+    }
+
+    std::mutex stop_mutex;
+    std::condition_variable stop_changed;
+    bool stop_returned = false;
+    jllama_status stop_status = JLLAMA_STATUS_ERROR;
+    std::thread stopper([&]() {
+        const jllama_status status = jllama_rpc_server_stop();
+        std::lock_guard<std::mutex> lock(stop_mutex);
+        stop_status = status;
+        stop_returned = true;
+        stop_changed.notify_all();
+    });
+    {
+        std::unique_lock<std::mutex> lock(stop_mutex);
+        EXPECT_FALSE(stop_changed.wait_for(lock, std::chrono::milliseconds(300), [&]() { return stop_returned; }))
+            << "the stop returned while serve had not even started the server";
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_held.mutex);
+        g_held.released = true;
+        g_held.changed.notify_all();
+    }
+
+    EXPECT_TRUE(run.returned_within(std::chrono::seconds(10))) << "serve went on after a stop issued before the bind";
+    stopper.join();
+    EXPECT_EQ(stop_status, JLLAMA_STATUS_OK);
+    EXPECT_EQ(run.status(), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
+// A stop while nothing serves stays a no-op: it must not end the next serve as well.
+TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
+    ASSERT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);
+    bool served = false;
+    for (int attempt = 0; attempt < 50 && !served; ++attempt) {
+        rpc_serve_run run(rpc_test_port(attempt + 2));
+        for (int i = 0;
+             i < 500 && !jllama_rpc_server_listening() && !run.returned_within(std::chrono::milliseconds(10)); ++i) {
+        }
+        if (jllama_rpc_server_listening()) {
+            served = true;
+            EXPECT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);
+            EXPECT_TRUE(run.returned_within(std::chrono::seconds(10)));
+            EXPECT_EQ(run.status(), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+    }
+    EXPECT_TRUE(served);
+    EXPECT_FALSE(jllama_rpc_server_listening());
 }
 
 TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {

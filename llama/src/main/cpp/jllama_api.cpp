@@ -23,8 +23,12 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -97,7 +101,67 @@ void log_adapter(enum ggml_log_level level, const char *text, void * /*user_data
     }
 }
 
+// jllama::rpc::set_serve_hook_for_testing().
+std::atomic<void (*)()> g_rpc_serve_hook{nullptr};
+
+// The serves in progress, for jllama_rpc_server_stop(). ggml clears its stop flag when it binds the
+// socket (patches/0015), so a stop of ggml's alone is lost when it lands before the bind (device
+// initialization, transport start) and the server goes on listening. A stop while a serve is in
+// progress is therefore kept here: serve does not start ggml's server once it is set, and the
+// stopping thread repeats ggml's stop until serve has returned. A stop while none is in progress
+// stays a no-op, and the request ends with the last serve, so it never reaches the next one -- the
+// reason ggml clears its flag in the first place.
+struct rpc_serve_state {
+    std::mutex mutex;
+    std::condition_variable ended;
+    int serving = 0;
+    bool stop_requested = false;
+};
+
+rpc_serve_state &rpc_serve() {
+    static rpc_serve_state state;
+    return state;
+}
+
+// Whether this thread is inside jllama_rpc_server_serve(): a stop from there cannot wait for it.
+thread_local bool t_in_rpc_serve = false;
+
+constexpr auto RPC_STOP_RETRY = std::chrono::milliseconds(50);
+constexpr auto RPC_STOP_TIMEOUT = std::chrono::seconds(30);
+
+// Marks one jllama_rpc_server_serve() call in progress, for its whole duration.
+class rpc_serving_scope {
+  public:
+    rpc_serving_scope() {
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.serving++ == 0) {
+            state.stop_requested = false;
+        }
+        t_in_rpc_serve = true;
+    }
+    ~rpc_serving_scope() {
+        t_in_rpc_serve = false;
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (--state.serving == 0) {
+            state.stop_requested = false;
+        }
+        state.ended.notify_all();
+    }
+    rpc_serving_scope(const rpc_serving_scope &) = delete;
+    rpc_serving_scope &operator=(const rpc_serving_scope &) = delete;
+
+    static bool stop_requested() {
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        return state.stop_requested;
+    }
+};
+
 } // namespace
+
+void jllama::rpc::set_serve_hook_for_testing(void (*hook)()) { g_rpc_serve_hook.store(hook); }
 
 extern "C" {
 
@@ -553,11 +617,19 @@ jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, c
     if (host == nullptr || devices == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "host and devices must not be null");
     }
+    rpc_serving_scope serving;
     try {
         const std::string endpoint = std::string(host) + ":" + std::to_string(port);
         auto selected = jllama::rpc::server_devices(jllama::rpc::split_endpoints(devices));
         if (selected.empty()) {
             throw std::runtime_error("no device to serve over RPC");
+        }
+        if (auto *hook = g_rpc_serve_hook.load()) {
+            hook();
+        }
+        if (rpc_serving_scope::stop_requested()) {
+            t_last_error.clear();
+            return JLLAMA_STATUS_OK; // stopped before the server started
         }
         // Blocks until jllama_rpc_server_stop(), or returns at once when the socket cannot be bound.
         jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_start_server)>("ggml_backend_rpc_start_server")(
@@ -574,9 +646,35 @@ jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, c
 
 jllama_status jllama_rpc_server_stop(void) {
     try {
-        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server")();
-        t_last_error.clear();
-        return JLLAMA_STATUS_OK;
+        auto *stop_server =
+            jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server");
+        rpc_serve_state &state = rpc_serve();
+        std::unique_lock<std::mutex> lock(state.mutex);
+        if (state.serving > 0) {
+            state.stop_requested = true;
+        }
+        if (state.serving == 0 || t_in_rpc_serve) {
+            // Nothing to wait for: none runs, or this is the serving thread itself, before ggml's
+            // server started (serve sees the request and does not start it).
+            lock.unlock();
+            stop_server();
+            t_last_error.clear();
+            return JLLAMA_STATUS_OK;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + RPC_STOP_TIMEOUT;
+        for (;;) {
+            lock.unlock();
+            stop_server(); // lost while the socket is not bound yet, hence the repetition
+            lock.lock();
+            const auto next = std::min(std::chrono::steady_clock::now() + RPC_STOP_RETRY, deadline);
+            if (state.ended.wait_until(lock, next, [&state]() { return state.serving == 0; })) {
+                t_last_error.clear();
+                return JLLAMA_STATUS_OK;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return fail(JLLAMA_STATUS_ERROR, "the RPC server did not stop within 30 s of the stop request");
+            }
+        }
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
     }

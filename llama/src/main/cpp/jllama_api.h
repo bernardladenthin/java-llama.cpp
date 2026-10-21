@@ -365,7 +365,18 @@ JLLAMA_API void jllama_strings_free(char **strings, size_t count);
 JLLAMA_API jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
                                                  const char *devices);
 
-/** Stops the running RPC server (no-op when none runs). */
+/**
+ * Stops the RPC server and returns once jllama_rpc_server_serve() has returned -- also for a stop
+ * that arrives before the socket is bound (device initialization), which ggml alone would lose.
+ * JLLAMA_STATUS_ERROR when serve has not returned 30 s after the request. Called on the serving
+ * thread itself (from a callback that runs there before the server starts), it returns at once and
+ * serve returns without starting the server.
+ *
+ * A no-op when no serve call is in progress, and it does not carry over to the next one: a stop
+ * issued before the serving thread has entered jllama_rpc_server_serve() is lost, so a caller that
+ * stops a server that may not have come up yet repeats the stop until serve has returned, the way
+ * the Java RpcServer does.
+ */
 JLLAMA_API jllama_status jllama_rpc_server_stop(void);
 
 /** True while the RPC server listens. */

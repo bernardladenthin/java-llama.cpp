@@ -27,7 +27,9 @@ public final class FfmRpcServer {
     /**
      * Serves until {@link #stop()}: <strong>blocks the calling thread</strong> for the life of the server,
      * or returns at once when the socket cannot be bound (check {@link #isListening()} from another
-     * thread to tell the two apart, as {@code RpcServer} does).
+     * thread to tell the two apart, as {@code RpcServer} does). A caller that gives up waiting for the
+     * server to listen stops it the way {@link #stop()} describes: repeatedly until this call has
+     * returned, since a stop before the serving thread has entered it is lost.
      *
      * @param host the IPv4 literal to bind
      * @param port the port
@@ -45,7 +47,15 @@ public final class FfmRpcServer {
         }
     }
 
-    /** Stops the running server; a no-op when none runs. */
+    /**
+     * Stops the server and returns once {@link #serve} has returned, also for a stop that arrives before
+     * the socket is bound. A no-op when no {@link #serve} call is in progress, and it does not carry over
+     * to the next one: a stop issued before the serving thread has entered {@link #serve} is lost, so
+     * stopping a server that may not have come up yet means repeating this until {@link #serve} has
+     * returned.
+     *
+     * @throws LlamaException when {@link #serve} has not returned 30 seconds after the request
+     */
     public static void stop() {
         JllamaNative.call(JllamaNative.RPC_SERVER_STOP);
     }

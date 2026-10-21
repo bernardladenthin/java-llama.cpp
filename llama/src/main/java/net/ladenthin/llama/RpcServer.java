@@ -581,10 +581,10 @@ public final class RpcServer implements AutoCloseable {
 
     /**
      * Stops a server thread that did not come up and waits for it to end. The stop is repeated while
-     * the thread lives: the native server clears its stop flag when it binds the socket, so a stop that
-     * arrives before the bind (a slow device initialization, an interrupted start) is lost, and the
-     * server would go on listening after the start has failed. An interrupt of the calling thread does
-     * not cut the wait short; it is restored afterwards.
+     * the thread lives: the native stop keeps a request that arrives while the serve call runs, also
+     * before the bind (a slow device initialization), but one issued before the thread has entered the
+     * serve call is a no-op, and the server would go on listening after the start has failed. An
+     * interrupt of the calling thread does not cut the wait short; it is restored afterwards.
      *
      * @return whether the thread has ended; when it has not, it keeps the single-instance slot until it
      *     does, and the caller reports that
