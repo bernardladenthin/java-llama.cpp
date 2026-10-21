@@ -782,7 +782,7 @@ public class LlamaModel implements AutoCloseable {
         boolean stopped = false;
         try {
             while (!stopped) {
-                stopped = feedStreamEnvelope(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
+                stopped = StreamEnvelope.feed(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
             }
         } finally {
             // On a clean stop the native reader was already released when the final chunk was
@@ -792,28 +792,6 @@ public class LlamaModel implements AutoCloseable {
             if (!stopped) {
                 cancelCompletion(taskId);
             }
-        }
-    }
-
-    /**
-     * Feed one envelope of {@code receiveChatCompletionChunk} to {@code chunkSink}. An envelope that is
-     * not what the native layer writes is a failure of the native layer, not of the caller's arguments,
-     * so it is a {@link LlamaException} (a server answers it with {@code 500}, where an
-     * {@link IllegalArgumentException} would be the request's fault); an exception of {@code chunkSink}
-     * passes through unchanged.
-     *
-     * @param parser the envelope parser
-     * @param envelope the envelope the native layer returned
-     * @param chunkSink the caller's receiver of each chunk
-     * @return {@code true} if the envelope ends the stream
-     * @throws LlamaException if the envelope is malformed
-     */
-    // package-private for LlamaModelStreamEnvelopeTest
-    static boolean feedStreamEnvelope(ChatStreamChunkParser parser, String envelope, Consumer<String> chunkSink) {
-        try {
-            return parser.feed(envelope, chunkSink);
-        } catch (ChatStreamChunkParser.MalformedEnvelopeException e) {
-            throw new LlamaException(String.valueOf(e.getMessage()), e);
         }
     }
 
@@ -842,7 +820,7 @@ public class LlamaModel implements AutoCloseable {
         boolean stopped = false;
         try {
             while (!stopped) {
-                stopped = feedStreamEnvelope(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
+                stopped = StreamEnvelope.feed(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
             }
         } finally {
             // as in streamChatCompletion: an early exit (chunkSink threw) releases the native task

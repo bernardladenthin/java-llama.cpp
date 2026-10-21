@@ -19,16 +19,18 @@ import org.junit.jupiter.api.Test;
 
 /**
  * How {@link LlamaModel}'s streaming loops report the envelopes of {@code receiveChatCompletionChunk}:
- * no model is loaded, the envelope is a literal.
+ * no model is loaded and no native library, the envelope is a literal. {@link StreamEnvelope} is what
+ * keeps this test free of the library: through {@code LlamaModel} itself the first call ran the class
+ * initializer, which loads it, and a build without the natives (the SonarQube job) failed here.
  */
-public class LlamaModelStreamEnvelopeTest {
+public class StreamEnvelopeTest {
 
     private final ChatStreamChunkParser parser = new ChatStreamChunkParser();
 
     @Test
     public void aWellFormedEnvelopeReachesTheSink() {
         List<String> chunks = new ArrayList<>();
-        boolean stop = LlamaModel.feedStreamEnvelope(parser, "{\"data\":{\"x\":1},\"stop\":true}", chunks::add);
+        boolean stop = StreamEnvelope.feed(parser, "{\"data\":{\"x\":1},\"stop\":true}", chunks::add);
         assertThat(stop, is(true));
         assertThat(chunks.size(), is(1));
     }
@@ -40,8 +42,8 @@ public class LlamaModelStreamEnvelopeTest {
      */
     @Test
     public void aMalformedEnvelopeIsALlamaExceptionNamingIt() {
-        LlamaException e = assertThrows(
-                LlamaException.class, () -> LlamaModel.feedStreamEnvelope(parser, "not json", chunk -> {}));
+        LlamaException e =
+                assertThrows(LlamaException.class, () -> StreamEnvelope.feed(parser, "not json", chunk -> {}));
         assertThat(e.getMessage(), containsString("'not json'"));
         assertThat(e.getCause(), instanceOf(ChatStreamChunkParser.MalformedEnvelopeException.class));
     }
@@ -51,7 +53,7 @@ public class LlamaModelStreamEnvelopeTest {
         IllegalArgumentException own = new IllegalArgumentException("the sink's own");
         IllegalArgumentException e = assertThrows(
                 IllegalArgumentException.class,
-                () -> LlamaModel.feedStreamEnvelope(parser, "{\"data\":{\"x\":1},\"stop\":false}", chunk -> {
+                () -> StreamEnvelope.feed(parser, "{\"data\":{\"x\":1},\"stop\":false}", chunk -> {
                     throw own;
                 }));
         assertThat(e, sameInstance(own));
