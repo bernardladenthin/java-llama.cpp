@@ -138,6 +138,20 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        ChatRequest.parseSchemaOrThrow is the same check for a tool's parameter schema, run by
+        appendTool: a schema that is not exactly one well-formed JSON value is a programming error at
+        the call site, reported as IllegalArgumentException naming the tool, instead of being sent on
+        and refused by llama.cpp at request time with a message naming neither the tool nor the
+        cause. Jackson's readTree declares the checked IOException, so the conversion is unavoidable;
+        the cause is chained through. Same tradeoff as JsonParameters.parseOrThrow above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.parameters.ChatRequest"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="parseSchemaOrThrow"/>
+    </Match>
+
+    <!--
         InferenceParameters and ModelParameters are fluent builders whose
         parameters field is a Map<String, String> serving as the CLI / JSON
         wire-format passed across JNI to nlohmann/json. Every setter

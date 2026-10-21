@@ -19,6 +19,8 @@ import net.ladenthin.llama.value.ToolDefinition;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Running documentation of the {@link ChatRequest} immutability + wither-pattern
@@ -234,29 +236,34 @@ class ChatRequestTest {
                     .appendTool(new ToolDefinition("f", "d", "{\"type\":\"object\"}"))
                     .buildToolsJson()
                     .orElseThrow(IllegalStateException::new);
-            assertThat(json, containsString("\"parameters\":{\"type\":\"object\"}"));
+            assertThat(
+                    json,
+                    is("[{\"type\":\"function\",\"function\":{\"name\":\"f\",\"description\":\"d\","
+                            + "\"parameters\":{\"type\":\"object\"}}}]"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"", "  ", "not json{{{", "{\"type\":\"object\"} {\"required\":[\"x\"]}"})
+        void appendToolRejectsASchemaThatIsNotExactlyOneJsonValue(String schema) {
+            // An empty schema used to be sent as the JSON string "", an unparseable one or one with trailing
+            // content as the raw text: llama.cpp then refused the request with "schema must be an object",
+            // naming neither the tool nor the cause, and a template rendered without a grammar took it as is.
+            ToolDefinition tool = new ToolDefinition("weather", "d", schema);
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> ChatRequest.empty().appendTool(tool));
+            assertThat(
+                    e.getMessage(),
+                    is("tool 'weather': parameters must be exactly one well-formed JSON value, but was: " + schema));
         }
 
         @Test
-        void buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull() {
-            // Jackson parses an empty or blank text to MissingNode, which an ObjectNode writes as null; an
-            // empty schema is no schema, so it takes the same string fallback as any other unparseable one.
-            String json = ChatRequest.empty()
-                    .appendTool(new ToolDefinition("f", "d", ""))
-                    .buildToolsJson()
-                    .orElseThrow(IllegalStateException::new);
-            assertThat(json, containsString("\"parameters\":\"\""));
-        }
-
-        @Test
-        void buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent() {
-            // A schema string holding more than one JSON value is not a schema; keeping only the first
-            // value would send a different schema than the caller wrote, without any error.
-            String json = ChatRequest.empty()
-                    .appendTool(new ToolDefinition("f", "d", "{\"type\":\"object\"} {\"required\":[\"x\"]}"))
-                    .buildToolsJson()
-                    .orElseThrow(IllegalStateException::new);
-            assertThat(json, not(containsString("\"parameters\":{\"type\":\"object\"}")));
+        void appendToolBoundsTheRejectedSchemaInTheMessage() {
+            String schema = "x".repeat(300);
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ChatRequest.empty().appendTool(new ToolDefinition("f", "d", schema)));
+            assertThat(e.getMessage(), not(containsString(schema)));
+            assertThat(e.getMessage(), containsString("x".repeat(80) + "..."));
         }
     }
 }

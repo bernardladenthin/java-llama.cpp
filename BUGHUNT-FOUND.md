@@ -155,6 +155,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F230](#f230) — niedrig — *gefixt*
 - [F231](#f231) — niedrig — *gefixt*
 - [F232](#f232) — niedrig — *gefixt*
+- [F233](#f233) — niedrig — *gefixt*
 
 ## Funde
 
@@ -179,6 +180,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Das Schema jeder `ToolDefinition` wurde mit einfachem `readTree` gelesen; das liest den ersten JSON-Wert und ignoriert den Rest. `{"type":"object"} {"required":["x"]}` wurde so ohne Fehler als `{"type":"object"}` gesendet – ein anderes Schema als vom Aufrufer geschrieben. `JsonParameters` nutzt aus genau diesem Grund `FAIL_ON_TRAILING_TOKENS` (siehe CLAUDE.md), `ChatRequest` umging das. Jetzt gleicher strikter Reader → solche Strings nehmen den vorhandenen Fallback für ungültiges JSON.
 - **Weitere Beobachtung (nicht geändert):** Ungültiges JSON wird absichtlich als **String** unter `parameters` weitergereicht, `""` und Leerzeichen werden zu `"parameters":null`. Ob eine `IllegalArgumentException` (wie in `JsonParameters`) besser wäre, ist eine API-Entscheidung.
 - **Reproduktion:** `ChatRequestTest$…#buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent` (vorher rot, danach grün), plus Positivtest `buildToolsJsonEmbedsAValidSchemaAsAnObject`; `ChatRequestTest` 24/24 grün. `spotbugs:check` nicht gelaufen.
+- **Nachtrag (Branch-Review 2026-10-20):** Die „API-Entscheidung“ ist mit F233 gefallen: `appendTool` weist ein Schema, das nicht genau ein JSON-Wert ist, mit `IllegalArgumentException` samt Werkzeugnamen ab; der String-Rückfall ist weg, der Test oben durch `appendToolRejectsASchemaThatIsNotExactlyOneJsonValue` ersetzt.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d6a9be5`
 
@@ -420,6 +422,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"parameters\":\"\"" but: was "[{"type":"function","function":{"name":"f","description":"d","parameters":null}}]"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatRequestTest` 25/25, `ToolCallingAgentTest` 6/6, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `8a13aa9`
+- **Nachtrag (Branch-Review 2026-10-20):** Der String-Rückfall war keine Verbesserung: upstream übernimmt `""` als Schema und weist es beim Grammatikbau mit „schema must be an object“ ab, ohne den Werkzeugnamen. Ersetzt durch F233 (Abweisung in `appendTool`); der Test oben ist entfallen.
 
 <a id="f56"></a>
 ### F56 – java-llama.cpp: nicht darstellbarer Offline-Modellpfad ergibt `InvalidPathException` statt `ModelUnavailableException`
@@ -1901,6 +1904,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („not json ==> Expected java.io.IOException to be thrown, but nothing was thrown.“, in beiden Tests); eine Zwischenfassung, die nur im `catch` warf, blieb für den leeren Körper rot („Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“) – die zusätzlichen Fälle pinnen also den ganzen Fix. Mit dem Fix grün (`OaiRerankSupportTest` 22/22, `OpenAiCompatServerHttpTest` 69/69, `LlamaArchitectureTest` 13/13); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5c5a892`
+
+### F233 – java-llama.cpp: ein leeres oder unparsbares Tool-Schema geht als String an llama.cpp statt in Java abgewiesen zu werden
+- **Zeit:** 2026-10-21 01:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ChatRequest.java` (`appendTool`, `buildToolsJson`, neu `parseSchemaOrThrow`)
+- **Schwere:** niedrig (die Anfrage scheiterte laut, aber spät und ohne Werkzeugnamen; nur ohne Grammatik still)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J8-2). Der String-Rückfall für unparsbaren Text ist älter als der Branch; F05 schickte ein Schema mit nachfolgendem Text in denselben Rückfall, F55 ein leeres oder blankes Schema (vorher `"parameters": null`, das upstream als „keine Parameter“ las).
+- **Beschreibung:** `buildToolsJson` schrieb ein Schema, das kein genau ein JSON-Wert war, als JSON-String unter `parameters`. Upstream (b11639) übernimmt den String als Schema (`common_chat_tools_parse_oaicompat`, `common/chat.cpp:580`; `common_chat_tool_parameters` ersetzt nur `null` und ein leeres Objekt, Zeile 546-554), und jeder Parser, der eine Tool-Grammatik baut, scheitert in `build_node` mit „schema must be an object“ (`common/json-schema.cpp:228`); `parse_oai_chat_params` macht daraus eine `InvalidRequestException`, deren Text weder das Werkzeug noch die Java-Ursache nennt. Der `force_pure_content`-Pfad (`chat.cpp:1375-1388`) rendert `"parameters":""` ohne Fehler in den Prompt. `JsonParameters.parseOrThrow` weist dieselbe Eingabeklasse mit einer `IllegalArgumentException` ab, der Branch behandelte denselben Fehler also zweifach.
+- **Fix:** `appendTool` liest das Schema mit dem strikten Reader (`FAIL_ON_TRAILING_TOKENS`) und wirft für einen Parserfehler und für `MissingNode` (leer, blank) `IllegalArgumentException("tool '<name>': parameters must be exactly one well-formed JSON value, but was: <Ausschnitt>")`, Ausschnitt höchstens 80 Zeichen wie in `JsonParameters`, Ursache verkettet. `buildToolsJson` setzt nur noch den geparsten Knoten; beide String-Rückfälle sind weg. Ein Werkzeug ohne Parameter deklariert `{"type":"object","properties":{}}` (so wie `LangChain4jMapping.EMPTY_PARAMETERS_SCHEMA`), die Javadoc von `appendTool` sagt das. Nicht übernommen: `null` oder ein leeres Objekt für `""` einzusetzen (der zweite Vorschlag des Funds) wäre ein stiller Rückfall. SpotBugs meldet die Umwandlung der `IOException` (`EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS`); unterdrückt mit Begründung neben der gleichartigen von `JsonParameters.parseOrThrow`.
+- **Warum `chat_template_kwargs` anders bleibt:** `ParameterJsonSerializer.buildRawValueObject` (F203) schreibt einen Wert, der kein JSON ist, weiter als String-Literal. Das ist dort dokumentiert und ein gültiger Wert: eine Template-Variable darf eine Zeichenkette sein (etwa `reasoning_effort`), upstream reicht sie an das Template durch. Ein Tool-Schema muss dagegen ein Objekt sein, und einen String weist upstream ab; derselbe Rückfall erzeugt hier also nie eine gültige Anfrage.
+- **Tests:** `ChatRequestTest$JsonHelpers#appendToolRejectsASchemaThatIsNotExactlyOneJsonValue` (`""`, `"  "`, `"not json{{{"`, `{"type":"object"} {"required":["x"]}`, prüft die ganze Meldung mit dem Werkzeugnamen), `#appendToolBoundsTheRejectedSchemaInTheMessage` (300 Zeichen → 80 plus `...`); `#buildToolsJsonEmbedsAValidSchemaAsAnObject` prüft jetzt die genaue Ausgabe statt eines `containsString`. Ersetzt `#buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull` (F55) und den schwachen `#buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent` (F05, prüfte nur `not(containsString(...))`).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, in allen vier Fällen und im Längentest), mit ihm grün (`ChatRequestTest` 28/28, `ChatResponseTest` 8/8, `LlamaArchitectureTest` 13/13, `LangChain4jMappingTest` 23/23); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
