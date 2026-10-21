@@ -10,6 +10,8 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -191,7 +193,9 @@ class StreamingChunkAssemblerTest {
         // Every partial that is reported carries the final id and name. Which fragments are reported
         // here is not pinned: the prefix that arrives before the name is not reported at all, so the
         // partials do not make up the arguments yet (assertPartialsMakeUpTheCompleteCall is red).
+        // At least one is reported, so the loop below cannot pass on an empty list.
         assertThat(handler.completeToolCalls.size(), is(1));
+        assertThat(handler.partialToolCalls, is(not(empty())));
         for (PartialToolCall partial : handler.partialToolCalls) {
             assertThat(partial.id(), is("call_1"));
             assertThat(partial.name(), is("get_weather"));
@@ -367,6 +371,7 @@ class StreamingChunkAssemblerTest {
                 + "\"timings\":{\"cache_n\":0,\"prompt_n\":7,\"predicted_n\":3}}");
         ChatResponse response = assembler.complete();
 
+        assertThat(response.tokenUsage(), is(notNullValue()));
         assertThat(response.tokenUsage().inputTokenCount(), is(7));
         assertThat(response.tokenUsage().outputTokenCount(), is(3));
         // "length", not "stop": no finish reason maps to STOP, so a reset would hide behind "stop".
