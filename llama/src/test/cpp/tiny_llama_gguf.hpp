@@ -169,4 +169,80 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     return ok ? path : std::string();
 }
 
+// A random llava-style (MLP) vision projector for the model above: 32x32 images in 16x16 patches,
+// a two-layer encoder of width 16 and a projection to the model's N_EMBD. Loaded with --mmproj it
+// makes the server multimodal, so the image paths run end to end without a download; like the
+// model, its answers are noise. llava's preprocessing resizes every image to 32x32, so any image
+// stb_image decodes will do.
+inline std::string write_tiny_mmproj_gguf(const std::string &prefix = "jllama-mmproj") {
+    constexpr int IMG = 32, PATCH = 16, V_EMBD = 16, V_HEAD = 2, V_FF = 32, V_LAYER = 2, PROJ = 32;
+    constexpr int N_PATCHES = (IMG / PATCH) * (IMG / PATCH);
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(7);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_str(g, "clip.projector_type", "mlp");
+    gguf_set_val_bool(g, "clip.has_vision_encoder", true);
+    gguf_set_val_bool(g, "clip.use_gelu", true);
+    gguf_set_val_u32(g, "clip.vision.image_size", IMG);
+    gguf_set_val_u32(g, "clip.vision.patch_size", PATCH);
+    gguf_set_val_u32(g, "clip.vision.embedding_length", V_EMBD);
+    gguf_set_val_u32(g, "clip.vision.feed_forward_length", V_FF);
+    gguf_set_val_u32(g, "clip.vision.block_count", V_LAYER);
+    gguf_set_val_u32(g, "clip.vision.projection_dim", PROJ);
+    gguf_set_val_u32(g, "clip.vision.attention.head_count", V_HEAD);
+    gguf_set_val_f32(g, "clip.vision.attention.layer_norm_epsilon", 1e-5f);
+    const float mean_std[] = {0.5f, 0.5f, 0.5f};
+    gguf_set_arr_data(g, "clip.vision.image_mean", GGUF_TYPE_FLOAT32, mean_std, 3);
+    gguf_set_arr_data(g, "clip.vision.image_std", GGUF_TYPE_FLOAT32, mean_std, 3);
+
+    ggml_init_params ip = {4u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: small noise (weights, biases); otherwise every element is value (norms).
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, 0.1f);
+        auto *data = (float *)t->data;
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            data[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    add("v.patch_embd.weight", {PATCH, PATCH, 3, V_EMBD}, -1);
+    add("v.patch_embd.bias", {V_EMBD}, -1);
+    add("v.position_embd.weight", {V_EMBD, N_PATCHES}, -1);
+    for (int il = 0; il < V_LAYER; ++il) {
+        const std::string p = "v.blk." + std::to_string(il) + ".";
+        for (const char *n : {"attn_q", "attn_k", "attn_v", "attn_out"}) {
+            add(p + n + ".weight", {V_EMBD, V_EMBD}, -1);
+            add(p + n + ".bias", {V_EMBD}, -1);
+        }
+        for (const char *n : {"ln1", "ln2"}) {
+            add(p + n + ".weight", {V_EMBD}, 1.0f);
+            add(p + n + ".bias", {V_EMBD}, 0.0f);
+        }
+        add(p + "ffn_up.weight", {V_EMBD, V_FF}, -1);
+        add(p + "ffn_up.bias", {V_FF}, -1);
+        add(p + "ffn_down.weight", {V_FF, V_EMBD}, -1);
+        add(p + "ffn_down.bias", {V_EMBD}, -1);
+    }
+    add("mm.0.weight", {V_EMBD, PROJ}, -1);
+    add("mm.0.bias", {PROJ}, -1);
+    add("mm.2.weight", {PROJ, N_EMBD}, -1);
+    add("mm.2.bias", {N_EMBD}, -1);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// A 2x2 red PNG, base64: an image stb_image decodes, small enough to inline, for the projector above.
+constexpr const char *TINY_PNG_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";
+
 } // namespace jllama_test

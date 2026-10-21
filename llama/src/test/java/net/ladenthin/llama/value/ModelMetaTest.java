@@ -141,6 +141,21 @@ public class ModelMetaTest {
     }
 
     @Test
+    public void testGetMediaMarker() throws Exception {
+        ModelMeta meta =
+                parse("{\"n_vocab\":100,\"modalities\":{\"vision\":true}," + "\"media_marker\":\"<__media_abc__>\"}");
+
+        assertThat(meta.getMediaMarker(), is("<__media_abc__>"));
+    }
+
+    @Test
+    public void testGetMediaMarkerEmptyWhenAbsent() throws Exception {
+        ModelMeta meta = parse("{\"n_vocab\":100,\"modalities\":{\"vision\":false}}");
+
+        assertThat(meta.getMediaMarker(), is(""));
+    }
+
+    @Test
     public void testGetArchitectureEmptyWhenAbsent() throws Exception {
         ModelMeta meta = parse("{\"vocab_type\":1,\"n_vocab\":100,\"n_ctx_train\":4096,"
                 + "\"n_embd\":512,\"n_params\":1000000,\"size\":500000,"

@@ -12,6 +12,7 @@
 #include "server-common.h"
 #include "server-chat.h"
 #include "server-http.h"
+#include "base64.hpp"
 #include "json-schema-to-grammar.h"
 #include "utils.hpp"
 #include "jllama_engine.hpp"
@@ -352,7 +353,41 @@ json parse_oai_chat_params(jllama_context *jctx, json &body, std::vector<raw_buf
 void populate_completion_task(server_task &task, jllama_context *jctx,
                               const std::vector<llama_logit_bias> &logit_bias_eog, const json &data, bool has_mtmd,
                               std::vector<raw_buffer> files) {
-    if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
+    // upstream's raw multimodal prompt, {"prompt_string": "...<marker>...", "multimodal_data": [base64]},
+    // is tokenized by its HTTP handler with the projector, which this engine cannot reach; the task's
+    // CLI fields carry it to the worker, which tokenizes it with the projector as the chat paths do.
+    // Tokenized here without one, it was refused as if the model had no projector.
+    const json *prompt_field = data.contains("prompt") ? &data.at("prompt") : nullptr;
+    if (files.empty() && prompt_field != nullptr && prompt_field->is_object() &&
+        prompt_field->contains("prompt_string") && prompt_field->contains("multimodal_data")) {
+        const json &prompt = *prompt_field;
+        if (!has_mtmd) {
+            throw std::invalid_argument("Multimodal data provided, but model does not support multimodal requests.");
+        }
+        const json &media = prompt.at("multimodal_data");
+        if (!media.is_array() || media.empty()) {
+            throw std::invalid_argument("\"multimodal_data\" must be a non-empty array of base64 strings");
+        }
+        for (const auto &entry : media) {
+            if (!entry.is_string()) {
+                throw std::invalid_argument("\"multimodal_data\" must be a non-empty array of base64 strings");
+            }
+            const std::string bytes = base64::decode(entry.get<std::string>());
+            files.emplace_back(bytes.begin(), bytes.end());
+        }
+        // A prompt that ends with its media leaves the slot no text token to take the logits from, and
+        // the server aborts the process on it (GGML_ASSERT(batch.size() > 0) in update_slots); upstream's
+        // chat paths never get there because the template puts text after the last image.
+        const json &prompt_string = prompt.at("prompt_string");
+        if (prompt_string.is_string() && string_ends_with(prompt_string.get<std::string>(), get_media_marker())) {
+            throw std::invalid_argument("a multimodal prompt must have text after its last media marker");
+        }
+        json multimodal = data;
+        multimodal["prompt"] = prompt.at("prompt_string");
+        if (!configure_multimodal_task_impl(task, has_mtmd, multimodal, std::move(files))) {
+            throw std::logic_error("a multimodal prompt carried no media");
+        }
+    } else if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
         auto tokenized_prompts =
             tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
         // A task carries one prompt. Upstream answers several prompts with one choice each; taking the
@@ -605,6 +640,10 @@ std::string model_meta(jllama_context *jctx) {
         {"name", m.model_name},
         {"architecture", arch},
         {"ftype", m.model_ftype},
+        // The placeholder a raw multimodal prompt puts where each image goes ({"prompt_string": ...,
+        // "multimodal_data": [...]}). Random per process unless LLAMA_MEDIA_MARKER pins it, so a caller
+        // reads it here, as upstream's /props publishes it.
+        {"media_marker", get_media_marker()},
     };
     // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
     // flattened to the top level because "architecture" above already names the GGUF architecture

@@ -707,6 +707,128 @@ TEST_F(CApiFim, ARawCompletionWithOnlyOneInfillFieldIsRefused) {
     EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
 }
 
+namespace {
+
+// The same random model with a random vision projector (--mmproj): a multimodal server.
+class CApiVision : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-vision");
+        mmproj_ = write_tiny_mmproj_gguf();
+        ASSERT_FALSE(path_.empty());
+        ASSERT_FALSE(mmproj_.empty());
+        const std::vector<std::string> args = {"jllama", "-m",   path_, "--mmproj",    mmproj_, "-c",
+                                               "128",    "-ngl", "0",   "--no-warmup", "-t",    "2"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(mmproj_, ignored);
+    }
+    // The server's media marker, which a raw multimodal prompt places where each image goes.
+    static std::string media_marker() {
+        Owned meta;
+        if (jllama_model_meta(model_, &meta.s) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return std::string();
+        }
+        return json::parse(meta.str()).value("media_marker", std::string());
+    }
+    static std::string path_;
+    static std::string mmproj_;
+    static jllama_model *model_;
+};
+std::string CApiVision::path_;
+std::string CApiVision::mmproj_;
+jllama_model *CApiVision::model_ = nullptr;
+
+// A raw request whose prompt is upstream's multimodal prompt object.
+std::string multimodal_prompt_request(const std::string &prompt_string, int n_images, const char *length_field) {
+    json images = json::array();
+    for (int i = 0; i < n_images; ++i) {
+        images.push_back(TINY_PNG_BASE64);
+    }
+    return json{{"prompt", {{"prompt_string", prompt_string}, {"multimodal_data", images}}},
+                {length_field, 2},
+                {"temperature", 0}}
+        .dump();
+}
+
+} // namespace
+
+TEST_F(CApiVision, ModelMetaNamesTheMediaMarker) {
+    // The marker is random per process (upstream's get_media_marker); a raw multimodal prompt cannot
+    // be written without it, and upstream publishes it in /props.
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(meta.str());
+    EXPECT_TRUE(j.at("modalities").at("vision").get<bool>());
+    ASSERT_TRUE(j.contains("media_marker")) << meta.str();
+    EXPECT_FALSE(j.at("media_marker").get<std::string>().empty());
+}
+
+TEST_F(CApiVision, ARawCompletionTakesUpstreamsMultimodalPromptObject) {
+    // upstream's raw schema: "prompt": {"prompt_string": "...<marker>...", "multimodal_data": ["<base64>"]}.
+    // The raw paths tokenized it without the projector and refused it as if the model had none.
+    const std::string marker = media_marker();
+    ASSERT_FALSE(marker.empty());
+    Owned text_only;
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"look  now","n_predict":1,"temperature":0})", &text_only.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(text_only.str()).at("tokens_evaluated").get<int>();
+
+    const std::string request = multimodal_prompt_request("look " + marker + " now", 1, "n_predict");
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    // four 16x16 patches of the 32x32 image, one embedding each, between the text tokens
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), text_tokens + 4) << completion.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, request.c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), text_tokens + 4);
+
+    Owned oai;
+    ASSERT_EQ(jllama_completions_oai(
+                  model_, multimodal_prompt_request("look " + marker + " now", 1, "max_tokens").c_str(), &oai.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(oai.str()).at("usage").at("prompt_tokens").get<int>(), text_tokens + 4) << oai.str();
+}
+
+TEST_F(CApiVision, AMultimodalPromptWhoseMarkersDoNotMatchItsImagesIsRefused) {
+    const std::string marker = media_marker();
+    ASSERT_FALSE(marker.empty());
+    Owned response;
+    const json bad_media = {{"prompt", {{"prompt_string", marker}, {"multimodal_data", json::array({"not base64!"})}}}};
+    const json no_media = {{"prompt", {{"prompt_string", marker}, {"multimodal_data", json::array()}}}};
+    for (const std::string &request :
+         {multimodal_prompt_request("no marker", 1, "n_predict"),
+          multimodal_prompt_request(marker + " and " + marker, 1, "n_predict"), bad_media.dump(), no_media.dump(),
+          // the image last leaves no text token for the logits: the server aborted the process on it
+          multimodal_prompt_request("look " + marker, 1, "n_predict")}) {
+        EXPECT_EQ(jllama_completions(model_, request.c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST) << request;
+    }
+}
+
+TEST_F(CApi, AMultimodalPromptObjectOnAModelWithoutAProjectorIsTheCallersFault) {
+    Owned response;
+    const std::string request = multimodal_prompt_request("look <__media__> now", 1, "n_predict");
+    EXPECT_EQ(jllama_completions(model_, request.c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("does not support multimodal"), std::string::npos)
+        << jllama_last_error();
+}
+
 TEST_F(CApi, ARawCompletionWithMessagesCompletesThePromptTheChatTemplateRenders) {
     // The raw completion paths render "messages" through the chat template into the prompt, as
     // jllama_apply_template does; they used to ignore the field and complete the prompt next to it.
