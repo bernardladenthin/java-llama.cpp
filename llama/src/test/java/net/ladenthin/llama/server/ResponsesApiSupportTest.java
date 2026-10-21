@@ -466,6 +466,23 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void aToolChoiceObjectOfAnotherTypeIsRefused() {
+        // allowed_tools, mcp and the hosted tools cannot be expressed in llama.cpp's auto/none/required;
+        // the object was dropped and the request ran as "auto".
+        for (String type : new String[] {"allowed_tools", "mcp", "file_search", "custom"}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                            + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"}],"
+                            + "\"tool_choice\":{\"type\":\"" + type + "\"}}")),
+                    type);
+            assertThat(
+                    e.getMessage(),
+                    is("tool_choice type '" + type + "' is not supported; use auto, none, required or a function"));
+        }
+    }
+
+    @Test
     public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
         // There is no response store: answering a turn that continues by previous_response_id without
         // its history would silently answer something else. upstream rejects it with a 400.

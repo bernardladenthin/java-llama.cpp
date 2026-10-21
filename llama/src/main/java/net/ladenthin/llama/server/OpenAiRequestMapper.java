@@ -24,10 +24,10 @@ import org.jspecify.annotations.Nullable;
  * {@code tool_call_id}, and vision {@code image_url} content parts) round-trips untouched into the native
  * chat-template parser. {@code tool_choice} is forwarded in its string form ({@code auto}, {@code none},
  * {@code required}, the only values llama.cpp's chat parser accepts); a {@code tool_choice} naming one
- * function becomes {@code required} with only that tool forwarded (see {@link #namedToolChoice}), and any
- * other object form ({@code allowed_tools}, {@code custom}) is ignored, so the request runs as
- * {@code auto}, which is also what upstream reads from a non-string. {@code parallel_tool_calls} is read as
- * a boolean. Sampling fields are translated to the
+ * function becomes {@code required} with only that tool forwarded, and any other object form
+ * ({@code allowed_tools}, {@code custom}, ...) is refused (see {@link #namedToolChoice}), where upstream
+ * reads a non-string as {@code auto} and runs the request without the restriction it asked for.
+ * {@code parallel_tool_calls} is read as a boolean. Sampling fields are translated to the
  * matching {@code InferenceParameters.with*} setter, as are the llama.cpp sampling extensions upstream's
  * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
  * controls upstream's chat
@@ -108,22 +108,34 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * The function a {@code tool_choice} object of type {@code function} names, or {@code null} for any
-     * other {@code tool_choice}. llama.cpp's chat parser reads {@code tool_choice} only as {@code auto},
-     * {@code none} or {@code required}; a named function is enforced by forwarding that tool alone with
-     * {@code required}, so the grammar admits no other call. The chat template then does not render the
-     * other tool definitions either, which the model may not call anyway (OpenAI keeps them visible and
-     * constrains only the output). Shared by the chat mapping ({@code tool_choice.function.name}) and
-     * the Responses translation ({@code tool_choice.name}).
+     * The function a {@code tool_choice} object of type {@code function} names, or {@code null} for an
+     * absent, {@code null} or string {@code tool_choice} (the string goes on as it is; upstream's chat
+     * parser refuses one it does not know). llama.cpp's chat parser reads {@code tool_choice} only as
+     * {@code auto}, {@code none} or {@code required}; a named function is enforced by forwarding that
+     * tool alone with {@code required}, so the grammar admits no other call. The chat template then does
+     * not render the other tool definitions either, which the model may not call anyway (OpenAI keeps
+     * them visible and constrains only the output). Any other object ({@code allowed_tools},
+     * {@code custom}, {@code mcp}, a hosted tool) cannot be expressed in those three values and is
+     * refused rather than run as {@code auto}. Shared by the chat mapping
+     * ({@code tool_choice.function.name}) and the Responses translation ({@code tool_choice.name}).
      *
      * @param toolChoice the request's {@code tool_choice}
      * @param name the node holding the function name in that request shape
      * @return the named function, or {@code null}
-     * @throws IllegalArgumentException for a {@code tool_choice} of type {@code function} without a name
+     * @throws IllegalArgumentException for a {@code tool_choice} of type {@code function} without a name,
+     *     an object of any other type, and a value that is neither a string nor an object
      */
     static @Nullable String namedToolChoice(JsonNode toolChoice, JsonNode name) {
-        if (!"function".equals(toolChoice.path("type").asText(""))) {
+        if (toolChoice.isMissingNode() || toolChoice.isNull() || toolChoice.isTextual()) {
             return null;
+        }
+        if (!toolChoice.isObject()) {
+            throw new IllegalArgumentException("'tool_choice' must be a string or an object (got " + toolChoice + ")");
+        }
+        String type = toolChoice.path("type").asText("");
+        if (!"function".equals(type)) {
+            throw new IllegalArgumentException(
+                    "tool_choice type '" + type + "' is not supported; use auto, none, required or a function");
         }
         if (!name.isTextual() || name.asText().isEmpty()) {
             throw new IllegalArgumentException(

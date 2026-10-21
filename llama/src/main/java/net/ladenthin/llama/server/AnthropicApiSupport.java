@@ -100,9 +100,9 @@ final class AnthropicApiSupport {
                     function.set("parameters", tool.path("input_schema").deepCopy());
                 }
             }
-            String toolChoice = toOpenAiToolChoice(request.path("tool_choice"));
+            JsonNode toolChoice = toOpenAiToolChoice(request.path("tool_choice"));
             if (toolChoice != null) {
-                openAi.put("tool_choice", toolChoice);
+                openAi.set("tool_choice", toolChoice);
             }
             // Anthropic expresses "no parallel tool use" via tool_choice.disable_parallel_tool_use;
             // OpenAI's equivalent is parallel_tool_calls=false. Map it so the shared chat core honors
@@ -359,20 +359,47 @@ final class AnthropicApiSupport {
         return content.toString();
     }
 
-    private static @org.jspecify.annotations.Nullable String toOpenAiToolChoice(JsonNode toolChoice) {
+    /**
+     * The OpenAI {@code tool_choice} for an Anthropic one: {@code auto}, {@code none} (upstream's
+     * converter leaves it out and runs the request as {@code auto}), {@code any} as {@code required}, and
+     * {@code {"type":"tool","name":…}} as OpenAI's named function, which the chat mapper enforces by
+     * forwarding that tool alone with {@code required} (upstream makes it {@code required} over every
+     * tool). Any other type ({@code allowed_tools}, {@code mcp}, …) and a value that is no object are
+     * refused, where upstream runs the request as {@code auto}.
+     *
+     * @param toolChoice the request's {@code tool_choice}
+     * @return the OpenAI {@code tool_choice}, or {@code null} when the request carries none
+     * @throws IllegalArgumentException for a {@code tool_choice} this translation cannot honour
+     */
+    private static @Nullable JsonNode toOpenAiToolChoice(JsonNode toolChoice) {
+        if (toolChoice.isMissingNode() || toolChoice.isNull()) {
+            return null;
+        }
+        if (!toolChoice.isObject()) {
+            throw new IllegalArgumentException("'tool_choice' must be an object (got " + toolChoice + ")");
+        }
         String type = toolChoice.path("type").asText("");
-        if ("auto".equals(type)) {
-            return "auto";
+        switch (type) {
+            case "auto":
+                return TextNode.valueOf("auto");
+            case "none":
+                return TextNode.valueOf("none");
+            case "any":
+                return TextNode.valueOf("required");
+            case "tool":
+                JsonNode name = toolChoice.path("name");
+                if (!name.isTextual() || name.asText().isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "tool_choice of type 'tool' needs the tool's 'name' (got " + toolChoice + ")");
+                }
+                ObjectNode named = OBJECT_MAPPER.createObjectNode();
+                named.put("type", "function");
+                named.putObject("function").put("name", name.asText());
+                return named;
+            default:
+                throw new IllegalArgumentException(
+                        "tool_choice type '" + type + "' is not supported; use auto, any, tool or none");
         }
-        if ("none".equals(type)) {
-            // Forbids tool use; upstream's converter leaves it out and the request runs as "auto".
-            return "none";
-        }
-        if ("any".equals(type) || "tool".equals(type)) {
-            // OpenAI's textual tool_choice cannot name a specific function; "required" is the closest.
-            return "required";
-        }
-        return null;
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {

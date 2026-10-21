@@ -1026,6 +1026,13 @@ where it does; where llama-server would drop part of a request without a word, t
   an integer field is truncated, as there. Stricter than llama-server: a boolean is refused (llama-server
   reads it as 0 or 1), and so is a mistyped `top_logprobs`, `id_slot` or reasoning budget, where
   llama-server logs a warning and uses the default.
+- `tool_choice` naming one tool (OpenAI `{"type":"function","function":{"name":…}}`, Responses
+  `{"type":"function","name":…}`, Anthropic `{"type":"tool","name":…}`) forwards that tool alone with
+  `required`, so the model can call no other; a name no tool carries is refused. llama-server reads the
+  first two as `auto` and the Anthropic one as `required` over every tool. A `tool_choice` object of any
+  other type (`allowed_tools`, `custom`, `mcp`, a hosted tool) cannot be expressed in llama.cpp's
+  `auto`/`none`/`required` and is refused, where llama-server runs the request as `auto`; so is a value
+  that is neither a string nor an object (on Anthropic, one that is no object).
 
 Embed it in your app:
 

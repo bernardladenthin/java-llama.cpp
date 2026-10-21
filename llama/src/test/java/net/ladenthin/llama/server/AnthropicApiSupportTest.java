@@ -471,6 +471,61 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toolChoiceNamingAToolForcesThatTool() throws IOException {
+        // {"type":"tool","name":...} asks for that tool; "required" over every tool let the model call
+        // another one. The translation names the function as OpenAI does, and the chat mapper forwards
+        // that tool alone with "required" (as for F227).
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":16,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}},"
+                + "{\"name\":\"g\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"tool\",\"name\":\"g\",\"disable_parallel_tool_use\":true}}"));
+        assertThat(openAi.path("tool_choice").path("type").asText(), is("function"));
+        assertThat(openAi.path("tool_choice").path("function").path("name").asText(), is("g"));
+        assertThat(openAi.path("parallel_tool_calls").asBoolean(true), is(false));
+        JsonNode mapped = MAPPER.readTree(
+                new OpenAiRequestMapper().toInferenceParameters(openAi).toJson());
+        assertThat(mapped.path("tools").size(), is(1));
+        assertThat(mapped.path("tools").path(0).path("function").path("name").asText(), is("g"));
+        assertThat(mapped.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceToolWithoutANameIsRefused() throws IOException {
+        JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"tool\"}}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request));
+        assertThat(e.getMessage(), containsString("tool_choice of type 'tool' needs the tool's 'name'"));
+    }
+
+    @Test
+    public void toolChoiceOfAnotherTypeIsRefused() throws IOException {
+        // Anything but auto, any, tool and none fell back to "auto" without a word.
+        for (String type : new String[] {"allowed_tools", "mcp", ""}) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                    + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                    + "\"tool_choice\":{\"type\":\"" + type + "\"}}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), type);
+            assertThat(
+                    e.getMessage(),
+                    is("tool_choice type '" + type + "' is not supported; use auto, any, tool or none"));
+        }
+    }
+
+    @Test
+    public void toolChoiceThatIsNoObjectIsRefused() throws IOException {
+        JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":\"any\"}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request));
+        assertThat(e.getMessage(), is("'tool_choice' must be an object (got \"any\")"));
+    }
+
+    @Test
     public void toolResultOnlyUserMessageEmitsOnlyToolMessage() throws IOException {
         // A user turn that carries only tool_result blocks must become exactly one role:"tool"
         // message — not a tool message plus a spurious empty user message.

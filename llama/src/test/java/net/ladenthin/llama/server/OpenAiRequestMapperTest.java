@@ -369,6 +369,35 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void aToolChoiceObjectOfAnotherTypeIsRefused() {
+        // allowed_tools, custom and the like cannot be expressed in llama.cpp's auto/none/required;
+        // upstream reads a non-string tool_choice as "auto", so the request ran without the restriction.
+        for (String type : new String[] {"allowed_tools", "custom", "mcp", ""}) {
+            String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                    + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                    + "\"tool_choice\":{\"type\":\"" + type + "\",\"name\":\"f\"}}";
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+            assertThat(
+                    request,
+                    e.getMessage(),
+                    is("tool_choice type '" + type + "' is not supported; use auto, none, required or a function"));
+        }
+    }
+
+    @Test
+    public void aToolChoiceThatIsNeitherAStringNorAnObjectIsRefused() {
+        for (String value : new String[] {"3", "true", "[\"auto\"]"}) {
+            String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                    + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                    + "\"tool_choice\":" + value + "}";
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+            assertThat(request, e.getMessage(), is("'tool_choice' must be a string or an object (got " + value + ")"));
+        }
+    }
+
+    @Test
     public void parallelToolCallsForwarded() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"a\"}}],"

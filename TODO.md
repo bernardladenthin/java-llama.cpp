@@ -559,10 +559,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
 **Chat mapper (`OpenAiRequestMapper`, every chat route)**
 - **Upstream's "logprobs is not supported with tools + stream" refusal is unreachable** (F220): the
   mapper turns `logprobs` into `n_probs` and does not see `stream`.
-- **Anthropic `{"type":"tool","name":…}` still means `required` over all tools, and a `tool_choice`
-  object of another type (`allowed_tools`, `mcp`, …) falls back to `auto` without a word** on the chat
-  and Responses paths (F227). The named-function narrowing of F227 is the model for the first; the
-  second needs a decision between `400` and a documented fallback.
 
 **Anthropic Messages**
 - **The image source `file` (Files API) is dropped without a word**, here and upstream (F29;

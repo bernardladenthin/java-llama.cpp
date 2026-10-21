@@ -164,7 +164,7 @@ final class ResponsesApiSupport {
             // The Responses API uses the same tool_choice + parallel_tool_calls fields as chat; forward
             // them so the shared chat core honors them. The string form (auto/none/required) goes as is,
             // a named function becomes "required" with only that tool forwarded above, and any other
-            // object form is dropped, so the request runs as "auto".
+            // object form was refused by namedToolChoice.
             if (toolChoice.isTextual()) {
                 openAi.put("tool_choice", toolChoice.asText());
             } else if (namedTool != null) {

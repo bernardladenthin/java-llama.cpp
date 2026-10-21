@@ -949,6 +949,35 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A {@code tool_choice} the server cannot honour is refused on the Anthropic route, streamed or not,
+     * before anything is generated: a type it does not know, and a tool name no tool carries (the chat
+     * mapper's check, reached through the translated request).
+     */
+    @Test
+    public void anUnsupportedAnthropicToolChoiceIsA400() throws IOException {
+        MappingBackend backend = new MappingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String stream : new String[] {"false", "true"}) {
+                String[][] cases = {
+                    {"{\"type\":\"allowed_tools\"}", "tool_choice type 'allowed_tools' is not supported"},
+                    {"{\"type\":\"tool\",\"name\":\"g\"}", "tool_choice names unknown tool 'g'"}
+                };
+                for (String[] c : cases) {
+                    String body = "{\"model\":\"test-model\",\"max_tokens\":8,\"stream\":" + stream
+                            + ",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                            + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                            + "\"tool_choice\":" + c[0] + "}";
+                    Response response = post(server.getPort(), "/v1/messages", body, "");
+                    assertThat(body, response.code, is(400));
+                    assertThat(body, response.body, containsString("\"type\":\"invalid_request_error\""));
+                    assertThat(body, response.body, containsString(c[1]));
+                }
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {
