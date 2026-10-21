@@ -2335,7 +2335,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aFileImageSourceIsRefused` (ersetzt `#aFileImageSourceIsDroppedLikeUpstream`; Nachricht und `tool_result`), `#anImageSourceOfAnUnknownTypeIsRefused` (ersetzt `#anUnsupportedImageSourceLeavesTheMessageText`; `ftp` und leer), `#anImageSourceWithoutItsDataOrUrlIsRefused`; `OpenAiCompatServerHttpTest#aFileImageSourceOnTheAnthropicRouteIsA400` (gestreamt und blockierend 400 `invalid_request_error` mit der Meldung, nichts generiert). Die alten Pin-Tests prüften das Gegenteil: „content.isTextual() is true“ und „asText() is "what is this?"“ nach dem Verwerfen.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „AnthropicApiSupportTest.aFileImageSourceIsRefused:237 {…"source":{"type":"file","file_id":"file_011a"}…} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, ebenso `anImageSourceOfAnUnknownTypeIsRefused:249 ftp` und `anImageSourceWithoutItsDataOrUrlIsRefused:266`, und „OpenAiCompatServerHttpTest.aFileImageSourceOnTheAnthropicRouteIsA400:1012 … Expected: is <400> but: was <200>“; mit dem Fix grün (`AnthropicApiSupportTest` 46/46, `OpenAiCompatServerHttpTest` 74/74, `AnthropicStreamTranslatorTest` 11/11, `OllamaApiSupportTest` 49/49, `OpenAiRequestMapperTest` 57/57, `ResponsesApiSupportTest` 70/70). `spotless:apply` grün; die festen Meldungen der ersten Fassung wurden um den gefundenen JSON-Typ ergänzt (die WEM-Regel von SpotBugs, vgl. F227).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `baecd5a`
 
 ## Offene Verdachte ohne Fund-ID
 
