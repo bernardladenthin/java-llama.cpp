@@ -125,8 +125,10 @@ public final class AgentOptions {
      *
      * @param args the raw arguments
      * @return the parsed options
-     * @throws IllegalArgumentException on an unknown flag, a missing value, or when neither/both of
-     *     {@code --base-url} and {@code --model} are given
+     * @throws IllegalArgumentException on an unknown flag, a missing value, when neither/both of
+     *     {@code --base-url} and {@code --model} are given, or when {@code --model} is given with a
+     *     {@code --model-id} that llama.cpp's {@code --alias} would split or strip (a comma, empty,
+     *     leading or trailing whitespace)
      */
     public static AgentOptions parse(String[] args) {
         Builder b = new Builder();

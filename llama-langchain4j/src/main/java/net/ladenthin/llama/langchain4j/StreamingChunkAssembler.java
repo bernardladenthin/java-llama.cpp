@@ -140,8 +140,8 @@ final class StreamingChunkAssembler {
                     || (!nameFragment.isEmpty() && !nameFragment.equals(tool.name))
                     || (!idFragment.isEmpty() && !idFragment.equals(tool.id))) {
                 throw new IllegalStateException("A delta changes tool call " + index
-                        + ", which was already reported complete when tool call " + highestIndex
-                        + " started: " + fragment);
+                        + ", which was already reported complete (the highest tool call index seen is "
+                        + highestIndex + "): " + fragment);
             }
             return;
         }
@@ -195,8 +195,9 @@ final class StreamingChunkAssembler {
 
     /**
      * Finalize the stream: emit {@code onCompleteToolCall} for every accumulated call not yet
-     * reported complete, in index order, and build the final {@link ChatResponse} (text and/or tool execution requests, thinking,
-     * finish reason, token usage when the stream carried a usage chunk).
+     * reported complete, in index order, and build the final {@link ChatResponse} (text and/or
+     * tool execution requests, thinking, finish reason, token usage when the stream carried a
+     * usage chunk).
      *
      * @return the assembled final response for {@code onCompleteResponse}
      */
