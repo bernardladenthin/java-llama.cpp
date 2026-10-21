@@ -738,6 +738,45 @@ public class LlamaLoaderTest {
     }
 
     @Test
+    public void flatLayoutLibraryNamesAreTheLibrarySuffixes() {
+        for (String name :
+                new String[] {"jllama.dll", "libjllama.dylib", "libjllama.jnilib", "libjllama.so", "ggml-metal.metal"
+                }) {
+            assertTrue(LlamaLoader.isFlatLayoutLibraryName(name), name);
+        }
+        for (String name : new String[] {"llama-2-7b.gguf", "llama-server.log", "ggml.tmp", "llama.cpp"}) {
+            assertFalse(LlamaLoader.isFlatLayoutLibraryName(name), name);
+        }
+    }
+
+    @Test
+    public void staleExtractionKeepsADirectoryNamedLikeALibrary(@TempDir Path dir) throws IOException {
+        // A build output directory such as /tmp/jllama.dll passes the prefix and the suffix check;
+        // only the regular-file guard keeps cleanPath from deleting it recursively.
+        Path directory = Files.createDirectory(dir.resolve("jllama.dll"));
+        Files.write(directory.resolve("README.md"), new byte[] {1});
+        assertFalse(LlamaLoader.isStaleExtraction(directory, Collections.<String>emptySet(), Instant.now()));
+    }
+
+    @Test
+    public void staleExtractionKeepsASymlinkNamedLikeALibrary(@TempDir Path dir) throws IOException {
+        // The guard does not follow links: a link named like a library points at something that is
+        // not ours, wherever it lives, and a link-following check would hand it to cleanPath.
+        Path target = Files.write(dir.resolve("target.bin"), new byte[] {1});
+        Path link = dir.resolve("ggml.dll");
+        boolean created;
+        try {
+            Files.createSymbolicLink(link, target);
+            created = true;
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            // Windows refuses symbolic links without the privilege to create them.
+            created = false;
+        }
+        assumeTrue(created, "symbolic links cannot be created here");
+        assertFalse(LlamaLoader.isStaleExtraction(link, Collections.<String>emptySet(), Instant.now()));
+    }
+
+    @Test
     public void extractionDirectoriesOfThisClasspathNameTheLibraryWithItsModules() {
         String archProp = LlamaSystemProperties.PREFIX + ".osinfo.architecture";
         String backendProp = LlamaSystemProperties.PREFIX + ".backend";
