@@ -564,8 +564,10 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   second needs a decision between `400` and a documented fallback.
 
 **Anthropic Messages**
-- **The image source `file` (Files API) is dropped without a word**, here and upstream (F29). Pin it
-  in a test (`aFileImageSourceIsDroppedLikeUpstream`) or refuse it; a decision first.
+- **The image source `file` (Files API) is dropped without a word**, here and upstream (F29;
+  `server-chat.cpp:417-441`/`:478-494`, b11639). Pinned and documented since the branch review by
+  `AnthropicApiSupportTest#aFileImageSourceIsDroppedLikeUpstream`; refusing it with a `400` instead
+  would deviate from upstream and stays a decision.
 - **A `base64` image without `media_type` defaults to `image/png` here and to `image/jpeg` upstream**
   (F29); neither aligned nor pinned by a test. A decision first.
 - **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221) is one line in

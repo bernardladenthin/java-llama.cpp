@@ -193,6 +193,28 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void aFileImageSourceIsDroppedLikeUpstream() throws IOException {
+        // A Files-API source ({type:file, file_id}) has nothing a local server could fetch. Upstream's
+        // server_chat_convert_anthropic_to_oai (tools/server/server-chat.cpp:417-441 for a message,
+        // :478-494 inside a tool_result, b11639) converts only base64 and url sources and drops it
+        // without an error; this pins the same behaviour: no image_url part, the message keeps its text.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011a\"}}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                        + "{\"type\":\"text\",\"text\":\"done\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011b\"}}]}]}]}"))
+                .path("messages");
+        JsonNode content = messages.path(0).path("content");
+        assertThat(content.isTextual(), is(true));
+        assertThat(content.asText(), is("what is this?"));
+        JsonNode toolContent = messages.path(2).path("content");
+        assertThat(toolContent.isTextual(), is(true));
+        assertThat(toolContent.asText(), is("done"));
+    }
+
+    @Test
     public void aSystemTextThatIsNoWellFormedBillingHeaderIsLeftAlone() {
         // normalizeBillingHeader rewrites only "cch=" followed by five characters and a ';', as upstream's
         // normalize_anthropic_billing_header; each of its guards must return the text untouched.
