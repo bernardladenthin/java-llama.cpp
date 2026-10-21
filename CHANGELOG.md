@@ -136,14 +136,17 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11800** (from b11639, in four steps on the branch: b11760, b11761, b11799, b11800). What the range
-  brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
+- **llama.cpp b11803** (from b11639, in five steps on the branch: b11760, b11761, b11799, b11800, b11803). What the
+  range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
   TTS-capable model lists `"audio"` in `ModelMeta.getOutputModalities()`; `HTTP_PROXY` / `HTTPS_PROXY` /
   `NO_PROXY` honoured by the model download (b11699, #21752); logprobs with speculative decoding (b11776);
   Kolibri-1 as upstream's own architecture (b11709, see its entry); the NEON fp32->fp16 selection upstream
-  (b11761, this project's #30505). Two patches dropped (`0016`, `0019`), `0007` refreshed.
+  (b11761, this project's #30505); two architectures from the last step, Flint (`FlintForCausalLM`, b11803,
+  #30928) and SenseNova U1 (text plus its vision projector in mtmd, #28919), and a jinja fix (#30941: a
+  `namespace` attribute is no longer shadowed by a dict method of the same name, so `ns.items` is the
+  attribute again, as in jinja2). Two patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
 - **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and

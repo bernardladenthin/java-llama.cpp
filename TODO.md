@@ -568,8 +568,9 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 
 ### After the llama.cpp bump to b11800 (2026-10-21): what the range offers and is not wired yet
 
-The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800; patches `0016` and `0019` dropped, `0007`
-refreshed; `docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
+The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800, and b11803 on 2026-10-21: Flint, SenseNova
+U1 and a jinja fix, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
+`docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
 library does not expose, each a decision rather than an omission:
 
 - **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
