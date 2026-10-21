@@ -237,7 +237,8 @@ final class OpenAiRequestMapper {
 
         // -1 is upstream's default (the server's --predict), the same as no field, so it stays unset. Every
         // other value is forwarded: upstream's hard limits [-1, INT32_MAX] refuse -2 and below with 400, as
-        // on the verbatim /v1/completions.
+        // on the verbatim /v1/completions. A 0 is forwarded as upstream reads it, and the server then
+        // generates one token (see withNPredict): its budget check runs only after the first token.
         int maxTokens = readMaxTokens(request);
         if (maxTokens != -1) {
             params = params.withNPredict(maxTokens);

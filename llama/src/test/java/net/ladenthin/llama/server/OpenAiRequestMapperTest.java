@@ -431,9 +431,10 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
-    public void zeroTokenCapOnlyWarmsTheCacheLikeUpstream() throws IOException {
-        // upstream: "When 0, no tokens will be generated but the prompt is evaluated into the cache". Dropping
-        // a 0 made the mapped routes generate without a cap, unlike the verbatim /v1/completions.
+    public void zeroTokenCapIsForwardedAsUpstreamReadsIt() throws IOException {
+        // Dropping a 0 made the mapped routes generate without a cap, while the verbatim /v1/completions
+        // forwarded it. The server then generates one token (withNPredict), not none: upstream's README
+        // ("When 0, no tokens will be generated") is older than the budget check that replaced it.
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":0}");
         assertThat(out.path("n_predict").asInt(-1), is(0));
     }
