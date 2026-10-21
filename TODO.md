@@ -552,10 +552,6 @@ the serving thread has entered `jllama_rpc_server_serve` cannot be told from "no
 stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer` does (F241).
 
 **Tests**
-- **The argument prefix that arrives before a tool call's name never reaches `onPartialToolCall`**
-  (`StreamingChunkAssembler`; documented in its Javadoc since this pass). If it is fixed, the contract
-  assertion `assertPartialsMakeUpTheCompleteCall` in `toolCallDeltaBeforeItsName_doesNotFailTheStream`
-  lands in the same commit; today it is red (`Expected: is "{\"city\":1}" but: was "ty\":1}"`).
 - **`RpcClient.AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt` fails under
   `--gtest_repeat=2`** in one process (also filtered alone); it passes in a normal `ctest` run. The
   test drives ggml's process-wide registry directly; find out which state the first run leaves.

@@ -187,6 +187,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F262](#f262) — niedrig — *gefixt*
 - [F263](#f263) — niedrig — *gefixt*
 - [F264](#f264) — niedrig — *gefixt*
+- [F265](#f265) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1231,6 +1232,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f7f3f0f`
 - **Nachtrag (Branch-Review 2026-10-20, Fund J14-4):** Die Klassen-Javadoc von `StreamingChunkAssembler` sagte noch, jedes `tool_calls`-Fragment gehe als `onPartialToolCall` hinaus, und dass id und Name am ersten Fragment kämen. Seit dem Fix (`f7f3f0f`) wird ein Fragment nur weitergereicht, wenn es Argumenttext trägt und sein Aufruf schon einen Namen hat; andere (ein Kopf nur mit id/Name, Argumente vor dem Namen) speisen nur den zusammengesetzten Aufruf. Javadoc und der Satz im `llama-langchain4j/README.md` sagen das jetzt, „id und Name“ kommen „usually“ am ersten Fragment. Nur Doku.
+- **Nachtrag (Branch-Review 2026-10-20/21):** Das Präfix vor dem Namen (J14-1) ist als [F265](#f265) behoben: `#toolCallDeltaBeforeItsName_doesNotFailTheStream` prüft jetzt `assertPartialsMakeUpTheCompleteCall`.
 
 <a id="f133"></a>
 ### F133 – java-llama.cpp: `setPoolingType(UNSPECIFIED)` lässt ein vorher gesetztes `--pooling` stehen
@@ -2436,6 +2438,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Loader rot: „BackendLoadTest.aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores:284 a second start extracted again ==> expected: <[…/jllama-backend-cpu-1a146e4d916-3aa8]> but was: <[…/jllama-backend-cpu-1a146e4d916-3aa8, …/jllama-backend-cpu-1a146e4d916-3aa8-me7c14cbc]>“; mit dem Fix grün: `BackendLoadTest` 10/10, `LlamaLoaderTest` 67/67, `NativeLibraryLoadSmokeTest` 7/7, `LlamaArchitectureTest` 13/13, dazu `BackendLoadTest,LlamaLoggerTest,NativeLibraryLoadSmokeTest` in einer gemeinsamen Fork in beiden Reihenfolgen (`-Dsurefire.runOrder=alphabetical` und `reversealphabetical`) grün — die echte Bibliothek wird nach den Fixture-Läufen weiter geladen bzw. bleibt geladen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `93be4df`
+
+<a id="f265"></a>
+### F265 – java-llama.cpp: das Argument-Präfix vor dem Namen eines gestreamten Werkzeugaufrufs erreicht `onPartialToolCall` nie
+- **Zeit:** 2026-10-21 17:26 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/StreamingChunkAssembler.java` (`PartialTool.reportedLength`, `acceptToolCallFragment`, Klassen-Javadoc)
+- **Schwere:** niedrig (bei b11639 nicht erreichbar: llama.cpp sendet Id und Namen mit dem ersten Fragment eines Aufrufs; Härtung gegen eine künftige Parser-Änderung, die `compute_diffs` erlaubt)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Tests“, erster Punkt; Fund J14-1, Brief JR-11), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. Folge des Fixes von F128, der Fragmente ohne Namen nur noch in den Aufruf sammelte, statt am `PartialToolCall` zu scheitern; der Nachtrag zu F128 hatte die Vertragsprüfung `assertPartialsMakeUpTheCompleteCall` für diesen Fall als rot dokumentiert.
+- **Beschreibung:** Argumenttext, der vor dem Namen eines Aufrufs ankam, ging nur in den gesammelten Aufruf; gemeldet wurde danach nur das jeweils aktuelle Fragment. Die Teilstücke eines Aufrufs ergaben daher nicht seine vollständigen Argumente (langchain4js Vertrag), im Beispiel kam `ty":1}` statt `{"city":1}` an.
+- **Fix:** Je Aufruf zählt `reportedLength`, wie viele Zeichen der Argumente schon gemeldet sind. Sobald ein Aufruf einen Namen hat und ungemeldeter Text vorliegt, wird alles ab `reportedLength` als ein `PartialToolCall` gemeldet — auch durch das Fragment, das nur den Namen bringt. So ergeben die Teilstücke stets die vollständigen Argumente, jedes mit endgültiger Id und Namen; das Verhalten für den gewöhnlichen Fall (Kopf-Fragment mit Name, dann Argumente) ist unverändert. Folge für einen Aufruf, dessen Name erst nach dem Beginn des nächsten kommt: sein Präfix wird beim Eintreffen des Namens gemeldet, vor seinem `CompleteToolCall` (Reihenfolge `partial:1, partial:0, complete:0, complete:1`). Klassen-Javadoc angepasst (der Satz, Argumente vor dem Namen „only feed the assembled call“, fällt).
+- **Tests:** `StreamingChunkAssemblerTest#toolCallDeltaBeforeItsName_doesNotFailTheStream` prüft jetzt `assertPartialsMakeUpTheCompleteCall`; `#defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts` erwartet das nachgereichte Teilstück von Aufruf 0 (`{}`, Name `first`) vor dessen Abschluss.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Assembler rot: „StreamingChunkAssemblerTest.toolCallDeltaBeforeItsName_doesNotFailTheStream:197->assertPartialsMakeUpTheCompleteCall:90 Expected: is "{\"city\":1}" but: was "ty\":1}"“; mit dem Fix grün, `StreamingChunkAssemblerTest` 13/13 (die geänderte Erwartung in `defersCompletion…` war mit dem Fix zunächst rot: „Expected: iterable containing ["partial:1", "complete:0", "complete:1"] but: item 1: was "partial:0"“ — genau das nachgereichte Präfix).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -190,16 +190,11 @@ class StreamingChunkAssemblerTest {
 
         assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("get_weather"));
         assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{\"city\":1}"));
-        // Every partial that is reported carries the final id and name. Which fragments are reported
-        // here is not pinned: the prefix that arrives before the name is not reported at all, so the
-        // partials do not make up the arguments yet (assertPartialsMakeUpTheCompleteCall is red).
-        // At least one is reported, so the loop below cannot pass on an empty list.
+        // The prefix that arrived before the name is reported as soon as the name is known, so the
+        // partials make up the arguments, each with the final id and name.
         assertThat(handler.completeToolCalls.size(), is(1));
         assertThat(handler.partialToolCalls, is(not(empty())));
-        for (PartialToolCall partial : handler.partialToolCalls) {
-            assertThat(partial.id(), is("call_1"));
-            assertThat(partial.name(), is("get_weather"));
-        }
+        assertPartialsMakeUpTheCompleteCall(handler);
     }
 
     @Test
@@ -252,7 +247,8 @@ class StreamingChunkAssemblerTest {
     /**
      * A call that has no name yet when the next one starts is not completed early: a
      * {@link CompleteToolCall} with a blank name would reach the handler. It is completed by
-     * {@code complete()}, with the name that arrived in the meantime.
+     * {@code complete()}, with the name that arrived in the meantime; the arguments it held back are
+     * reported as its partial when the name arrives, before its completion.
      */
     @Test
     void defersCompletionOfAToolCallThatHasNoNameYetWhenTheNextOneStarts() {
@@ -268,7 +264,9 @@ class StreamingChunkAssemblerTest {
                 + "\"id\":\"a\",\"function\":{\"name\":\"first\"}}]},\"finish_reason\":\"tool_calls\"}]}");
         ChatResponse response = assembler.complete();
 
-        assertThat(handler.toolCallEvents, contains("partial:1", "complete:0", "complete:1"));
+        assertThat(handler.toolCallEvents, contains("partial:1", "partial:0", "complete:0", "complete:1"));
+        assertThat(handler.partialToolCalls.get(1).partialArguments(), is("{}"));
+        assertThat(handler.partialToolCalls.get(1).name(), is("first"));
         assertThat(handler.completeToolCalls.get(0).toolExecutionRequest().name(), is("first"));
         assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("first"));
         assertThat(response.aiMessage().toolExecutionRequests().get(1).name(), is("second"));

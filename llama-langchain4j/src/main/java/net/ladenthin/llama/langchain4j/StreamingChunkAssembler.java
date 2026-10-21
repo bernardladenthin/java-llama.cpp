@@ -31,11 +31,12 @@ import java.util.TreeMap;
  *   <li>{@code delta.reasoning_content} →
  *       {@link StreamingChatResponseHandler#onPartialThinking(PartialThinking)}
  *   <li>{@code delta.tool_calls[*]} fragments → accumulated per OpenAI {@code index} (id and
- *       name usually arrive on the first fragment, arguments split across fragments). A fragment is
- *       forwarded as {@link StreamingChatResponseHandler#onPartialToolCall(PartialToolCall)} only if
- *       it carries argument text and its call already has a name ({@code PartialToolCall} refuses
- *       empty arguments and a blank name); other fragments, such as an id/name-only header or
- *       arguments that arrive before the name, only feed the assembled call. Every call is
+ *       name usually arrive on the first fragment, arguments split across fragments). The argument
+ *       text is forwarded as {@link StreamingChatResponseHandler#onPartialToolCall(PartialToolCall)}
+ *       once its call has a name ({@code PartialToolCall} refuses empty arguments and a blank name):
+ *       an id/name-only header is reported with the first argument fragment, and arguments that
+ *       arrive before the name are reported together with the fragment that brings the name, so the
+ *       partials of a call always make up its complete arguments. Every call is
  *       completed as {@link StreamingChatResponseHandler#onCompleteToolCall(CompleteToolCall)}
  *       as soon as a call with a higher index starts (llama.cpp only ever extends the last call of
  *       a message), the last one, and any call that had no name yet at that point, by
@@ -57,6 +58,8 @@ final class StreamingChunkAssembler {
         String id = "";
         String name = "";
         final StringBuilder arguments = new StringBuilder();
+        /** How many characters of {@link #arguments} were already reported as partials. */
+        int reportedLength;
         /** Whether {@code onCompleteToolCall} was already sent for this call. */
         boolean completed;
 
@@ -166,15 +169,18 @@ final class StreamingChunkAssembler {
         tool.arguments.append(argumentsFragment);
         // PartialToolCall refuses empty arguments and a blank name, and llama.cpp sends both: the
         // first delta of a call usually carries id and name only, and its incremental parser may
-        // report a call before its name. Such a delta still feeds the assembled call.
-        if (argumentsFragment.isEmpty() || tool.name.isEmpty()) {
+        // report a call before its name. Such a delta only feeds the assembled call; what it held
+        // back is reported with the first delta that can be, so no argument text is lost.
+        if (tool.name.isEmpty() || tool.arguments.length() == tool.reportedLength) {
             return;
         }
+        String unreported = tool.arguments.substring(tool.reportedLength);
+        tool.reportedLength = tool.arguments.length();
         handler.onPartialToolCall(PartialToolCall.builder()
                 .index(index)
                 .id(tool.id)
                 .name(tool.name)
-                .partialArguments(argumentsFragment)
+                .partialArguments(unreported)
                 .build());
     }
 
