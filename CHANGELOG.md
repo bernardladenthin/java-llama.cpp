@@ -1195,6 +1195,14 @@ the first two items break every existing consumer at upgrade.
   passes `-Dmaven.repository.credentialScope=id`, Maven's own switch back to id-only matching, until a
   setup-java release can write `<repositoryOrigins>` (`mvn-server-repository-origins`, merged upstream
   but not yet released).
+- **`NativeLibraryLoadSmokeTest` reported the real library as llama.cpp `bTEST` (or as `{}`) when the
+  Java suite ran in one Surefire fork**, depending on the class order. `LlamaModel.getJllamaBuildInfo()`
+  returns the build file of the last successful load, and two loader test classes load fixtures:
+  `BackendLoadTest` really loads its dummy library, `LlamaLoaderTest` reports loads from directories
+  with a fixture build file or none. Run after a real load, they left the fixture's record standing for
+  the real library. Both classes now put back the record they found (`LlamaLoader.restoreBuildInfo`,
+  package-private, for the loader tests only). The shipped library behaves as before: only a
+  successful `System.load` sets the record, a refused or failed `initialize()` leaves it as it was.
 - **`SessionConcurrencyTest` timed out on `Java Tests macOS 15 arm64 (Metal)` from llama.cpp b11457 on**
   (green through b11320, red in both runs since). Only this class slowed down -- about 130x, from
   0.45 s to 57-110 s per token, while every other class ran as fast as before. It is the one test

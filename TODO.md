@@ -525,9 +525,30 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F244 and the dated
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F245 and the dated
 addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
 scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
+
+**Java API (`LlamaModel`, `LlamaLoader`)**
+- **`complete()` / `completeWithStats()` / `generate()` with `withInputPrefix` / `withInputSuffix` do
+  not fill in the middle** (open suspicion, measured; ledger "Offene Verdachte ohne Fund-ID"):
+  `completions_stream_request` posts an infill task without `format_prompt_infill` and without the FIM
+  check, so prefix and suffix are dropped and the empty `prompt` is completed (`tokens_evaluated` 0,
+  where `handleInfill` with the same values evaluates 53 prompt tokens). The README promises the
+  opposite. `LlamaModelTest#testCompleteInfillCustom` is red on a model without a BOS (CodeLlama's BOS
+  gives it something to complete) and `#testGenerateInfill` passes on the same path only because it
+  counts the empty final result. Needs a finding id and a fix in the engine (format the infill as
+  `handleInfill` does, FIM check included).
+- **`withMessages(...)` on `generate()` / `complete()` is ignored** (open suspicion, same section):
+  `messages` is an OAI-layer field that only `oaicompat_chat_params_parse` reads, and the completion
+  path never calls it, so the request completes its `prompt`. `ChatAdvancedTest#testMessagesInGenerate`
+  is red on a model without a BOS for that reason and is left as it is, since making it green would
+  drop its assertion. Either apply the chat template on that path or refuse `messages` there with
+  `InvalidRequestException`.
+- **A second successful `LlamaLoader.initialize()` runs the search again** (F245): if
+  `net.ladenthin.llama.lib.path` or the backend filter changed in between, it loads a second copy of
+  the library and replaces the build info. Whether `initialize()` should do nothing after its first
+  success is a design decision; `BackendLoadTest` relies on repeated loads.
 
 **Ollama routes**
 - **`/api/generate` with `raw: true` drops `format` and `images` without a word** (F215). Ollama keeps
@@ -601,6 +622,19 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
   its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.
 - **The agent's 4xx path is tested without retries**: the tests run with `RetryPolicy.NONE`, so
   nothing pins that Atmosphere skips retrying a `4xx` (optional).
+- **Some model-backed tests are bound to CI's models on purpose** (no action; recorded so that a run
+  against another model, such as the random two-layer GGUF of the local sandbox, is not read as a
+  defect). They check a property of the model, so they fail there instead of skipping:
+  `LlamaEmbeddingsTest` asserts CodeLlama-7B's embedding dimension 4096 (four tests);
+  `LlamaModelTest#testTokenization` and `#testVocabOnly` the space llama's SentencePiece tokenizer
+  puts before a prompt; `QuantizerIntegrationTest#quantize_producesLoadableModel` the size of the
+  quantized 135M draft model (above 10 MB) and `#quantize_requantizeWithoutOptIn_throws` an input that
+  is already quantized; `ReasoningBudgetTest#testThinkingDefault_reasoningContentAndAnswerPresent`
+  that Qwen3 thinks by default; and the multi-turn tests
+  `SessionConcurrencyTest#testConcurrentSendProducesAlternatingTranscript` and
+  `SessionForkRewindIntegrationTest`'s fork and rewind cases a context above 128 tokens (they ask for 2048; the
+  random model gives them its 128). The infill tests differ: they check the infill paths, not the
+  model, and skip themselves on a model without FIM tokens (`FimAssumptions`).
 
 **Atmosphere agent**
 - **`AgentOptions.withWorkspace` copies only `baseUrl`, `modelPath` and `workspace`**: the copy falls
