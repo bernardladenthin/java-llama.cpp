@@ -87,7 +87,8 @@ the first two items break every existing consumer at upgrade.
     (see Fixed): a `max_tokens` below `-1`, `top_logprobs` without `logprobs: true`, a `tool_choice`
     naming a tool the request does not carry, an Anthropic `max_tokens` that is not a number, and on
     `/v1/responses` an input item of an unknown type, an `input_image` without a URL and a
-    `function_call` whose `arguments` is not a string.
+    `function_call` whose `arguments` is not a string; and an `/api/generate` `prompt` that is not a
+    string, which was answered as a preload (see Changed).
 
 ### Added
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
@@ -363,10 +364,13 @@ the first two items break every existing consumer at upgrade.
   and `think` honoured, answering `thinking` next to `response`. A request with neither a prompt nor
   a suffix -- how clients preload a model -- is answered at once with Ollama's load response
   (`done: true`, empty `response`, `done_reason` `"load"`; a single object even when streamed)
-  instead of answering an empty user turn. Three deliberate differences from Ollama remain: a request
-  with a suffix but no prompt stays fill-in-the-middle at the start of the file (Ollama answers it
-  with the load response), an empty `"suffix": ""` counts as a suffix, and `keep_alive: 0` does not
-  unload the model and is answered `"load"` (Ollama unloads and answers `"unload"`). `/api/chat`
+  instead of answering an empty user turn. A `prompt` that is not a string (an array, an object, a
+  number) is refused with `400` and Ollama's error body, as Ollama does when it binds the request,
+  before any of these branches; it was taken for a preload or for an empty prompt. Three deliberate
+  differences from Ollama remain: a request with a suffix but no prompt stays fill-in-the-middle at
+  the start of the file (Ollama answers it with the load response), an empty `"suffix": ""` counts as
+  a suffix, and `keep_alive: 0` does not unload the model and is answered `"load"` (Ollama unloads
+  and answers `"unload"`). `/api/chat`
   without messages is answered the same way, as Ollama preloads with it; it was refused with `400`.
 - **`OpenAiCompatServer --model-id` / `--model-alias` take a value llama.cpp keeps as one alias.**
   llama.cpp splits `--alias` at commas and strips every part, so `--model-id my,model` was advertised
