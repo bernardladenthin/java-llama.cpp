@@ -279,6 +279,25 @@ public class ModelParametersTest {
     }
 
     /**
+     * An empty path used to be dropped without a word by the next value of the same option
+     * ({@code addLoraAdapter("").addLoraAdapter("b.gguf")} rendered {@code --lora b.gguf}), while
+     * alone it reached the load and failed there. Refusing it at build time names the option.
+     */
+    @Test
+    public void anEmptyAdapterPathIsRefusedInsteadOfDropped() {
+        IllegalArgumentException lora = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ModelParameters().addLoraAdapter("").addLoraAdapter("b.gguf"));
+        assertThat(lora.getMessage(), is("--lora needs a non-empty file path"));
+        IllegalArgumentException controlVector =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().addControlVector(""));
+        assertThat(controlVector.getMessage(), is("--control-vector needs a non-empty file path"));
+        ModelParameters p = new ModelParameters().addLoraAdapter("a.gguf");
+        assertThrows(IllegalArgumentException.class, () -> p.addLoraAdapter(""));
+        assertThat("a refused value leaves the earlier one in place", p.parameters.get("--lora"), is("a.gguf"));
+    }
+
+    /**
      * The colon is the field separator and upstream splits on every one of them, demanding exactly
      * two parts -- so an absolute Windows path cannot be expressed at all. Refusing it here names the
      * cause instead of letting the load fail with "Failed to parse model parameters".

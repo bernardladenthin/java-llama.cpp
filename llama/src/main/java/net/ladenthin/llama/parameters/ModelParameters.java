@@ -1045,6 +1045,7 @@ public final class ModelParameters extends CliParameters {
      *
      * @param fname the file path of the LoRA adapter
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addLoraAdapter(String fname) {
         return appendCsvValue(ModelOption.LORA, fname);
@@ -1075,6 +1076,7 @@ public final class ModelParameters extends CliParameters {
      *
      * @param fname the file path of the control vector
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addControlVector(String fname) {
         return appendCsvValue(ModelOption.CONTROL_VECTOR, fname);

@@ -103,19 +103,26 @@ abstract class CliParameters {
      * comma or a quote — upstream's {@code parse_csv_row} recognises an opening quote only at the
      * start of a field, so a path with a comma in it cannot be passed any other way.
      *
+     * <p>An empty value is refused: every caller appends a file path, and an empty one would only
+     * fail later, at the load.
+     *
      * @param option the option to append to
      * @param value  the single value to append, unescaped
      * @param <T>    the concrete subtype of this builder
      * @return this builder
+     * @throws IllegalArgumentException if {@code value} is empty; the message names the option
      */
     // Self-typing builder idiom — see putScalar above.
     @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
     protected final <T extends CliParameters> T appendCsvValue(ModelOption option, String value) {
+        final String key = option.getCliOption();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException(key + " needs a non-empty file path");
+        }
         final String field =
                 value.indexOf(',') < 0 && value.indexOf('"') < 0 ? value : '"' + value.replace("\"", "\"\"") + '"';
-        final String key = option.getCliOption();
         final String present = parameters.get(key);
-        parameters.put(key, present == null || present.isEmpty() ? field : present + "," + field);
+        parameters.put(key, present == null ? field : present + "," + field);
         return (T) this;
     }
 

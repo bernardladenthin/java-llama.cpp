@@ -1918,6 +1918,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `0a49c54`
 
+### F234 – java-llama.cpp: `appendCsvValue` überschreibt einen leeren Vorwert still statt ihn zu ergänzen
+- **Zeit:** 2026-10-21 01:14 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/CliParameters.java` (`appendCsvValue`), `ModelParameters.java` (Javadoc von `addLoraAdapter`, `addControlVector`)
+- **Schwere:** niedrig (ein ungültiger, leerer Adapterpfad verschwand ohne Meldung)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J8-7). Eingeführt mit F188 (`appendCsvValue`); dessen Eintrag nennt keinen Grund für den `isEmpty()`-Zweig, und seine Tests nutzten nie einen leeren Wert.
+- **Beschreibung:** `appendCsvValue` schrieb `present == null || present.isEmpty() ? field : present + "," + field`. Ein leerer Vorwert kann nur aus einem früheren `addLoraAdapter("")` oder `addControlVector("")` stammen (die skalierten Varianten schreiben immer `FNAME:SCALE`), und der nächste Aufruf überschrieb ihn: `addLoraAdapter("").addLoraAdapter("b.gguf")` ergab `--lora b.gguf`. In anderer Reihenfolge (`b.gguf,`) oder allein (`--lora ""`) kam der leere Pfad dagegen bei upstream an, dessen `parse_csv_row` (`common/arg.cpp:1369-1410`, b11639) leere Felder behält und dessen `--lora`-Handler daraus einen Adapter macht, der beim Laden laut scheitert. Für einen fehlenden Schlüssel ist `present` ohnehin `null`; der Zweig wirkte nur als dieser stille Verlust.
+- **Fix:** `appendCsvValue` weist einen leeren Wert mit `IllegalArgumentException("<option> needs a non-empty file path")` ab, im Stil der Meldung von `scaledField` (F187), und hängt einen vorhandenen Wert immer an (`present == null ? field : present + "," + field`). Abweisen statt Behalten, weil ein Fehler beim Bauen, der die Option nennt, klarer ist als „failed to load lora adapter“ beim Laden, und weil so auch der einzelne leere Wert früh auffällt. Die Javadoc der beiden ungeskalierten Methoden nennt die Ausnahme.
+- **Tests:** `ModelParametersTest#anEmptyAdapterPathIsRefusedInsteadOfDropped` (`addLoraAdapter("").addLoraAdapter("b.gguf")` und `addControlVector("")` werfen mit der genauen Meldung; ein abgewiesener Wert lässt einen früheren `a.gguf` unverändert).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`ModelParametersTest` 98/98, `ModelParametersExtendedTest` 151/151, `WireNameRegistryTest` 8/8); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.
