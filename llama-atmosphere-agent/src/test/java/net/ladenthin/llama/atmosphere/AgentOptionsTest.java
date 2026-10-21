@@ -262,4 +262,28 @@ class AgentOptionsTest {
                 IllegalArgumentException.class,
                 () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-port", "70000"}));
     }
+
+    @Test
+    void modelIdThatLlamaCppsAliasWouldSplitOrTrimIsRejectedForAnInProcessModel() {
+        // The in-process model is served under the id as its --alias, which llama.cpp splits at commas
+        // and strips; /v1/models and the answers would name it differently again.
+        for (String id : new String[] {"a,b", " x", "x ", ""}) {
+            assertThat(
+                    id,
+                    assertThrows(
+                                    IllegalArgumentException.class,
+                                    () -> AgentOptions.parse(new String[] {"--model-id", id, "--model", "m.gguf"}))
+                            .getMessage(),
+                    containsString("--model-id"));
+        }
+    }
+
+    @Test
+    void modelIdForARemoteEndpointIsSentUnchanged() {
+        // Against --base-url the id names a model of someone else's server; nothing here splits it.
+        assertThat(
+                AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--model-id", "a,b"})
+                        .getModelId(),
+                is("a,b"));
+    }
 }

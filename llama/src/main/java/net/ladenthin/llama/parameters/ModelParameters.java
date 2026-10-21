@@ -1556,8 +1556,9 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the name the model answers to ({@code --alias}): the {@code model} field of every OpenAI
      * answer and chunk, and the id the embedded server lists under {@code /v1/models}. Unset, llama.cpp
-     * uses the model's own name or file name. Upstream accepts several aliases separated by commas and
-     * answers with the first.
+     * answers with the Hugging Face or Docker repository the model was loaded from, and for a local file
+     * with the model path as given to {@code --model} (not just the file name). Upstream accepts several
+     * aliases separated by commas, strips each, and answers with the first.
      *
      * @param alias the model name, or several separated by commas
      * @return this builder

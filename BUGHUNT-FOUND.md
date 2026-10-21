@@ -165,6 +165,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F240](#f240) — niedrig — *gefixt*
 - [F241](#f241) — niedrig bis mittel — *gefixt*
 - [F242](#f242) — niedrig — *gefixt*
+- [F243](#f243) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2040,6 +2041,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: `assemblesParallelToolCallsByIndex` und `completesEachToolCallAsSoonAsTheNextOneStarts` mit „Expected: iterable containing ["partial:0", "complete:0", "partial:1", "complete:1"] but: item 1: was "partial:1"“, `argumentsForAToolCallThatIsAlreadyCompleteFailTheStream` mit „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix alle 12 Tests der Klasse grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b90de3c`
+
+### F243 – java-llama.cpp: der Atmosphere-Agent nennt in jeder Antwort seines In-Process-Servers den absoluten Modellpfad statt der Modell-Id
+- **Zeit:** 2026-10-21 02:50 UTC
+- **Datei:** `llama-atmosphere-agent/src/main/java/net/ladenthin/llama/atmosphere/ModelEndpoint.java` (`modelParameters`), `llama-atmosphere-agent/src/main/java/net/ladenthin/llama/atmosphere/AgentOptions.java` (`parse`, neu `requireAliasSafeModelId`), `llama/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java` (Javadoc von `setAlias`)
+- **Schwere:** niedrig (Loopback-Server; ein falscher `model`-Wert und ein lokaler Pfad in den Antworten, kein falsches Ergebnis)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund XJ-2). Folge von F185 (jede native OpenAI-Antwort trägt upstreams Modellnamen, vorher ""); `15f857a` hat dieselbe Abweichung für `OpenAiServerCli` behoben, indem die CLI immer `--alias` setzt, und F201 die Modell-Id dort auf Komma/Randleerzeichen geprüft. Der CHANGELOG sagt, ein Aufrufer mit eigenem `LlamaModel` müsse `setAlias` selbst setzen; der Agent ist ein solcher Aufrufer und tat es nicht.
+- **Beschreibung:** `ModelEndpoint.modelParameters` lud das In-Process-Modell ohne `setAlias`, `open()` bot es mit `OpenAiServerConfig.modelId(options.getModelId())` an (Vorgabe `local-model`). Upstream b11639 (`server-context.cpp`, Modellname) nimmt ohne Alias `params_base.model.get_name()`, und das ist für eine lokale Datei der Pfad (`common.h`, `common_params_model::get_name`). `OpenAiCompatServer` reicht die native Antwort unverändert weiter. Also listete `/v1/models` `local-model`, während jede `/v1/chat/completions`-Antwort und jedes Stück des Streams z. B. `/home/user/models/qwen.gguf` nannte. `AgentOptions` nahm `--model-id` ungeprüft; da `--alias` an Kommas trennt und jedes Stück trimmt, hätte ein bloßes `setAlias` für `a,b` oder ` x` dieselbe Abweichung behalten.
+- **Fix:** `modelParameters` setzt `setAlias(options.getModelId())`, die Regel von `OpenAiServerCli.toModelParameters`. `AgentOptions.parse` lehnt mit `--model` eine `--model-id` mit Komma, eine leere und eine mit Randleerzeichen ab, wie `OpenAiServerCli.modelIdValue`; mit `--base-url` bleibt die Id ungeprüft, weil sie dort ein Modell eines fremden Servers benennt und kein Alias wird (Abweichung vom Brief, der die Prüfung allgemein verlangt). Das Javadoc von `ModelParameters.setAlias` sagte, ohne Alias nehme llama.cpp den eigenen Namen oder den Dateinamen; es nennt jetzt das Repository bzw. den Pfad wie an `--model` übergeben und dass jedes Alias getrimmt wird.
+- **Tests:** `LocalAgentTest.inProcessModelAnswersUnderTheModelIdItIsListedWith` (`--alias` = `AgentOptions.DEFAULT_MODEL_ID` ohne, `x` mit `--model-id x`), `AgentOptionsTest.modelIdThatLlamaCppsAliasWouldSplitOrTrimIsRejectedForAnInProcessModel` (`a,b`, ` x`, `x `, `""`), `AgentOptionsTest.modelIdForARemoteEndpointIsSentUnchanged` (`a,b` mit `--base-url` bleibt). `LocalAgentTest` 28/28, `AgentOptionsTest` 17/17 grün; Kern-Javadoc ohne Fehler.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: „Expected: a collection containing "--alias" but: mismatches were: [was "", was "--fit", was "off", was "--model", was "m.gguf", …]“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix beide grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

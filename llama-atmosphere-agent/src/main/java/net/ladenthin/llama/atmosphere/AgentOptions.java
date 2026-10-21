@@ -173,6 +173,9 @@ public final class AgentOptions {
             if (frontEnds > 1) {
                 throw new IllegalArgumentException("--web, --acp and --prompt exclude each other");
             }
+            if (b.modelPath != null) {
+                requireAliasSafeModelId(b.modelId);
+            }
         }
         return new AgentOptions(b);
     }
@@ -214,6 +217,25 @@ public final class AgentOptions {
         b.acp = acp;
         b.workspace = newWorkspace.toAbsolutePath().normalize();
         return new AgentOptions(b);
+    }
+
+    /**
+     * The in-process model is served under the model id as its {@code --alias}, which llama.cpp splits at
+     * commas and strips; an id it would change would make {@code /v1/models} and the answers name the model
+     * differently. The same rule as {@code OpenAiServerCli}'s {@code --model-id}. Against {@code --base-url}
+     * the id names a model of another server and is sent unchanged.
+     */
+    private static void requireAliasSafeModelId(String modelId) {
+        if (modelId.indexOf(',') >= 0) {
+            throw new IllegalArgumentException(
+                    "--model-id must not contain a comma with --model (llama.cpp reads it as a list of aliases), got: "
+                            + modelId);
+        }
+        if (modelId.isEmpty() || !modelId.equals(modelId.trim())) {
+            throw new IllegalArgumentException(
+                    "--model-id must be non-empty without leading or trailing whitespace with --model, got: '" + modelId
+                            + "'");
+        }
     }
 
     private static String value(String[] args, int index, String flag) {
