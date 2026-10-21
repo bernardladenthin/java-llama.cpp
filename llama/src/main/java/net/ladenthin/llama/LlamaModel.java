@@ -154,8 +154,10 @@ public class LlamaModel implements AutoCloseable {
      * verbatim -- no chat template, no role markers; for a conversation use {@link #chat(ChatRequest)}.
      * Two request shapes build the prompt instead: messages set with
      * {@link InferenceParameters#withMessages(java.util.List)} are rendered through the model's chat
-     * template, as {@link #applyTemplate(InferenceParameters)} renders them (a non-empty prompt next
-     * to them is refused), and {@link InferenceParameters#withInputPrefix(String)} together with
+     * template, as {@link #applyTemplate(InferenceParameters)} renders them, stopping also at the stop
+     * strings the template adds of its own (a non-empty prompt next to them is refused, and so is a chat
+     * field this path cannot apply: a response format or tools, which {@link #chatComplete} applies),
+     * and {@link InferenceParameters#withInputPrefix(String)} together with
      * {@link InferenceParameters#withInputSuffix(String)} is an infill request, formatted as
      * {@link #handleInfill(String)} formats it.
      *
@@ -839,7 +841,9 @@ public class LlamaModel implements AutoCloseable {
      *     prompt over the context size, several prompts in one request (an array of strings or of token arrays)
      *     or {@code "n"} greater than 1 -- one prompt and one completion per request, unlike upstream's server;
      *     send separate requests -- only one of {@code "input_prefix"} and {@code "input_suffix"}, or a non-empty
-     *     {@code "prompt"} or the infill fields next to {@code "messages"}
+     *     {@code "prompt"}, the infill fields or a chat field this path cannot apply ({@code "response_format"},
+     *     {@code "tools"}, {@code "tool_choice"}, {@code "parallel_tool_calls"}, {@code "top_logprobs"},
+     *     {@code "thinking_budget_tokens"}) next to {@code "messages"}
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the request carries the infill
      *     fields and the model has no fill-in-the-middle tokens
      */

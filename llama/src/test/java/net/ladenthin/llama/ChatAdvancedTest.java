@@ -239,6 +239,48 @@ public class ChatAdvancedTest {
         assertTrue(e.getMessage().contains("'prompt'"), "Error should name the prompt but was: " + e.getMessage());
     }
 
+    /**
+     * The chat fields the raw completion paths cannot apply are refused beside the messages, by name:
+     * the grammar of a response format and the tool-call grammar of the tool fields belong to the chat
+     * paths, and {@code complete()}/{@code generate()} used to drop them without a word.
+     */
+    @Test
+    public void testChatOnlyFieldsBesideMessagesInCompleteAndGenerateAreAnInvalidRequest() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        String tools = "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\","
+                + "\"parameters\":{\"type\":\"object\"}}}]";
+        List<Pair<String, InferenceParameters>> requests = Arrays.asList(
+                new Pair<>("response_format", chatRequest(messages).withResponseFormat("{\"type\":\"json_object\"}")),
+                new Pair<>("tools", chatRequest(messages).withToolsJson(tools)),
+                new Pair<>("tool_choice", chatRequest(messages).withToolChoice("required")),
+                new Pair<>("parallel_tool_calls", chatRequest(messages).withParallelToolCalls(true)));
+
+        for (Pair<String, InferenceParameters> request : requests) {
+            String field = "'" + request.getKey() + "'";
+            InvalidRequestException completed =
+                    assertThrows(InvalidRequestException.class, () -> model.complete(request.getValue()), field);
+            assertTrue(
+                    completed.getMessage().contains(field),
+                    "complete() names " + field + ": " + completed.getMessage());
+            InvalidRequestException generated = assertThrows(
+                    InvalidRequestException.class,
+                    () -> {
+                        for (LlamaOutput ignored : model.generate(request.getValue())) {
+                            // drained: the request must not run
+                        }
+                    },
+                    field);
+            assertTrue(
+                    generated.getMessage().contains(field),
+                    "generate() names " + field + ": " + generated.getMessage());
+        }
+    }
+
+    private static InferenceParameters chatRequest(List<Pair<String, String>> messages) {
+        return InferenceParameters.empty().withMessages(null, messages).withNPredict(1);
+    }
+
     // ------------------------------------------------------------------
     // 5. Penalty params — repeatPenalty, frequencyPenalty, presencePenalty
     // ------------------------------------------------------------------

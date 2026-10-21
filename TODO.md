@@ -525,19 +525,17 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F247 and the dated
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F248 and the dated
 addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
 scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
 
 **Java API (`LlamaModel`, `LlamaLoader`)**
-- **With `messages`, the raw completion paths keep only the rendered prompt** (F247):
-  `render_messages_into_prompt` takes the `prompt` `parse_oai_chat_params` returns and drops what else
-  the chat parser derives from the request -- the grammar it builds from `response_format`, the
-  tool-call grammar from `tools` / `tool_choice`, and the template's extra stop words. `response_format`
-  and `tools` were ignored on these paths before as well (the completion schema reads only
-  `json_schema` / `grammar`), but with `messages` the derived grammar exists and is thrown away. Either
-  carry it over (and the stop words) or refuse `response_format` / `tools` there with
-  `InvalidRequestException`; until then they are dropped without a word.
+- **With `messages`, the raw completion paths do not derive the template's reasoning-budget tags**
+  (F247, F248): the chat parser turns `reasoning_budget_tokens` into a budget with the template's
+  thinking start/end tags; `render_messages_into_prompt` takes the prompt and the template's stop
+  strings and refuses the chat-only fields, but leaves `reasoning_budget_tokens` a completion field
+  without the tags, so the budget does nothing unless the caller names the tags itself (as without
+  `messages`). Either carry the tags over or refuse the budget beside `messages`.
 - **A second successful `LlamaLoader.initialize()` runs the search again** (F245): if
   `net.ladenthin.llama.lib.path` or the backend filter changed in between, it loads a second copy of
   the library and replaces the build info. Whether `initialize()` should do nothing after its first

@@ -686,6 +686,120 @@ TEST_F(CApi, ARawCompletionWithMessagesAndAPromptOrInfillFieldsIsRefused) {
     EXPECT_EQ(jllama_completions(model_, R"({"messages":"no"})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
 }
 
+TEST_F(CApi, ARawCompletionWithMessagesRefusesTheChatOnlyFields) {
+    // The raw completion paths keep only the prompt the chat template renders from "messages". The
+    // grammar the chat parser derives from response_format, the tool-call grammar of tools,
+    // tool_choice and parallel_tool_calls, top_logprobs and the thinking_budget_tokens alias used to
+    // be dropped without a word; they are refused, each by name.
+    const std::vector<std::pair<std::string, json>> fields = {
+        {"response_format", json{{"type", "json_object"}}},
+        {"tools",
+         json::array({json{{"type", "function"},
+                           {"function", json{{"name", "get_weather"}, {"parameters", json{{"type", "object"}}}}}}})},
+        {"tool_choice", "required"},
+        {"parallel_tool_calls", true},
+        {"top_logprobs", 2},
+        {"thinking_budget_tokens", 8},
+    };
+    for (const auto &field : fields) {
+        json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                        {"n_predict", 1},
+                        {"temperature", 0}};
+        request[field.first] = field.second;
+        if (field.first == "top_logprobs") {
+            request["logprobs"] = true; // without it the chat parser refuses top_logprobs itself
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST)
+            << field.first;
+        EXPECT_NE(std::string(jllama_last_error()).find("'" + field.first + "'"), std::string::npos)
+            << jllama_last_error();
+        int task = -1;
+        EXPECT_EQ(jllama_completions_stream_request(model_, request.dump().c_str(), &task),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << field.first;
+        EXPECT_NE(std::string(jllama_last_error()).find("'" + field.first + "'"), std::string::npos)
+            << jllama_last_error();
+        if (task >= 0) {
+            jllama_task_release(model_, task);
+        }
+    }
+    // A null value is no field, and the fields the raw path reads or the template renders stay allowed.
+    const json allowed = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"response_format", nullptr},
+                          {"chat_template_kwargs", json::object()},
+                          {"grammar", "root ::= \"a\""},
+                          {"n_predict", 1},
+                          {"temperature", 0}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model_, allowed.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
+    // A chat template can add stop strings of its own (upstream's Laguna workaround adds
+    // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
+    // completion paths rendered the template and dropped them, so a raw completion with "messages"
+    // ran past the end of the answer. The grammar forces the stop string; the end-of-generation token
+    // is a byte that never occurs in it.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-stops", false, 4);
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- laguna_glm_thinking -#}"
+                             "{%- for message in messages -%}"
+                             "<|im_start|>{{ message.role }}\n{{ message.content }}<|im_end|>\n"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}<|im_start|>assistant\n{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"grammar", "root ::= \"</assistant>\""},
+                          {"n_predict", 20},
+                          {"temperature", 0}};
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json blocking = json::parse(completion.str());
+    EXPECT_EQ(blocking.at("stop_type").get<std::string>(), "word") << blocking.dump();
+    EXPECT_EQ(blocking.at("stopping_word").get<std::string>(), "</assistant>") << blocking.dump();
+    EXPECT_EQ(blocking.at("content").get<std::string>(), "") << blocking.dump();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json streamed = receive_to_stop(model, task);
+    EXPECT_EQ(streamed.at("stop_type").get<std::string>(), "word") << streamed.dump();
+    EXPECT_EQ(streamed.at("stopping_word").get<std::string>(), "</assistant>") << streamed.dump();
+
+    // The stops of the request do not replace the template's: both are in force.
+    json with_stop = request;
+    with_stop["stop"] = json::array({"zzz"});
+    Owned other_stop;
+    ASSERT_EQ(jllama_completions(model, with_stop.dump().c_str(), &other_stop.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(other_stop.str()).at("stopping_word").get<std::string>(), "</assistant>") << other_stop.str();
+    with_stop["stop"] = "</assist";
+    Owned own_stop;
+    ASSERT_EQ(jllama_completions(model, with_stop.dump().c_str(), &own_stop.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(own_stop.str()).at("stopping_word").get<std::string>(), "</assist") << own_stop.str();
+
+    // The chat path stops there too: the template's stop string is what both paths share.
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json choice = json::parse(chat.str()).at("choices").at(0);
+    EXPECT_EQ(choice.at("finish_reason").get<std::string>(), "stop") << chat.str();
+    EXPECT_EQ(choice.at("message").value("content", std::string()), "") << chat.str();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
     Owned grammar;
     ASSERT_EQ(jllama_json_schema_to_grammar(R"({"type":"object","properties":{"a":{"type":"string"}}})", &grammar.s),

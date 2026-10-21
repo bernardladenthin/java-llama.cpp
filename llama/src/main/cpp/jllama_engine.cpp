@@ -652,13 +652,69 @@ static void prepare_infill_prompt(jllama_context *jctx, const server_context_met
     }
 }
 
+// The request fields oaicompat_chat_params_parse consumes that have no effect on a raw completion:
+// response_format becomes the session's grammar, tools/tool_choice/parallel_tool_calls its tool-call
+// grammar with its triggers and preserved tokens, top_logprobs the n_probs of a chat answer and
+// thinking_budget_tokens an alias of reasoning_budget_tokens. The completion schema reads none of
+// them, and the raw paths take only the rendered prompt from the parser, so each used to be dropped
+// without a word. The fields that act while rendering (chat_template_kwargs, reasoning_effort,
+// add_generation_prompt, continue_final_message) and the completion fields the schema reads itself
+// (json_schema, grammar, logprobs as n_probs, reasoning_budget_tokens, stop) stay allowed.
+static constexpr const char *CHAT_ONLY_FIELDS[] = {"response_format",     "tools",        "tool_choice",
+                                                   "parallel_tool_calls", "top_logprobs", "thinking_budget_tokens"};
+
+// The stop strings a chat template adds of its own (upstream's Laguna workaround adds "</assistant>",
+// which the model can spell out as text), which the chat paths append to the request's stops in
+// server_task::apply_chat_session. The raw paths post no session, so they are written into "stop"
+// here, after the stops the completion schema would take: the request's (a string or an array), or
+// the CLI defaults when it names none -- the schema falls back to those only when "stop" holds no
+// word. An array element that is no string is left for the schema to refuse.
+static void add_template_stops(jllama_context *jctx, json &data, const std::vector<std::string> &template_stops) {
+    if (template_stops.empty()) {
+        return;
+    }
+    json stops = json::array();
+    const json requested = data.contains("stop") ? data.at("stop") : json();
+    if (requested.is_string()) {
+        stops.push_back(requested);
+    } else if (requested.is_array()) {
+        for (const auto &word : requested) {
+            if (!word.is_string() || !word.get<std::string>().empty()) {
+                stops.push_back(word);
+            }
+        }
+    }
+    if (stops.empty()) {
+        for (const std::string &word : jctx->params.antiprompt) {
+            stops.push_back(word);
+        }
+    }
+    for (const std::string &word : template_stops) {
+        bool present = false;
+        for (const auto &existing : stops) {
+            present = present || (existing.is_string() && existing.get<std::string>() == word);
+        }
+        if (!present) {
+            stops.push_back(word);
+        }
+    }
+    data["stop"] = std::move(stops);
+}
+
 // A raw completion request with "messages" completes the prompt the chat template renders from them,
 // as applyTemplate renders it; the other fields stay completion fields. The field used to be read on
 // the chat paths alone (oaicompat_chat_params_parse), so a raw completion ignored it and completed
-// the prompt next to it, mostly the empty one. A non-empty prompt or the infill fields beside the
-// messages are refused rather than one of the two dropped; an empty prompt is no prompt
+// the prompt next to it, mostly the empty one. A non-empty prompt, the infill fields or one of
+// CHAT_ONLY_FIELDS beside the messages are refused rather than dropped; an empty prompt is no prompt
 // (InferenceParameters("") writes one). The media files of array-form content come back in files.
 static void render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+    for (const char *field : CHAT_ONLY_FIELDS) {
+        if (data.contains(field) && !data.at(field).is_null()) {
+            throw jllama_invalid_request(std::string("'") + field +
+                                         "' is a chat field and has no effect on a raw completion with 'messages': "
+                                         "send the request as a chat completion");
+        }
+    }
     if (is_infill_request(data)) {
         throw jllama_invalid_request(
             "'messages' cannot be combined with 'input_prefix'/'input_suffix': send an infill request or a chat");
@@ -668,12 +724,13 @@ static void render_messages_into_prompt(jllama_context *jctx, json &data, std::v
             "'messages' and 'prompt' cannot both be set: the messages are rendered into the prompt");
     }
     json body = data;
-    common_chat_session session; // the raw path parses no chat output; only the prompt is used
+    common_chat_session session; // the raw path parses no chat output; the prompt and the stops are used
     const json chat = parse_oai_chat_params(jctx, body, files, session);
     if (!chat.contains("prompt") || !chat.at("prompt").is_string()) {
         throw std::runtime_error("the chat template did not produce a string prompt");
     }
     data["prompt"] = chat.at("prompt");
+    add_template_stops(jctx, data, session.additional_stops());
 }
 
 // A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill

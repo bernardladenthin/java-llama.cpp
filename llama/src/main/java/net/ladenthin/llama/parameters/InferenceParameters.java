@@ -448,7 +448,10 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the OpenAI {@code response_format} object replaced. The native server
      * turns {@code {"type":"json_object"}} or {@code {"type":"json_schema","json_schema":{...}}} into a
      * GBNF grammar constraint internally, so the model is forced to emit conforming JSON — the OpenAI
-     * "structured outputs" feature that strict agent clients use.
+     * "structured outputs" feature that strict agent clients use. A chat field: beside messages on the
+     * raw completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped; that path takes {@code json_schema} or a
+     * grammar instead.
      *
      * @param responseFormatJson the {@code response_format} object as a JSON-encoded string
      * @return a new instance; this instance is unchanged
@@ -597,8 +600,12 @@ public final class InferenceParameters extends JsonParameters {
      *
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
-     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
-     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
      *
      * @param systemMessage optional system message ({@code null} or empty allowed)
      * @param messages user/assistant message pairs (role -&gt; content)
@@ -620,8 +627,12 @@ public final class InferenceParameters extends JsonParameters {
      *
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
-     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
-     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
      *
      * @param messages ordered messages, including any {@code "system"} prelude
      * @return a new instance; this instance is unchanged
@@ -636,8 +647,12 @@ public final class InferenceParameters extends JsonParameters {
      *
      * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
      * the messages are rendered through the model's chat template into the prompt, as
-     * {@code applyTemplate} renders them, and the other fields stay completion fields; a non-empty
-     * prompt or the infill fields beside them are refused with an {@code InvalidRequestException}.</p>
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
      *
      * @param messagesJson the JSON array string
      * @return a new instance; this instance is unchanged
@@ -648,7 +663,9 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the OAI-style {@code tools} array set from a pre-built
-     * JSON string (e.g. {@link ChatRequest#buildToolsJson()}).
+     * JSON string (e.g. {@link ChatRequest#buildToolsJson()}). A chat field: beside messages on the raw
+     * completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped.
      *
      * @param toolsJson the JSON array string
      * @return a new instance; this instance is unchanged
@@ -658,7 +675,9 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the OAI-style {@code tool_choice} hint replaced.
+     * Returns a new request with the OAI-style {@code tool_choice} hint replaced. A chat field: beside
+     * messages on the raw completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped.
      *
      * @param toolChoice the hint string ({@code "auto"} / {@code "none"} / {@code "required"}); {@code null} clears
      * @return a new instance; this instance is unchanged
@@ -668,7 +687,9 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the OpenAI-compatible {@code parallel_tool_calls} flag replaced.
+     * Returns a new request with the OpenAI-compatible {@code parallel_tool_calls} flag replaced. A chat
+     * field: beside messages on the raw completion path ({@code complete}/{@code generate}) it is refused
+     * with an {@code InvalidRequestException} rather than dropped.
      *
      * @param parallelToolCalls whether the model may emit more than one tool call in a turn
      * @return a new instance; this instance is unchanged

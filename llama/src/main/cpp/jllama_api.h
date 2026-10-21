@@ -183,8 +183,11 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
  * several prompts or "n" > 1 are JLLAMA_STATUS_INVALID_REQUEST (send separate requests). A body with
  * `input_prefix`/`input_suffix` is an infill one, prepared as for jllama_infill (both fields required,
  * JLLAMA_STATUS_ERROR when the model has no FIM tokens). One with `messages` completes the prompt the
- * chat template renders from them (as jllama_apply_template); a non-empty `prompt` or the infill
- * fields beside them are JLLAMA_STATUS_INVALID_REQUEST.
+ * chat template renders from them (as jllama_apply_template), stopping also at the stop strings the
+ * template adds of its own, as the chat paths do; a non-empty `prompt`, the infill fields or a chat
+ * field this path cannot apply (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
+ * `top_logprobs`, `thinking_budget_tokens`) beside them are JLLAMA_STATUS_INVALID_REQUEST, the
+ * message naming the field: send those as a chat completion.
  */
 JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json);
 
