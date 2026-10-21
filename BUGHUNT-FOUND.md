@@ -1225,6 +1225,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot – alle fünf Wither-Tests (z. B. „Expected: not map containing ["grammar"->ANYTHING] but: was <{grammar="x"}>“) und der Basistest („expected: not same but was: <TestBuilder{keys=[grammar], values=redacted}>“); mit Fix `InferenceParametersTest` 111/111 und `JsonParametersTest` 26/26 (skipped 0), Gegenprobe per `git stash` wieder rot. PIT auf `JsonParameters`: 18/18 getötet. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `OpenAiRequestMapperTest` 31/31; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5bba245`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J8-4):** Zwei Stellen in `JsonParameters` beschrieben noch das alte Verhalten: das `@param text` von `withOptionalJson` („`null` means leave the parameter unset“) und die Javadoc von `toJsonString` („null to behave as do not set this parameter“). Beide sagen jetzt, dass `null` den früheren Wert löscht, wie die Beschreibung, das `@return` und die Aufrufer in `InferenceParameters`. Nur Doku.
 
 <a id="f137"></a>
 ### F137 – java-llama.cpp: `Session.fork` prüft eine negative Ziel-Slot-ID erst nach Sichern und Wiederherstellen

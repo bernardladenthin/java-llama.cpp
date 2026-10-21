@@ -125,7 +125,7 @@ abstract class JsonParameters {
     /**
      * Serialize a non-null string to its JSON string form. Use
      * {@link #withOptionalJson(RequestField, String)} when the input may be null and the
-     * caller wants null to behave as "do not set this parameter".
+     * caller wants null to clear the parameter.
      *
      * @param text the non-null input
      * @return the JSON-encoded string
@@ -237,7 +237,7 @@ abstract class JsonParameters {
      * none); otherwise the value is JSON-encoded and a new instance is returned.
      *
      * @param field the field to set
-     * @param text  the optional input; {@code null} means "leave the parameter unset"
+     * @param text  the optional input; {@code null} clears any earlier value of the field
      * @param <T>  the concrete subtype of this parameter set
      * @return {@code this} if {@code text} is null and the field is unset, otherwise a new
      *     instance with the entry set or removed
