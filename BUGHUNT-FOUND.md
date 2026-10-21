@@ -2147,7 +2147,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OllamaApiSupportTest.aNonTextPromptIsNotALoadRequest` (`isLoadOnly` falsch für Array und Objekt, wahr für `null`), `OllamaApiSupportTest.aPromptThatIsNotAStringIsRefused` (wirft für Array, Objekt, Zahl mit dem Wortlaut; nicht für String, leeren String, `null`, fehlend), `OpenAiCompatServerHttpTest.ollamaGenerateWithANonTextPromptIsABadRequest` (Array, Objekt mit `suffix`, Zahl mit `raw` und `stream`: 400 mit `error`, das Backend wird nicht gerufen).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code (mit einem `requireTextualPrompt`, das nichts tut, damit der Test übersetzt) rot: `aNonTextPromptIsNotALoadRequest` mit „Expected: is <false> but: was <true>“, `aPromptThatIsNotAStringIsRefused` mit „{"prompt":["a"]} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, der HTTP-Test mit „{"model":"test-model","prompt":["a"]} Expected: is <400> but: was <200>“; mit dem Fix grün (`OllamaApiSupportTest` 48, `OpenAiCompatServerHttpTest` 70, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün. Der offene Punkt in `TODO.md` („Open points from the branch review“, Ollama routes) ist entfernt.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `1503b94`
 
 ## Offene Verdachte ohne Fund-ID
 
