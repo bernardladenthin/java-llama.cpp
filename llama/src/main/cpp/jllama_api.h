@@ -193,8 +193,8 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
  * tags, say) are rendered as text even where the vocabulary holds them as special tokens, beside the
  * request's own `preserved_tokens`. A body without `messages` names the budget's tags itself
  * (`reasoning_budget_start_tag`, `reasoning_budget_end_tags`); without `reasoning_budget_message`
- * the server's default message is forced before the end tag, as on the chat paths. A non-empty `prompt`, the infill fields or a chat
- * field this path cannot apply (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
+ * the server's default message is forced before the end tag, as on the chat paths. A non-empty `prompt`, the infill
+ * fields or a chat field this path cannot apply (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
  * `top_logprobs`, `thinking_budget_tokens`) beside them are JLLAMA_STATUS_INVALID_REQUEST, the
  * message naming the field: send those as a chat completion.
  */
