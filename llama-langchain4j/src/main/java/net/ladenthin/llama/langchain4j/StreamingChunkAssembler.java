@@ -31,11 +31,15 @@ import java.util.TreeMap;
  *   <li>{@code delta.reasoning_content} →
  *       {@link StreamingChatResponseHandler#onPartialThinking(PartialThinking)}
  *   <li>{@code delta.tool_calls[*]} fragments → accumulated per OpenAI {@code index} (id and
- *       name arrive on the first fragment, arguments split across fragments), each forwarded as
- *       {@link StreamingChatResponseHandler#onPartialToolCall(PartialToolCall)} and completed as
- *       {@link StreamingChatResponseHandler#onCompleteToolCall(CompleteToolCall)} as soon as a
- *       call with a higher index starts (llama.cpp only ever extends the last call of a message),
- *       the last one, and any call that had no name yet at that point, by {@link #complete()}
+ *       name usually arrive on the first fragment, arguments split across fragments). A fragment is
+ *       forwarded as {@link StreamingChatResponseHandler#onPartialToolCall(PartialToolCall)} only if
+ *       it carries argument text and its call already has a name ({@code PartialToolCall} refuses
+ *       empty arguments and a blank name); other fragments, such as an id/name-only header or
+ *       arguments that arrive before the name, only feed the assembled call. Every call is
+ *       completed as {@link StreamingChatResponseHandler#onCompleteToolCall(CompleteToolCall)}
+ *       as soon as a call with a higher index starts (llama.cpp only ever extends the last call of
+ *       a message), the last one, and any call that had no name yet at that point, by
+ *       {@link #complete()}
  *   <li>{@code finish_reason} / trailing {@code usage} chunk → finish reason and
  *       {@link TokenUsage} on the final response
  * </ul>
