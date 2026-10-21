@@ -209,6 +209,34 @@ public class OaiRerankSupportTest {
     }
 
     @Test
+    public void documentsRequestGetsTheOpenAiObjectThroughToResponse() throws IOException {
+        // A request with "documents" (no "texts") is answered as the OpenAI/Jina object, not as the
+        // bare TEI array; the model id is echoed.
+        JsonNode out = read(OaiRerankSupport.toResponse(
+                read("{\"query\":\"q\",\"documents\":[\"a\",\"b\"]}"),
+                "[{\"document\":\"a\",\"index\":0,\"score\":0.1},{\"document\":\"b\",\"index\":1,\"score\":0.9}]",
+                "m"));
+        assertThat(out.isObject(), is(true));
+        assertThat(out.path("object").asText(), is("list"));
+        assertThat(out.path("results").size(), is(2));
+        assertThat(out.path("model").asText(), is("m"));
+    }
+
+    @Test
+    public void teiRequestHonoursTopNAndOmitsTextByDefault() throws IOException {
+        // upstream's format_response_rerank (server-common.cpp, b11639) resizes to min(top_n, n) before
+        // its is_tei_format early return, and reads return_text with the default false, so the TEI
+        // answer honours top_n and carries no text unless asked to.
+        JsonNode out = read(OaiRerankSupport.toResponse(
+                read("{\"query\":\"q\",\"texts\":[\"a\",\"b\"],\"top_n\":1}"),
+                "[{\"document\":\"a\",\"index\":0,\"score\":0.1},{\"document\":\"b\",\"index\":1,\"score\":0.9}]",
+                "m"));
+        assertThat(out.size(), is(1));
+        assertThat(out.path(0).path("index").asInt(), is(1));
+        assertThat(out.path(0).has("text"), is(false));
+    }
+
+    @Test
     public void toOaiResponseRefusesANativeBodyThatIsNotAJsonArray() {
         // An unparsable body used to become 200 with empty results, indistinguishable from "nothing
         // matched". An empty body is no exception to Jackson (it reads a MissingNode) and an object is
