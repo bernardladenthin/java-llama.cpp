@@ -475,10 +475,12 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the logit bias (token-id form) replaced. Empty input is a
-     * no-op (returns {@code this}). This entry overrides any prior logit-bias setter.
+     * no-op (returns {@code this}). This entry overrides any prior logit-bias setter. A bias of
+     * {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param logitBias token-id to bias-value
      * @return a new instance with the bias set, or {@code this} if {@code logitBias} is empty
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public InferenceParameters withTokenIdBias(Map<Integer, Float> logitBias) {
         if (logitBias.isEmpty()) {
@@ -508,10 +510,12 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the logit bias (token-string form) replaced. Empty input
-     * is a no-op (returns {@code this}). Overrides prior logit-bias setters.
+     * is a no-op (returns {@code this}). Overrides prior logit-bias setters. A bias of
+     * {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param logitBias token string to bias value
      * @return a new instance with the bias set, or {@code this} if {@code logitBias} is empty
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public InferenceParameters withTokenBias(Map<String, Float> logitBias) {
         if (logitBias.isEmpty()) {
@@ -596,7 +600,10 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with chat messages replaced (multimodal-capable variant).
      * Messages with non-null {@link net.ladenthin.llama.value.ChatMessage#getParts()} are serialized as OAI
-     * array-form content (text + image_url parts).
+     * array-form content (text + image_url parts). Tool calls and tool results keep their
+     * {@code tool_calls} / {@code tool_call_id}; empty or blank tool-call arguments are written as
+     * {@code {}}, because chat templates that take object arguments parse the history's arguments
+     * as JSON and an empty string would fail the whole request.
      *
      * @param messages ordered messages, including any {@code "system"} prelude
      * @return a new instance; this instance is unchanged

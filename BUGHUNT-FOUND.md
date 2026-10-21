@@ -324,6 +324,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ParameterJsonSerializerTest#testBuildTokenIdBiasArray_negativeInfinityBansTheToken`, `#testBuildTokenIdBiasArray_nanOrPositiveInfinityIsRejected` (vorher rot, nachher 34/34); `InferenceParametersTest` 105/105, `WireNameRegistryTest` 8/8 grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d38840e`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J8-6):** Die öffentliche Javadoc nannte das Verhalten nicht, nur die private `addBias`. `ParameterJsonSerializer#buildTokenIdBiasArray`/`#buildTokenStringBiasArray` und `InferenceParameters#withTokenIdBias`/`#withTokenBias` sagen jetzt, dass `Float.NEGATIVE_INFINITY` als llamas Sperrform `false` geht, und nennen `@throws IllegalArgumentException` für NaN und +Unendlich. Nur Doku; `ParameterJsonSerializerTest` pinnt beides.
 
 <a id="f28"></a>
 ### F28 – java-llama.cpp: `InferenceParameters.withMessages(List<ChatMessage>)` verwirft `tool_calls` und `tool_call_id`
@@ -1304,6 +1305,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nicht abgedeckt (offen):** Die Übersetzungen des Servers bauen den Verlauf ohne `buildMessages`: `ResponsesApiSupport.java:218` (`asText("")`) und `AnthropicApiSupport.java:229` (`input` fehlt → `""`) können weiterhin `""` schreiben. **Nachtrag 2026-10-19:** behoben als F172.
 - **Status:** gefixt (Java-API-Pfad; Server-Übersetzungen als F172)
 - **Commit:** 7f19450
+- **Nachtrag (Branch-Review 2026-10-20, Fund J8-6):** `ParameterJsonSerializer#buildMessages(List<ChatMessage>)`, `InferenceParameters#withMessages(List<ChatMessage>)` und `ChatRequest#buildMessagesJson` sagen jetzt, dass leere oder nur aus Leerraum bestehende Tool-Call-Argumente als `{}` geschrieben werden. Genauer als der Kommentar am Fix: upstream `json::parse`t die Argumente des Verlaufs nur bei Templates, die Objekt-Argumente nehmen (`supports_object_arguments`, `common/chat.cpp:1350`, b11639); der Code-Kommentar sagt das jetzt auch. `ToolCall` sagt, dass die Argumente aus der Modellantwort unverändert bleiben und nur beim Zurückschreiben in den Verlauf aus leer `{}` wird. Nur Doku; `ParameterJsonSerializerTest` pinnt das Verhalten.
 
 <a id="f167"></a>
 ### F167 – java-llama.cpp: `completeBatch`/`chatBatch` laufen auf dem gemeinsamen `ForkJoinPool` und nutzen auf wenigen Kernen nicht alle Slots

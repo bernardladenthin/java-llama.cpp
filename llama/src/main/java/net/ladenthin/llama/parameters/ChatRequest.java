@@ -316,7 +316,9 @@ public final class ChatRequest {
     /**
      * Build the OAI-style {@code messages} array as a JSON string. Each entry carries
      * role and content; assistant tool-call turns add a {@code tool_calls} array; tool-
-     * result turns add a {@code tool_call_id} field.
+     * result turns add a {@code tool_call_id} field. Empty or blank tool-call arguments are
+     * written as {@code {}}, because chat templates that take object arguments parse the
+     * history's arguments as JSON and an empty string would fail the whole request.
      *
      * @return the JSON array as a string
      */

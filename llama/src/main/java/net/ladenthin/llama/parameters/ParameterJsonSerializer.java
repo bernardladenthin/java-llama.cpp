@@ -117,7 +117,11 @@ public class ParameterJsonSerializer {
      * {@link net.ladenthin.llama.value.ChatMessage} objects directly so messages with non-null
      * {@link net.ladenthin.llama.value.ChatMessage#getParts()} can be serialized as the OAI-compatible
      * array-form {@code content} the upstream {@code mtmd} pipeline expects.
-     * Plain text messages still emit the legacy string-form {@code content}.
+     * Plain text messages still emit the legacy string-form {@code content}. A tool-result message
+     * carries its {@code tool_call_id}, an assistant turn with tool calls a {@code tool_calls} array.
+     * Empty or blank tool-call arguments are written as {@code {}}, because chat templates that take
+     * object arguments parse the history's arguments as JSON and an empty string would fail the
+     * whole request.
      *
      * @param messages messages in order; must not be {@code null}
      * @return a Jackson {@link ArrayNode} ready for the {@code messages} request field
@@ -168,8 +172,9 @@ public class ParameterJsonSerializer {
                     entry.put("type", "function");
                     ObjectNode function = entry.putObject("function");
                     function.put("name", call.getName());
-                    // Upstream parses the arguments of the history with json::parse, so an empty
-                    // string fails the whole request with 400; a call without arguments is "{}".
+                    // Templates that take object arguments make upstream json::parse the arguments
+                    // of the history, so an empty string fails the whole request with 400; a call
+                    // without arguments is "{}".
                     final String arguments = call.getArgumentsJson();
                     function.put("arguments", arguments.trim().isEmpty() ? "{}" : arguments);
                 }
@@ -230,9 +235,11 @@ public class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for integer token IDs:
      * {@code [[15043, 1.0], [50256, -0.5]]}.
+     * A bias of {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param biases map from token ID to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code [tokenId, biasValue]} pairs
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public ArrayNode buildTokenIdBiasArray(Map<Integer, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -248,9 +255,11 @@ public class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for string tokens:
      * {@code [["Hello", 1.0], [" world", -0.5]]}.
+     * A bias of {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param biases map from token string to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code ["token", biasValue]} pairs
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public ArrayNode buildTokenStringBiasArray(Map<String, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
