@@ -465,6 +465,7 @@ public class ChatScenarioTest {
      */
     @Test
     public void testHandleInfillDirect() {
+        FimAssumptions.assumeFimTokens(model);
         String prefix = "def greet(name):\n    \"\"\" ";
         String suffix = "\n    return greeting\n";
 

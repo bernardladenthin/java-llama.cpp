@@ -20,6 +20,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.FimAssumptions;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.exception.InvalidRequestException;
@@ -272,6 +273,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
 
     @Test
     public void infillReturnsContent() throws IOException {
+        FimAssumptions.assumeFimTokens(model);
         String body = "{\"input_prefix\":\"def add(a, b):\\n    return \",\"input_suffix\":\"\\n\",\"n_predict\":16}";
         Response response = post(port, "/infill", body, "");
         assertThat(response.code, is(200));
@@ -306,6 +308,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
 
     @Test
     public void ollamaGenerateWithSuffixUsesInfill() throws IOException {
+        FimAssumptions.assumeFimTokens(model);
         String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":false,"
                 + "\"prompt\":\"def add(a, b):\\n    return \",\"suffix\":\"\\n\",\"options\":{\"num_predict\":16}}";
         Response response = post(port, "/api/generate", body, "");

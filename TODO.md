@@ -596,10 +596,6 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 - **`RpcClient.AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt` fails under
   `--gtest_repeat=2`** in one process (also filtered alone); it passes in a normal `ctest` run. The
   test drives ggml's process-wide registry directly; find out which state the first run leaves.
-- **Three FIM tests fail against a model without FIM tokens** (`500`):
-  `OpenAiServerCompletionIntegrationTest#infillReturnsContent`, `#ollamaGenerateWithSuffixUsesInfill`
-  and `ErrorHandlingTest#testHandleInfillMissingInputSuffix`. Not a defect -- CI's model has the
-  tokens -- but they should self-skip on a model without them, as the model-gated tests do.
 - **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
   `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
   its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.

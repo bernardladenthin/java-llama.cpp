@@ -192,6 +192,7 @@ public class ErrorHandlingTest {
 
     @Test
     public void testHandleInfillMissingInputSuffix() {
+        FimAssumptions.assumeFimTokens(model);
         String json = "{\"input_prefix\":\"def hello():\",\"n_predict\":5}";
         try {
             model.handleInfill(json);
