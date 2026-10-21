@@ -2052,7 +2052,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `LocalAgentTest.inProcessModelAnswersUnderTheModelIdItIsListedWith` (`--alias` = `AgentOptions.DEFAULT_MODEL_ID` ohne, `x` mit `--model-id x`), `AgentOptionsTest.modelIdThatLlamaCppsAliasWouldSplitOrTrimIsRejectedForAnInProcessModel` (`a,b`, ` x`, `x `, `""`), `AgentOptionsTest.modelIdForARemoteEndpointIsSentUnchanged` (`a,b` mit `--base-url` bleibt). `LocalAgentTest` 28/28, `AgentOptionsTest` 17/17 grün; Kern-Javadoc ohne Fehler.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: „Expected: a collection containing "--alias" but: mismatches were: [was "", was "--fit", was "off", was "--model", was "m.gguf", …]“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix beide grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `f10aa6a`
 
 ## Offene Verdachte ohne Fund-ID
 
