@@ -287,12 +287,14 @@ the first two items break every existing consumer at upgrade.
 - **`ModelParameters.setMoeCacheMib(int)`** (`--moe-cache-mib`, llama.cpp b11480, EXPERIMENTAL upstream): a
   GPU cache for the MoE expert weights a `setCpuMoeLayers` / `--cpu-moe` setup keeps in host memory,
   split among several GPUs like the layers; `0` (the default) disables it.
-- **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
-  llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
-  `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of
-  both community converters. Guarded by `test_kolibri1.cpp`, which compares tiny random models with an
-  independent reference written from Aleph Alpha's vLLM implementation. The patch is dropped once upstream adds
-  the architecture.
+- **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE): upstream's own
+  implementation since llama.cpp b11709 ([ggml-org/llama.cpp#30673](https://github.com/ggml-org/llama.cpp/pull/30673)),
+  which this library carries from the b11760 bump on; before it the patch `0016-model-kolibri1.patch` (dropped at
+  that bump, see `docs/history/dropped-llama-patches.md`). The patch also loaded the GGUFs of the two community
+  converters; upstream does not -- it requires the keys its own converter writes and knows no pre-tokenizer
+  `kolibri1` -- so those files must be reconverted with upstream's `convert_hf_to_gguf.py` (b11709 or later).
+  Guarded by `test_kolibri1.cpp`, which compares tiny random models with an independent reference written from
+  Aleph Alpha's vLLM implementation, now against upstream's code.
 - **`GpuSplitMode.TENSOR`** (`--split-mode tensor`, tensor parallelism, EXPERIMENTAL upstream). The mode
   existed upstream before; since llama.cpp b11450 (#26610) it also works across RPC servers.
 - **Input/output modalities on `RouterModel` and `ModelMeta`** (llama.cpp b11429, #29987):

@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11639](https://img.shields.io/badge/llama.cpp-%23b11639-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11639)  
+[![llama.cpp b11760](https://img.shields.io/badge/llama.cpp-%23b11760-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11760)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -111,7 +111,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Runtime LoRA adapter control** — list the loaded adapters and change their scales at runtime without reloading the model (`getLoraAdapters()` / `setLoraAdapters(Map)`), the typed counterpart of the upstream `GET`/`POST /lora-adapters` endpoints.
 - **Text-to-speech** (`TextToSpeech`) over llama.cpp's Qwen3-TTS pipeline (`mtmd_helper::gen_audio`), returning WAV audio.
 - **In-JVM GGUF quantization** (`LlamaQuantizer`) over llama.cpp's `llama_model_quantize` — convert a GGUF to another quantization scheme without shelling out to `llama-quantize`.
-- **Kolibri-1** (Aleph Alpha's German/English reasoning MoE, architecture `kolibri1`) before upstream llama.cpp supports it, through a carried patch that loads the GGUFs of both community converters. See [Kolibri-1](#kolibri-1-aleph-alpha).
+- **Kolibri-1** (Aleph Alpha's German/English reasoning MoE, architecture `kolibri1`), supported by llama.cpp itself since b11709; GGUFs converted with upstream's converter. See [Kolibri-1](#kolibri-1-aleph-alpha).
 - **Decision models** (`handleSystemOne`) — llama.cpp's TypeSafe-compatible `/v1/systemone` API: typed `choice` / `score` / `noul` questions about a state, answered with probabilities in one forward pass, no token generated (laya, julia-1, lev, openjev, kev and the later decision models). See [Decision models](#decision-models-v1systemone).
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
@@ -771,12 +771,14 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 ### Kolibri-1 (Aleph Alpha)
 
 [Kolibri-1](https://huggingface.co/Aleph-Alpha/Kolibri-1) is Aleph Alpha's 78B-parameter Mixture-of-Experts
-reasoning model for German and English (about 3.5B parameters active per token, Apache-2.0). Upstream llama.cpp
-does not support its architecture yet ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)),
-so this library carries it as a patch (`llama/patches/0016-model-kolibri1.patch`) until upstream does. It loads the
-community GGUFs of both published converters -- e.g. [Hob-forge/Kolibri-1-GGUF](https://huggingface.co/Hob-forge/Kolibri-1-GGUF)
-and [Eliasfpv28/Kolibri-1-Q3_K_S-GGUF](https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF) -- which the two
-community llama.cpp patches cannot each load from the other. The embedded chat template handles reasoning and
+reasoning model for German and English (about 3.5B parameters active per token, Apache-2.0). llama.cpp supports
+the architecture since b11709 ([ggml-org/llama.cpp#30673](https://github.com/ggml-org/llama.cpp/pull/30673)), and
+this library has carried it as a patch before that (`0016-model-kolibri1.patch`, dropped at the b11760 bump). Use a
+GGUF converted with upstream's `convert_hf_to_gguf.py` at b11709 or later: the GGUFs the two community ports
+published earlier (e.g. [Hob-forge/Kolibri-1-GGUF](https://huggingface.co/Hob-forge/Kolibri-1-GGUF) and
+[Eliasfpv28/Kolibri-1-Q3_K_S-GGUF](https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF)) carry other metadata
+(a pre-tokenizer name upstream does not know, another gating-function value, keys upstream requires left out),
+which the dropped patch tolerated and upstream's loader refuses. The embedded chat template handles reasoning and
 Hermes-style tool calls; for a split GGUF, point the model path at the first part.
 
 ```java
@@ -791,8 +793,8 @@ try (LlamaModel model = new LlamaModel(params)) {
 ```
 
 The model is large (the Q4_K_M file is 47.5 GB) and runs from system RAM on the CPU, or partly offloaded to a
-GPU. The architecture is checked numerically against Aleph Alpha's reference on tiny random models in every C++
-test run; the real model was not run in this project's CI, and the GPU backends are untested for it.
+GPU. Upstream's implementation is checked numerically against Aleph Alpha's reference on tiny random models in
+every C++ test run of this project (`test_kolibri1.cpp`); the real model was not run in this project's CI.
 
 ### Decision models (`/v1/systemone`)
 

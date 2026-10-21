@@ -344,8 +344,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11639)
-set(JLLAMA_GIT_COMMIT "a0e6dc7384edb8f5d927155e1d26c10b4a310e6d")   # the commit b11639 names; kept after the tag exists
+set(JLLAMA_GIT_TAG    b11760)
+set(JLLAMA_GIT_COMMIT "b684498579899ec376ea13ab4bb3d0a9ef2c1a5b")   # the commit b11760 names; kept after the tag exists
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -948,6 +948,12 @@ if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
         ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+        # server-connect.cpp (b11744, #28277): server.cpp spawns the llama-connect helper binary through
+        # it when --connect is given and references the class unconditionally, so the unit is a link
+        # requirement of server.cpp, never of the JNI routes. Without the binary --connect fails with
+        # a message; a build without subprocess support (Android, where server.cpp is not compiled
+        # anyway) answers "subprocess support disabled".
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-connect.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server.cpp
     )
@@ -1392,6 +1398,7 @@ if(BUILD_TESTING)
             src/test/cpp/test_native_server_shutdown.cpp
             src/main/cpp/native_server_engine.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server-connect.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp

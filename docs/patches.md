@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**14 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -30,7 +30,6 @@ match a binary to this page.
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
 | 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
-| 0016 | [`0016-model-kolibri1.patch`](#0016-model-kolibri1patch) | model: add Kolibri-1 (kolibri1) -- carried until upstream supports it | 6 | 7 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0019 | [`0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](#0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversionpatch) | ggml-cpu : select the NEON fp32->fp16 conversion | 1 | 2 |
@@ -244,78 +243,6 @@ JVM) cannot use ggml-rpc as it is:
 Upstream-submittable; not filed upstream yet. The runnable guard is
 src/test/cpp/test_rpc.cpp: it links both new functions and exercises the registration and
 stop paths over loopback.
-```
-
-## 0016-model-kolibri1.patch
-
-**Files (6):** `src/llama-arch.cpp`, `src/llama-arch.h`, `src/llama-model.cpp`, `src/llama-vocab.cpp`, `src/models/kolibri1.cpp`, `src/models/models.h`
-
-The patch's own header, verbatim:
-
-```text
-model: add Kolibri-1 (kolibri1) -- carried until upstream supports it
-
-Aleph Alpha's Kolibri-1 is a 78B-parameter German/English reasoning MoE (3.46B active per
-token, Apache-2.0). Upstream llama.cpp has no support yet; the request is
-https://github.com/ggml-org/llama.cpp/issues/29922 (open, no PR at the time of writing).
-DROP THIS PATCH as soon as upstream registers the architecture -- check on every bump with
-`git grep -n kolibri src/llama-arch.cpp` in the new llama.cpp tag. This one is a clean true/false,
-unlike the drop-checks of 0017, 0018 and 0019: the name reaches that file only through this patch,
-so NO hits means the patch is still needed and any hit means upstream has it. Run it against the
-pristine tag, never against a patched source tree, which would show this patch's own lines.
-Measured at b11639 (a0e6dc738): 0 hits.
-
-Architecture (from Aleph Alpha's own vLLM implementation, the reference used here):
-  - GQA attention with per-head q/k RMSNorm. config.layer_types interleaves sliding-window
-    layers, which use (NEOX) RoPE, with full-attention layers that have no positional encoding.
-  - Sandwich norms: input norm -> attention -> post-attention norm -> residual, then
-    pre-FFN norm -> routed MoE + one ungated shared expert -> post-FFN norm -> residual.
-  - Router: top-k selected on (logits + expert_bias), experts weighted by the unbiased
-    sigmoid(logits), renormalized only if norm_topk_prob (off in Kolibri-1). This is NOT
-    DeepSeek-V3's sigmoid router (selection on sigmoid(logits) + bias), which picks other
-    experts as soon as the bias is non-zero -- so the graph builds the selection itself and
-    hands it to build_moe_ffn (selected_experts_in); build_moe_ffn itself is unchanged.
-
-What the patch touches: the arch name "kolibri1" (llama-arch.{h,cpp}), the model mapping and
-NEOX rope type (llama-model.cpp), the model struct (models/models.h), the new
-src/models/kolibri1.cpp, and the "kolibri1" pre-tokenizer name mapped to Qwen2's
-(llama-vocab.cpp). No converter or gguf-py change: this project only loads GGUFs.
-
-Both published GGUF dialects load. The two community converters disagree on metadata, and
-each community runtime rejects the other's files:
-  - expert_gating_func: 2 (sigmoid) from the AFMoE-based converter, 5 ("sigmoid_logit_add",
-    a value only the Qwen3-MoE-based converter's patch defines) from the other one, or
-    absent. All three mean the same router, which is a property of the architecture.
-  - tokenizer.ggml.pre: "qwen2" or "kolibri1"; the Qwen3-MoE-based runtime registers the
-    latter, the AFMoE-based one does not (llama.cpp rejects an unknown pre-tokenizer).
-  - expert_weights_norm, expert_shared_count and output.weight are optional here.
-
-Known places (all read while writing this patch, 2026-10-06):
-  - Request:   https://github.com/ggml-org/llama.cpp/issues/29922
-  - Model:     https://huggingface.co/Aleph-Alpha/Kolibri-1 (and Kolibri-1-BF16)
-  - Reference: https://github.com/Aleph-Alpha/aleph-alpha-inference, aleph_alpha_inference/
-               kolibri1.py at 049a6a7 (Apache-2.0, Copyright 2026 Aleph Alpha GmbH) -- the
-               specification this patch follows; its tests/test_kolibri1.py pins the router.
-  - AFMoE-based port by Eliasfpv28, base llama.cpp edd6e2bbd (b11378):
-               https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF, runtime-source/
-               kolibri1-runtime.patch (new additions Apache-2.0, llama.cpp-derived parts MIT).
-               Source of the graph-side router (selection built outside build_moe_ffn).
-               Its runtime is also what https://huggingface.co/InsidiousFiddler/Kolibri-1-GGUF
-               points to.
-  - Qwen3-MoE-based port, base llama.cpp 836d571 (b11381), as carried in
-               https://github.com/mjwsolo/localcode/pull/101 (patches/0006-kolibri1.patch,
-               "community patch"). https://huggingface.co/Hob-forge/Kolibri-1-GGUF publishes
-               GGUFs and a kolibri1-llama.cpp.patch (MIT) for the same base commit whose model
-               card describes the same design (a new gating mode); that file itself could not be
-               fetched from here, so it is not verified to be byte-identical. Source of the
-               loader (optional keys, tied-output fallback, swa rope base) and of the graph layout.
-  - Independent effort under the name "kolibri" (not "kolibri1"), whose GGUFs this patch
-               does not load: https://github.com/CWBudde/kolibri-llama-cpp,
-               https://github.com/CWBudde/llama.cpp/pull/7
-
-Verification in java-llama.cpp: src/test/cpp/test_kolibri1.cpp builds tiny random Kolibri-1
-GGUFs in both dialects, runs them through the real library and compares every logit with an
-independent float reference written from the vLLM implementation above.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
