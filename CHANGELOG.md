@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11799** (from b11639, in three steps on the branch: b11760, b11761, b11799). What the range
+- **llama.cpp b11800** (from b11639, in four steps on the branch: b11760, b11761, b11799, b11800). What the range
   brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a

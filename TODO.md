@@ -564,9 +564,9 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
   `501` as `countTokens` is. `LlamaModelBackend` implements it, so the shipped backend is not
   affected; a `501` with the reason would match the other optional capabilities.
 
-### After the llama.cpp bump to b11799 (2026-10-21): what the range offers and is not wired yet
+### After the llama.cpp bump to b11800 (2026-10-21): what the range offers and is not wired yet
 
-The bump itself is done (b11639 -> b11760 -> b11761 -> b11799; patches `0016` and `0019` dropped, `0007`
+The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800; patches `0016` and `0019` dropped, `0007`
 refreshed; `docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
 library does not expose, each a decision rather than an omission:
 
