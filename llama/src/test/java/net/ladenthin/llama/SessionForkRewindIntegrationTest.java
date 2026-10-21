@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.ChatMessage;
+import net.ladenthin.llama.value.Pair;
 import net.ladenthin.llama.value.SessionCheckpoint;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -75,12 +76,34 @@ public class SessionForkRewindIntegrationTest {
         return new Session(
                 model,
                 slotId,
-                "You are terse.",
-                p -> p.withNPredict(24).withTemperature(0.0f).withSeed(42).withReasoningBudgetTokens(0));
+                SYSTEM_MESSAGE,
+                p -> p.withNPredict(N_PREDICT)
+                        .withTemperature(0.0f)
+                        .withSeed(42)
+                        .withReasoningBudgetTokens(0));
+    }
+
+    private static final String SYSTEM_MESSAGE = "You are terse.";
+    private static final int N_PREDICT = 24;
+
+    /**
+     * Skips the test unless the longest transcript it builds -- two turns, the second one sending
+     * {@code secondPrompt} -- fits a slot of the loaded model (see {@link ModelAssumptions}).
+     *
+     * @param secondPrompt the prompt of the second turn
+     */
+    private static void assumeTwoTurnsFit(String secondPrompt) {
+        ModelAssumptions.assumeConversationFits(
+                model,
+                SYSTEM_MESSAGE,
+                java.util.Arrays.asList(
+                        new Pair<>("user", "Say OK."), new Pair<>("assistant", ""), new Pair<>("user", secondPrompt)),
+                2 * N_PREDICT);
     }
 
     @Test
     public void rewindRestoresTranscriptAndConversationContinues() {
+        assumeTwoTurnsFit("Say MORE.");
         try (Session session = newSession(0)) {
             session.send("Say OK.");
             List<ChatMessage> atCheckpoint = session.getMessages();
@@ -102,6 +125,7 @@ public class SessionForkRewindIntegrationTest {
 
     @Test
     public void forkCreatesIndependentSessionWithSameTranscript() {
+        assumeTwoTurnsFit("Say A.");
         try (Session original = newSession(0)) {
             original.send("Say OK.");
 

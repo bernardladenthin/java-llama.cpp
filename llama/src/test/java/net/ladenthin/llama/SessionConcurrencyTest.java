@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.LlamaOutput;
+import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -95,6 +96,17 @@ public class SessionConcurrencyTest {
     public void testConcurrentSendProducesAlternatingTranscript() throws Exception {
         final int threads = 2;
         final int callsPerThread = 2;
+        // The last send carries the whole transcript: every prompt, the answers before it, and its own.
+        List<Pair<String, String>> transcript = new java.util.ArrayList<>();
+        for (int t = 0; t < threads; t++) {
+            for (int i = 0; i < callsPerThread; i++) {
+                if (!transcript.isEmpty()) {
+                    transcript.add(new Pair<>("assistant", ""));
+                }
+                transcript.add(new Pair<>("user", "hi from t" + t + " call " + i));
+            }
+        }
+        ModelAssumptions.assumeConversationFits(model, null, transcript, threads * callsPerThread * N_PREDICT);
         try (Session session =
                 new Session(model, 0, null, p -> p.withNPredict(N_PREDICT).withTemperature(0.0f))) {
 

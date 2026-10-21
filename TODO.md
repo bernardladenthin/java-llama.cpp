@@ -555,21 +555,6 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 - **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
   `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
   its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.
-- **Some model-backed tests are bound to CI's models on purpose** (no action; recorded so that a run
-  against another model, such as the random two-layer GGUF of the local sandbox, is not read as a
-  defect). They check a property of the model, so they fail there instead of skipping:
-  `LlamaEmbeddingsTest` and `LlamaModelTest#testEmbedding` assert CodeLlama-7B's embedding dimension
-  4096 (five tests); `LlamaModelTest#testTokenization` and `#testVocabOnly` the space llama's
-  SentencePiece tokenizer puts before a prompt; `QuantizerIntegrationTest#quantize_producesLoadableModel` the size of the
-  quantized 135M draft model (above 10 MB) and `#quantize_requantizeWithoutOptIn_throws` an input that
-  is already quantized; `ReasoningBudgetTest#testThinkingDefault_reasoningContentAndAnswerPresent`
-  that Qwen3 thinks by default; and the multi-turn tests
-  `SessionConcurrencyTest#testConcurrentSendProducesAlternatingTranscript`,
-  `LlamaModelTest#testChatCompleteMultiTurn` and `#testSessionMultiTurn`,
-  `ChatScenarioTest#testChatCompleteMultiTurnThreeTurns` and
-  `SessionForkRewindIntegrationTest`'s fork and rewind cases a context above 128 tokens (they ask for 2048; the
-  random model gives them its 128). The infill tests differ: they check the infill paths, not the
-  model, and skip themselves on a model without FIM tokens (`FimAssumptions`).
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 

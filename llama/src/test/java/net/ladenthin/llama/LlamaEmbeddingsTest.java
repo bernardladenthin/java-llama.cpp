@@ -87,6 +87,7 @@ public class LlamaEmbeddingsTest {
     @Test
     public void testEmbedUnspecifiedPooling() {
         model = openModel(PoolingType.UNSPECIFIED);
+        ModelAssumptions.assumeEmbeddingDimension(model, EXPECTED_DIM);
         float[] embedding = model.embed(TEXT);
         assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.UNSPECIFIED);
@@ -96,6 +97,7 @@ public class LlamaEmbeddingsTest {
     @Test
     public void testEmbedMeanPooling() {
         model = openModel(PoolingType.MEAN);
+        ModelAssumptions.assumeEmbeddingDimension(model, EXPECTED_DIM);
         float[] embedding = model.embed(TEXT);
         assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.MEAN);
@@ -105,6 +107,7 @@ public class LlamaEmbeddingsTest {
     @Test
     public void testEmbedLastPooling() {
         model = openModel(PoolingType.LAST);
+        ModelAssumptions.assumeEmbeddingDimension(model, EXPECTED_DIM);
         float[] embedding = model.embed(TEXT);
         assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.LAST);
@@ -150,6 +153,7 @@ public class LlamaEmbeddingsTest {
     @Test
     public void testEmbedBatchReturnsOneVectorPerPromptInOrder() {
         model = openModel(PoolingType.MEAN);
+        ModelAssumptions.assumeEmbeddingDimension(model, EXPECTED_DIM);
         java.util.List<float[]> batch =
                 model.embed(java.util.Arrays.asList(TEXT, "A completely different sentence.", TEXT));
 

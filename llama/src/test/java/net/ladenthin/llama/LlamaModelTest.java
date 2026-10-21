@@ -517,6 +517,12 @@ public class LlamaModelTest {
      */
     @Test
     public void testSessionMultiTurn() {
+        ModelAssumptions.assumeConversationFits(
+                model,
+                "You are a terse assistant.",
+                java.util.Arrays.asList(
+                        new Pair<>("user", "Say hi."), new Pair<>("assistant", ""), new Pair<>("user", "Say bye.")),
+                2 * 8);
         try (Session session = new Session(
                 model,
                 0,
@@ -634,6 +640,7 @@ public class LlamaModelTest {
 
     @Test
     public void testEmbedding() {
+        ModelAssumptions.assumeEmbeddingDimension(model, 4096);
         float[] embedding = model.embed(prefix);
         assertEquals(4096, embedding.length);
     }
@@ -660,6 +667,7 @@ public class LlamaModelTest {
 
     @Test
     public void testTokenization() {
+        ModelAssumptions.assumeSentencePieceSpacePrefix(model);
         String prompt = "Hello, world!";
         int[] encoded = model.encode(prompt);
         String decoded = model.decode(encoded);
@@ -669,6 +677,7 @@ public class LlamaModelTest {
 
     @Test
     public void testVocabOnly() {
+        ModelAssumptions.assumeSentencePieceSpacePrefix(model); // the same file, loaded in full
         try (LlamaModel vocabModel = new LlamaModel(
                 new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly())) {
             String prompt = "Hello, world!";
@@ -1036,6 +1045,7 @@ public class LlamaModelTest {
         messages.add(new Pair<>("user", "What is 2+2?"));
         messages.add(new Pair<>("assistant", "4"));
         messages.add(new Pair<>("user", "And 3+3?"));
+        ModelAssumptions.assumeConversationFits(model, null, messages, nPredict);
 
         InferenceParameters params = new InferenceParameters("")
                 .withMessages(null, messages)

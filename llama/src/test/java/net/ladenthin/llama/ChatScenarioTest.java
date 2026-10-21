@@ -355,6 +355,14 @@ public class ChatScenarioTest {
      */
     @Test
     public void testChatCompleteMultiTurnThreeTurns() {
+        List<Pair<String, String>> conversation = new ArrayList<>();
+        conversation.add(new Pair<>("user", "A?"));
+        conversation.add(new Pair<>("assistant", ""));
+        conversation.add(new Pair<>("user", "B?"));
+        conversation.add(new Pair<>("assistant", ""));
+        conversation.add(new Pair<>("user", "B?"));
+        ModelAssumptions.assumeConversationFits(model, null, conversation, 3 * N_PREDICT);
+
         List<Pair<String, String>> messages = new ArrayList<>();
         messages.add(new Pair<>("user", "A?"));
 
