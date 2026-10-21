@@ -156,6 +156,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F231](#f231) — niedrig — *gefixt*
 - [F232](#f232) — niedrig — *gefixt*
 - [F233](#f233) — niedrig — *gefixt*
+- [F234](#f234) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1520,6 +1521,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Die Akkumulationszusicherungen sind gegen `putString` rot (der erste Wert fehlt). Die End-to-end-Probe aus F187 zeigt zwei skalierte Adapter als einen Wert: `--lora-scaled ..\models\moe_shakespeare15M.gguf:0.5,second.gguf:0.25`. Modullaufzahlen wie in F187.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5fff6b8`
+- **Nachtrag (Branch-Review 2026-10-20):** Der `isEmpty()`-Zweig in `appendCsvValue` ließ einen leeren Vorwert still verschwinden; behoben als F234 (ein leerer Wert wird abgewiesen).
 
 <a id="f189"></a>
 ### F189 – java-llama.cpp: Ohne `--model-id` nennen `/v1/models` und die Antworten dasselbe Modell verschieden
