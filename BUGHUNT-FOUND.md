@@ -1969,7 +1969,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `RpcServerLifecycleTest#aServerThatIgnoresTheStopIsReportedAndKeepsTheSlot` (ein Backend, dessen `serve` den Stopp ignoriert, Start-Frist 100 ms, Stopp-Frist 200 ms: die Meldung nennt den überlebenden Thread, ein zweiter Start wirft `IllegalStateException`, nach dem Ende des Threads ist der Platz frei), `#aCloseThatTheServerThreadOutlivesKeepsTheSlot` (dasselbe für `close()`), `#aServerThreadThatEndsOnItsOwnKeepsTheSlotUntilClose` (der Platz bleibt bis `close()` belegt, auch wenn der Thread schon geendet hat; gegen den alten Code grün, er pinnt die Zwei-Halter-Regel).
 - **Rot-Grün-Nachweis:** Zuerst nur die Stopp-Frist als Parameter eingeführt (verhaltensneutral), dann rot: „Expected: a string containing "its thread did not end within 200 ms after the stop" but: was "RPC server could not listen on 127.0.0.1:50052 (is the port already in use?)"“ und „Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“; mit dem Fix grün (`RpcServerLifecycleTest` 18/18, `RpcServerTest` 9/9 gegen die native Bibliothek, `RpcServerOptionsTest` 9/9); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `2eb3fff`
 
 ## Offene Verdachte ohne Fund-ID
 
