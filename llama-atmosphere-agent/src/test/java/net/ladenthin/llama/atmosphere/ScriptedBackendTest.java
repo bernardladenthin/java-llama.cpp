@@ -39,6 +39,18 @@ class ScriptedBackendTest {
         }
     }
 
+    /** The text a turn's chunks carry: the {@code delta.content} of every chunk, in order. */
+    private static String contentOf(List<String> chunks) throws Exception {
+        StringBuilder content = new StringBuilder();
+        for (String chunk : chunks) {
+            var delta = MAPPER.readTree(chunk).path("choices").path(0).path("delta");
+            if (delta.path("content").isTextual()) {
+                content.append(delta.path("content").asText());
+            }
+        }
+        return content.toString();
+    }
+
     @Test
     void aTextTurnCarryingTheLineSeparatorIsJsonOnEveryPlatform() {
         assertEveryChunkIsJson(
@@ -52,29 +64,30 @@ class ScriptedBackendTest {
     /**
      * The default branch of {@code quote}, not the named cases: a control character nobody listed is
      * what reopened the gap, so every one of them is checked rather than the four with a short escape.
+     * Valid JSON is not enough -- any hexadecimal or short escape parses -- so each must also come back
+     * as itself: a wrong code point, or a CR written with the escape of an LF, parses just as well.
      */
     @Test
-    void everyControlCharacterSurvivesAsJson() {
+    void everyControlCharacterSurvivesAsJson() throws Exception {
         for (int c = 0; c < 0x20; c++) {
+            String what = "U+" + String.format("%04X", c);
             String text = "a" + (char) c + "b";
-            assertEveryChunkIsJson("U+" + String.format("%04X", c), ScriptedBackend.textTurn(text));
+            List<String> chunks = ScriptedBackend.textTurn(text);
+            assertEveryChunkIsJson(what, chunks);
+            assertThat(what, contentOf(chunks), is(text));
         }
-        assertEveryChunkIsJson("quote and backslash", ScriptedBackend.textTurn("say \"hi\"\\ now"));
-        assertEveryChunkIsJson("DEL and beyond", ScriptedBackend.textTurn("a\u007fb\u0085c d"));
+        String quoted = "say \"hi\"\\ now";
+        assertEveryChunkIsJson("quote and backslash", ScriptedBackend.textTurn(quoted));
+        assertThat("quote and backslash", contentOf(ScriptedBackend.textTurn(quoted)), is(quoted));
+        String beyond = "a\u007fb\u0085c d";
+        assertEveryChunkIsJson("DEL and beyond", ScriptedBackend.textTurn(beyond));
+        assertThat("DEL and beyond", contentOf(ScriptedBackend.textTurn(beyond)), is(beyond));
     }
 
     /** A chunk must also carry the text back unchanged -- escaping may not lose or alter it. */
     @Test
     void theTextComesBackOutOfTheChunkUnchanged() throws Exception {
         String text = "working" + System.lineSeparator() + "\tdone \"quoted\" \\ U+0001:\u0001";
-        List<String> chunks = ScriptedBackend.textTurn(text);
-        String content = null;
-        for (String chunk : chunks) {
-            var delta = MAPPER.readTree(chunk).path("choices").path(0).path("delta");
-            if (delta.path("content").isTextual()) {
-                content = delta.path("content").asText();
-            }
-        }
-        assertThat(content, is(text));
+        assertThat(contentOf(ScriptedBackend.textTurn(text)), is(text));
     }
 }
