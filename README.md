@@ -146,7 +146,10 @@ In Gradle it is just `implementation("net.ladenthin:llama-platform:6.0.0")`.)
 > [!NOTE]
 > This layout starts with **6.0.0**. Up to 5.1.0, `net.ladenthin:llama` was one jar that
 > carried the CPU natives of every platform, and each GPU classifier was a complete
-> replacement for it.
+> replacement for it. Upgrading from 5.1? Everything a 5.1 consumer has to change -- the
+> dependency, the logging binding, the default port 9931 of both servers, renamed builder methods,
+> slot file names, requests refused instead of dropped -- is listed in one place:
+> [CHANGELOG.md, "Upgrading from 5.1"](CHANGELOG.md#upgrading-from-51).
 
 There are multiple [examples](llama/src/test/java/examples).
 

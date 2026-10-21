@@ -128,8 +128,10 @@ jina-reranker models the core test jobs already download) — the
   `presencePenalty`, `stopSequences`.
 
 - **Streaming tool calls + thinking events.** `JllamaStreamingChatModel` streams over the
-  native OpenAI chunk path: a `delta.tool_calls` fragment carrying arguments for an already named
-  call surfaces as `onPartialToolCall`, every assembled call as `onCompleteToolCall`, and the calls
+  native OpenAI chunk path: the arguments of a `delta.tool_calls` call surface as
+  `onPartialToolCall` once the call has a name (arguments that arrived before it are reported then,
+  so the partial calls add up to the complete arguments), every assembled call as
+  `onCompleteToolCall` as soon as the next call starts or the stream ends, and the calls
   land on the final response as
   `AiMessage.toolExecutionRequests()` (finish reason `TOOL_EXECUTION`); reasoning deltas surface
   as `onPartialThinking` and as `AiMessage.thinking()`; both the blocking and the streamed
