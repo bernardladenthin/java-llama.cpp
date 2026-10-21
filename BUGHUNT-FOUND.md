@@ -1873,7 +1873,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OaiRerankSupportTest#readTopNConvertsAFloatLikeUpstream` (`2.0` und `2.7` → 2), `#negativeFloatTopNIsAnInvalidRequest` (`-1.5`), `#readTopNKeepsAllForANonNumberOrAValueOutsideTheIntRange` (`"2"`, `true`, `4294967296` → -1, pinnt die dokumentierten Abweichungen).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <2> but: was <-1>“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`OaiRerankSupportTest` 19/19, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `5781ef5`
 
 ## Offene Verdachte ohne Fund-ID
 
