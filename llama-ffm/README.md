@@ -85,10 +85,13 @@ builds like every other module.
 
 ```bash
 mvn -pl llama -am -DskipTests install          # the core first
-mvn -f llama-ffm/pom.xml verify                # 7 model-free tests + the model-backed ones
+mvn -f llama-ffm/pom.xml verify                # the model-free tests + the model-backed ones
 # the model-backed test takes the draft model of .github/models.csv, or:
 mvn -f llama-ffm/pom.xml verify -Dnet.ladenthin.llama.ffm.model=/path/to/model.gguf
 ```
 
-The native-backed tests skip themselves without a native build (`llama/src/main/natives`, or
-`-Dnet.ladenthin.llama.lib.path=<natives directory>`).
+`FfmNativeServerTest` and `FfmTextToSpeechTest` run over fake `Backend` implementations and need
+no native library. `JllamaNativeTest` and the model-backed `FfmLlamaModelIntegrationTest` skip
+themselves without a native build (`llama/src/main/natives`, or
+`-Dnet.ladenthin.llama.lib.path=<natives directory>`); `FfmRpcServerTest` serves the CPU over
+loopback and needs one as well.

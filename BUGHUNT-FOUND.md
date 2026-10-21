@@ -1624,6 +1624,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Mit dem Seam, aber ohne Lock: `closeWaitsForASynthesisInsideTheNativeCall` rot (`close()` kehrte zurück, während die Synthese noch lief); mit dem Lock grün. `llama-ffm` `verify` 35/35 mit dem Zufallsmodell.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `c07aad0`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J13-1):** `llama-ffm/README.md` nannte noch „7 model-free tests“ (Stand vor dem Branch) und behauptete, die nativen Tests übersprängen sich ohne Bibliothek; der CLAUDE.md-Punkt „Tests“ des Moduls kannte nur `JllamaNativeTest` und `FfmLlamaModelIntegrationTest`. Das README nennt jetzt keine Zahl mehr und sagt, welche Klassen ohne Bibliothek laufen (`FfmNativeServerTest`, `FfmTextToSpeechTest`, über Fake-`Backend`s, F59/F198), welche sich überspringen (`JllamaNativeTest`, der modellgestützte Test) und dass `FfmRpcServerTest` eine braucht (er überspringt sich nicht); CLAUDE.md zählt die beiden Lebenszyklus-Klassen, die drei `takeStrings`-Fälle, `FfmRpcServerTest`, `oaiCompletionStreamEndsWithUsage` und die beiden Callback-Fehlerfälle auf. Nur Doku.
 
 <a id="f199"></a>
 ### F199 – java-llama.cpp: Ein Heartbeat vor dem Eröffnungsevent verschluckt `message_start` (Anthropic) bzw. `response.created` (Responses)

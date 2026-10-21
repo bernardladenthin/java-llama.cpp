@@ -3102,12 +3102,20 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   are major 66 and are not part of the smoke sets.
 - **Tests**: `JllamaNativeTest` (model-free: `apiVersion` equals the pom version surefire passes,
   `buildInfo` starts with `LlamaCppVersion`, a grammar conversion, a missing model's message, the log
-  callback reached from the worker and flushed on `null`, RPC device names) and
-  `FfmLlamaModelIntegrationTest` (the draft model, or `-Dnet.ladenthin.llama.ffm.model`: progress
-  callback, meta, chat completion, streaming to `stop` and an early close, raw completion and its
-  stream, tokenize/detokenize round trip, template, metrics, LoRA and configure, slot erase and the
-  refused save, the embedding refusal, invalid requests, the attached server answering `/health` and
-  the model outliving it, a closed model refusing calls). Locally the C++ test fixture's twin, a
+  callback reached from the worker and flushed on `null`, an `Error` thrown by the log callback losing
+  that line and nothing else, RPC device names, and three `takeStrings` cases: a populated array read
+  in order and freed with its count, an empty non-null array still freed, a null array not freed),
+  `FfmNativeServerTest` and `FfmTextToSpeechTest` (no native library, fake `Backend`s: `close()` waits
+  for an `isRunning()` / `synthesize` call inside the native call -- the lifecycle lock, a read/write
+  lock for TTS --, a call after `close()` does not touch the handle, a second `close()` has no
+  effect), `FfmRpcServerTest` (loopback, CPU: a stop while nothing serves does not stop the next serve,
+  a stop ends it) and `FfmLlamaModelIntegrationTest` (the draft model, or
+  `-Dnet.ladenthin.llama.ffm.model`: progress callback, meta, chat completion, streaming to `stop` and
+  an early close, raw completion and its stream, the OAI completion stream ending with `usage`,
+  tokenize/detokenize round trip, template, metrics, LoRA and configure, slot erase and the refused
+  save, the embedding refusal, invalid requests, the attached server answering `/health` and the model
+  outliving it, an `Error` thrown by the progress callback aborting the load instead of the JVM, a
+  closed model refusing calls). Locally the C++ test fixture's twin, a
   tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
 - **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
 
