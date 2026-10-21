@@ -601,9 +601,6 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
   `OpenAiServerCompletionIntegrationTest#infillReturnsContent`, `#ollamaGenerateWithSuffixUsesInfill`
   and `ErrorHandlingTest#testHandleInfillMissingInputSuffix`. Not a defect -- CI's model has the
   tokens -- but they should self-skip on a model without them, as the model-gated tests do.
-- **`MemoryManagementTest` (context 32) assumes a context shift** that llama.cpp no longer makes by
-  default (`ctx_shift = false` at b11639); check whether it still tests what it says, and use the new
-  `enableContextShift()` if it should.
 - **`llama-ffm`'s `FfmRpcServerTest` has no natives assumption**: without a native library it fails
   instead of skipping like the module's other tests.
 - **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):

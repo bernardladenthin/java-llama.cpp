@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.CompletionResult;
+import net.ladenthin.llama.value.Usage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -22,12 +24,13 @@ import org.junit.jupiter.api.Test;
  * Exercises complex C++ memory-management logic inside {@code server.hpp} that is not reached
  * by any other test in the suite.
  *
- * <h2>Context shifting (server.hpp ~line 2951)</h2>
- * When {@code n_past + 1 >= n_ctx} the server discards the oldest {@code n_discard} KV-cache
- * positions by calling {@code llama_memory_seq_rm} / {@code llama_memory_seq_add} and rebuilds
- * {@code cache_tokens} in-place.  A small context window (32 tokens) and
- * {@code setIgnoreEos(true)} guarantee the limit is crossed during a single {@code complete()}
- * call.
+ * <h2>Context shifting ({@code pre_decode()} in server-context.cpp)</h2>
+ * With {@code --context-shift} ({@link ModelParameters#enableContextShift()}; upstream's default is
+ * off), when a slot's tokens reach its context the server discards the oldest {@code n_discard} KV-cache
+ * positions by calling {@code seq_rm} / {@code seq_add} and rebuilds the slot's tokens in-place. The
+ * smallest context window (256 tokens), a 300-token answer and {@code setIgnoreEos(true)} guarantee
+ * the limit is crossed during a single call; the shift tests assert that every requested token was
+ * generated, which without the shift ends at the full context ({@code truncated}).
  *
  * <h2>Prompt-cache prefix reuse (server.hpp ~line 3162)</h2>
  * With {@code cache_prompt=true} successive calls compute a common prefix via
@@ -41,11 +44,21 @@ import org.junit.jupiter.api.Test;
 public class MemoryManagementTest {
 
     /**
-     * A short prompt whose token length we can reason about (~10 tokens for CodeLlama BPE).
-     * Kept intentionally brief so that, together with nPredict=25 and ctxSize=32, the context
-     * window is reliably exceeded and the shift path is triggered.
+     * A short prompt whose token length we can reason about (~10 tokens for CodeLlama BPE); with
+     * {@link #SHIFT_N_PREDICT} generated tokens it exceeds {@link #SMALL_CTX_SIZE}.
      */
     private static final String SHORT_PROMPT = "def add(a, b): return";
+
+    /**
+     * The context size of {@link #smallCtxModel}, and the smallest there is: llama.cpp pads
+     * {@code n_ctx} (and a slot's share of it) to a multiple of 256 ({@code llama-context.cpp:377},
+     * b11639), so the 32 this test used to ask for was a context of 256, which its 25 tokens never
+     * filled.
+     */
+    private static final int SMALL_CTX_SIZE = 256;
+
+    /** The tokens the shift tests request; with the prompt they exceed {@link #SMALL_CTX_SIZE}. */
+    private static final int SHIFT_N_PREDICT = 300;
 
     /**
      * A longer prompt (~25 tokens) used as the stable cached prefix for cache-reuse tests.
@@ -64,9 +77,10 @@ public class MemoryManagementTest {
     private static LlamaModel model;
 
     /**
-     * Separate model instance with a deliberately tiny context window (32 tokens).
-     * SHORT_PROMPT (~10 tokens) + nPredict=25 totals ~35 tokens, which exceeds the window
-     * and forces the context-shift path in server.hpp.
+     * Separate model instance with the smallest context window ({@link #SMALL_CTX_SIZE}) and one slot.
+     * SHORT_PROMPT + {@link #SHIFT_N_PREDICT} exceeds the window, which forces the context-shift path
+     * ({@code pre_decode()} in server-context.cpp). It is the small draft model, because the shift tests
+     * generate a few hundred tokens each.
      */
     private static LlamaModel smallCtxModel;
 
@@ -83,11 +97,17 @@ public class MemoryManagementTest {
                 .setGpuLayers(gpuLayers)
                 .setFit(false));
 
-        // ctxSize=32 makes a context shift unavoidable: ~10-token prompt + 25 predicted tokens
-        // totals ~35 positions, guaranteed to exceed the 32-token window.
+        Assumptions.assumeTrue(
+                new File(TestConstants.DRAFT_MODEL_PATH).exists(),
+                "Draft model file not found, skipping MemoryManagementTest");
+        // The prompt and SHIFT_N_PREDICT tokens exceed the one slot's context, so a context shift is
+        // unavoidable -- once it is enabled: upstream's default is off (common.h, ctx_shift = false at
+        // b11639), and without it the slot stops when its context is full.
         smallCtxModel = new LlamaModel(new ModelParameters()
-                .setModel(TestConstants.MODEL_PATH)
-                .setCtxSize(32)
+                .setModel(TestConstants.DRAFT_MODEL_PATH)
+                .setCtxSize(SMALL_CTX_SIZE)
+                .setParallel(1)
+                .enableContextShift()
                 .setGpuLayers(gpuLayers)
                 .setFit(false));
     }
@@ -109,7 +129,8 @@ public class MemoryManagementTest {
     /**
      * Forces the KV-cache context shift by generating more tokens than {@code ctxSize} allows.
      *
-     * <p>C++ path exercised (server.hpp ~2951–2993):
+     * <p>C++ path exercised (the shift in {@code pre_decode()}, server-context.cpp; shown in the
+     * names of the former server.hpp):
      * <pre>
      *   llama_memory_seq_rm(ctx_mem, slot.id, n_keep, n_keep + n_discard)
      *   llama_memory_seq_add(ctx_mem, slot.id, n_keep + n_discard, slot.n_past, -n_discard)
@@ -122,14 +143,14 @@ public class MemoryManagementTest {
     @Test
     public void testContextShiftingAllowsContinuedGeneration() {
         InferenceParameters params = new InferenceParameters(SHORT_PROMPT)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true) // prevent early stop so the shift is reliably triggered
                 .withSeed(42);
 
-        String output = smallCtxModel.complete(params);
+        CompletionResult result = smallCtxModel.completeWithStats(params);
 
-        assertNotNull(output, "Output must not be null after a context shift");
-        assertFalse(output.isEmpty(), "Output must not be empty after a context shift");
+        assertGeneratedPastTheContext(result);
+        assertFalse(result.getText().isEmpty(), "Output must not be empty after a context shift");
     }
 
     /**
@@ -144,10 +165,10 @@ public class MemoryManagementTest {
     public void testContextShiftFollowedByFreshGeneration() {
         // First call: triggers context shift
         InferenceParameters shiftParams = new InferenceParameters(SHORT_PROMPT)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true)
                 .withSeed(1);
-        smallCtxModel.complete(shiftParams);
+        assertGeneratedPastTheContext(smallCtxModel.completeWithStats(shiftParams));
 
         // Second call: independent generation on the same model after the shift
         InferenceParameters freshParams =
@@ -295,18 +316,18 @@ public class MemoryManagementTest {
     @Test
     public void testContextShiftWithNKeepPreservesGeneration() {
         // n_keep=5 asks the shift to freeze the first 5 prompt tokens as a "system prefix".
-        // With ctxSize=32 and nPredict=25 the window is reliably exceeded, so the shift fires
+        // With SMALL_CTX_SIZE and SHIFT_N_PREDICT the window is reliably exceeded, so the shift fires
         // with the non-trivial n_keep_eff = 5 + add_bos_token path.
         InferenceParameters params = new InferenceParameters(SHORT_PROMPT)
                 .withNKeep(5)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true)
                 .withSeed(42);
 
-        String output = smallCtxModel.complete(params);
+        CompletionResult result = smallCtxModel.completeWithStats(params);
 
-        assertNotNull(output, "Output must not be null after a context shift with n_keep > 0");
-        assertFalse(output.isEmpty(), "Output must not be empty after a context shift with n_keep > 0");
+        assertGeneratedPastTheContext(result);
+        assertFalse(result.getText().isEmpty(), "Output must not be empty after a context shift with n_keep > 0");
     }
 
     // ------------------------------------------------------------------
@@ -450,6 +471,23 @@ public class MemoryManagementTest {
                 // no generation, no embedding — only construct + immediate destruct
             }
         }
+    }
+
+    /**
+     * The shift tests are only worth something if the shift happened: every requested token was
+     * generated although prompt and answer together do not fit into {@link #SMALL_CTX_SIZE}. Without
+     * {@code --context-shift} the slot stops when its context is full ({@code truncated}, stop type
+     * {@code limit}) and the answer is shorter than {@link #SHIFT_N_PREDICT}.
+     */
+    private static void assertGeneratedPastTheContext(CompletionResult result) {
+        Usage usage = result.getUsage();
+        assertEquals(
+                SHIFT_N_PREDICT,
+                usage.getCompletionTokens(),
+                "every requested token must be generated, which needs a context shift: " + result.getRawJson());
+        assertTrue(
+                usage.getPromptTokens() + usage.getCompletionTokens() > SMALL_CTX_SIZE,
+                "prompt and answer must exceed the context, or no shift was needed: " + usage);
     }
 
     /**
