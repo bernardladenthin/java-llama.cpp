@@ -800,7 +800,8 @@ public class LlamaModel implements AutoCloseable {
      * @param requestJson the OpenAI completion body ({@code {"prompt": ..., "max_tokens": ..., ...}})
      * @param chunkSink receiver for each {@code text_completion} chunk JSON string, in order
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (no
-     *     {@code prompt}, a parameter upstream refuses, several prompts, a prompt over the context size)
+     *     {@code prompt}, a parameter upstream refuses, several prompts, {@code "n"} greater than 1, a prompt
+     *     over the context size; see {@link #handleCompletionsOai(String)})
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails
      */
     public void streamCompletionsOai(String requestJson, Consumer<String> chunkSink) {
@@ -826,7 +827,9 @@ public class LlamaModel implements AutoCloseable {
      * @param paramsJson JSON string with at least a "prompt" field
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
-     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size
+     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size, several prompts in
+     *     one request (an array of strings or of token arrays) or {@code "n"} greater than 1 -- one prompt and
+     *     one completion per request, unlike upstream's server; send separate requests
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails
      */
     public native String handleCompletions(String paramsJson);
@@ -838,7 +841,9 @@ public class LlamaModel implements AutoCloseable {
      * @param paramsJson JSON string with OAI-compatible completion parameters
      * @return JSON response in OAI format
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
-     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size
+     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size, several prompts in
+     *     one request (an array of strings or of token arrays) or {@code "n"} greater than 1 -- one prompt and
+     *     one completion per request, unlike upstream's server; send separate requests
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails
      */
     public native String handleCompletionsOai(String paramsJson);
@@ -850,7 +855,8 @@ public class LlamaModel implements AutoCloseable {
      * @param paramsJson JSON string with infill parameters
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, a missing
-     *     {@code "input_prefix"} or {@code "input_suffix"}, a parameter outside its limits
+     *     {@code "input_prefix"} or {@code "input_suffix"}, a parameter outside its limits, {@code "n"} greater
+     *     than 1 (one completion per request)
      * @throws net.ladenthin.llama.exception.LlamaException if the model has no fill-in-the-middle tokens or inference fails
      */
     public native String handleInfill(String paramsJson);
@@ -1180,7 +1186,8 @@ public class LlamaModel implements AutoCloseable {
      * @return JSON response in OAI chat-completion format
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
      *     {@code "messages"}, a message the chat template cannot take, a parameter outside its limits, a
-     *     prompt over the context size
+     *     prompt over the context size, {@code "n"} greater than 1 (one completion per request, unlike
+     *     upstream's server; send separate requests)
      * @throws net.ladenthin.llama.exception.LlamaException if the model was loaded in embedding mode or inference fails
      */
     public native String handleChatCompletions(String params);

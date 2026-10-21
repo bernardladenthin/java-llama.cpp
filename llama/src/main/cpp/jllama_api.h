@@ -123,7 +123,8 @@ JLLAMA_API void jllama_model_free(jllama_model *model);
 /**
  * An OpenAI chat completion, blocking: `request_json` is the request body
  * (`{"messages":[...], "max_tokens": ..., ...}`), *response_json the chat.completion object
- * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses.
+ * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses, including
+ * "n" > 1: a request takes one completion (send separate requests).
  */
 JLLAMA_API jllama_status jllama_chat_completions(jllama_model *model, const char *request_json, char **response_json);
 
@@ -131,7 +132,8 @@ JLLAMA_API jllama_status jllama_chat_completions(jllama_model *model, const char
  * Starts a streaming OpenAI chat completion (`"stream": true` in the body makes the server emit
  * chat.completion.chunk deltas) and returns its task id in *task_id. Receive with
  * jllama_chat_completions_stream_receive until it reports stop; a task not received to its end is
- * released with jllama_task_release.
+ * released with jllama_task_release. "n" > 1 is JLLAMA_STATUS_INVALID_REQUEST, as for
+ * jllama_chat_completions.
  */
 JLLAMA_API jllama_status jllama_chat_completions_stream_request(jllama_model *model, const char *request_json,
                                                                 int *task_id);
@@ -192,27 +194,29 @@ JLLAMA_API jllama_status jllama_completions_oai(jllama_model *model, const char 
  * Starts a streaming OpenAI /v1/completions request (the body as for jllama_completions_oai) and
  * returns its task id in *task_id. Receive with jllama_chat_completions_stream_receive, whose
  * envelopes then carry text_completion chunks, the last with usage; release an unfinished task with
- * jllama_task_release.
+ * jllama_task_release. One prompt and one choice, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_completions_oai_stream_request(jllama_model *model, const char *request_json,
                                                                int *task_id);
 
 /**
  * A fill-in-the-middle request (`input_prefix`, `input_suffix`, optional `input_extra` and
- * `prompt`), blocking. JLLAMA_STATUS_ERROR when the model has no FIM tokens.
+ * `prompt`), blocking. JLLAMA_STATUS_ERROR when the model has no FIM tokens; "n" > 1 is
+ * JLLAMA_STATUS_INVALID_REQUEST, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_infill(jllama_model *model, const char *request_json, char **response_json);
 
 /**
  * Starts a raw streaming completion (`"stream": true`; an infill one when the body carries
  * `input_prefix`/`input_suffix`) and returns its task id; receive with
- * jllama_completions_stream_receive.
+ * jllama_completions_stream_receive. One prompt and one completion, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id);
 
 /**
  * Starts a streaming chat completion whose results are llama.cpp's raw result objects (the chat
  * template applied, no OpenAI chunk formatting); receive with jllama_completions_stream_receive.
+ * "n" > 1 is JLLAMA_STATUS_INVALID_REQUEST, as for jllama_chat_completions.
  */
 JLLAMA_API jllama_status jllama_chat_completions_request(jllama_model *model, const char *request_json, int *task_id);
 

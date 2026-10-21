@@ -1612,6 +1612,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Der C-API-Test gegen den alten Code rot (alle vier Wege `OK` statt `INVALID_REQUEST`), mit dem Fix grün; `ctest` grün. Die beiden Java-Tests lokal mit dem Zufallsmodell grün (die zwei Infill-Tests der Klasse scheitern dort erwartungsgemäß, das Zufallsmodell hat keine FIM-Tokens); in CI mit dem echten Modell.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7a51bbc`
+- **Nachtrag (Branch-Review 2026-10-20, Fund XJ-5):** Die Ablehnung mehrerer Prompts (F184) und von `"n"` > 1 stand im C-Header nur bei `jllama_completions`/`jllama_completions_oai` und in der Javadoc von `streamCompletionsOai` nur zur Hälfte. Jetzt nennen sie die `@throws InvalidRequestException` von `LlamaModel#handleCompletions`, `#handleCompletionsOai` und `#streamCompletionsOai` (beides), `#handleChatCompletions` und `#handleInfill` (nur `"n"`: eine Chat-Anfrage rendert genau einen Prompt aus `messages`, Infill baut ihn selbst), alle acht Anfrage-Methoden von `FfmLlamaModel` mit derselben Aufteilung, und im C-Header die Chat-, Infill- und Stream-Funktionen. Formuliert als unbedingte Ablehnung (ein Prompt und eine Completion je Anfrage), nicht über die Slot-Zahl. Nur Doku.
 
 <a id="f198"></a>
 ### F198 – java-llama.cpp: `FfmTextToSpeech.close()` gibt die Engine frei, während `synthesize()` auf einem anderen Thread in ihr läuft (FFM-Hälfte von F16)
