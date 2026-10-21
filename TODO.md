@@ -525,7 +525,7 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F243 and the dated
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F244 and the dated
 addenda in the ledger. What the fixes left open, or what the reviewers raised outside the findings'
 scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when it is done.
 
@@ -570,9 +570,8 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   would deviate from upstream and stays a decision.
 - **A `base64` image without `media_type` defaults to `image/png` here and to `image/jpeg` upstream**
   (F29); neither aligned nor pinned by a test. A decision first.
-- **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221) is one line in
-  each of upstream's `to_json_anthropic*` plus an assertion in `test_compat_anthropic.py`; add it to
-  the upstream inventory below for the day after the release.
+- **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in
+  the upstream inventory ("Upstream submissions", last bullet) for the day after the release.
 
 **Decided deviations, recorded so they are not rediscovered** (no action): unknown part types inside
 a Responses `message` are not refused, because the same branch carries assistant `output_text` /
@@ -1399,6 +1398,12 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   real parser in `BUGHUNT-MEASUREMENTS.md` M6 (of four argv forms only a relative path and plain
   `--lora` were accepted). The obvious fix is to split on the **last** colon; small enough for a PR,
   so draft it then. Downstream `ModelParameters` refuses such a path with the reason meanwhile.
+
+- **From the branch review of 2026-10-20 (F221): upstream's Anthropic answer names a matched stop
+  word in `stop_sequence` but says `stop_reason` `end_turn`**, where the Messages API specifies
+  `stop_reason` `stop_sequence`. The fix is one line in each of the two `to_json_anthropic*` functions
+  of `tools/server/server-task.cpp` plus an assertion in `test_compat_anthropic.py`; downstream
+  `AnthropicApiSupport` corrects it meanwhile. Small enough for a PR, so draft it then.
 
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
