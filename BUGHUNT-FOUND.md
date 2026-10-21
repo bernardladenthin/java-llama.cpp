@@ -1728,6 +1728,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `200cc90`
 - **Nachtrag (Branch-Review 2026-10-20, Funde J1-4, J3-3, J16-2):** Beide Regeln sind bewusste Abweichungen von Ollama, nicht Ollamas Verhalten: Ollamas `GenerateHandler` prüft nur `req.Prompt == ""` (der `suffix` fügt dort nur `CapabilityInsert` hinzu), beantwortet also einen leeren Prompt mit `suffix` mit der Ladeantwort, und antwortet bei `keep_alive: 0` ohne Prompt mit `done_reason "unload"`. Hier bleibt der leere Prompt mit `suffix` FIM am Dateianfang (auch bei `"suffix":""`, `hasSuffix` fragt nur nach einem String), und `keep_alive: 0` bekommt die Ladeantwort, weil nichts entladen wird — ein „unload“ wäre eine Meldung über eine Aktion, die nicht stattfand. Die Javadoc von `isLoadOnly`/`toOllamaLoadResponse`, die README-Zeile der Ollama-Routen und `TODO.md` sagen das jetzt; vorher schrieb die Javadoc die `suffix`-Bedingung Ollama zu. Reine Doku, kein Test.
 
+<a id="f213"></a>
 ### F213 – java-llama.cpp: Ollama `/api/chat` mit einem `messages`-Element, das kein Objekt ist, schließt die Verbindung ohne Antwort
 - **Zeit:** 2026-10-20 19:55 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOpenAiChatRequest`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaChat`)
@@ -1740,6 +1741,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6295831`
 
+<a id="f214"></a>
 ### F214 – java-llama.cpp: Eine `IOException` des Backends vor dem ersten Chunk gilt als Verbindungsabbruch — keine Antwort, nur DEBUG
 - **Zeit:** 2026-10-20 20:09 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`ResponseStream`; die `IOException`-Zweige von `streamCompletions`, `streamChat`, `streamOllamaChat`, `streamAnthropic`, `streamResponses`)
@@ -1752,6 +1754,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d00936b`
 
+<a id="f215"></a>
 ### F215 – java-llama.cpp: Ollama `/api/generate` mit `raw: true` verwirft `system`, `template` und `context` still — Ollama antwortet 400
 - **Zeit:** 2026-10-20 20:20 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `hasRawConflict`, `RAW_CONFLICT_MESSAGE`; Javadoc von `isRaw`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaGenerate`)
@@ -1764,6 +1767,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7933eb0`
 
+<a id="f216"></a>
 ### F216 – java-llama.cpp: Ollama `/api/chat` ohne Nachrichten (Ollamas Vorladen) wird mit 400 abgewiesen statt mit der Ladeantwort beantwortet
 - **Zeit:** 2026-10-20 20:27 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `isChatLoadOnly`, `toOllamaChatLoadResponse`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaChat`)
@@ -1776,6 +1780,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a4d0604`
 
+<a id="f217"></a>
 ### F217 – java-llama.cpp: Ollamas `think: true` wird verworfen — ein Server mit abgeschaltetem Denken übergeht es still
 - **Zeit:** 2026-10-20 20:31 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOpenAiChatRequest`; über `GENERATE_CHAT_FIELDS` auch `/api/generate`)
@@ -1788,6 +1793,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `eade620`
 
+<a id="f218"></a>
 ### F218 – java-llama.cpp: Chat-Anfrage mit `json_schema` und `grammar` verliert das Schema still statt upstreams 400
 - **Zeit:** 2026-10-20 21:24 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLlamaCppSampling`)
@@ -1800,6 +1806,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `fea0a1d`
 
+<a id="f219"></a>
 ### F219 – java-llama.cpp: Chat-Mapper normalisiert `max_tokens` unter -1 und `n` unter 1 still auf die Vorgaben
 - **Zeit:** 2026-10-20 21:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyCommonFields`)
@@ -1812,6 +1819,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `63f05e1`
 
+<a id="f220"></a>
 ### F220 – java-llama.cpp: Chat-Mapper verwirft `top_logprobs` ohne `logprobs` still und liest ein ganzzahliges `logprobs` als `n_probs` 20
 - **Zeit:** 2026-10-20 21:40 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLogprobs`, neu; vorher in `toInferenceParameters`)
@@ -1824,6 +1832,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ca1baa9`
 
+<a id="f221"></a>
 ### F221 – java-llama.cpp: Anthropic meldet ein getroffenes Stoppwort als `stop_reason` `end_turn` statt `stop_sequence`
 - **Zeit:** 2026-10-20 22:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`toAnthropicResponse`, `anthropicStopReason(String, String)` neu), `AnthropicStreamTranslator.java` (`end`)
@@ -1836,6 +1845,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7e965d9`
 
+<a id="f222"></a>
 ### F222 – java-llama.cpp: Gestreamte Anthropic-Antwort öffnet bei Denkinhalt nach Text einen zweiten Thinking-Block, während der Textblock offen bleibt
 - **Zeit:** 2026-10-20 22:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicStreamTranslator.java` (`onChunk`, `end`, `closeTextBlock` neu)
@@ -1848,6 +1858,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `cb123a9`
 
+<a id="f223"></a>
 ### F223 – java-llama.cpp: Anthropic `max_tokens`, das keine Zahl ist, wird still durch die Vorgabe 4096 ersetzt statt abgewiesen
 - **Zeit:** 2026-10-20 22:40 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`toOpenAiChatRequest`), `OpenAiCompatServer.java` (`handleAnthropicMessages`)
@@ -1860,6 +1871,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `82bef4a`
 
+<a id="f224"></a>
 ### F224 – java-llama.cpp: Responses `input_image` ohne URL und fremde Werkzeugergebnis-Teile werden still verworfen statt abgewiesen
 - **Zeit:** 2026-10-20 23:05 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`inputContentWithImages`, `toolOutputParts`, neu `imageUrl`)
@@ -1872,6 +1884,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `e372019`
 
+<a id="f225"></a>
 ### F225 – java-llama.cpp: Responses `function_call` mit Objekt-`arguments` wird still zu `"{}"`
 - **Zeit:** 2026-10-20 23:07 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`appendInput`, Fall `function_call`)
@@ -1884,6 +1897,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4913acf`
 
+<a id="f226"></a>
 ### F226 – java-llama.cpp: Responses-Route verwirft `logit_bias` und `n_probs` still, obwohl der Chat-Mapper sie liest
 - **Zeit:** 2026-10-20 23:12 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`CHAT_PASSTHROUGH_FIELDS` und seine Javadoc)
@@ -1896,6 +1910,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `88f823e`
 
+<a id="f227"></a>
 ### F227 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, lässt bei mehreren Werkzeugen jedes zu
 - **Zeit:** 2026-10-20 23:21 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`toOpenAiChatRequest`, Werkzeugblock), `OpenAiRequestMapper.java` (`toInferenceParameters`, neu `namedToolChoice`)
@@ -1908,6 +1923,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `740938d`
 
+<a id="f228"></a>
 ### F228 – java-llama.cpp: Responses-Eingabe-Items unbekannten Typs werden zu leeren Nutzernachrichten statt abgewiesen
 - **Zeit:** 2026-10-20 23:26 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`appendInput`, `switch` über den Item-Typ; Klassen-Javadoc)
@@ -1920,6 +1936,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `beaffcc`
 
+<a id="f229"></a>
 ### F229 – java-llama.cpp: Abgeschnittene Responses-Antwort (`finish_reason` `length`) wird als `completed` gemeldet
 - **Zeit:** 2026-10-20 23:33 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesStreamTranslator.java` (`onChunk`, `end`), `ResponsesApiSupport.java` (`toResponsesResponse`, neu `isTruncated`, `markIncomplete`)
@@ -1932,6 +1949,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ad8b0b1`
 
+<a id="f230"></a>
 ### F230 – java-llama.cpp: `/v1/rerank`: ein `top_n` als Gleitkommazahl gilt als „fehlt“, ein negatives (`-1.5`) umgeht die Abweisung
 - **Zeit:** 2026-10-21 00:14 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`readTopN`)
@@ -1944,6 +1962,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5781ef5`
 
+<a id="f231"></a>
 ### F231 – java-llama.cpp: `/v1/rerank`: ein explizites `"documents": null` neben `texts` wird abgewiesen statt aus `texts` bedient
 - **Zeit:** 2026-10-21 00:19 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`readDocuments`)
@@ -1956,6 +1975,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `893ede3`
 
+<a id="f232"></a>
 ### F232 – java-llama.cpp: `/v1/rerank`: ein nativer Antwortkörper, der kein JSON-Array ist, wird still zu einer leeren Ergebnisliste (200)
 - **Zeit:** 2026-10-21 00:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`toTeiResponse`, `toOaiResponse`, neu `readNativeArray`), `LlamaModelBackend.java` (`rerank`)
@@ -1968,6 +1988,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5c5a892`
 
+<a id="f233"></a>
 ### F233 – java-llama.cpp: ein leeres oder unparsbares Tool-Schema geht als String an llama.cpp statt in Java abgewiesen zu werden
 - **Zeit:** 2026-10-21 01:05 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ChatRequest.java` (`appendTool`, `buildToolsJson`, neu `parseSchemaOrThrow`)
@@ -1981,6 +2002,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `0a49c54`
 
+<a id="f234"></a>
 ### F234 – java-llama.cpp: `appendCsvValue` überschreibt einen leeren Vorwert still statt ihn zu ergänzen
 - **Zeit:** 2026-10-21 01:14 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/CliParameters.java` (`appendCsvValue`), `ModelParameters.java` (Javadoc von `addLoraAdapter`, `addControlVector`)
@@ -1993,6 +2015,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b8c3992`
 
+<a id="f235"></a>
 ### F235 – java-llama.cpp: `submitAllThenReceive` gibt bei einem `Error` nichts frei und bricht das Empfangen ab
 - **Zeit:** 2026-10-21 01:27 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/BatchDispatch.java` (`submitAllThenReceive`), `llama/spotbugs-exclude.xml` (Kommentare zu `BatchDispatch`)
@@ -2005,6 +2028,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `edad4ca`
 
+<a id="f236"></a>
 ### F236 – java-llama.cpp: die Batch-Methoden verwerfen jeden Fehler nach dem ersten ohne Spur
 - **Zeit:** 2026-10-21 01:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/BatchDispatch.java` (`submitAllThenReceive`, `runEachOnItsOwnThread`, neu `suppress`), `LlamaModel.java` (Javadoc von `completeBatch`, `chatBatch`)
@@ -2017,6 +2041,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4b410d1`
 
+<a id="f237"></a>
 ### F237 – java-llama.cpp: `RpcServer` gibt den Einzelinstanz-Platz nach 30 s frei, obwohl der Server-Thread noch lebt, und meldet „could not listen“
 - **Zeit:** 2026-10-21 01:42 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/RpcServer.java` (`start`, `stopAndJoin`, `close`, neu `releaseSlotShare`)
@@ -2029,6 +2054,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2eb3fff`
 
+<a id="f238"></a>
 ### F238 – java-llama.cpp: `--offline` meldet eine vorhandene Modelldatei mit Nicht-ASCII-Namen als fehlend, wenn die JVM mit der POSIX-Locale läuft
 - **Zeit:** 2026-10-21 01:52 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/OfflineModelGuard.java` (`localFileExists`, neu `countsAsMissing`, `fileNameEncoding`, `jnuEncoding`)
@@ -2041,6 +2067,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `8809fe4`
 
+<a id="f239"></a>
 ### F239 – java-llama.cpp: der Loader lässt die `.tmp`-Reste unterbrochener Kopien des alten Layouts für immer liegen
 - **Zeit:** 2026-10-21 01:56 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/LlamaLoader.java` (`isStaleExtraction`, neu `isOlderThanTheStaleAge`, `FLAT_LAYOUT_TEMP_COPY`; Javadoc von `cleanup`, `isFlatLayoutLibraryName`, `FLAT_LAYOUT_SUFFIXES`)
@@ -2053,6 +2080,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4205d20`
 
+<a id="f240"></a>
 ### F240 – java-llama.cpp: Patch 0021 hält einen nie benutzten Slot für einen Adapterwechsel und wirft dessen geladenen Prompt weg
 - **Zeit:** 2026-10-21 02:22 UTC
 - **Datei:** `llama/patches/0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch` (zweiter Hunk in `init()` von `tools/server/server-context.cpp`, Kopftext), `llama/src/test/cpp/test_lora_cache.cpp`, `docs/patches.md`, `CLAUDE.md`
@@ -2065,6 +2093,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `166a267`
 
+<a id="f241"></a>
 ### F241 – java-llama.cpp: `jllama_rpc_server_stop`/`FfmRpcServer.stop` verlieren einen Stopp vor dem Bind; der Server lauscht weiter
 - **Zeit:** 2026-10-21 02:35 UTC
 - **Datei:** `llama/src/main/cpp/jllama_api.cpp` (`jllama_rpc_server_serve`, `jllama_rpc_server_stop`, neu `rpc_serving_scope`), `llama/src/main/cpp/jllama_api.h`, `llama/src/main/cpp/rpc_support.hpp` (Test-Seam), `llama-ffm/src/main/java/net/ladenthin/llama/ffm/FfmRpcServer.java` (Javadoc), `llama/src/main/java/net/ladenthin/llama/RpcServer.java` (Kommentar von `stopAndJoin`), `CLAUDE.md`
@@ -2078,6 +2107,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `1047673`
 
+<a id="f242"></a>
 ### F242 – java-llama.cpp: `llama-langchain4j` meldet `onCompleteToolCall` eines parallelen Werkzeugaufrufs erst am Stream-Ende, nach den Teilstücken des nächsten
 - **Zeit:** 2026-10-21 02:47 UTC
 - **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/StreamingChunkAssembler.java` (`acceptToolCallFragment`, neu `completeCallsBelow`, `complete`)
@@ -2090,6 +2120,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b90de3c`
 
+<a id="f243"></a>
 ### F243 – java-llama.cpp: der Atmosphere-Agent nennt in jeder Antwort seines In-Process-Servers den absoluten Modellpfad statt der Modell-Id
 - **Zeit:** 2026-10-21 02:50 UTC
 - **Datei:** `llama-atmosphere-agent/src/main/java/net/ladenthin/llama/atmosphere/ModelEndpoint.java` (`modelParameters`), `llama-atmosphere-agent/src/main/java/net/ladenthin/llama/atmosphere/AgentOptions.java` (`parse`, neu `requireAliasSafeModelId`), `llama/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java` (Javadoc von `setAlias`)
