@@ -204,7 +204,11 @@ void set_log_sink(common_log_callback callback, void *user_data);
 [[nodiscard]] std::string metrics(jllama_context *jctx);
 
 enum class slot_op { save, restore, erase };
-/** Saves, restores or erases a slot's KV cache (filename for save/restore); the result object. */
+/**
+ * Saves, restores or erases a slot's KV cache; the result object. For save/restore, filename names a
+ * file inside the --slot-save-path directory (jllama_invalid_request for a name with a directory part
+ * or "..", std::runtime_error when the model was loaded without the directory), as upstream's route.
+ */
 [[nodiscard]] std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename);
 
 /** The LoRA adapter list, and setting the scales from a JSON array of {id, scale}. */

@@ -1040,20 +1040,31 @@ std::string metrics(jllama_context *jctx) {
     return safe_json_to_str(server_metrics_to_json(*counters, *slots));
 }
 
+// Saving and restoring follow upstream's slots route (handle_slots_save/handle_slots_restore): the
+// file is a name, validated by fs_validate_filename (no directory part, no ".."), inside the
+// --slot-save-path directory, and without that directory the actions are not offered (upstream
+// answers 501 there, before the name is looked at). The C API used to take the name as the path, so
+// the directory had no effect and a file could be written anywhere the process may write. Erasing
+// needs no file and stays available.
 std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename) {
     if (op == slot_op::erase) {
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = id_slot;
         return one_shot(jctx, std::move(task));
     }
-    if (filename.empty()) {
-        throw std::runtime_error(op == slot_op::save ? "Filename is required for slot save"
-                                                     : "Filename is required for slot restore");
+    const std::string &directory = jctx->params.slot_save_path; // the parser ends it with a separator
+    if (directory.empty()) {
+        throw std::runtime_error("Saving or restoring a slot needs a slot directory: load the model with "
+                                 "--slot-save-path <dir> (ModelParameters.setSlotSavePath)");
+    }
+    if (!fs_validate_filename(filename)) {
+        throw jllama_invalid_request("Invalid slot file name '" + filename +
+                                     "': name a file inside the --slot-save-path directory, without a directory part");
     }
     server_task task(op == slot_op::save ? SERVER_TASK_TYPE_SLOT_SAVE : SERVER_TASK_TYPE_SLOT_RESTORE);
     task.slot_action.id_slot = id_slot;
     task.slot_action.filename = filename;
-    task.slot_action.filepath = filename;
+    task.slot_action.filepath = directory + filename;
     return one_shot(jctx, std::move(task));
 }
 

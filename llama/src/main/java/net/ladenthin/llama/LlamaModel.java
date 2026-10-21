@@ -1067,7 +1067,16 @@ public class LlamaModel implements AutoCloseable {
     }
 
     /**
-     * Save a slot's KV cache state to a file.
+     * Save a slot's KV cache state to a file in the slot directory.
+     *
+     * <p>As llama.cpp's {@code POST /slots/:id?action=save}, {@code filename} is a file name inside the
+     * directory the model was loaded with
+     * ({@link net.ladenthin.llama.parameters.ModelParameters#setSlotSavePath(String)},
+     * {@code --slot-save-path}), not a path: a name with a directory part ({@code /} or {@code \}),
+     * with {@code ..} or an empty one throws an
+     * {@link net.ladenthin.llama.exception.InvalidRequestException}, and a model loaded without the
+     * directory refuses with a {@link net.ladenthin.llama.exception.LlamaException} naming the option.
+     * Up to 5.x the argument was used as the path itself and the directory had no effect.</p>
      *
      * <p><strong>The file format is versioned by the linked llama.cpp build, not by this library.</strong>
      * llama.cpp stamps every state file with {@code LLAMA_STATE_SEQ_VERSION} and rejects one written
@@ -1081,26 +1090,35 @@ public class LlamaModel implements AutoCloseable {
      * save file"} — it does not name the version mismatch as the cause.</p>
      *
      * @param slotId the slot ID to save
-     * @param filepath the file path to save to
+     * @param filename the name of the file inside the slot directory
      * @return JSON with save result
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if {@code filename} is not a plain
+     *     file name
+     * @throws net.ladenthin.llama.exception.LlamaException if the model has no slot directory or the
+     *     save fails
      */
-    public String saveSlot(int slotId, String filepath) {
-        return handleSlotAction(1, slotId, filepath);
+    public String saveSlot(int slotId, String filename) {
+        return handleSlotAction(1, slotId, filename);
     }
 
     /**
-     * Restore a slot's KV cache state from a file.
+     * Restore a slot's KV cache state from a file in the slot directory; {@code filename} is a file
+     * name inside the directory, as for {@link #saveSlot(int, String)}.
      *
      * <p>Only a file written by a build pinned to the same llama.cpp {@code LLAMA_STATE_SEQ_VERSION}
      * loads — see {@link #saveSlot(int, String)} for what that means in practice and how a mismatch
      * surfaces.</p>
      *
      * @param slotId the slot ID to restore
-     * @param filepath the file path to restore from
+     * @param filename the name of the file inside the slot directory
      * @return JSON with restore result
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if {@code filename} is not a plain
+     *     file name
+     * @throws net.ladenthin.llama.exception.LlamaException if the model has no slot directory or the
+     *     restore fails
      */
-    public String restoreSlot(int slotId, String filepath) {
-        return handleSlotAction(2, slotId, filepath);
+    public String restoreSlot(int slotId, String filename) {
+        return handleSlotAction(2, slotId, filename);
     }
 
     // ------------------------------------------------------------------

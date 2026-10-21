@@ -47,7 +47,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_rerank()` | documents scored against a query (`--reranking`) |
 | `jllama_tokenize()`, `jllama_tokenize_json()`, `jllama_detokenize()`, `jllama_detokenize_json()` | ids or the `/tokenize` response (with pieces on request); bytes with their length, or the `/detokenize` response |
 | `jllama_metrics()` | the counters plus the `slots` array (`LlamaModel.getMetrics()`) |
-| `jllama_slot_action()` | save, restore or erase a slot's KV cache |
+| `jllama_slot_action()` | save, restore or erase a slot's KV cache; the file of a save or restore is a file name inside the `--slot-save-path` directory, as upstream's `/slots` route takes it (a name with a directory part or `..` is `JLLAMA_STATUS_INVALID_REQUEST`, a model without the directory `JLLAMA_STATUS_ERROR`) |
 | `jllama_lora_adapters()`, `jllama_set_lora_adapters()` | the LoRA list; the scales from `[{"id", "scale"}]` |
 | `jllama_configure()` | `n_threads`, `n_threads_batch`, `slot_prompt_similarity` at run time |
 | `jllama_systemone()` | a `/v1/systemone` request to a decision model |

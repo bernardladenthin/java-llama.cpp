@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.ladenthin.llama.exception.InvalidRequestException;
@@ -26,6 +27,7 @@ import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * A model through the C API: loaded with the core's {@code ModelParameters}, the contract of each
@@ -182,10 +184,35 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
-    void slotEraseAnswersAndASaveWithoutAFilenameIsRefused() throws IOException {
+    void slotEraseAnswersAndASaveWithoutASlotDirectoryIsRefused() throws IOException {
         assertTrue(JSON.readTree(model.slotAction(SlotOp.ERASE, 0, null)).isObject());
-        LlamaException e = assertThrows(LlamaException.class, () -> model.slotAction(SlotOp.SAVE, 0, null));
-        assertEquals("Filename is required for slot save", e.getMessage());
+        LlamaException e = assertThrows(LlamaException.class, () -> model.slotAction(SlotOp.SAVE, 0, "slot0.bin"));
+        assertFalse(e instanceof InvalidRequestException, e.getMessage());
+        assertEquals(
+                "Saving or restoring a slot needs a slot directory: load the model with --slot-save-path <dir> "
+                        + "(ModelParameters.setSlotSavePath)",
+                e.getMessage());
+    }
+
+    @Test
+    void aSlotFileIsANameInsideTheSlotDirectory(@TempDir Path slotDir) throws IOException {
+        ModelParameters parameters = new ModelParameters()
+                .setModel(FfmTestSupport.assumeModel().toString())
+                .setCtxSize(128)
+                .setGpuLayers(0)
+                .setThreads(2)
+                .setSlotSavePath(slotDir.toString());
+        try (FfmLlamaModel withSlots = FfmLlamaModel.load(parameters, null)) {
+            String saved = withSlots.slotAction(SlotOp.SAVE, 0, "slot0.bin");
+            assertTrue(Files.exists(slotDir.resolve("slot0.bin")), saved);
+            assertEquals("slot0.bin", JSON.readTree(saved).path("filename").asText(), saved);
+            assertEquals(0, JSON.readTree(withSlots.slotAction(SlotOp.RESTORE, 0, "slot0.bin")).path("id_slot").asInt());
+            assertThrows(InvalidRequestException.class, () -> withSlots.slotAction(SlotOp.SAVE, 0, "../escaped.bin"));
+            assertThrows(
+                    InvalidRequestException.class,
+                    () -> withSlots.slotAction(SlotOp.RESTORE, 0, slotDir.resolve("slot0.bin").toString()));
+            assertFalse(Files.exists(slotDir.getParent().resolve("escaped.bin")));
+        }
     }
 
     @Test

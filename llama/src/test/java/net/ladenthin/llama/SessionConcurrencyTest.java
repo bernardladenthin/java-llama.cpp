@@ -166,13 +166,13 @@ public class SessionConcurrencyTest {
                     // ok
                 }
                 try {
-                    session.save("/tmp/should-not-be-written");
+                    session.save("should-not-be-written.bin");
                     fail("save() during stream must throw");
                 } catch (IllegalStateException expected) {
                     // ok
                 }
                 try {
-                    session.restore("/tmp/should-not-be-read");
+                    session.restore("should-not-be-read.bin");
                     fail("restore() during stream must throw");
                 } catch (IllegalStateException expected) {
                     // ok

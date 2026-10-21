@@ -288,15 +288,20 @@ JLLAMA_API jllama_status jllama_detokenize_json(jllama_model *model, const int *
 JLLAMA_API jllama_status jllama_metrics(jllama_model *model, char **response_json);
 
 typedef enum jllama_slot_op {
-    /** Saves a slot's KV cache to `filename` (under `--slot-save-path`). */
+    /** Saves a slot's KV cache to the file `filename` inside the `--slot-save-path` directory. */
     JLLAMA_SLOT_SAVE = 1,
-    /** Restores a slot's KV cache from `filename`. */
+    /** Restores a slot's KV cache from the file `filename` inside the `--slot-save-path` directory. */
     JLLAMA_SLOT_RESTORE = 2,
-    /** Erases a slot's KV cache (`filename` ignored). */
+    /** Erases a slot's KV cache (`filename` ignored; needs no `--slot-save-path`). */
     JLLAMA_SLOT_ERASE = 3
 } jllama_slot_op;
 
-/** A slot save/restore/erase; *response_json is the server's result object. */
+/**
+ * A slot save/restore/erase; *response_json is the server's result object. As upstream's
+ * `POST /slots/:id?action=save|restore`, `filename` is a file name, not a path: one with a directory
+ * part (`/` or `\`), with `..`, or an empty one is JLLAMA_STATUS_INVALID_REQUEST, and saving or
+ * restoring on a model loaded without `--slot-save-path` is JLLAMA_STATUS_ERROR.
+ */
 JLLAMA_API jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id,
                                             const char *filename, char **response_json);
 

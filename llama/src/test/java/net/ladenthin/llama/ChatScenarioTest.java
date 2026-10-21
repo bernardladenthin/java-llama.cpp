@@ -9,9 +9,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import net.ladenthin.llama.args.PoolingType;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.json.ChatResponseParser;
 import net.ladenthin.llama.json.CompletionResponseParser;
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Complex chat scenario tests exercising code paths not covered by LlamaModelTest:
@@ -56,6 +59,9 @@ public class ChatScenarioTest {
 
     private static LlamaModel model;
 
+    @TempDir
+    static Path slotDir;
+
     @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(
@@ -66,6 +72,7 @@ public class ChatScenarioTest {
                 .setModel(TestConstants.MODEL_PATH)
                 .setGpuLayers(gpuLayers)
                 .setFit(false)
+                .setSlotSavePath(slotDir.toString())
                 .enableEmbedding()
                 // MEAN pooling is required for OAI-compatible embedding format;
                 // the default 'none' pooling is not OAI-compatible.
@@ -580,35 +587,37 @@ public class ChatScenarioTest {
     // ------------------------------------------------------------------
 
     /**
-     * saveSlot writes the KV cache to a file; restoreSlot reads it back.
-     * Both must succeed (return a JSON response with expected fields).
-     * The saved file is removed after the test.
+     * saveSlot writes the KV cache to a file inside the {@code --slot-save-path} directory, named by
+     * a file name as upstream's slots route takes it; restoreSlot reads it back. A name with a
+     * directory part or {@code ..} is the caller's error. The native side used to take the name as a
+     * path, so the file landed relative to the working directory and the slot directory had no effect.
      */
     @Test
     public void testSaveAndRestoreSlot() throws IOException {
         // Prime the slot with a short generation so there is state to save
         model.complete(new InferenceParameters("Hello").withNPredict(5).withSeed(42));
+        File stray = new File("chat-scenario-slot.bin");
 
-        File tempFile = File.createTempFile("llama_slot_", ".bin");
-        tempFile.deleteOnExit();
-        String filepath = tempFile.getAbsolutePath();
-        // Delete so the native layer can write it fresh
-        Files.delete(tempFile.toPath());
+        try {
+            String saveResult = model.saveSlot(0, "chat-scenario-slot.bin");
+            assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
+            assertTrue(Files.exists(slotDir.resolve("chat-scenario-slot.bin")), saveResult);
+            assertFalse(stray.exists(), "the slot file must not land in the working directory");
 
-        String saveResult = model.saveSlot(0, filepath);
-        assertNotNull(saveResult, "saveSlot must return non-null");
-        assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
-
-        // File must now exist
-        File saved = new File(filepath);
-        if (saved.exists()) {
-            // Only attempt restore if file was actually written
-            String restoreResult = model.restoreSlot(0, filepath);
-            assertNotNull(restoreResult, "restoreSlot must return non-null");
+            String restoreResult = model.restoreSlot(0, "chat-scenario-slot.bin");
             assertTrue(restoreResult.contains("\"id_slot\""), "restoreSlot result must contain id_slot");
-            saved.delete();
+
+            InvalidRequestException escaped =
+                    assertThrows(InvalidRequestException.class, () -> model.saveSlot(0, "../escaped.bin"));
+            assertTrue(escaped.getMessage().contains("--slot-save-path"), escaped.getMessage());
+            assertThrows(
+                    InvalidRequestException.class,
+                    () -> model.restoreSlot(
+                            0, slotDir.resolve("chat-scenario-slot.bin").toString()));
+            assertFalse(Files.exists(slotDir.getParent().resolve("escaped.bin")));
+        } finally {
+            Files.deleteIfExists(stray.toPath()); // only written by the defect this test pins
         }
-        // If the file wasn't written we still pass: the save attempt exercised the code path.
     }
 
     // ------------------------------------------------------------------

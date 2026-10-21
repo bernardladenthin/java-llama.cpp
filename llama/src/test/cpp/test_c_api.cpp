@@ -83,6 +83,9 @@ jllama_model *CApi::model_ = nullptr;
 
 const char *CHAT_REQUEST = R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":4,"temperature":0})";
 
+const char *SLOT_SAVE_PATH_MISSING = "Saving or restoring a slot needs a slot directory: load the model with "
+                                     "--slot-save-path <dir> (ModelParameters.setSlotSavePath)";
+
 } // namespace
 
 TEST(CApiStatic, VersionAndBuildInfoAreTheBuildsOwn) {
@@ -500,14 +503,79 @@ TEST_F(CApi, MetricsCarryTheCountersAndTheSlots) {
     EXPECT_EQ(j.at("slots").size(), 1u);
 }
 
+TEST(CApiSlotFiles, ASlotFileIsNamedInsideTheSlotSaveDirectory) {
+    // Upstream's slots route takes a file name, validates it (fs_validate_filename: no directory, no
+    // "..") and resolves it under --slot-save-path. The C API used the name as the path, so the file
+    // landed relative to the working directory and the slot directory had no effect.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-files");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-slots-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const std::vector<std::string> args = {
+        "jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2", "--slot-save-path", dir.string()};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"Hello","n_predict":2,"temperature":0})", &completion.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "slot0.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_TRUE(std::filesystem::exists(dir / "slot0.bin")) << saved.str();
+    EXPECT_FALSE(std::filesystem::exists("slot0.bin"));
+    EXPECT_EQ(json::parse(saved.str()).at("filename").get<std::string>(), "slot0.bin") << saved.str();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "slot0.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(restored.str()).at("id_slot").get<int>(), 0) << restored.str();
+
+    // A name with a directory, a parent reference or nothing at all is the caller's error, as upstream's
+    // 400 "Invalid filename"; nothing is written outside the slot directory.
+    const std::string absolute = (dir / "absolute.bin").string();
+    for (const std::string &name : {std::string("../escaped.bin"), std::string("sub/slot.bin"), absolute,
+                                    std::string("..\\escaped.bin"), std::string()}) {
+        Owned refused;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &refused.s),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << name;
+        EXPECT_EQ(std::string(jllama_last_error()), "Invalid slot file name '" + name +
+                                                        "': name a file inside the --slot-save-path directory, "
+                                                        "without a directory part")
+            << name;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &refused.s),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << name;
+    }
+    EXPECT_FALSE(std::filesystem::exists(dir.parent_path() / "escaped.bin"));
+    EXPECT_FALSE(std::filesystem::exists(absolute));
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+    std::filesystem::remove("slot0.bin", ignored); // only written by the defect this test pins
+}
+
 TEST_F(CApi, SlotActionsAndLoraAdapters) {
     Owned response;
     ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_ERASE, 0, nullptr, &response.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
     EXPECT_TRUE(json::parse(response.str()).is_object());
+    // The model was loaded without --slot-save-path: saving and restoring are refused as upstream's
+    // slots route refuses them (501), before the file name is looked at; erasing needs no file.
     Owned refused;
-    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "", &refused.s), JLLAMA_STATUS_ERROR);
-    EXPECT_STREQ(jllama_last_error(), "Filename is required for slot save");
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "slot0.bin", &refused.s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), SLOT_SAVE_PATH_MISSING);
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_RESTORE, 0, "", &refused.s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), SLOT_SAVE_PATH_MISSING);
+    EXPECT_FALSE(std::filesystem::exists("slot0.bin"));
     EXPECT_EQ(jllama_slot_action(model_, static_cast<jllama_slot_op>(7), 0, nullptr, &refused.s),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "Invalid slot action");

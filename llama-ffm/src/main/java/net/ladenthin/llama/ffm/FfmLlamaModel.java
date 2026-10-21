@@ -376,12 +376,17 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * A slot save, restore or erase.
+     * A slot save, restore or erase. As {@code LlamaModel.saveSlot}, the file of a save or restore is a
+     * file name inside the directory the model was loaded with ({@code --slot-save-path}), not a path.
      *
      * @param op the operation
      * @param slotId the slot
-     * @param filename the file for {@link SlotOp#SAVE} and {@link SlotOp#RESTORE}; ignored for erase
+     * @param filename the name of the file inside the slot directory for {@link SlotOp#SAVE} and
+     *     {@link SlotOp#RESTORE}; ignored for erase
      * @return the server's result object
+     * @throws InvalidRequestException if {@code filename} has a directory part, contains {@code ..} or
+     *     is empty
+     * @throws LlamaException if the model was loaded without {@code --slot-save-path}, or the action fails
      */
     public String slotAction(SlotOp op, int slotId, String filename) {
         requireNonNull(op, "op");

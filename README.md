@@ -886,7 +886,10 @@ a JSON response, matching the HTTP server's contract:
 `handleEmbeddings`, `handleTokenize`, `handleDetokenize`.
 
 Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, String)`,
-`restoreSlot(int, String)`, and `getModelMeta()`.
+`restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
+(`ModelParameters.setSlotSavePath`, `--slot-save-path`), and the `String` is a file name inside it, as
+the server's `/slots` route takes it -- a name with a directory part or `..` is an
+`InvalidRequestException`.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 

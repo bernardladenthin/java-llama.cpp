@@ -43,6 +43,8 @@ public class SessionForkRewindIntegrationTest {
                 .setModel(modelPath)
                 .setCtxSize(2048)
                 .setGpuLayers(gpuLayers)
+                // The checkpoint files are names inside this directory (LlamaModel.saveSlot).
+                .setSlotSavePath(tempDir.toString())
                 // Two slots: slot 0 hosts the primary session, slot 1 receives the fork.
                 .setParallel(2));
     }
@@ -82,8 +84,7 @@ public class SessionForkRewindIntegrationTest {
         try (Session session = newSession(0)) {
             session.send("Say OK.");
             List<ChatMessage> atCheckpoint = session.getMessages();
-            SessionCheckpoint checkpoint =
-                    session.checkpoint(tempDir.resolve("rewind.bin").toString());
+            SessionCheckpoint checkpoint = session.checkpoint("rewind.bin");
 
             session.send("Say MORE.");
             assertThat(session.getMessages().size(), is(atCheckpoint.size() + 2));
@@ -104,7 +105,7 @@ public class SessionForkRewindIntegrationTest {
         try (Session original = newSession(0)) {
             original.send("Say OK.");
 
-            try (Session forked = original.fork(1, tempDir.resolve("fork.bin").toString())) {
+            try (Session forked = original.fork(1, "fork.bin")) {
                 // The fork starts as an exact transcript copy...
                 assertThat(forked.getMessages(), is(original.getMessages()));
 
@@ -124,8 +125,7 @@ public class SessionForkRewindIntegrationTest {
     public void forkOntoOwnSlotFailsFast() {
         try (Session session = newSession(0)) {
             org.junit.jupiter.api.Assertions.assertThrows(
-                    IllegalArgumentException.class,
-                    () -> session.fork(0, tempDir.resolve("self.bin").toString()));
+                    IllegalArgumentException.class, () -> session.fork(0, "self.bin"));
         }
     }
 }

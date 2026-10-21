@@ -388,4 +388,20 @@ public class ErrorHandlingTest {
             assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }
+
+    /**
+     * Without {@code --slot-save-path} a slot cannot be saved or restored, as upstream's slots route
+     * answers {@code 501} there: a {@link LlamaException} naming the option, not an
+     * {@link InvalidRequestException}, and before the file name is looked at. Erasing needs no file.
+     */
+    @Test
+    public void testSaveSlotWithoutSlotSavePathIsRefused() {
+        LlamaException save = assertThrows(LlamaException.class, () -> model.saveSlot(0, "slot.bin"));
+        assertFalse(save instanceof InvalidRequestException, save.getMessage());
+        assertTrue(save.getMessage().contains("--slot-save-path"), save.getMessage());
+        LlamaException restore = assertThrows(LlamaException.class, () -> model.restoreSlot(0, "../slot.bin"));
+        assertFalse(restore instanceof InvalidRequestException, restore.getMessage());
+        assertFalse(new File("slot.bin").exists());
+        assertNotNull(model.eraseSlot(0));
+    }
 }
