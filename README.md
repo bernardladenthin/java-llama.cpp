@@ -1015,6 +1015,18 @@ and context length, which Copilot's Ollama provider reads to enable agent mode. 
 `GET /props` reports `default_generation_settings.n_ctx` and a `modalities` block, which autocomplete
 clients such as llama.vscode read to size their context window.
 
+**Request checks on the translated routes.** The chat routes (OpenAI chat, Anthropic Messages, Ollama,
+OpenAI Responses) build the native request themselves rather than forwarding the body, so they check
+what llama-server checks and answer `400` (Anthropic's `invalid_request_error`, Ollama's `{"error":…}`)
+where it does; where llama-server would drop part of a request without a word, they refuse it instead:
+
+- A number field (`max_tokens`, `temperature`, `n`, `n_probs`, `seed`, the llama.cpp sampling
+  extensions, Ollama's `options`, …) holding anything but a JSON number is refused with llama-server's
+  message (`Field 'max_tokens': type must be number, but is string`); `null` is the default, a fraction in
+  an integer field is truncated, as there. Stricter than llama-server: a boolean is refused (llama-server
+  reads it as 0 or 1), and so is a mistyped `top_logprobs`, `id_slot` or reasoning budget, where
+  llama-server logs a warning and uses the default.
+
 Embed it in your app:
 
 ```java

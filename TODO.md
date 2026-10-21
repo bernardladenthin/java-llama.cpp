@@ -557,11 +557,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   current contract or change it with a red/green test.
 
 **Chat mapper (`OpenAiRequestMapper`, every chat route)**
-- **A non-numeric `max_tokens` (`"100"`) is read as `-1`, i.e. no limit** (F223 names it): upstream's
-  schema answers `400`. The Anthropic route now refuses it before the mapper; the OpenAI route itself
-  does not.
-- **A non-numeric `n` or `n_probs` (a string) is ignored** where upstream's schema answers `400`.
-  Pre-existing, not a regression of the branch.
 - **Upstream's "logprobs is not supported with tools + stream" refusal is unreachable** (F220): the
   mapper turns `logprobs` into `n_probs` and does not see `stream`.
 - **Anthropic `{"type":"tool","name":…}` still means `required` over all tools, and a `tool_choice`

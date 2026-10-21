@@ -131,7 +131,8 @@ final class OllamaApiSupport {
      * @param ollamaRequest the parsed Ollama request
      * @return an OpenAI {@code /v1/chat/completions} request object
      * @throws IllegalArgumentException when {@code messages} is present but not an array, or one of its
-     *     elements is not an object (upstream's {@code common/chat.cpp} refuses both the same way)
+     *     elements is not an object (upstream's {@code common/chat.cpp} refuses both the same way), or a
+     *     number option holds anything but a number (see {@link OpenAiRequestMapper#optionalNumber})
      */
     static ObjectNode toOpenAiChatRequest(JsonNode ollamaRequest) {
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
@@ -280,8 +281,8 @@ final class OllamaApiSupport {
         copyNumber(options, "presence_penalty", to, "presence_penalty");
         copyNumber(options, "frequency_penalty", to, "frequency_penalty");
         copyNumber(options, "num_keep", to, "n_keep");
-        JsonNode repeatLastN = options.path("repeat_last_n");
-        if (repeatLastN.isIntegralNumber() && repeatLastN.asInt() >= 0) {
+        JsonNode repeatLastN = OpenAiRequestMapper.optionalNumber(options, "repeat_last_n");
+        if (repeatLastN != null && repeatLastN.asInt() >= 0) {
             to.set("repeat_last_n", repeatLastN);
         }
     }
@@ -291,8 +292,8 @@ final class OllamaApiSupport {
      * whose hard limit starts there.
      */
     private static void copyNumPredict(JsonNode options, ObjectNode to, String toKey) {
-        JsonNode numPredict = options.path("num_predict");
-        if (numPredict.isIntegralNumber() && numPredict.asInt() < -1) {
+        JsonNode numPredict = OpenAiRequestMapper.optionalNumber(options, "num_predict");
+        if (numPredict != null && numPredict.asInt() < -1) {
             to.put(toKey, -1);
         } else {
             copyNumber(options, "num_predict", to, toKey);
@@ -300,8 +301,8 @@ final class OllamaApiSupport {
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {
-        JsonNode value = from.path(fromKey);
-        if (value.isNumber()) {
+        JsonNode value = OpenAiRequestMapper.optionalNumber(from, fromKey);
+        if (value != null) {
             to.set(toKey, value);
         }
     }

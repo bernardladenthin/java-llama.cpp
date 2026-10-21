@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiFunction;
 import net.ladenthin.llama.parameters.InferenceParameters;
@@ -31,7 +32,9 @@ import org.jspecify.annotations.Nullable;
  * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
  * controls upstream's chat
  * parser reads ({@code chat_template_kwargs}, {@code reasoning_effort}, the reasoning budget); unknown
- * fields are ignored.
+ * fields are ignored. A number field holding anything but a JSON number is refused as upstream's request
+ * schema refuses it ({@code Field 'max_tokens': type must be number, but is string}, see
+ * {@link #optionalNumber}); {@code null} is the default, as there.
  *
  * <p>The {@code stream} flag is intentionally not mapped here — streaming is selected by the caller
  * ({@link net.ladenthin.llama.LlamaModel#chatComplete} forces it off,
@@ -146,7 +149,8 @@ final class OpenAiRequestMapper {
         JsonNode logprobs = request.path("logprobs");
         JsonNode topLogprobs = request.path("top_logprobs");
         if (logprobs.isBoolean() && logprobs.asBoolean()) {
-            return params.withNProbs(topLogprobs.isNumber() ? topLogprobs.asInt() : DEFAULT_TOP_LOGPROBS);
+            JsonNode count = optionalNumber(request, "top_logprobs");
+            return params.withNProbs(count != null ? count.asInt() : DEFAULT_TOP_LOGPROBS);
         }
         if (!topLogprobs.isMissingNode() && !topLogprobs.isNull()) {
             throw new IllegalArgumentException("top_logprobs requires logprobs to be set to true");
@@ -177,8 +181,8 @@ final class OpenAiRequestMapper {
         // Upstream reads "n" as n_cmpl (several answers, hard limits [1, n_parallel]); these paths return
         // one and "n" never reaches upstream from here, so every other value is refused rather than
         // silently answered once.
-        JsonNode choices = request.path("n");
-        if (choices.isNumber() && choices.asInt() != 1) {
+        JsonNode choices = optionalNumber(request, "n");
+        if (choices != null && choices.asInt() != 1) {
             throw new IllegalArgumentException("'n' must be 1 (one answer is returned) but was " + choices.asInt());
         }
         // logit_bias as upstream's schema reads it: [token, bias] pairs or OpenAI's object form.
@@ -186,10 +190,7 @@ final class OpenAiRequestMapper {
         if (logitBias.isObject() || logitBias.isArray()) {
             params = params.withLogitBiasJson(logitBias.toString());
         }
-        JsonNode nProbs = request.path("n_probs");
-        if (nProbs.isInt()) {
-            params = params.withNProbs(nProbs.asInt());
-        }
+        params = withInt(params, request, "n_probs", InferenceParameters::withNProbs);
         JsonNode verbose = request.path("verbose");
         if (verbose.isBoolean()) {
             params = params.withVerbose(verbose.asBoolean());
@@ -203,40 +204,19 @@ final class OpenAiRequestMapper {
         if (cachePrompt.isBoolean()) {
             params = params.withCachePrompt(cachePrompt.asBoolean());
         }
-        JsonNode cacheReuse = request.path("n_cache_reuse");
-        if (cacheReuse.isIntegralNumber()) {
-            params = params.withCacheReuse(cacheReuse.asInt());
-        }
+        params = withInt(params, request, "n_cache_reuse", InferenceParameters::withCacheReuse);
         // upstream's default -1 means "any slot"; leaving the field unset is the same request.
-        JsonNode slotId = request.path("id_slot");
-        if (slotId.isIntegralNumber() && slotId.asInt() >= 0) {
+        JsonNode slotId = optionalNumber(request, "id_slot");
+        if (slotId != null && slotId.asInt() >= 0) {
             params = params.withSlotId(slotId.asInt());
         }
 
-        JsonNode temperature = request.path("temperature");
-        if (temperature.isNumber()) {
-            params = params.withTemperature((float) temperature.asDouble());
-        }
-        JsonNode topP = request.path("top_p");
-        if (topP.isNumber()) {
-            params = params.withTopP((float) topP.asDouble());
-        }
-        JsonNode topK = request.path("top_k");
-        if (topK.isNumber()) {
-            params = params.withTopK(topK.asInt());
-        }
-        JsonNode seed = request.path("seed");
-        if (seed.isNumber()) {
-            params = params.withSeed(seed.asInt());
-        }
-        JsonNode presencePenalty = request.path("presence_penalty");
-        if (presencePenalty.isNumber()) {
-            params = params.withPresencePenalty((float) presencePenalty.asDouble());
-        }
-        JsonNode frequencyPenalty = request.path("frequency_penalty");
-        if (frequencyPenalty.isNumber()) {
-            params = params.withFrequencyPenalty((float) frequencyPenalty.asDouble());
-        }
+        params = withFloat(params, request, "temperature", InferenceParameters::withTemperature);
+        params = withFloat(params, request, "top_p", InferenceParameters::withTopP);
+        params = withInt(params, request, "top_k", InferenceParameters::withTopK);
+        params = withInt(params, request, "seed", InferenceParameters::withSeed);
+        params = withFloat(params, request, "presence_penalty", InferenceParameters::withPresencePenalty);
+        params = withFloat(params, request, "frequency_penalty", InferenceParameters::withFrequencyPenalty);
 
         // -1 is upstream's default (the server's --predict), the same as no field, so it stays unset. Every
         // other value is forwarded: upstream's hard limits [-1, INT32_MAX] refuse -2 and below with 400, as
@@ -309,21 +289,48 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * Apply {@code setter} with the request's number {@code field}, if it is one.
+     * Apply {@code setter} with the request's number {@code field}.
      *
      * @param params the parameters to extend
      * @param request the parsed request object
      * @param field the request field
      * @param setter the matching setter
-     * @return the extended parameters, or {@code params} when the field is absent or not a number
+     * @return the extended parameters, or {@code params} when the field is absent or {@code null}
+     * @throws IllegalArgumentException when the field holds anything but a number (see {@link #optionalNumber})
      */
     private static InferenceParameters withFloat(
             InferenceParameters params,
             JsonNode request,
             String field,
             BiFunction<InferenceParameters, Float, InferenceParameters> setter) {
+        JsonNode value = optionalNumber(request, field);
+        return value != null ? setter.apply(params, (float) value.asDouble()) : params;
+    }
+
+    /**
+     * The request's number {@code field}, read as upstream's request schema reads a number field
+     * ({@code field_num::eval}, {@code server-schema.cpp}, b11639): absent or {@code null} is the server's
+     * default, a number is the value (an integer field truncates a fraction, as upstream's conversion
+     * does), and anything else is refused with upstream's message. Stricter than upstream in one case:
+     * a boolean is refused, where upstream's JSON conversion reads it as 0 or 1. The Anthropic, Ollama
+     * and Responses translations check their own number fields with it, so every chat route answers a
+     * mistyped number the same way.
+     *
+     * @param request the object holding the field
+     * @param field the field name
+     * @return the number node, or {@code null} when the field is absent or {@code null}
+     * @throws IllegalArgumentException when the field holds anything but a number
+     */
+    static @Nullable JsonNode optionalNumber(JsonNode request, String field) {
         JsonNode value = request.path(field);
-        return value.isNumber() ? setter.apply(params, (float) value.asDouble()) : params;
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isNumber()) {
+            throw new IllegalArgumentException("Field '" + field + "': type must be number, but is "
+                    + value.getNodeType().name().toLowerCase(Locale.ROOT));
+        }
+        return value;
     }
 
     /**
@@ -349,43 +356,40 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * Apply {@code setter} with the request's integer {@code field}, if it is one.
+     * Apply {@code setter} with the request's integer {@code field}; a fraction is truncated, as
+     * upstream's conversion to the field's integer type truncates it.
      *
      * @param params the parameters to extend
      * @param request the parsed request object
      * @param field the request field
      * @param setter the matching setter
-     * @return the extended parameters, or {@code params} when the field is absent or not an integer
+     * @return the extended parameters, or {@code params} when the field is absent or {@code null}
+     * @throws IllegalArgumentException when the field holds anything but a number (see {@link #optionalNumber})
      */
     private static InferenceParameters withInt(
             InferenceParameters params,
             JsonNode request,
             String field,
             BiFunction<InferenceParameters, Integer, InferenceParameters> setter) {
-        JsonNode value = request.path(field);
-        return value.isIntegralNumber() ? setter.apply(params, value.asInt()) : params;
+        JsonNode value = optionalNumber(request, field);
+        return value != null ? setter.apply(params, value.asInt()) : params;
     }
 
     /**
      * Read the output-token cap: upstream's {@code n_predict}, else the newer {@code
      * max_completion_tokens}, else the legacy {@code max_tokens} (upstream reads the latter two as
-     * aliases of the first).
+     * aliases of the first and stops at the first one present, without looking at the others).
      *
      * @param request the parsed OpenAI request object
-     * @return the requested cap, or {@code -1} when none of the fields is a number
+     * @return the requested cap, or {@code -1} when none of the fields is present
+     * @throws IllegalArgumentException when the first field present is not a number
      */
     private int readMaxTokens(JsonNode request) {
-        JsonNode nPredict = request.path("n_predict");
-        if (nPredict.isNumber()) {
-            return nPredict.asInt();
-        }
-        JsonNode maxCompletion = request.path("max_completion_tokens");
-        if (maxCompletion.isNumber()) {
-            return maxCompletion.asInt();
-        }
-        JsonNode maxTokens = request.path("max_tokens");
-        if (maxTokens.isNumber()) {
-            return maxTokens.asInt();
+        for (String field : new String[] {"n_predict", "max_completion_tokens", "max_tokens"}) {
+            JsonNode value = optionalNumber(request, field);
+            if (value != null) {
+                return value.asInt();
+            }
         }
         return -1;
     }
@@ -444,11 +448,11 @@ final class OpenAiRequestMapper {
         if (!kwargs.isEmpty()) {
             params = params.withChatTemplateKwargs(kwargs);
         }
-        JsonNode budget = request.path("reasoning_budget_tokens");
-        if (!budget.isInt()) {
-            budget = request.path("thinking_budget_tokens");
+        JsonNode budget = optionalNumber(request, "reasoning_budget_tokens");
+        if (budget == null) {
+            budget = optionalNumber(request, "thinking_budget_tokens");
         }
-        if (budget.isInt()) {
+        if (budget != null) {
             params = params.withReasoningBudgetTokens(budget.asInt());
         }
         return params;

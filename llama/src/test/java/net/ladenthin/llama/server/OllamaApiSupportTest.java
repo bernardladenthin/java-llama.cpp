@@ -667,4 +667,30 @@ public class OllamaApiSupportTest {
         assertThat(messages.get(0).path("role").asText(), is("user"));
         assertThat(messages.get(0).path("content").asText(), is("q"));
     }
+
+    @Test
+    public void anOptionThatIsNotANumberIsRefused() throws IOException {
+        // Ollama answers a mistyped option with 400; the translation dropped it without a word, so the
+        // request ran with the server's defaults (num_predict "8": no cap at all).
+        for (String option : new String[] {
+            "temperature",
+            "top_p",
+            "top_k",
+            "seed",
+            "num_predict",
+            "min_p",
+            "typical_p",
+            "repeat_penalty",
+            "presence_penalty",
+            "frequency_penalty",
+            "num_keep",
+            "repeat_last_n"
+        }) {
+            JsonNode request = read("{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                    + "\"options\":{\"" + option + "\":\"8\"}}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> OllamaApiSupport.toOpenAiChatRequest(request), option);
+            assertThat(e.getMessage(), is("Field '" + option + "': type must be number, but is string"));
+        }
+    }
 }

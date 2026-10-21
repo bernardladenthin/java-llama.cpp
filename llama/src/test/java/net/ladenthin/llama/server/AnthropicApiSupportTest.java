@@ -268,6 +268,20 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void aSamplingFieldThatIsNotANumberIsRefused() throws IOException {
+        // upstream's converter passes temperature, top_p and top_k through and its schema refuses a
+        // string (Field 'temperature': type must be number); the translation dropped it without a word,
+        // so the request sampled with the server's defaults.
+        for (String field : new String[] {"temperature", "top_p", "top_k"}) {
+            JsonNode request = read("{\"max_tokens\":8,\"" + field
+                    + "\":\"0.3\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), field);
+            assertThat(e.getMessage(), is("Field '" + field + "': type must be number, but is string"));
+        }
+    }
+
+    @Test
     public void requestWithNullMaxTokensIsCappedLikeAbsent() throws IOException {
         // upstream's schema treats null as absent ("clients can send null to request the server default")
         JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(

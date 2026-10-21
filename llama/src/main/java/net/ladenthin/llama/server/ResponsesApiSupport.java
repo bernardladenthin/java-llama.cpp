@@ -110,7 +110,8 @@ final class ResponsesApiSupport {
      * @param request the parsed Responses request
      * @return an OpenAI {@code /v1/chat/completions} request object
      * @throws IllegalArgumentException if the request continues an earlier response by {@code previous_response_id},
-     *     names an unknown tool in {@code tool_choice}, or carries input this translation refuses as upstream does
+     *     names an unknown tool in {@code tool_choice}, carries input this translation refuses as upstream does, or
+     *     holds anything but a number in {@code temperature}, {@code top_p} or {@code max_output_tokens}
      */
     static ObjectNode toOpenAiChatRequest(JsonNode request) {
         // As upstream's convert_responses_to_chatcmpl: there is no response store, so a turn that refers
@@ -517,8 +518,8 @@ final class ResponsesApiSupport {
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {
-        JsonNode value = from.path(fromKey);
-        if (value.isNumber()) {
+        JsonNode value = OpenAiRequestMapper.optionalNumber(from, fromKey);
+        if (value != null) {
             to.set(toKey, value);
         }
     }

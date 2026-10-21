@@ -65,7 +65,8 @@ final class AnthropicApiSupport {
      *
      * @param request the parsed Anthropic request
      * @return an OpenAI {@code /v1/chat/completions} request object
-     * @throws IllegalArgumentException if {@code max_tokens} is present, not {@code null} and not a number
+     * @throws IllegalArgumentException if {@code max_tokens}, {@code temperature}, {@code top_p} or
+     *     {@code top_k} is present, not {@code null} and not a number
      */
     static ObjectNode toOpenAiChatRequest(JsonNode request) {
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
@@ -115,14 +116,13 @@ final class AnthropicApiSupport {
         // it is capped at upstream's default instead of generating until the context is full. null
         // counts as absent, as in upstream's schema ("clients can send null to request the server
         // default"); any other value that is not a number upstream's schema refuses, and so does this.
-        JsonNode maxTokens = request.path("max_tokens");
-        if (maxTokens.isNumber()) {
-            copyNumber(request, "max_tokens", openAi, "max_tokens");
-        } else if (maxTokens.isMissingNode() || maxTokens.isNull()) {
-            openAi.put("max_tokens", DEFAULT_MAX_TOKENS);
+        JsonNode maxTokens = OpenAiRequestMapper.optionalNumber(request, "max_tokens");
+        if (maxTokens != null) {
+            openAi.set("max_tokens", maxTokens);
         } else {
-            throw new IllegalArgumentException("'max_tokens' must be an integer but was " + maxTokens);
+            openAi.put("max_tokens", DEFAULT_MAX_TOKENS);
         }
+        // Upstream passes these through and its schema refuses a value that is not a number.
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");
         copyNumber(request, "top_k", openAi, "top_k");
@@ -376,8 +376,8 @@ final class AnthropicApiSupport {
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {
-        JsonNode value = from.path(fromKey);
-        if (value.isNumber()) {
+        JsonNode value = OpenAiRequestMapper.optionalNumber(from, fromKey);
+        if (value != null) {
             to.set(toKey, value);
         }
     }

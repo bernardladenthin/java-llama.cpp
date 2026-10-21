@@ -505,6 +505,108 @@ public class OpenAiRequestMapperTest {
         assertThat(both.path("grammar").asText(), is("root ::= \"a\""));
     }
 
+    /** Every number field the mapper reads, as upstream's request schema or chat parser reads it. */
+    private static final String[] NUMBER_FIELDS = {
+        "n_predict",
+        "max_completion_tokens",
+        "max_tokens",
+        "n",
+        "n_probs",
+        "n_cache_reuse",
+        "id_slot",
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "min_p",
+        "typical_p",
+        "repeat_penalty",
+        "top_n_sigma",
+        "xtc_probability",
+        "xtc_threshold",
+        "dynatemp_range",
+        "dynatemp_exponent",
+        "repeat_last_n",
+        "min_keep",
+        "n_keep",
+        "reasoning_budget_tokens",
+        "thinking_budget_tokens"
+    };
+
+    @Test
+    public void aStringMaxTokensIsRefusedRatherThanReadAsNoLimit() {
+        // upstream's schema reads max_tokens as a number (field_num::eval, server-schema.cpp, b11639) and
+        // answers "Field 'max_tokens': ... type must be number, but is string" with 400; the mapper read
+        // the string as no field at all, so the request ran without a cap.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":\"100\"}"));
+        assertThat(e.getMessage(), is("Field 'max_tokens': type must be number, but is string"));
+    }
+
+    @Test
+    public void everyNumberFieldThatIsNotANumberIsRefusedLikeUpstreamsSchema() {
+        // A string, a boolean, an object or an array in a number field was skipped without a word (n:"2"
+        // answered once, n_probs:"3" returned no probabilities); upstream answers 400. A boolean is
+        // refused too, where upstream's nlohmann conversion would read it as 0 or 1.
+        String[][] values = {{"\"3\"", "string"}, {"true", "boolean"}, {"{}", "object"}, {"[3]", "array"}};
+        for (String field : NUMBER_FIELDS) {
+            for (String[] value : values) {
+                String request =
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"" + field + "\":" + value[0] + "}";
+                IllegalArgumentException e =
+                        assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+                assertThat(
+                        request, e.getMessage(), is("Field '" + field + "': type must be number, but is " + value[1]));
+            }
+        }
+    }
+
+    @Test
+    public void aTopLogprobsThatIsNotANumberIsRefused() {
+        // upstream's chat parser falls back to 20 with a log warning; a wrong type is the client's mistake
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                        + "\"logprobs\":true,\"top_logprobs\":\"3\"}"));
+        assertThat(e.getMessage(), is("Field 'top_logprobs': type must be number, but is string"));
+    }
+
+    @Test
+    public void aNullNumberFieldIsTheDefaultLikeUpstream() throws IOException {
+        // upstream's schema treats null as absent ("clients can send null to request the server default")
+        StringBuilder request = new StringBuilder("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]");
+        for (String field : NUMBER_FIELDS) {
+            request.append(",\"").append(field).append("\":null");
+        }
+        JsonNode out = mapAndSerialize(request.append('}').toString());
+        assertThat(out.has("n_predict"), is(false));
+        assertThat(out.has("temperature"), is(false));
+        assertThat(out.has("repeat_last_n"), is(false));
+    }
+
+    @Test
+    public void aFractionalIntegerFieldIsTruncatedLikeUpstream() throws IOException {
+        // upstream converts a JSON float to the field's integer type; repeat_last_n 32.7 was dropped here
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"max_tokens\":100.5,\"repeat_last_n\":32.7,\"n_probs\":3.9}");
+        assertThat(out.path("n_predict").asInt(), is(100));
+        assertThat(out.path("repeat_last_n").asInt(-1), is(32));
+        assertThat(out.path("n_probs").asInt(-1), is(3));
+    }
+
+    @Test
+    public void onlyTheFirstPresentTokenCapAliasIsReadLikeUpstream() throws IOException {
+        // upstream's schema reads n_predict, then max_completion_tokens, then max_tokens, and stops at the
+        // first one present; a later alias is not looked at
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n_predict\":7,\"max_tokens\":\"x\"}");
+        assertThat(out.path("n_predict").asInt(), is(7));
+    }
+
     @Test
     public void unknownFieldsIgnored() throws IOException {
         JsonNode out = mapAndSerialize(

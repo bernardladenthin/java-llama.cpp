@@ -928,6 +928,27 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A {@code max_tokens} that is not a number is refused by the chat mapper, as upstream's schema
+     * refuses it; the refusal reaches the client as 400, streamed or not, before any SSE starts.
+     */
+    @Test
+    public void aStringMaxTokensOnTheChatRouteIsA400() throws IOException {
+        MappingBackend backend = new MappingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String stream : new String[] {"false", "true"}) {
+                String body = "{\"max_tokens\":\"100\",\"stream\":" + stream
+                        + ",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+                Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(body, response.body, containsString("\"type\":\"invalid_request_error\""));
+                assertThat(
+                        body, response.body, containsString("Field 'max_tokens': type must be number, but is string"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {
@@ -1221,6 +1242,29 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         public void stream(JsonNode request, ChunkSink sink) throws IOException {
             this.called = "stream";
             this.request = request;
+            super.stream(request, sink);
+        }
+    }
+
+    /**
+     * Backend that maps every chat request with the real {@link OpenAiRequestMapper} before answering, as
+     * {@link LlamaModelBackend} does, so a request the mapper refuses never reaches generation.
+     */
+    static final class MappingBackend extends FakeBackend {
+        private final OpenAiRequestMapper mapper = new OpenAiRequestMapper();
+        volatile String called = "";
+
+        @Override
+        public String complete(JsonNode request) {
+            mapper.toInferenceParameters(request);
+            this.called = "complete";
+            return super.complete(request);
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            mapper.toInferenceParameters(request);
+            this.called = "stream";
             super.stream(request, sink);
         }
     }

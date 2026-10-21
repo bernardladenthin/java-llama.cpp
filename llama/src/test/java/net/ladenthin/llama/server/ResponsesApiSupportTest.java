@@ -639,4 +639,18 @@ public class ResponsesApiSupportTest {
         assertThat(openAi.has("tool_choice"), is(false));
         assertThat(openAi.has("parallel_tool_calls"), is(false));
     }
+
+    @Test
+    public void aSamplingFieldThatIsNotANumberIsRefused() throws IOException {
+        // upstream's converter copies the whole body and its schema refuses a string in a number field
+        // (Field 'temperature': type must be number); the translation dropped temperature, top_p and
+        // max_output_tokens without a word, so the request ran with the server's defaults and no cap.
+        String[][] fields = {{"temperature", "temperature"}, {"top_p", "top_p"}, {"max_output_tokens", "max_tokens"}};
+        for (String[] field : fields) {
+            JsonNode request = MAPPER.readTree("{\"input\":\"hi\",\"" + field[0] + "\":\"1\"}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> ResponsesApiSupport.toOpenAiChatRequest(request), field[0]);
+            assertThat(e.getMessage(), is("Field '" + field[0] + "': type must be number, but is string"));
+        }
+    }
 }
