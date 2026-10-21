@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 import java.util.function.Consumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.InferenceParameters;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Production {@link OpenAiBackend} that runs requests against a loaded {@link LlamaModel}.
@@ -121,39 +122,40 @@ final class LlamaModelBackend implements OpenAiBackend {
 
     @Override
     public int countTokens(JsonNode request) throws IOException {
-        if (hasMediaContent(request)) {
+        String mediaType = mediaPartType(request);
+        if (mediaType != null) {
             // upstream counts an image's embeddings with the projector, which only its worker reaches
-            throw new UnsupportedOperationException(
-                    "counting the tokens of image, audio or video input is not supported");
+            throw new UnsupportedOperationException("counting the tokens of a '" + mediaType
+                    + "' content part is not supported; image, audio and video input is counted by the projector");
         }
         // the prompt a generation evaluates: the chat template rendered over the request, tokenized with
         // the special tokens added and parsed, as upstream's handle_count_tokens does
         String prompt = model.applyTemplate(mapper.toInferenceParameters(request));
-        JsonNode tokens = OBJECT_MAPPER
-                .readTree(model.handleTokenize(prompt, true, false))
-                .path("tokens");
+        String answer = model.handleTokenize(prompt, true, false);
+        JsonNode tokens = OBJECT_MAPPER.readTree(answer).path("tokens");
         if (!tokens.isArray()) {
-            throw new IOException("the tokenizer answered without a token array");
+            throw new IOException("the tokenizer answered without a token array: " + answer);
         }
         return tokens.size();
     }
 
     /**
-     * Whether a chat request carries a content part that is not text (an image, audio or a video).
+     * The type of the first content part of a chat request that is not text (an image, audio or a
+     * video), which the token count cannot see.
      *
      * @param request the OpenAI chat request
-     * @return {@code true} if any message's {@code content} array has a part whose {@code type} is not
-     *     {@code "text"}
+     * @return the part's {@code type}, or {@code null} if every message's content is text
      */
-    static boolean hasMediaContent(JsonNode request) {
+    static @Nullable String mediaPartType(JsonNode request) {
         for (JsonNode message : request.path("messages")) {
             for (JsonNode part : message.path("content")) {
-                if (part.isObject() && !"text".equals(part.path("type").asText(""))) {
-                    return true;
+                String type = part.path("type").asText("");
+                if (part.isObject() && !"text".equals(type)) {
+                    return type;
                 }
             }
         }
-        return false;
+        return null;
     }
 
     @Override

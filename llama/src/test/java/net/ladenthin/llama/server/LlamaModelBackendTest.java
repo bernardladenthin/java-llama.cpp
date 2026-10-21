@@ -37,11 +37,11 @@ public class LlamaModelBackendTest {
             JsonNode request = mapper.readTree("{\"messages\":[{\"role\":\"system\",\"content\":\"s\"},"
                     + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"t\"},{\"type\":\""
                     + type + "\"}]}]}");
-            assertThat(type, LlamaModelBackend.hasMediaContent(request), is(true));
+            assertThat(type, LlamaModelBackend.mediaPartType(request), is(type));
         }
         JsonNode text = mapper.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"t\"},"
                 + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"t\"}]}]}");
-        assertThat(LlamaModelBackend.hasMediaContent(text), is(false));
+        assertThat(LlamaModelBackend.mediaPartType(text), is((String) null));
     }
 
     @Test

@@ -726,11 +726,13 @@ final class OllamaApiSupport {
         if (!template.isMissingNode()
                 && !template.isNull()
                 && !(template.isTextual() && template.asText().isEmpty())) {
-            throw new IllegalArgumentException(TEMPLATE_UNSUPPORTED_MESSAGE);
+            throw new IllegalArgumentException(
+                    TEMPLATE_UNSUPPORTED_MESSAGE + " (got " + template.asText().length() + " characters)");
         }
         JsonNode context = request.path("context");
         if (!context.isMissingNode() && !context.isNull() && !(context.isArray() && context.size() == 0)) {
-            throw new IllegalArgumentException(CONTEXT_UNSUPPORTED_MESSAGE);
+            throw new IllegalArgumentException(CONTEXT_UNSUPPORTED_MESSAGE + " (got "
+                    + (context.isArray() ? context.size() + " tokens" : "a " + context.getNodeType()) + ")");
         }
     }
 
@@ -793,7 +795,8 @@ final class OllamaApiSupport {
         String prompt = request.path("prompt").asText("");
         if (hasImages(request)) {
             if (mediaMarker == null) {
-                throw new IllegalStateException("a raw prompt with images needs the server's media marker");
+                throw new IllegalStateException("a raw prompt with "
+                        + request.path("images").size() + " images needs the server's media marker");
             }
             openAi.set("prompt", toRawMultimodalPrompt(prompt, request.path("images"), mediaMarker));
         } else {
@@ -887,7 +890,7 @@ final class OllamaApiSupport {
     /** The base64 payload of a {@code data:} URL; any other string is taken as bare base64, as Ollama sends it. */
     private static String stripDataUrl(String image) {
         int comma = image.indexOf(',');
-        return image.startsWith("data:") && comma >= 0 ? image.substring(comma + 1) : image;
+        return comma >= 0 && image.startsWith("data:") ? image.substring(comma + 1) : image;
     }
 
     /**
@@ -899,7 +902,8 @@ final class OllamaApiSupport {
      */
     static ObjectNode toInfillRequest(JsonNode request) {
         if (hasImages(request)) {
-            throw new IllegalArgumentException("images are not supported with a suffix (fill-in-the-middle)");
+            throw new IllegalArgumentException("images are not supported with a suffix (fill-in-the-middle); got "
+                    + request.path("images").size());
         }
         ObjectNode infill = OBJECT_MAPPER.createObjectNode();
         copyFormatAsJsonSchema(request, infill);

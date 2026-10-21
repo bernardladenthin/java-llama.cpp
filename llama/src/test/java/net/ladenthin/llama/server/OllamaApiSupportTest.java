@@ -357,7 +357,7 @@ public class OllamaApiSupportTest {
                 IllegalArgumentException.class,
                 () -> OllamaApiSupport.toInfillRequest(
                         read("{\"prompt\":\"def f(\",\"suffix\":\")\",\"images\":[\"AAAA\"]}")));
-        assertThat(images.getMessage(), is("images are not supported with a suffix (fill-in-the-middle)"));
+        assertThat(images.getMessage(), is("images are not supported with a suffix (fill-in-the-middle); got 1"));
     }
 
     @Test

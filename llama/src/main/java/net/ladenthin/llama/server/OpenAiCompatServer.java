@@ -887,7 +887,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     private void handleChatInputTokens(HttpExchange exchange) throws IOException {
-        handleCountTokens(exchange, false, request -> request);
+        handleCountTokens(exchange, false, UnaryOperator.identity());
     }
 
     /**

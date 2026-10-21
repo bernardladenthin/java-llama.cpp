@@ -614,15 +614,15 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             String[][] cases = {
                 {
                     "{\"model\":\"test-model\",\"prompt\":\"why?\",\"template\":\"{{ .Prompt }}\",\"stream\":false}",
-                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE
+                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE + " (got 13 characters)"
                 },
                 {
                     "{\"model\":\"test-model\",\"prompt\":\"why?\",\"context\":[1,2,3],\"stream\":false}",
-                    OllamaApiSupport.CONTEXT_UNSUPPORTED_MESSAGE
+                    OllamaApiSupport.CONTEXT_UNSUPPORTED_MESSAGE + " (got 3 tokens)"
                 },
                 {
                     "{\"model\":\"test-model\",\"prompt\":\"def f(\",\"suffix\":\")\",\"template\":\"t\"}",
-                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE
+                    OllamaApiSupport.TEMPLATE_UNSUPPORTED_MESSAGE + " (got 1 characters)"
                 }
             };
             for (String[] c : cases) {
