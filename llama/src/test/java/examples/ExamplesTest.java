@@ -18,6 +18,8 @@ import java.io.PrintStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import net.ladenthin.llama.ClaudeGenerated;
+import net.ladenthin.llama.FimAssumptions;
+import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.Assumptions;
@@ -64,8 +66,14 @@ public class ExamplesTest {
 
     @Test
     public void infillExampleKeepsPrefixAndSuffix() {
+        ModelParameters parameters = model(TestConstants.MODEL_PATH);
+        // The example infills through complete(), which refuses a model without FIM tokens (F246); the
+        // probe load lets the test skip on such a model instead of failing on the example's own load.
+        try (LlamaModel probe = new LlamaModel(parameters)) {
+            FimAssumptions.assumeFimTokens(probe);
+        }
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        InfillExample.run(model(TestConstants.MODEL_PATH), capture(bytes));
+        InfillExample.run(parameters, capture(bytes));
         String out = bytes.toString(StandardCharsets.UTF_8);
         assertThat(out, startsWith("/** Returns whether the text reads the same backwards"));
         assertThat(out, endsWith("\n}\n"));
