@@ -92,6 +92,10 @@ public final class TrainingParameters {
      * Serialize this configuration to the JSON object the native fine-tuning layer expects.
      *
      * @return a compact JSON string
+     * @throws IllegalArgumentException if {@code epochs} is below 1, {@code valSplit} is outside
+     *     {@code [0, 1)}, or not exactly one of {@code trainingText} and {@code trainingFile} is set
+     * @throws NullPointerException if {@code modelPath} or {@code outputPath} was left unset on the
+     *     builder (the message names the field)
      */
     public String toJson() {
         validate();

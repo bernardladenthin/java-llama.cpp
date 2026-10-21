@@ -32,6 +32,10 @@ public final class LlamaTrainer {
      * Run one fine-tuning job to completion.
      *
      * @param parameters the training configuration (model, corpus, output, optimizer, schedule, ...)
+     * @throws IllegalArgumentException if {@code parameters} violate the documented bounds (see
+     *     {@link TrainingParameters#toJson()}); checked before anything native runs
+     * @throws NullPointerException if {@code parameters} was built without {@code modelPath} or
+     *     {@code outputPath}
      * @throws LlamaException if the model cannot be loaded or training fails
      */
     public static void finetune(TrainingParameters parameters) {
@@ -49,6 +53,7 @@ public final class LlamaTrainer {
      * @param output the path the fine-tuned GGUF is written to
      * @param epochs number of passes over the corpus (at least 1)
      * @param learningRate the AdamW learning rate at the first epoch (e.g. {@code 1e-5f})
+     * @throws IllegalArgumentException if {@code epochs} is below 1
      * @throws LlamaException if the model cannot be loaded or training fails
      */
     public static void finetune(Path model, String trainingText, Path output, int epochs, float learningRate) {

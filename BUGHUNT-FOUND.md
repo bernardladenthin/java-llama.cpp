@@ -181,6 +181,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `aaa7b5a`
 - **Doku-Lücke aus diesem Fix (2026-10-17, nur beschrieben):** Seit dem Fix wirft `TrainingParameters.toJson()` – und damit beide `LlamaTrainer.finetune`-Überladungen – bei ungültiger Konfiguration `IllegalArgumentException`; die Javadoc beider `finetune` nennt nur `LlamaException`. Reine Doku, kein Test kann sie rot machen, daher nach der Nutzerregel unverändert.
+- **Nachtrag (Branch-Review 2026-10-20, Fund J8-5):** Die Doku-Lücke ist geschlossen. `TrainingParameters#toJson` nennt `@throws IllegalArgumentException` (weniger als eine Epoche, `valSplit` außerhalb `[0, 1)`, nicht genau ein Korpus) und `@throws NullPointerException` (`modelPath`/`outputPath` am Builder nicht gesetzt; die Meldung nennt das Feld -- die NPE gab es schon vor dem Fix, er gab ihr nur den Namen). `LlamaTrainer#finetune(TrainingParameters)` nennt beide mit Verweis auf `toJson`; die Bequemlichkeits-Überladung nur `IllegalArgumentException` für `epochs` unter 1, die einzige dort erreichbare Prüfung (Text als Parameter, keine Datei, `valSplit` auf dem Standard, Pfade nicht null unter `@NullMarked`). Nur Doku; die Prüfungen pinnt `TrainingParametersTest`.
 
 <a id="f05"></a>
 ### F05 – java-llama.cpp: `ChatRequest.buildToolsJson()` kürzt ein Tool-Schema still auf den ersten JSON-Wert
