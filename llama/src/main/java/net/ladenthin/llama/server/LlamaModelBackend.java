@@ -7,6 +7,8 @@ package net.ladenthin.llama.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.function.Consumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.InferenceParameters;
 
@@ -22,8 +24,8 @@ import net.ladenthin.llama.parameters.InferenceParameters;
  *
  * <p>The streaming sink may fail with {@link IOException} (client disconnect); because the underlying
  * model API takes a {@link java.util.function.Consumer} (no checked exceptions), that failure is
- * relayed across the boundary via {@link java.io.UncheckedIOException} and unwrapped here so the
- * in-flight native task is cancelled.
+ * relayed across the boundary via {@link UncheckedIOException} and unwrapped here so the
+ * in-flight native task is cancelled ({@link #relay}).
  *
  * <p>A request the native layer rejects -- a body that is not valid JSON, a missing field, an empty
  * embedding input, a prompt over the context size -- arrives as
@@ -60,25 +62,7 @@ final class LlamaModelBackend implements OpenAiBackend {
     @Override
     public void stream(JsonNode request, ChunkSink sink) throws IOException {
         InferenceParameters params = mapper.toInferenceParameters(request);
-        // Holds an IOException thrown by the sink so it can be rethrown after the model API (which
-        // only understands unchecked exceptions) unwinds and cancels the native task.
-        final IOException[] sinkFailure = new IOException[1];
-        try {
-            model.streamChatCompletion(params, chunkJson -> {
-                try {
-                    sink.accept(chunkJson);
-                } catch (IOException e) {
-                    sinkFailure[0] = e;
-                    throw new java.io.UncheckedIOException(e);
-                }
-            });
-        } catch (java.io.UncheckedIOException e) {
-            IOException cause = sinkFailure[0];
-            if (cause != null) {
-                throw cause;
-            }
-            throw e;
-        }
+        relay(chunkConsumer -> model.streamChatCompletion(params, chunkConsumer), sink);
     }
 
     @Override
@@ -92,19 +76,38 @@ final class LlamaModelBackend implements OpenAiBackend {
         // The native handler parses the OpenAI body itself, as for the blocking request; forward it.
         ObjectNode body = request.deepCopy();
         body.put("stream", true);
+        relay(chunkConsumer -> model.streamCompletionsOai(body.toString(), chunkConsumer), sink);
+    }
+
+    /**
+     * Run a streaming model call, handing its chunks to {@code sink}, and give back an
+     * {@link IOException} of the sink as that same exception.
+     *
+     * <p>The model API takes a {@link Consumer}, which cannot throw a checked exception, so the sink's
+     * {@link IOException} (a client that disconnected) crosses it as an {@link UncheckedIOException}.
+     * The model call cancels its native task when that exception unwinds it; afterwards the original
+     * {@link IOException} is rethrown, so that the server takes its disconnect path rather than the one
+     * for a failed completion. An {@link UncheckedIOException} the sink did not cause, and every other
+     * exception of the model call, propagate unchanged.
+     *
+     * @param modelCall the model call, given the consumer its chunks go to
+     * @param sink where each chunk is written
+     * @throws IOException the sink's own exception, if it threw one
+     */
+    static void relay(Consumer<Consumer<String>> modelCall, ChunkSink sink) throws IOException {
         // Holds an IOException thrown by the sink so it can be rethrown after the model API (which
         // only understands unchecked exceptions) unwinds and cancels the native task.
         final IOException[] sinkFailure = new IOException[1];
         try {
-            model.streamCompletionsOai(body.toString(), chunkJson -> {
+            modelCall.accept(chunkJson -> {
                 try {
                     sink.accept(chunkJson);
                 } catch (IOException e) {
                     sinkFailure[0] = e;
-                    throw new java.io.UncheckedIOException(e);
+                    throw new UncheckedIOException(e);
                 }
             });
-        } catch (java.io.UncheckedIOException e) {
+        } catch (UncheckedIOException e) {
             IOException cause = sinkFailure[0];
             if (cause != null) {
                 throw cause;

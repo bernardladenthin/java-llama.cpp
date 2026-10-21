@@ -545,9 +545,10 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        LlamaModelBackend.stream (and streamCompletions) bridges the model's Consumer-based streaming API (which cannot throw a
-        checked exception) back to the IOException-throwing ChunkSink. A sink IOException is relayed out
-        of the consumer as an UncheckedIOException, caught here, and the ORIGINAL IOException is rethrown
+        LlamaModelBackend.relay (shared by stream and streamCompletions) bridges the model's Consumer-based
+        streaming API (which cannot throw a checked exception) back to the IOException-throwing ChunkSink.
+        A sink IOException is relayed out of the consumer as an UncheckedIOException, caught here, and the
+        ORIGINAL IOException is rethrown
         (it was stashed before wrapping). fb-contrib LEST flags the catch block because the thrown object
         differs from the caught one, but the rethrown IOException is exactly the underlying cause with
         its stack trace intact, so no history is lost. This is the standard UncheckedIOException unwrap
@@ -556,10 +557,7 @@ SPDX-License-Identifier: MIT
     <Match>
         <Class name="net.ladenthin.llama.server.LlamaModelBackend"/>
         <Bug pattern="LEST_LOST_EXCEPTION_STACK_TRACE"/>
-        <Or>
-            <Method name="stream"/>
-            <Method name="streamCompletions"/>
-        </Or>
+        <Method name="relay"/>
     </Match>
 
     <!--

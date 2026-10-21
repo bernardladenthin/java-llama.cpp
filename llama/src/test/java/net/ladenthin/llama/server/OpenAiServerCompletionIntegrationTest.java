@@ -10,12 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ServerMetrics;
+import nl.altindag.log.LogCaptor;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -33,6 +43,18 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String MODEL_ID = "completion-local";
+    /**
+     * Tokens a cancelled stream asks for. Small enough that the whole budget fits the context of one
+     * slot together with the prompt, or the slot stops early on its own and a missing cancel looks the
+     * same as a working one.
+     */
+    private static final int CANCEL_BUDGET = 100;
+    /** How long a slot may stay busy after a cancel, as in the cancellation tests of LlamaModelTest. */
+    private static final long IDLE_TIMEOUT_MILLIS = 30_000L;
+    /** The server's log line for a client that went away during a stream. */
+    private static final String DISCONNECT_LOG = "client disconnected during stream";
+    /** The server's log line for a stream that failed for any other reason. */
+    private static final String FAILURE_LOG = "streaming completion failed";
 
     private static LlamaModel model;
     private static OpenAiCompatServer server;
@@ -155,6 +177,104 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
                 InvalidRequestException.class,
                 () -> model.handleChatCompletions(
                         "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"n\":2,\"max_tokens\":2}"));
+    }
+
+    /**
+     * A sink that fails mid-stream ends {@link LlamaModel#streamCompletionsOai} with its own exception,
+     * and the model cancels the native task on the way out (F186). The budget is fixed ({@code
+     * ignore_eos}) and counted through the server's decode counter -- one decode per generated token
+     * while this slot is the only one busy -- because waiting for the slot to become idle alone passes
+     * without the cancel as well: the slot then simply generates the whole budget first.
+     */
+    @Test
+    public void aSinkThatFailsMidStreamCancelsTheNativeTask() throws InterruptedException {
+        long decodesBefore = awaitIdleSlots().getDecodeTotal();
+        IllegalStateException failure = new IllegalStateException("client gone");
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> model.streamCompletionsOai(cancelledStreamBody(), chunk -> {
+                    throw failure;
+                }));
+        assertThat(thrown, is(failure));
+        long decodes = awaitIdleSlots().getDecodeTotal() - decodesBefore;
+        assertThat("decodes of the cancelled stream: " + decodes, decodes < CANCEL_BUDGET / 2, is(true));
+    }
+
+    /**
+     * A client that closes the connection during a streamed {@code /v1/completions} is a disconnect to
+     * the server, not a failed completion: the sink's {@link IOException} comes back through the model
+     * call as itself, so the server logs it at DEBUG and writes nothing more, and the native task is
+     * cancelled. An {@link java.io.UncheckedIOException} escaping the backend instead would be logged
+     * as a WARN with an error event written to the gone client -- invisible in the slot count, which is
+     * why the log is asserted.
+     */
+    @Test
+    public void aClientThatDisconnectsMidStreamIsADisconnectAndFreesTheSlot() throws IOException, InterruptedException {
+        long decodesBefore = awaitIdleSlots().getDecodeTotal();
+        try (LogCaptor captor = LogCaptor.forClass(OpenAiCompatServer.class)) {
+            captor.setLogLevelToDebug();
+            String body = cancelledStreamBody().replace("{", "{\"stream\":true,");
+            try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
+                OutputStream out = socket.getOutputStream();
+                byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                out.write(("POST /v1/completions HTTP/1.1\r\nHost: localhost\r\n"
+                                + "Content-Type: application/json\r\nContent-Length: " + bytes.length
+                                + "\r\n\r\n")
+                        .getBytes(StandardCharsets.US_ASCII));
+                out.write(bytes);
+                out.flush();
+                BufferedReader in =
+                        new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+                String line = in.readLine();
+                assertThat(String.valueOf(line), line != null && line.startsWith("HTTP/1.1 200"), is(true));
+                while (line != null && !line.startsWith("data: ")) {
+                    line = in.readLine();
+                }
+                assertThat("a first chunk before the close", line != null, is(true));
+            }
+            List<String> disconnects = awaitStreamOutcome(captor);
+            assertThat(disconnects.toString(), disconnects.size(), is(1));
+            assertThat(captor.getWarnLogs().toString(), captor.getWarnLogs().contains(FAILURE_LOG), is(false));
+        }
+        long decodes = awaitIdleSlots().getDecodeTotal() - decodesBefore;
+        assertThat("decodes of the disconnected stream: " + decodes, decodes < CANCEL_BUDGET / 2, is(true));
+    }
+
+    /** A streamed completion that runs until it is stopped: {@link #CANCEL_BUDGET} tokens, no EOS. */
+    private static String cancelledStreamBody() {
+        return "{\"prompt\":\"Once\",\"max_tokens\":" + CANCEL_BUDGET + ",\"ignore_eos\":true}";
+    }
+
+    /**
+     * Waits until the server logged how the stream ended, either way, and returns its disconnect lines.
+     */
+    private static List<String> awaitStreamOutcome(LogCaptor captor) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(IDLE_TIMEOUT_MILLIS);
+        while (!captor.getDebugLogs().contains(DISCONNECT_LOG)
+                && !captor.getWarnLogs().contains(FAILURE_LOG)) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the server logged no end of the stream after " + IDLE_TIMEOUT_MILLIS
+                        + " ms; debug: " + captor.getDebugLogs() + ", warn: " + captor.getWarnLogs());
+            }
+            Thread.sleep(20L);
+        }
+        List<String> disconnects = new java.util.ArrayList<>(captor.getDebugLogs());
+        disconnects.removeIf(message -> !message.equals(DISCONNECT_LOG));
+        return disconnects;
+    }
+
+    /** Polls the metrics until no slot is processing, for at most {@link #IDLE_TIMEOUT_MILLIS}. */
+    private static ServerMetrics awaitIdleSlots() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(IDLE_TIMEOUT_MILLIS);
+        ServerMetrics metrics = model.getMetricsTyped();
+        while (metrics.getProcessingSlots() != 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("a slot is still processing after " + IDLE_TIMEOUT_MILLIS + " ms");
+            }
+            Thread.sleep(20L);
+            metrics = model.getMetricsTyped();
+        }
+        return metrics;
     }
 
     @Test
