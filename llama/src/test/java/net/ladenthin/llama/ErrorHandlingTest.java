@@ -252,6 +252,23 @@ public class ErrorHandlingTest {
                 "Error should be upstream's refusal but was: " + e.getMessage());
     }
 
+    @Test
+    public void anInvalidRequestKeepsAFourByteCharacterOfTheRequest() {
+        // upstream quotes the client's response_format type in its refusal (oaicompat_chat_params_parse,
+        // server-common.cpp:1318, b11639); the message crosses JNI through throw_api_status, which has to
+        // hand it over as UTF-8 bytes -- ThrowNew reads Modified UTF-8 and mangles a supplementary character
+        String emoji = "\uD83D\uDE00"; // U+1F600
+        String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]," + "\"response_format\":{\"type\":\""
+                + emoji + "\"},\"n_predict\":1}";
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.handleChatCompletions(request));
+
+        assertTrue(
+                e.getMessage().contains("but got: " + emoji),
+                "Error should quote the type intact but was: " + e.getMessage());
+    }
+
     // -------------------------------------------------------------------------
     // configureParallelInference validation
     // -------------------------------------------------------------------------
