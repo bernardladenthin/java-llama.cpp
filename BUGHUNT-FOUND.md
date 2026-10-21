@@ -1943,7 +1943,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BatchDispatchTest#submitAllThenReceive_failedSubmissionWithAnError_releasesTheTasksAlreadySubmitted` (die dritte Einreichung wirft einen `AssertionError`; dieselbe Instanz kommt an, 10 und 20 sind freigegeben), `#submitAllThenReceive_aReleaseThatThrowsAnError_doesNotStopTheOtherReleases` (die Freigabe von 10 wirft einen `AssertionError`; 20 wird trotzdem freigegeben, der `Error` hängt unterdrückt an der Einreichfehlermeldung), `#submitAllThenReceive_anErrorFromAReceive_stillReceivesTheOthersThenThrowsIt` (der Empfang von 1 wirft einen `AssertionError`; 1, 2, 3 werden empfangen, dieselbe Instanz kommt an).
 - **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot („Expected: iterable containing [<10>, <20>] but: no item was <10>“, „Unexpected exception type thrown, expected: <java.lang.IllegalStateException> but was: <java.lang.AssertionError>“, „Expected: iterable containing [<1>, <2>, <3>] but: no item was <2>“), mit ihm grün (`BatchDispatchTest` 14/14); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `edad4ca`
 
 ## Offene Verdachte ohne Fund-ID
 
