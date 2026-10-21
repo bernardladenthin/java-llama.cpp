@@ -390,6 +390,16 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
+- **The SYCL natives jobs install upstream's toolchain**, as llama.cpp's `ubuntu-24-sycl` / `windows-sycl`
+  release jobs do: Intel's Deep Learning Essentials 2026.1.4 and oneDNN 2026.0.2 offline installers (upstream
+  since b11654, #30131), pinned by URL, instead of the unpinned apt packages on Linux and the 2025.3.3 bundle on
+  Windows; and the Level Zero loader/SDK upstream's jobs have had since #21597 / #29273. **Two consequences
+  for the shipped modules:** both now import the Level Zero loader (`libze_loader.so.1`, `ze_loader.dll`; the
+  Intel GPU driver's) and carry ggml-sycl's Level Zero allocation path (`GGML_SYCL_SUPPORT_LEVEL_ZERO_API`),
+  which the modules built so far never had -- their import lists carried no loader; and the Windows module
+  needs the oneAPI **2026** runtime (`sycl9.dll`, `mkl_sycl_blas.6.dll`) where the 2025.3 build needed
+  `sycl8.dll` / `mkl_sycl_blas.5.dll` -- with the older runtime on `PATH` the module no longer loads, and
+  ggml skips it silently (the CPU modules run). README names the runtime per jar.
 - `TextToSpeech` follows llama.cpp b11796 (#30902): `mtmd_helper::gen_audio` is initialised explicitly and
   the synthesis input starts from upstream's defaults (a `stream` flag joined the struct, off here). No
   change to the Java API; a projector without audio generation is refused with a message, as before.

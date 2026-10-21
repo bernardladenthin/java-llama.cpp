@@ -951,8 +951,8 @@ vendor runtime.
 |---|---|---|---|
 | `rocm-linux-x86-64` | `GGML_HIP=ON -DCMAKE_HIP_COMPILER=… -DGPU_TARGETS=…` | `ubuntu-latest` + ROCm 10 TheRock wheels (pip, `rocm-sdk path`) | `Linux/x86_64/rocm/libggml-hip.so` |
 | `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2022` + ROCm 10 TheRock wheels (pip) | `Windows/x86_64/rocm/ggml-hip.dll` |
-| `sycl-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `Linux/x86_64/sycl/libggml-sycl.so` |
-| `sycl-windows-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`) | `windows-2025-vs2026` + oneAPI installer | `Windows/x86_64/sycl/ggml-sycl.dll` |
+| `sycl-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel Deep Learning Essentials 2026.1.4 + oneDNN 2026.0.2 (offline installers) + Level Zero 1.33.1 debs, as upstream's `ubuntu-24-sycl` | `Linux/x86_64/sycl/libggml-sycl.so` |
+| `sycl-windows-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`) | `windows-2025-vs2026` + Deep Learning Essentials 2026.1.4 + oneDNN 2026.0.2 (offline installers) + the Level Zero SDK zip, as upstream's `windows-sycl` | `Windows/x86_64/sycl/ggml-sycl.dll` |
 | `opencl-windows-aarch64` | `GGML_OPENCL=ON …ADRENO_KERNELS=ON` (clang-cl, `GGML_OPENMP=OFF`) | `windows-11-arm` (arm64 CPU job's toolchain) | `Windows/aarch64/opencl/ggml-opencl.dll` |
 | `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `Linux/x86_64/openvino/libggml-openvino.so` |
 | `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `Windows/x86_64/openvino/ggml-openvino.dll` |
@@ -992,8 +992,18 @@ jar barely shrinks (zip already compressed the code); what shrinks is the extrac
 **SYCL is fp16 on both OSes, one jar each**, as upstream's SYCL release builds (`GGML_SYCL_F16=ON`).
 The second Linux precision (`sycl-fp32-linux-x86-64`, fp32 accumulation) was dropped with the modular
 natives: nobody had asked for it, and two modules of the same backend on one classpath would both
-register the same device. **Both SYCL jobs install oneDNN** (Linux `intel-oneapi-dnnl-devel`, Windows
-`intel.oneapi.win.dnnl`): since llama.cpp #29107 (b11636) `GGML_SYCL_DNN` (default ON) fails the configure
+register the same device. **Both SYCL jobs install upstream's toolchain, pinned by installer URL**
+(`KEEP IN SYNC WITH UPSTREAM` in `publish.yml`, read off `release.yml`'s `ubuntu-24-sycl` / `windows-sycl` jobs
+at the pinned tag; the bump runbook lists it): Intel's Deep Learning Essentials bundle (DPC++, MKL, TBB) plus
+the separate oneDNN installer (b11654, #30131 -- until the b11800 bump the Linux job took the same components
+from Intel's apt repository, unpinned, and the Windows job the 2025.3.3 bundle that still carried oneDNN), and
+the Level Zero loader/SDK upstream's jobs have had since #21597 / #29273 (`GGML_SYCL_SUPPORT_LEVEL_ZERO_API`,
+default ON, links `ze_loader` when found and only warns without it). **The Level Zero half changed the shipped
+modules**: the ones built from the apt packages / the 2025.3 bundle never found a loader (run 38870889665's
+package job listed none), so both modules import it now -- `libze_loader.so.1` / `ze_loader.dll`, the Intel GPU
+driver's -- and the Windows module needs the oneAPI 2026 runtime (`sycl9.dll`, `mkl_sycl_blas.6.dll`) instead of
+2025.3's `sycl8.dll` / `mkl_sycl_blas.5.dll`; the README classifier table names both. **oneDNN is required**: since
+llama.cpp #29107 (b11636) `GGML_SYCL_DNN` (default ON) fails the configure
 when oneDNN is missing or is a CPU-only build, where it used to warn and build a module whose flash attention
 runs the slower MKL path -- which is what the Linux module had been until the b11639 bump. The module then
 needs `libdnnl.so.3` / `dnnl.dll` at run time, from the same oneAPI environment (`setvars.sh`) as MKL.
@@ -1707,9 +1717,11 @@ tag and links `ssl`/`crypto` into its `cpp-httplib` target. **Android, s390x and
 are the exceptions** (`LLAMA_OPENSSL=OFF`, so `find_package` cannot link a system OpenSSL by
 accident): the dockcross cross-clang is not a configuration BoringSSL is built for here, big-endian
 is outside its supported set, and `icx`/`icpx` (compiler id `IntelLLVM`) is neither GCC nor Clang to
-BoringSSL's CMake -- upstream's `ubuntu-24-sycl` release job passes `LLAMA_OPENSSL=OFF` as well,
-while its `windows-sycl` job (C by `cl`, C++ by `icx`) builds BoringSSL, as the Windows SYCL job here
-did before. `verify-native-deps.py` is what holds the line: a `libssl` of any kind in a shipped
+BoringSSL's CMake -- upstream's `ubuntu-24-sycl` release job builds against the system OpenSSL instead since
+b11676 (#30456; `libssl-dev`, a dynamic `libssl` a shipped library here must not import), while its
+`windows-sycl` job (C by `cl`, C++ by `icx`) builds BoringSSL. The SYCL jars are module-only builds -- ggml
+alone, no cpp-httplib -- so no SSL code reaches them either way; the exception matters for a full Linux SYCL
+build of `libjllama` only. `verify-native-deps.py` is what holds the line: a `libssl` of any kind in a shipped
 library's dependency list fails `package`. The one import this adds is Windows' `crypt32.dll`
 (cpp-httplib's certificate-store lookup), an OS component since Windows 2000, in `WINDOWS_OS`.
 

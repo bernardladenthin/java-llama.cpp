@@ -213,8 +213,11 @@ set(LLAMA_BUILD_COMMON ON)
 # cpp-httplib built with ONE setting. Off where BoringSSL is not built here: Android (the dockcross
 # cross-clang, and the AAR has no download use case), s390x (big-endian is outside BoringSSL's
 # supported set) and the Linux SYCL builds (icx/icpx, compiler id IntelLLVM, which BoringSSL's CMake
-# treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job passes LLAMA_OPENSSL=OFF too,
-# while its windows-sycl job builds BoringSSL -- as this file did before). LLAMA_OPENSSL=OFF there
+# treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job builds against the system
+# OpenSSL instead since b11676/#30456 -- libssl-dev, a dynamic libssl, which verify-native-deps.py
+# would reject in a shipped library -- while its windows-sycl job builds BoringSSL, as this file does.
+# The SYCL jars themselves are module-only builds, ggml alone and no cpp-httplib, so no SSL code
+# reaches them either way; the setting matters only for a full Linux SYCL build). LLAMA_OPENSSL=OFF there
 # Linux: no libgomp dependency, because the jar has to load in the images Java is actually deployed
 # in. `libggml-base.so` -- the first file LlamaLoader loads -- declares `libgomp.so.1` whenever ggml
 # builds with OpenMP, and GCC's -fopenmp links it DYNAMICALLY, so it is a runtime requirement of the

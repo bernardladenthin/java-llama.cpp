@@ -78,10 +78,12 @@ each vendor publishes next to the file.)* Still open, each with the reason:
       measured hash so it can be pinned after a check on a trusted machine instead of costing another
       run; and the CUDA archive names come from the manifest (`relative_path`) instead of upstream's
       hand-written list, whose `cuda_crt 13.4.59` was not the `cuda_crt` the newest manifest hashes.
-- [ ] **The oneAPI Windows installer has no checksum endpoint** Intel publishes next to the file
-      (`registrationcenter-download.intel.com/.../intel-deep-learning-essentials-2025.3.3.18_offline.exe`);
-      pinning needs one download of the 1.6 GB installer on a machine that can reach it, then
-      `Get-FileHash` into a `ONEAPI_INSTALLER_SHA256` check like the Vulkan one.
+- [ ] **The oneAPI installers have no checksum endpoint** Intel publishes next to the files (since the b11800
+      bump both SYCL jobs take upstream's: Deep Learning Essentials 2026.1.4 and oneDNN 2026.0.2 for Linux
+      and Windows, `ONEAPI_DLE_URL` / `ONEAPI_ONEDNN_URL` in `publish.yml`); pinning needs one download of
+      each installer on a machine that can reach `registrationcenter-download.intel.com`, then `sha256sum` /
+      `Get-FileHash` into a check like the Vulkan one. The Level Zero debs and SDK zip come from a GitHub
+      release and could be hashed the same way.
 - [ ] **ROCm wheels come from a moving index** (`stable.repo.amd.com/rocm/whl-next/`, version-pinned
       with `==` but not hashed): `pip install --require-hashes` needs a requirements file with the
       hash of every wheel of `rocm[libraries,devel]`, which only a machine that can download the
@@ -590,11 +592,22 @@ library does not expose, each a decision rather than an omission:
   configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
   flag answers with upstream's "not available" message. No plan to bundle a binary.
 
-And one CI drift to watch: upstream's SYCL release jobs moved from the oneAPI Base Toolkit to the Deep Learning
-Essentials + oneDNN installers (b11654, #30131) and build the Linux module with system OpenSSL (b11676,
-#30456). Ours stay on the apt packages (Linux) / the DLE 2025.3.3 installer (Windows) and ship the Linux SYCL
-module without HTTPS (`verify-native-deps.py` forbids a `libssl` import); nothing to do until a SYCL job
-breaks or the Linux module should fetch models over HTTPS.
+**The SYCL jobs follow upstream's installers since this bump** (owner's ask, 2026-10-21): Deep Learning
+Essentials 2026.1.4 + oneDNN 2026.0.2 offline installers on both OSes (upstream since b11654, #30131), pinned by
+URL under `KEEP IN SYNC WITH UPSTREAM`, instead of Intel's unpinned apt packages (Linux) and the 2025.3.3 bundle
+(Windows); and the Level Zero loader/SDK upstream's jobs have carried since #21597 / #29273. **That last part is
+a change to the shipped modules, not only to the toolchain:** the modules built so far never found a Level Zero
+loader (the package job of run 38870889665 listed none among their imports), so from this bump on
+`libggml-sycl.so` imports `libze_loader.so.1` and `ggml-sycl.dll` imports `ze_loader.dll` (Intel's GPU driver
+ships both) and both carry ggml-sycl's Level Zero allocation path; and the Windows module moves from the oneAPI
+2025.3 runtime (`sycl8.dll`, `mkl_sycl_blas.5.dll`) to 2026.1 (`sycl9.dll`, `mkl_sycl_blas.6.dll`). CHANGELOG
+and the README classifier table say so. **Unverified here** -- Intel's download host answers this sandbox with
+403, and no job runs locally -- so the first Publish run proves it; what to read there: both installers download
+and install silently, `setvars.sh` / `setvars.bat` exist, the configure prints `Level Zero loader found` and no
+`oneDNN not found` FATAL_ERROR, and the package job's dependency lines show `libze_loader.so.1` / `ze_loader.dll`
+and `sycl9.dll` (`verify-native-deps.py` holds a GPU directory to a denylist only, so a vendor loader passes). The OpenSSL half of upstream's change (b11676, #30456: the
+Linux job builds against `libssl-dev`) does not apply: the SYCL jars are module-only builds without
+cpp-httplib, and a shipped `libjllama` must not import a dynamic `libssl` anyway.
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
