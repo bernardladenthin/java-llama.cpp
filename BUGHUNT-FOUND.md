@@ -184,6 +184,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F259](#f259) — niedrig bis mittel — *gefixt*
 - [F260](#f260) — niedrig — *gefixt*
 - [F261](#f261) — niedrig bis mittel — *gefixt*
+- [F262](#f262) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1778,6 +1779,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, der `ResponseStream`-Test mit „Expected: is <false> but: was <true>“ (`answerIfNotStarted` nach gescheitertem Kopfzeilen-Schreiben); mit dem Fix grün (`ResponseStreamTest` 5, `OpenAiCompatServerHttpTest` 66, `OllamaApiSupportTest` 39, `LlamaArchitectureTest` 13). Modellgestützt mit dem Winzmodell `OpenAiCompatServerIntegrationTest` 13/13 grün; in `OpenAiServerCompletionIntegrationTest` scheitern nur die beiden Infill-Fälle (500, das Winzmodell hat keine FIM-Token), die keine Streaming-Route berühren. `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d00936b`
+- **Nachtrag (Branch-Review 2026-10-20/21):** die Hälfte nach dem Start des Streams (eine Backend-`IOException` nach dem ersten Chunk galt weiter als Abbruch, ohne Fehler-Event) ist als [F262](#f262) behoben: nur die Ausnahme, die ein Schreiben des Streams selbst warf, ist noch ein DEBUG-Abbruch.
 
 <a id="f215"></a>
 ### F215 – java-llama.cpp: Ollama `/api/generate` mit `raw: true` verwirft `system`, `template` und `context` still — Ollama antwortet 400
@@ -2379,6 +2381,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b99a25b`
 
+<a id="f261"></a>
 ### F261 – java-llama.cpp: `POST /v1/messages/count_tokens` und die `input_tokens`-Routen antworten 404; upstream zählt dort die Prompt-Token
 - **Zeit:** 2026-10-21 16:05 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (neu `handleCountTokens` mit den drei Routen und ihren Kurzformen, `PATH_MESSAGES_COUNT_TOKENS`, `PATH_RESPONSES_INPUT_TOKENS`, `PATH_CHAT_COMPLETIONS_INPUT_TOKENS`), `OpenAiBackend.java` (neu `countTokens`), `LlamaModelBackend.java` (`countTokens`, `mediaPartType`), `README.md`
@@ -2390,6 +2393,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server (mit `countTokens` als Stummel) rot: „OpenAiCompatServerHttpTest.theTokenCountRoutesAnswerWithTheCountOfTheTranslatedRequest:345 /v1/messages/count_tokens Expected: is <200> but: was <404>“, „theTokenCountRoutesAnswerRefusalsInTheirRoutesErrorShape:386 {"error":{"message":"Not found: /v1/messages/count_tokens",…}} Expected: is <400> but: was <404>“, „OpenAiCompatServerIntegrationTest.theTokenCountRoutesCountThePromptAGenerationEvaluates:92 … Not found: /v1/chat/completions/input_tokens … Expected: is <200> but: was <404>“; mit dem Fix grün: `OpenAiCompatServerHttpTest` 79/79, `LlamaModelBackendTest` 5/5, `OpenAiCompatServerIntegrationTest` 15/15 (Winzmodell als Reasoning-Modell), `AnthropicApiSupportTest` 46/46, `ResponsesApiSupportTest` 70/70.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2c6e5c5`
+
+<a id="f262"></a>
+### F262 – java-llama.cpp: nach begonnenem Stream gilt eine Backend-`IOException` als Verbindungsabbruch — kein Fehler-Event, nur DEBUG
+- **Zeit:** 2026-10-21 17:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (neu `failStream`; `ResponseStream.writeStrict` merkt sich seine Ausnahme, neu `ResponseStream.isOwnWriteFailure`; die Fehlerzweige von `streamCompletions`, `streamChat`, `streamOllamaChat`, `streamAnthropic`, `streamResponses`)
+- **Schwere:** niedrig (nur über die öffentliche Schnittstelle `OpenAiBackend` erreichbar; `LlamaModelBackend` reicht nur die `IOException` der Senke weiter)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Server transport“; Brief JR-6), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F214 hatte die Hälfte vor dem ersten Chunk behoben (500 statt keiner Antwort) und die Hälfte danach bewusst offen gelassen.
+- **Beschreibung:** Nach dem Start des Streams nahmen die fünf Streaming-Routen jede `IOException` für einen gegangenen Client: `LOG.debug("client disconnected during stream", e)`, kein Fehler-Event, kein `[DONE]`. `OpenAiBackend.stream`/`streamCompletions` dürfen eine `IOException` aber auch für eine gescheiterte Generierung werfen; ein noch verbundener Client sah seinen Stream dann enden, als sei die Antwort vollständig, und im Log stand nichts über WARN.
+- **Fix:** Der Abbruch wird nicht mehr am Typ erkannt, sondern an der Identität: `ResponseStream.writeStrict` merkt sich die Ausnahme, die es wirft, und `isOwnWriteFailure` erkennt sie wieder, auch eingewickelt (Ursachenkette, begrenzt auf 16 Glieder; `LlamaModelBackend.relay` reicht genau diese Ausnahme zurück). Nur sie ist ein DEBUG-Abbruch. Jeder andere Fehler — eine `RuntimeException` oder eine eigene `IOException` des Backends — geht durch den neuen Helfer `failStream`: WARN mit Klassenname und Meldung, vor dem Start 500 mit dem Fehlerkörper der Route, danach das Fehler-Event der Route über `writeQuietly` (SSE-`data:`-Fehlerobjekt für Chat und Completions, Ollama-NDJSON-Zeile `{"error":…}`, Anthropic `event: error`, Responses `response.failed` plus `event: error`). Abweichung vom Brief: der Brief schlug vor, jede `IOException` nach dem Start mit WARN und Event zu behandeln („ein echter Disconnect kostet nichts“); das hätte jeden gewöhnlichen Verbindungsabbruch als WARN geloggt. Die Identitätsprüfung trennt die beiden Fälle genau.
+- **Tests:** `OpenAiCompatServerHttpTest#aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute` (alle fünf Streaming-Routen, `IoFailingAfterFirstChunkBackend`: ein Chunk, dann `IOException("generation failed")`; Status 200, der Chunk, das Fehler-Event der Route mit der Meldung, WARN mit `IOException` per LogCaptor), `ResponseStreamTest#theFailureOfAStrictWriteIsRecognisedAsTheStreamsOwn` (auch als `UncheckedIOException` eingewickelt; eine andere `IOException` nicht), `#noFailureIsTheStreamsOwnBeforeAStrictWriteFailed`.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute:944 /v1/chat/completions Expected: a string containing "\"type\":\"server_error\"" but: was "data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"he"}}]}“ (der Stream endete nach dem Chunk, ohne Fehler-Event und ohne `[DONE]`); mit dem Fix grün: `OpenAiCompatServerHttpTest` 80/80, `ResponseStreamTest` 7/7.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

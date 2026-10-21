@@ -29,6 +29,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
@@ -403,20 +404,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     out.writeQuietly(OpenAiSseFormatter.sseData(
                             OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
                 }
-            } catch (IOException e) {
-                if (out.answerIfNotStarted(
-                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
-                    LOG.warn("streaming completion failed before the first chunk", e);
-                } else {
-                    LOG.debug("client disconnected during stream", e);
-                }
-            } catch (RuntimeException e) {
-                LOG.warn("streaming completion failed", e);
-                if (!out.answerIfNotStarted(
-                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
-                    out.writeQuietly(OpenAiSseFormatter.sseData(
-                            OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null)));
-                }
+            } catch (IOException | RuntimeException e) {
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
+                failStream(out, e, "streaming completion", error, () -> OpenAiSseFormatter.sseData(error));
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -502,20 +492,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     out.writeQuietly(OpenAiSseFormatter.sseData(
                             OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
                 }
-            } catch (IOException e) {
-                if (out.answerIfNotStarted(
-                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
-                    LOG.warn("streaming chat completion failed before the first chunk", e);
-                } else {
-                    LOG.debug("client disconnected during stream", e);
-                }
-            } catch (RuntimeException e) {
-                LOG.warn("streaming chat completion failed", e);
-                if (!out.answerIfNotStarted(
-                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
-                    out.writeQuietly(OpenAiSseFormatter.sseData(
-                            OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null)));
-                }
+            } catch (IOException | RuntimeException e) {
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
+                failStream(out, e, "streaming chat completion", error, () -> OpenAiSseFormatter.sseData(error));
             } finally {
                 // try-with-resources closes the stream (under its lock) after the heartbeat is cancelled,
                 // so the close never races a still-in-flight heartbeat write.
@@ -644,17 +623,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 if (!out.answerIfNotStarted(HTTP_BAD_REQUEST, ollamaError(message(e)))) {
                     out.writeQuietly(ollamaError(message(e)) + "\n");
                 }
-            } catch (IOException e) {
-                if (out.answerIfNotStarted(HTTP_SERVER_ERROR, ollamaError(message(e)))) {
-                    LOG.warn("ollama streaming chat failed before the first chunk", e);
-                } else {
-                    LOG.debug("ollama client disconnected during stream", e);
-                }
-            } catch (RuntimeException e) {
-                LOG.warn("ollama streaming chat failed", e);
-                if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, ollamaError(message(e)))) {
-                    out.writeQuietly(ollamaError(message(e)) + "\n");
-                }
+            } catch (IOException | RuntimeException e) {
+                String error = ollamaError(message(e));
+                failStream(out, e, "ollama streaming chat", error, () -> error + "\n");
             }
         }
     }
@@ -799,18 +770,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 if (!out.answerIfNotStarted(HTTP_BAD_REQUEST, error)) {
                     out.writeQuietly(AnthropicApiSupport.sseEvent("error", error));
                 }
-            } catch (IOException e) {
-                if (out.answerIfNotStarted(HTTP_SERVER_ERROR, anthropicError(message(e), ANTHROPIC_ERROR_SERVER))) {
-                    LOG.warn("anthropic streaming failed before the first event", e);
-                } else {
-                    LOG.debug("anthropic client disconnected during stream", e);
-                }
-            } catch (RuntimeException e) {
-                LOG.warn("anthropic streaming failed", e);
+            } catch (IOException | RuntimeException e) {
                 String error = anthropicError(message(e), ANTHROPIC_ERROR_SERVER);
-                if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, error)) {
-                    out.writeQuietly(AnthropicApiSupport.sseEvent("error", error));
-                }
+                failStream(out, e, "anthropic streaming", error, () -> AnthropicApiSupport.sseEvent("error", error));
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -975,20 +937,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     out.writeQuietly(translator.failed(message(e), ERROR_TYPE_REQUEST) + "event: error\ndata: " + error
                             + "\n\n");
                 }
-            } catch (IOException e) {
-                if (out.answerIfNotStarted(
-                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
-                    LOG.warn("responses streaming failed before the first event", e);
-                } else {
-                    LOG.debug("responses client disconnected during stream", e);
-                }
-            } catch (RuntimeException e) {
-                LOG.warn("responses streaming failed", e);
+            } catch (IOException | RuntimeException e) {
                 String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
-                if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, error)) {
-                    out.writeQuietly(
-                            translator.failed(message(e), ERROR_TYPE_SERVER) + "event: error\ndata: " + error + "\n\n");
-                }
+                failStream(
+                        out,
+                        e,
+                        "responses streaming",
+                        error,
+                        () -> translator.failed(message(e), ERROR_TYPE_SERVER) + "event: error\ndata: " + error
+                                + "\n\n");
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -1248,6 +1205,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
         private boolean answered;
 
+        /** How many causes {@link #isOwnWriteFailure(Throwable)} follows. */
+        private static final int MAX_CAUSE_DEPTH = 16;
+
+        /** The last exception a strict write threw: the stream's own failure, i.e. a client that went away. */
+        private @Nullable IOException writeFailure;
+
         ResponseStream(HttpExchange exchange, String contentType) {
             this.exchange = exchange;
             this.contentType = contentType;
@@ -1298,13 +1261,42 @@ public final class OpenAiCompatServer implements AutoCloseable {
         /** Write under the lock, propagating failures so a streaming generation can be cancelled. */
         void writeStrict(String text) throws IOException {
             synchronized (lock) {
-                OutputStream out = body();
-                if (out == null) {
-                    throw new IOException("the request was already answered without a stream; " + text.length()
-                            + " characters dropped");
+                try {
+                    OutputStream out = body();
+                    if (out == null) {
+                        throw new IOException("the request was already answered without a stream; " + text.length()
+                                + " characters dropped");
+                    }
+                    out.write(text.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } catch (IOException e) {
+                    writeFailure = e;
+                    throw e;
                 }
-                out.write(text.getBytes(StandardCharsets.UTF_8));
-                out.flush();
+            }
+        }
+
+        /**
+         * Whether {@code failure} is, or was caused by, the exception a strict write of this stream threw
+         * -- the client going away rather than the backend failing.
+         *
+         * @param failure the exception a route caught
+         * @return {@code true} if a strict write threw it, also when it arrives wrapped
+         */
+        // identity is the point: the very exception a write threw, not an equal one
+        @SuppressWarnings("ReferenceEquality")
+        boolean isOwnWriteFailure(Throwable failure) {
+            synchronized (lock) {
+                IOException own = writeFailure;
+                Throwable t = failure;
+                // bounded, so a cause chain with a cycle cannot loop
+                for (int depth = 0; own != null && t != null && depth < MAX_CAUSE_DEPTH; depth++) {
+                    if (t == own) {
+                        return true;
+                    }
+                    t = t.getCause();
+                }
+                return false;
             }
         }
 
@@ -1364,6 +1356,33 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     LOG.trace("stream close failed", e);
                 }
             }
+        }
+    }
+
+    /**
+     * Report a failure of a streaming route that is not the request's fault. A failed write of the
+     * stream itself is the client going away: nothing can reach it any more, so it is a DEBUG line. Any
+     * other failure -- a {@link RuntimeException}, or an {@link IOException} of the backend's own, which
+     * {@link OpenAiBackend} allows -- is a WARN naming the exception, answered with {@code 500} and
+     * {@code errorBody} while the stream has not started, and with {@code errorEvent} on the stream once
+     * it has. A backend {@link IOException} after the start used to be taken for a disconnect too, so a
+     * client that was still connected saw its stream end as if the answer were complete.
+     *
+     * @param out the route's response stream
+     * @param e the failure
+     * @param what the route, for the log line
+     * @param errorBody the route's error body for a {@code 500}
+     * @param errorEvent the route's error event, written best-effort into the started stream
+     */
+    private static void failStream(
+            ResponseStream out, Exception e, String what, String errorBody, Supplier<String> errorEvent) {
+        if (out.isOwnWriteFailure(e)) {
+            LOG.debug("{}: the client went away", what, e);
+            return;
+        }
+        LOG.warn("{} failed: {}: {}", what, e.getClass().getSimpleName(), message(e), e);
+        if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, errorBody)) {
+            out.writeQuietly(errorEvent.get());
         }
     }
 

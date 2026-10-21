@@ -207,4 +207,31 @@ public class ResponseStreamTest {
 
         assertThat("the headers were written once", exchange.headerWrites, is(1));
     }
+    /**
+     * The routes tell a client that went away from a backend that failed by the exception: the one a
+     * strict write threw (also when a backend hands it back wrapped) is the client's, any other one the
+     * backend's, which still deserves an error event on the stream.
+     */
+    @Test
+    void theFailureOfAStrictWriteIsRecognisedAsTheStreamsOwn() throws Exception {
+        RecordingExchange exchange = new RecordingExchange();
+        exchange.headerFailure = new IOException("Broken pipe");
+        try (OpenAiCompatServer.ResponseStream out =
+                new OpenAiCompatServer.ResponseStream(exchange, "text/event-stream")) {
+            IOException own = assertThrows(IOException.class, () -> out.writeStrict("DATA\n"));
+            assertThat(out.isOwnWriteFailure(own), is(true));
+            assertThat(out.isOwnWriteFailure(new java.io.UncheckedIOException(own)), is(true));
+            assertThat(out.isOwnWriteFailure(new IOException("generation failed")), is(false));
+        }
+    }
+
+    @Test
+    void noFailureIsTheStreamsOwnBeforeAStrictWriteFailed() throws Exception {
+        RecordingExchange exchange = new RecordingExchange();
+        try (OpenAiCompatServer.ResponseStream out =
+                new OpenAiCompatServer.ResponseStream(exchange, "text/event-stream")) {
+            out.writeStrict("DATA\n");
+            assertThat(out.isOwnWriteFailure(new IOException("generation failed")), is(false));
+        }
+    }
 }

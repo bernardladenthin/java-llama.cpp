@@ -544,10 +544,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   honest options are a `400` or a documented deviation.
 
 **Server transport**
-- **After a stream started, a backend `IOException` is taken for a disconnect** (F214): it is logged
-  at DEBUG and the stream ends without an error event. A third-party `OpenAiBackend` may report a
-  generation failure that way; a quiet error event (`writeQuietly` of the route's error event) would
-  cost nothing when the client really is gone. Optional, outside what F182 promised.
 - **Decision open: should a malformed stream envelope fail instead of ending the stream?**
   `ChatStreamChunkParser.feed` treats an unparseable or empty envelope as the end of the stream, and
   `StreamingChunkAssembler` follows it, so a broken envelope looks like a short answer. One reviewer:

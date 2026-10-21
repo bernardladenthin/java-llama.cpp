@@ -5,7 +5,9 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.startsWith;
 
@@ -23,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import nl.altindag.log.LogCaptor;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -921,6 +924,35 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A backend {@link IOException} after the stream has started was taken for a client that had gone
+     * away: no error event, and a DEBUG line only. A client that is still connected then saw the stream
+     * end as if the answer were complete. It is the route's server-error event now, and a WARN naming
+     * the exception; a write that failed because the client did go away stays a DEBUG line (see
+     * {@code ResponseStreamTest}).
+     */
+    @Test
+    public void aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute() throws IOException {
+        try (LogCaptor captor = LogCaptor.forClass(OpenAiCompatServer.class);
+                OpenAiCompatServer server =
+                        new OpenAiCompatServer(new IoFailingAfterFirstChunkBackend(), config()).start()) {
+            for (String[] route : STREAMING_ROUTES) {
+                captor.clearLogs();
+                Response response = post(server.getPort(), route[0], route[1], "");
+                assertThat(route[0], response.code, is(200));
+                assertThat(route[0], response.body, containsString("he"));
+                assertThat(route[0], response.body, containsString(route[3]));
+                assertThat(route[0], response.body, containsString(IoFailingAfterFirstChunkBackend.REASON));
+                assertThat(
+                        route[0],
+                        captor.getWarnLogs(),
+                        hasItem(allOf(
+                                containsString("IOException"),
+                                containsString(IoFailingAfterFirstChunkBackend.REASON))));
+            }
+        }
+    }
+
     @Test
     public void aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent() throws IOException {
         ScriptedStreamBackend backend =
@@ -1641,6 +1673,23 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
         @Override
         public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
+            throw new IOException(REASON);
+        }
+    }
+
+    /** Backend whose streams emit one chunk and then fail with an {@link IOException} of their own. */
+    static final class IoFailingAfterFirstChunkBackend extends FakeBackend {
+        static final String REASON = "generation failed";
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            sink.accept("{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"he\"}}]}");
+            throw new IOException(REASON);
+        }
+
+        @Override
+        public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
+            sink.accept("{\"object\":\"text_completion\",\"choices\":[{\"text\":\"he\",\"finish_reason\":null}]}");
             throw new IOException(REASON);
         }
     }
