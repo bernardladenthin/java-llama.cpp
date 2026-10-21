@@ -1982,7 +1982,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OfflineModelGuardTest` (neu, im `loader`-Paket, weil die Funktion paketintern ist): `countsAsMissing_aNameTheJvmEncodingCannotRepresent_isLeftToTheNativeLoader` (US-ASCII und ein Parser, der wie `UnixPath.encode` wirft: nicht „fehlt“), `…_aNameTheFileSystemRejects_isMissing`, `…_aNulCharacter_isMissing`, `…_aNulCharacterWinsOverAnUnencodableName`, `…_anExistingAndAMissingFile`, `fileNameEncoding_isTheJnuEncodingExceptOnWindows`, `jnuEncoding_isTheCharsetOfTheProperty`, `jnuEncoding_anAbsentOrUnknownNameFallsBackToTheDefaultCharset`; der F56-Test `LlamaModelOfflineTest#check_offlineAndUnrepresentablePath_throwsModelUnavailable` bleibt grün. Zusätzlich von Hand geprüft mit `LC_ALL=C` (`sun.jnu.encoding=ANSI_X3.4-1968`) und einer vorhandenen Datei `größe.gguf`: der alte Wächter warf `ModelUnavailableException`, der neue lässt durch; ein fehlender Nicht-ASCII-Name geht jetzt ebenfalls an den nativen Lader.
 - **Rot-Grün-Nachweis:** Zuerst die Funktion mit der alten Semantik herausgezogen (jede `InvalidPathException` heißt „fehlt“, Zeichensatz unbeachtet), dann rot: `countsAsMissing_aNameTheJvmEncodingCannotRepresent_isLeftToTheNativeLoader` „Expected: is <false> but: was <true>“; mit dem Fix grün (`OfflineModelGuardTest` 8/8, `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `8809fe4`
 
 ## Offene Verdachte ohne Fund-ID
 
