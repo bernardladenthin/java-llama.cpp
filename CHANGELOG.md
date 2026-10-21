@@ -39,8 +39,11 @@ the first two items break every existing consumer at upgrade.
    `setHfRepoV`/`setHfFileV`, `enableMlock`, `disableMmap` -- the Removed section names the
    replacement where one exists, e.g. `setLoadMode(LoadMode)`). The attach-mode server reads the
    endpoint toggles from `ModelParameters` now (`enableMetricsEndpoint()` & co.), not from its argv.
-4. **`NativeServer` listens on 9931 when no `--port` is given** (llama.cpp's new default);
-   `OpenAiCompatServer` stays on 8080. Pass `--port` where a fixed port matters.
+4. **Both servers listen on 9931 when no port is given**, llama.cpp's default since b11521:
+   `NativeServer` follows llama-server, and `OpenAiCompatServer` (`OpenAiServerConfig.DEFAULT_PORT`,
+   the `--port` default of its command line) moved from 8080 to the same port. Pass `--port` (or
+   `OpenAiServerConfig.Builder.port(int)`) where a fixed port matters, and point clients that were
+   configured for `http://localhost:8080` at the new port.
 5. **Platform floors:** Windows 10 or newer (Universal CRT), macOS 15.0, glibc 2.28 on Linux
    (RHEL 8, Ubuntu 20.04, Debian 10 and later), Android API 28; the ROCm jars need a ROCm 10
    runtime, the CUDA jars CUDA 13. 32-bit Windows and the `msvc-windows-x86-64` jar no longer ship.
@@ -82,13 +85,22 @@ the first two items break every existing consumer at upgrade.
     leading or trailing whitespace, and a model file name with a comma is advertised with `_` in its
     place; `/api/generate` without `"raw": true` applies the model's chat template, as Ollama does
     (send `raw: true` for a bare completion); a route answers its own path only, so a sub-path such as
-    `/v1/messages/count_tokens` is `404`; a negative rerank `top_n` is `400`. Values the translations
-    used to replace or drop without a word are refused with `400`, as upstream or the protocol does
-    (see Fixed): a `max_tokens` below `-1`, `top_logprobs` without `logprobs: true`, a `tool_choice`
-    naming a tool the request does not carry, an Anthropic `max_tokens` that is not a number, and on
-    `/v1/responses` an input item of an unknown type, an `input_image` without a URL and a
-    `function_call` whose `arguments` is not a string; and an `/api/generate` `prompt` that is not a
-    string, which was answered as a preload (see Changed).
+    `/v1/messages/batches` is `404` (upstream's token-count routes are served, see Added); a negative
+    rerank `top_n` is `400`. Values the translations used to replace or drop without a word are
+    refused with `400`, as upstream or the protocol does (see Fixed): a `max_tokens` below `-1`, a
+    number field of the wrong type on every chat route (`"max_tokens": "100"` ran without a limit; a
+    boolean is refused too), `top_logprobs` without `logprobs: true`, `logprobs: true` on a streamed
+    request with tools, a `tool_choice` naming a tool the request does not carry or an object of a type
+    other than `function` (Anthropic: other than `auto`, `any`, `tool`, `none`), an Anthropic image
+    source other than `base64` or `url`, and on `/v1/responses` an input item of an unknown type, an
+    `input_image` without a URL and a `function_call` whose `arguments` is not a string; on
+    `/api/generate` a `prompt` that is not a string (it was answered as a preload, see Changed), a
+    `format` that is neither `"json"` nor a schema object (on `/api/chat` too), and without `raw` a
+    `template` or a `context`, which the chat template cannot apply. Anthropic's named
+    `tool_choice` (`{"type": "tool", "name": ...}`) now forces that one tool instead of allowing any.
+    A failure after a stream has started is reported as the route's error event (a `data:` error
+    object, an Ollama `{"error": ...}` line, Anthropic `event: error`, Responses `response.failed`)
+    and logged at WARN, where it ended the stream as if the answer were complete.
 14. **Infill fields and messages on the raw completion paths take effect or are refused.**
     `complete` / `completeWithStats` / `generate` with `withInputPrefix` or `withInputSuffix` now
     infill and need both fields and a model with FIM tokens; with `withMessages(...)` they render the
@@ -96,7 +108,32 @@ the first two items break every existing consumer at upgrade.
     budget through the template's thinking tags, and refuse a non-empty prompt, the infill fields or
     a chat-only field (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
     `top_logprobs`, `thinking_budget_tokens`) next to them (see Fixed). All of them used to be
-    dropped without a word.
+    dropped without a word. Without messages, a reasoning budget needs its tags from the request
+    (`withReasoningBudgetStartTag` / `withReasoningBudgetEndTags`, see Added).
+15. **Slot files are file names inside `--slot-save-path`.** `LlamaModel.saveSlot` / `restoreSlot`,
+    `Session.save` / `restore` / `checkpoint` / `fork`, the C API's `jllama_slot_action` and
+    `llama-ffm` take a file name, which the library resolves inside the directory
+    `ModelParameters.setSlotSavePath(...)` names, as llama.cpp's own slot route does; up to 5.1 the
+    argument was the path itself and the directory had no effect. Without the directory saving and
+    restoring are a `LlamaException`, and a name with a directory part, `..` or nothing is an
+    `InvalidRequestException`; `eraseSlot` needs neither. `SessionCheckpoint.getFilepath()` is
+    `getFilename()`. Load with `setSlotSavePath(dir)` and pass `"slot0.bin"` where you passed
+    `dir + "/slot0.bin"`. Slot files written by 5.1 do not restore at all (llama.cpp's state format
+    moved on, see Changed); regenerate them.
+16. **`LlamaLoader.initialize()` loads once per JVM.** A second call after a successful load returns
+    without searching again; a `net.ladenthin.llama.lib.path` or `net.ladenthin.llama.backend` changed
+    in between takes effect only in a new JVM, which the loader says once on stderr. It used to load a
+    second copy of the library and replace the build info, although the JVM keeps using the first.
+17. **A malformed stream envelope is an error, not the end of the stream.** `ChatStreamChunkParser.feed`
+    throws `ChatStreamChunkParser.MalformedEnvelopeException` (an `IllegalArgumentException`) for an
+    envelope that is not `{"data": <object or array>, "stop": <boolean>}` -- an empty one included,
+    which used to end the stream; through `LlamaModel`'s streams it is a `LlamaException` (`500` in
+    the server).
+18. **`llama-langchain4j` streams tool calls in a different order.** `onCompleteToolCall` of a call
+    fires when the next call starts, not at the end of the stream, and arguments that arrived before
+    a call's name are reported through `onPartialToolCall` once the name is known, so the partial calls
+    add up to the complete arguments; a fragment that would change a call already reported complete
+    fails the stream through `onError`.
 
 ### Added
 - **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
@@ -306,6 +343,35 @@ the first two items break every existing consumer at upgrade.
   has context shifting off by default, so a slot stops when its context is full; this turns it on.
   `disableContextShift()` said the default was "enabled"; its Javadoc now names upstream's default, and
   each of the two methods replaces an earlier call of the other, so the later call wins.
+- **`OpenAiCompatServer` serves upstream's token-count routes**: `POST /v1/messages/count_tokens`
+  (Anthropic, `{"input_tokens": N}`; Claude Code asks there), `/v1/responses/input_tokens` and
+  `/v1/chat/completions/input_tokens` (`"object": "response.input_tokens"`), each also without the
+  `/v1` prefix. The body is translated as on the generating route, rendered by the model's chat
+  template and tokenized as llama.cpp counts it; a refused translation is `400` in the route's error
+  form. Content that only the multimodal projector can count (image, audio, video) is `501` naming
+  the part, where upstream counts it -- a count that left it out would be too low. The new default
+  method `OpenAiBackend.countTokens(JsonNode)` (`501` unless overridden) carries it;
+  `LlamaModelBackend` implements it.
+- **The reasoning budget's tags in the builder**: `InferenceParameters.withReasoningBudgetStartTag`,
+  `withReasoningBudgetEndTags` and `withReasoningBudgetMessage` (`reasoning_budget_start_tag`,
+  `reasoning_budget_end_tags`, `reasoning_budget_message` of llama.cpp's completion schema), so
+  `withReasoningBudgetTokens` takes effect on `complete()` / `generate()` without messages too. An
+  empty tag or no end tag is an `IllegalArgumentException`; with messages, and on the chat paths, the
+  template's own thinking tags win where it has some. The budget starts counting at a start tag the
+  model generates (one at the end of the prompt is not seen, as upstream; use messages there), and a
+  tag the vocabulary holds as a special token shows as text only with `preserved_tokens`.
+  `reasoning_control` gets no builder method: it arms the sampler for llama.cpp's runtime
+  `reasoning_end` action, which this library does not offer.
+- **Images on the raw completion paths.** The raw completion requests over JSON
+  (`LlamaModel.handleCompletions` / `handleCompletionsOai` / `streamCompletionsOai`), the C API and
+  `llama-ffm` take upstream's multimodal prompt object, `"prompt": {"prompt_string": "... <marker>
+  ...", "multimodal_data": ["<base64>"]}`, on a model loaded with `--mmproj`; it was refused as if
+  the model had no projector. `ModelMeta.getMediaMarker()` (`media_marker` of the model meta, as
+  upstream's `/props`) names the marker, which llama.cpp draws per process unless
+  `LLAMA_MEDIA_MARKER` pins it. Markers that do not match the images, data that is not base64 and a
+  prompt that ends on the image are invalid requests -- the last one aborted the process inside
+  llama.cpp. The default method `OpenAiBackend.mediaMarker()` passes the marker to the Ollama
+  translation.
 
 ### Changed
 - Dependencies and build tooling bumped in step with the sibling repositories: Jackson 2.22.3 ->
@@ -526,9 +592,25 @@ the first two items break every existing consumer at upgrade.
   other `LlamaException`.
 - **`NativeServer` binds port 9931 when no `--port` is given** (llama.cpp b11521,
   [#30159](https://github.com/ggml-org/llama.cpp/pull/30159) moved the server default off 8080), in classic and
-  attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. `OpenAiCompatServer` keeps its own default
-  of 8080 (`OpenAiServerConfig.DEFAULT_PORT`, a public constant of this project with no upstream coupling). Pass
-  `--port` explicitly where a fixed port matters; every README example already does.
+  attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. **`OpenAiCompatServer` follows**:
+  `OpenAiServerConfig.DEFAULT_PORT` and the `--port` default of its command line are 9931 instead of 8080,
+  so both servers of the library default to llama.cpp's port; the agent's documentation, the CLI help and
+  the Javadoc examples name it. Pass `--port` explicitly where a fixed port matters; every README example
+  already does.
+- **Slot files are resolved inside `--slot-save-path`, as llama.cpp's slot route does.**
+  `LlamaModel.saveSlot` / `restoreSlot`, `Session.save` / `restore` / `checkpoint` / `fork`, the C API's
+  `jllama_slot_action` and `llama-ffm` used their argument as the path itself, so
+  `ModelParameters.setSlotSavePath(...)` had no effect, `../x.bin` or an absolute path was written
+  wherever it pointed, and a model without the directory saved anyway. The argument is a file name now:
+  without the directory, saving and restoring are a `LlamaException` naming the option; a name with a
+  directory part, `..` or nothing is an `InvalidRequestException` (`JLLAMA_STATUS_INVALID_REQUEST`);
+  erasing a slot needs no directory. The parameters are called `filename`, and
+  `SessionCheckpoint.getFilepath()` is `getFilename()`.
+- **`LlamaLoader.initialize()` is idempotent after the first successful load.** Every call searched
+  again (only the nested call from `JNI_OnLoad` returned early), so a call after `lib.path` or the
+  backend filter had changed loaded a second copy of the library, or extracted a second module set, and
+  replaced the build info while the JVM kept using the first library. A further call now loads nothing
+  and names a property changed since the load once on stderr; a failed attempt is retried.
 - **CI: the Linux CUDA build no longer routes nvcc through sccache by default** (`SCCACHE_WRAP_NVCC=true`
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
@@ -786,7 +868,8 @@ the first two items break every existing consumer at upgrade.
   - **A route answers its own path only.** `com.sun.net.httpserver` dispatches by longest prefix, so
     `POST /v1/messages/count_tokens` (Claude Code counts tokens there) ran a full generation and
     `/v1/modelsXYZ` listed the models; every other path is `404` now, as upstream, and `/v1/reranking`
-    is registered as the alias of `/v1/rerank` it only was by prefix.
+    is registered as the alias of `/v1/rerank` it only was by prefix. The token-count routes are
+    served since (see Added).
   - **The advertised context matches what a request can use** (`maxInputTokens` / `maxOutputTokens`,
     the context length of `/api/show` and `/props`, which Copilot & co. size their prompts by). The
     input budget was `-c` minus 2048 whatever the output budget was (`-c 2048` advertised 1 input
@@ -818,6 +901,16 @@ the first two items break every existing consumer at upgrade.
     overrode an `n_probs` next to it), and `top_logprobs` without `logprobs: true` is `400` with
     upstream's message, as is a `logprobs` that is neither a boolean nor a number; both were dropped
     or misread without a word.
+  - **A number field of the wrong type is `400`**, as upstream's schema answers it (`Field 'max_tokens':
+    type must be number, but is string`), on every chat route: the mapper read only numbers and left
+    everything else out, so `"max_tokens": "100"` ran without a limit and a decimal `n_probs` or
+    `repeat_last_n` was dropped. `null` still means "not set" and a decimal in an integer field is cut
+    as upstream does; a boolean is refused, where llama.cpp would read it as 0 or 1. The Anthropic
+    (`max_tokens`, `temperature`, `top_p`, `top_k`), Responses (`temperature`, `top_p`,
+    `max_output_tokens`) and Ollama translations (every number option) read their numbers the same way.
+  - **`logprobs: true` on a streamed request with tools is `400`** with upstream's message
+    (`logprobs is not supported with tools + stream`); the mapper turned it into `n_probs`, so the
+    refusal was unreachable. A number `logprobs`, a blocking request and one without tools stay allowed.
   - **`id_slot: -1` means any slot**, upstream's default, instead of a `400`; and `max_tokens: 0` is
     passed on as upstream reads it instead of meaning "no limit". A `max_tokens` (or `n_predict`,
     `max_completion_tokens`) below `-1` is answered with upstream's `400` and an `n` other than 1 is
@@ -826,7 +919,9 @@ the first two items break every existing consumer at upgrade.
     `auto`, so the model could answer without calling it, or any other tool. Only the named tool is
     passed on now, with `required`, so the model must call exactly that one (llama.cpp knows no
     named choice; the template therefore no longer shows the model the other tools). A name no tool
-    of the request carries, and a `function` choice without a name, are `400`.
+    of the request carries, and a `function` choice without a name, are `400`. A `tool_choice` object
+    of another type (`allowed_tools`, `custom`, `mcp`, a hosted tool) ran as `auto`, so the requested
+    restriction vanished; it is `400` naming the type, here and on `/v1/responses`.
 - **Ollama routes (`/api/*`).**
   - **Images reach the model.** `/api/chat` ignored a message's `images`, although `/api/show`
     advertises `vision` with `--mmproj`; they become `image_url` parts (the MIME type from the magic
@@ -854,13 +949,26 @@ the first two items break every existing consumer at upgrade.
     0.6.4, and the route said `0.1.0`, so the whole Copilot path failed at that check.
   - **`/api/show` names the context length where Continue reads it**: `parameters` carries
     `num_ctx <n>`.
+  - **`/api/generate` with `raw: true` keeps `format` and `images`**, as Ollama does: `format` becomes a
+    JSON schema (`"json"` an object schema) on the raw and the fill-in-the-middle way, and each
+    `[img-N]` marker of the raw prompt is replaced by the server's media marker, image `N` passed as
+    multimodal data; both were dropped. A `format` that is neither `"json"` nor a schema object is
+    `400` on every way (`/api/chat` included), as Ollama answers it, and so are a marker without its
+    image, an image without its marker (Ollama drops it) and an image beside `suffix`.
+  - **`/api/generate` without `raw` refuses `template` and `context`** with `400`: the model's chat
+    template renders the prompt and token contexts cannot be replayed, so both were ignored and the
+    request was answered as an ordinary chat turn. Empty values count as not set, as in Ollama.
   - **A malformed `/api/chat` is answered with `400`.** A `messages` element that is not an object
     (a string, `null`, an array) ended the request with a closed connection and no status line, and
     a `messages` that is not an array was read as "no messages"; both are refused with upstream's
     message and the element's index now.
 - **Anthropic Messages (`/v1/messages`).**
   - **Images reach the model**: `image` blocks of a message (`base64` or `url` source) and of a
-    `tool_result` become `image_url` parts; both were dropped.
+    `tool_result` become `image_url` parts; both were dropped. A `base64` image without `media_type`
+    is named by its bytes (PNG, JPEG, GIF, WebP), else `image/jpeg` as upstream; it was always
+    `image/png`. An image source of another type -- the Files API's `file`, which a local server cannot
+    fetch -- and a `base64` or `url` source without its string are `400` naming the problem; upstream
+    drops such a block, and the message went on as text without the image.
   - **Several text blocks of one message are joined with a newline**, as upstream does for a template
     that takes text only; `first` + `second` became `firstsecond`.
   - **Thinking works in both directions.** `thinking.budget_tokens` becomes the reasoning budget
@@ -870,7 +978,10 @@ the first two items break every existing consumer at upgrade.
     `reasoning_content`.
   - **A request without `max_tokens` is capped at 4096**, as upstream, instead of running to the end
     of the context, and `chat_template_kwargs` is passed on.
-  - **`tool_choice: {"type": "none"}` forbids tool calls**; it ran as `auto`.
+  - **`tool_choice: {"type": "none"}` forbids tool calls**; it ran as `auto`. **`{"type": "tool",
+    "name": ...}` forces that tool**: it became `required` over every tool, as in upstream's
+    translation, so the model could call another one; it is passed on as OpenAI's named choice now. A
+    name the request does not carry, a `tool` choice without a name and any other type are `400`.
   - **Tool calls without arguments**: `tool_use.input` is `{}` instead of `null`, and a `tool_use`
     without `input` in the history is sent as `"{}"` -- `""` or `"null"` made llama.cpp refuse the whole
     follow-up request.
@@ -967,9 +1078,12 @@ the first two items break every existing consumer at upgrade.
     takes effect through the template's thinking tags, as on the chat paths: once it is spent, the
     model is made to close its thinking block with the template's end tag (`</think>`); without the
     tags, which the raw paths dropped, the budget did nothing. A template without thinking tags leaves
-    the request unchanged, as a chat completion does, and without messages the budget still has no
-    effect on the raw paths (the builder offers no tag fields). The same for the C API and
-    `llama-ffm`.
+    the request unchanged, as a chat completion does. The tokens a template preserves come along too:
+    an end tag the vocabulary holds as a special token (Qwen3's `</think>`) reads as text in the
+    content, where it was an empty piece; a request's own `preserved_tokens` stay in force beside
+    them. Without messages the tags come from the request (see Added); a budget given tags but no
+    `reasoning_budget_message` now forces the end tag behind the server's default message, as the
+    chat path does -- before, it counted and forced nothing. The same for the C API and `llama-ffm`.
   - **JSON values are taken as given or refused, never cut short.** A `ToolDefinition` schema with
     trailing content (`{"type":"object"} {"required":["x"]}`) was sent as its first value, and a
     `chat_template_kwargs` value holding two JSON values as the first of them. A schema that is not
@@ -1009,8 +1123,13 @@ the first two items break every existing consumer at upgrade.
     `ModelUnavailableException` instead of an `InvalidPathException`; a path the JVM cannot encode in
     its file-name charset -- a non-ASCII model name in a JVM running with the POSIX locale
     (`LC_ALL=C`) -- is no longer reported as missing although the file exists, but left to the native
-    loader, which reads paths as UTF-8 and loads it; and `ChatStreamChunkParser` treats
-    an empty envelope as the end of the stream, as its Javadoc says.
+    loader, which reads paths as UTF-8 and loads it.
+  - **A malformed stream envelope fails the stream instead of ending it.** `ChatStreamChunkParser.feed`
+    took an unparsable, empty or blank envelope for the end of the stream and one without `stop` for
+    "continue" (a polling loop that would never end), so a transport fault looked like a short answer,
+    also through `llama-langchain4j`. It reads the envelope strictly now and throws
+    `ChatStreamChunkParser.MalformedEnvelopeException` naming the reason and an excerpt; `LlamaModel`'s
+    streams turn it into a `LlamaException`, which `OpenAiCompatServer` answers with `500`.
 - **`LlamaLoader` deletes only its own files from the temp directory.** The clean-up of the pre-6.0.0
   layout deleted, recursively, every entry of `java.io.tmpdir` (or `net.ladenthin.llama.tmpdir`) whose
   name starts with `jllama`, `llama` or `ggml` -- a `/tmp/llama.cpp` checkout, a `/tmp/ggml-models/`
@@ -1026,7 +1145,9 @@ the first two items break every existing consumer at upgrade.
   request now asks for the usage chunk); a streamed tool call no longer fails at its first fragment
   without arguments or without a name (langchain4j's `PartialToolCall` refuses both, the fragment
   still joins the assembled call); and several `TextContent`s of a user message are joined with a
-  newline instead of being glued together.
+  newline instead of being glued together. Arguments that arrive before a call's name are reported
+  through `onPartialToolCall` once the name is known, so the partial calls of a tool call add up to
+  its complete arguments (`ty":1}` arrived where `{"city":1}` was sent).
 - **A scaled LoRA adapter or control vector loads at all.** `ModelParameters.addLoraScaledAdapter` and
   `addControlVectorScaled` rendered their value as `FNAME,SCALE`, while llama.cpp has read these options
   as `FNAME:SCALE,...` since b7448 (#18056): the comma is the list separator, the colon the field
@@ -1091,10 +1212,13 @@ the first two items break every existing consumer at upgrade.
   starts with the first write (a chunk, the protocol's opening events or a heartbeat), and a failure
   before it is `400` or `500` with the route's own error body, as without `stream` -- an `IOException`
   an `OpenAiBackend` reports before the first chunk included, which was taken for a client that had
-  gone away and ended the request with a closed connection and no status line. A failure after the
-  stream started is still an error event; an `IOException` there still counts as the client having
-  gone away and ends the stream. One visible effect: the Atmosphere agent now reports such a failure
-  instead of ending the turn with an empty answer.
+  gone away and ended the request with a closed connection and no status line. One visible effect:
+  the Atmosphere agent now reports such a failure instead of ending the turn with an empty answer.
+  **After the stream started**, an `IOException` of the backend still counted as the client having
+  gone away: no error event, the stream simply ended and only a DEBUG line was logged. Only the
+  server's own failed write counts as a disconnect now; every other failure is logged at WARN and
+  ends the stream with the route's error event (a `data:` error object, an Ollama `{"error": ...}`
+  line, Anthropic `event: error`, Responses `response.failed` and `event: error`).
 - **Error messages with a 4-byte character reach Java intact.** The JNI shells handed messages to
   `ThrowNew` and `NewStringUTF`, which read Modified UTF-8; a message quoting a path or request text
   with a supplementary-plane character (an emoji) was mangled on HotSpot -- a trainer message for
