@@ -242,7 +242,9 @@ JLLAMA_API jllama_status jllama_embeddings(jllama_model *model, const char *requ
 
 /**
  * Reranks `n_documents` documents against `query` (a model loaded with `--reranking`); the result
- * array, each entry with its `index` and `score`.
+ * array, one entry per document with `document` (its text), `index` (its position in `documents`),
+ * `score` and `tokens_evaluated` (the tokens the model evaluated for it, 0 if not reported; an
+ * OpenAI-shaped `usage` sums them).
  */
 JLLAMA_API jllama_status jllama_rerank(jllama_model *model, const char *query, int n_documents,
                                        const char *const *documents, char **response_json);
