@@ -159,8 +159,9 @@ final class ResponsesApiSupport {
                 throw new IllegalArgumentException("tool_choice names unknown tool '" + namedTool + "'");
             }
             // The Responses API uses the same tool_choice + parallel_tool_calls fields as chat; forward
-            // them so the shared chat core honors them. The mapper consumes the string form of
-            // tool_choice ("auto"/"none"/"required"), which is what we forward here.
+            // them so the shared chat core honors them. The string form (auto/none/required) goes as is,
+            // a named function becomes "required" with only that tool forwarded above, and any other
+            // object form is dropped, so the request runs as "auto".
             if (toolChoice.isTextual()) {
                 openAi.put("tool_choice", toolChoice.asText());
             } else if (namedTool != null) {

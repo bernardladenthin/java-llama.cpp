@@ -18,12 +18,15 @@ import org.jspecify.annotations.Nullable;
 /**
  * Pure mapping from an OpenAI {@code /v1/chat/completions} request body to {@link InferenceParameters}.
  *
- * <p>The structural fields — {@code messages}, {@code tools}, the string form of {@code tool_choice}, and
- * {@code parallel_tool_calls} — are forwarded
- * <em>verbatim</em> as raw JSON so the full OpenAI shape (assistant {@code tool_calls},
- * {@code role:"tool"} results with {@code tool_call_id}, and vision {@code image_url} content parts)
- * round-trips untouched into the native chat-template parser. A {@code tool_choice} naming one function
- * becomes {@code required} with only that tool forwarded (see {@link #namedToolChoice}). Sampling fields are translated to the
+ * <p>The structural fields {@code messages} and {@code tools} are forwarded <em>verbatim</em> as raw JSON
+ * so the full OpenAI shape (assistant {@code tool_calls}, {@code role:"tool"} results with
+ * {@code tool_call_id}, and vision {@code image_url} content parts) round-trips untouched into the native
+ * chat-template parser. {@code tool_choice} is forwarded in its string form ({@code auto}, {@code none},
+ * {@code required}, the only values llama.cpp's chat parser accepts); a {@code tool_choice} naming one
+ * function becomes {@code required} with only that tool forwarded (see {@link #namedToolChoice}), and any
+ * other object form ({@code allowed_tools}, {@code custom}) is ignored, so the request runs as
+ * {@code auto}, which is also what upstream reads from a non-string. {@code parallel_tool_calls} is read as
+ * a boolean. Sampling fields are translated to the
  * matching {@code InferenceParameters.with*} setter, as are the llama.cpp sampling extensions upstream's
  * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
  * controls upstream's chat
