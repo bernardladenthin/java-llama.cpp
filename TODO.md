@@ -543,15 +543,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   applies them. The chat-template path has no slot for a caller's template or a token context, so the
   honest options are a `400` or a documented deviation.
 
-**Server transport**
-- **Decision open: should a malformed stream envelope fail instead of ending the stream?**
-  `ChatStreamChunkParser.feed` treats an unparseable or empty envelope as the end of the stream, and
-  `StreamingChunkAssembler` follows it, so a broken envelope looks like a short answer. One reviewer:
-  the path is not reachable from `LlamaModel`, whose native side always writes a well-formed envelope,
-  so hardening buys nothing. The other: throw an `IllegalArgumentException` naming the envelope
-  instead of a silent end, as the rerank and tool-schema readers now do (F232, F233). Decide, then either pin the
-  current contract or change it with a red/green test.
-
 **Anthropic Messages**
 - **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in
   the upstream inventory ("Upstream submissions", last bullet) for the day after the release.

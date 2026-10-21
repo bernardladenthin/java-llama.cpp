@@ -773,7 +773,8 @@ public class LlamaModel implements AutoCloseable {
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (see
      *     {@link #handleChatCompletions(String)}); a prompt over the context size is reported this way too, on
      *     the first chunk
-     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the native layer delivers a
+     *     malformed stream envelope
      */
     public void streamChatCompletion(InferenceParameters parameters, Consumer<String> chunkSink) {
         InferenceParameters streaming = parameters.withStream(true);
@@ -781,8 +782,7 @@ public class LlamaModel implements AutoCloseable {
         boolean stopped = false;
         try {
             while (!stopped) {
-                String envelope = receiveChatCompletionChunk(taskId);
-                stopped = chatStreamParser.feed(envelope, chunkSink);
+                stopped = feedStreamEnvelope(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
             }
         } finally {
             // On a clean stop the native reader was already released when the final chunk was
@@ -792,6 +792,28 @@ public class LlamaModel implements AutoCloseable {
             if (!stopped) {
                 cancelCompletion(taskId);
             }
+        }
+    }
+
+    /**
+     * Feed one envelope of {@code receiveChatCompletionChunk} to {@code chunkSink}. An envelope that is
+     * not what the native layer writes is a failure of the native layer, not of the caller's arguments,
+     * so it is a {@link LlamaException} (a server answers it with {@code 500}, where an
+     * {@link IllegalArgumentException} would be the request's fault); an exception of {@code chunkSink}
+     * passes through unchanged.
+     *
+     * @param parser the envelope parser
+     * @param envelope the envelope the native layer returned
+     * @param chunkSink the caller's receiver of each chunk
+     * @return {@code true} if the envelope ends the stream
+     * @throws LlamaException if the envelope is malformed
+     */
+    // package-private for LlamaModelStreamEnvelopeTest
+    static boolean feedStreamEnvelope(ChatStreamChunkParser parser, String envelope, Consumer<String> chunkSink) {
+        try {
+            return parser.feed(envelope, chunkSink);
+        } catch (ChatStreamChunkParser.MalformedEnvelopeException e) {
+            throw new LlamaException(String.valueOf(e.getMessage()), e);
         }
     }
 
@@ -812,15 +834,15 @@ public class LlamaModel implements AutoCloseable {
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (no
      *     {@code prompt}, a parameter upstream refuses, several prompts, {@code "n"} greater than 1, a prompt
      *     over the context size; see {@link #handleCompletionsOai(String)})
-     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the native layer delivers a
+     *     malformed stream envelope
      */
     public void streamCompletionsOai(String requestJson, Consumer<String> chunkSink) {
         int taskId = requestCompletionOaiStream(requestJson);
         boolean stopped = false;
         try {
             while (!stopped) {
-                String envelope = receiveChatCompletionChunk(taskId);
-                stopped = chatStreamParser.feed(envelope, chunkSink);
+                stopped = feedStreamEnvelope(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
             }
         } finally {
             // as in streamChatCompletion: an early exit (chunkSink threw) releases the native task
