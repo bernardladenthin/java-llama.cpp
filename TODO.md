@@ -555,8 +555,6 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 - **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
   `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
   its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.
-- **The agent's 4xx path is tested without retries**: the tests run with `RetryPolicy.NONE`, so
-  nothing pins that Atmosphere skips retrying a `4xx` (optional).
 - **Some model-backed tests are bound to CI's models on purpose** (no action; recorded so that a run
   against another model, such as the random two-layer GGUF of the local sandbox, is not read as a
   defect). They check a property of the model, so they fail there instead of skipping:
