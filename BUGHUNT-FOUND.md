@@ -1916,7 +1916,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ChatRequestTest$JsonHelpers#appendToolRejectsASchemaThatIsNotExactlyOneJsonValue` (`""`, `"  "`, `"not json{{{"`, `{"type":"object"} {"required":["x"]}`, prüft die ganze Meldung mit dem Werkzeugnamen), `#appendToolBoundsTheRejectedSchemaInTheMessage` (300 Zeichen → 80 plus `...`); `#buildToolsJsonEmbedsAValidSchemaAsAnObject` prüft jetzt die genaue Ausgabe statt eines `containsString`. Ersetzt `#buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull` (F55) und den schwachen `#buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent` (F05, prüfte nur `not(containsString(...))`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, in allen vier Fällen und im Längentest), mit ihm grün (`ChatRequestTest` 28/28, `ChatResponseTest` 8/8, `LlamaArchitectureTest` 13/13, `LangChain4jMappingTest` 23/23); `spotless:apply`, `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `0a49c54`
 
 ## Offene Verdachte ohne Fund-ID
 
