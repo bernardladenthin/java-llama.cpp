@@ -576,6 +576,25 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A backend without a media marker cannot take a raw prompt with images: a capability it lacks, which
+     * upstream answers 501, here in the route's Ollama error shape. The marker's default threw
+     * {@link UnsupportedOperationException} into the generic branch, a 500 (F267).
+     */
+    @Test
+    public void ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"look [img-0] now\",\"raw\":true,"
+                    + "\"images\":[\"AAAA\"],\"stream\":false}";
+            Response response = post(server.getPort(), "/api/generate", body, "");
+
+            assertThat(response.body, response.code, is(501));
+            assertThat(
+                    READER.readTree(response.body).path("error").asText(),
+                    is("raw prompts with images are not supported by this backend"));
+        }
+    }
+
     /** A raw image no {@code [img-N]} tag places, or a format Ollama does not know, is the client's fault. */
     @Test
     public void ollamaGenerateWithAnUnplacedImageOrAnUnknownFormatIsABadRequest() throws IOException {

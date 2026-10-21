@@ -519,8 +519,8 @@ they are not rediscovered:
 
 ### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
 
-The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F266 and the dated
-addenda in the ledger (F250 … F266 closed every open point of this list on 2026-10-21, before
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F267 and the dated
+addenda in the ledger (F250 … F267 closed every open point of this list on 2026-10-21, before
 6.0.0, by the owner's decision). What is still open, or what the reviewers raised outside the
 findings' scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when
 it is done.

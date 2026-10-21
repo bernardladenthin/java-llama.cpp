@@ -668,7 +668,16 @@ public final class OpenAiCompatServer implements AutoCloseable {
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
                 } else if (OllamaApiSupport.isRaw(request)) {
                     // the marker the raw prompt's images go to is the server's, asked only when there are any
-                    String marker = OllamaApiSupport.hasImages(request) ? backend.mediaMarker() : null;
+                    String marker = null;
+                    if (OllamaApiSupport.hasImages(request)) {
+                        try {
+                            marker = backend.mediaMarker();
+                        } catch (UnsupportedOperationException e) {
+                            // a backend that takes no images lacks a capability: upstream's 501, not a 500
+                            sendJson(exchange, HTTP_NOT_IMPLEMENTED, ollamaError(message(e)));
+                            return;
+                        }
+                    }
                     generated = OllamaApiSupport.Generated.fromCompletion(
                             backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request, marker)));
                 } else {

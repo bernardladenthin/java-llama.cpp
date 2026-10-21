@@ -955,6 +955,10 @@ the first two items break every existing consumer at upgrade.
     multimodal data; both were dropped. A `format` that is neither `"json"` nor a schema object is
     `400` on every way (`/api/chat` included), as Ollama answers it, and so are a marker without its
     image, an image without its marker (Ollama drops it) and an image beside `suffix`.
+  - **A backend that takes no images answers a raw `/api/generate` with images `501`, not `500`.** The
+    default `OpenAiBackend.mediaMarker()` throws `UnsupportedOperationException`, which the route took
+    for a server fault; it is upstream's answer for a capability the server lacks now, with the
+    exception's message in Ollama's error shape. `LlamaModelBackend` is not affected.
   - **`/api/generate` without `raw` refuses `template` and `context`** with `400`: the model's chat
     template renders the prompt and token contexts cannot be replayed, so both were ignored and the
     request was answered as an ordinary chat turn. Empty values count as not set, as in Ollama.

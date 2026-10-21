@@ -189,6 +189,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F264](#f264) — niedrig — *gefixt*
 - [F265](#f265) — niedrig — *gefixt*
 - [F266](#f266) — mittel — *gefixt*
+- [F267](#f267) — niedrig — *gefixt*
 
 ## Funde
 
@@ -2388,6 +2389,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code (mit den neuen Signaturen als Stummel) rot: „OllamaApiSupportTest.aRawGenerationTakesItsFormatAsTheJsonSchema:265 Expected: is <{"type":"object"}> but: was <>“, „aRawGenerationPutsItsImagesWhereTheirTagsAre:315 Expected: is "a <m> b <m> c" but: was """, „aFormatThatIsNeitherJsonNorASchemaIsRefused:287 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, ebenso `aRawImageWithoutItsTagOrATagWithoutItsImageIsRefused:329`, `anInfillGenerationTakesItsFormatAndRefusesImages` („Expected: is <{"type":"object"}> but: was <>“), und „OpenAiCompatServerHttpTest.ollamaGenerateWithAnUnplacedImageOrAnUnknownFormatIsABadRequest:520 … Expected: is <400> but: was <200>“, „ollamaGenerateWithRawCarriesItsFormatAndImages:493 Expected: is <{"type":"object"}> but: was <>“. Der modellgestützte Test rot ohne die `json_schema`-Zeile: „OpenAiServerCompletionIntegrationTest.ollamaGenerateRawWithFormatJsonAnswersAJsonObject:321 d"d"dV"d Expected: is <true> but: was <false>“ (Winzmodell, freier Text). Mit dem Fix grün: `OllamaApiSupportTest` 54/54, `OpenAiCompatServerHttpTest` 76/76, `LlamaModelBackendTest` 4/4, `OpenAiServerCompletionIntegrationTest` 10/12 mit dem Winzmodell (die zwei übersprungenen brauchen FIM-Token).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `e5d35b1`
+- **Nachtrag (Branch-Review 2026-10-20/21):** Ein eigenes `OpenAiBackend`, das `mediaMarker()` nicht überschreibt, bekam auf eine rohe Anfrage mit Bildern 500 statt 501 (Prüfer von J3-routes, Brief JR-23); behoben als [F267](#f267).
 
 <a id="f260"></a>
 ### F260 – java-llama.cpp: Ollama `/api/generate` ohne `raw` verwirft `template` und `context` still
@@ -2481,6 +2483,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code jede Instanz in einem eigenen Prozess (`timeout 20 jllama_test --gtest_filter=…`): Exit 139 (`SIGSEGV`) für `apply_template`, `chat_completions`, `chat_completions_stream_request`, `chat_completions_request`, `completions`, `completions_oai`, `completions_stream_request`, `completions_oai_stream_request`, `infill`, `rerank`; Exit 124 (Hänger, nach 20 s abgebrochen) für `metrics`, `slot_action`, `lora_adapters`, `set_lora_adapters`; die übrigen rot an der Meldung, z. B. „Expected: (error.find(std::string("jllama_") + c.name + " is not available in vocab-only mode")) != (std::string::npos), actual: 18446744073709551615 vs 18446744073709551615“ (`embed`, `embeddings`, `configure`, `systemone`, `server_start_attached`, die beiden Stream-Empfänge), `task_release` „Expected equality of these values“ (meldete `JLLAMA_STATUS_OK`). Java gegen die unveränderte Bibliothek: `VocabOnlyModelTest#applyTemplateIsRefused` „The forked VM terminated without properly saying goodbye. VM crash or System.exit called?“ (`hs_err`: „C [libjllama.so+0x7a7874] llama_vocab::token_bos() const+0x4“), die ganze Klasse lief in ein 300-s-Timeout. Mit dem Fix grün: die 23 C++-Fälle (`ctest -R 'CApi|VocabOnly'` 74/74), `VocabOnlyModelTest` 9/9.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `c46e918`
+
+<a id="f267"></a>
+### F267 – java-llama.cpp: ein `OpenAiBackend` ohne `mediaMarker()` antwortet auf `/api/generate` mit rohen Bildern 500 statt 501
+- **Zeit:** 2026-10-21 18:41 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaGenerate`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiBackend.java` (Javadoc von `mediaMarker`)
+- **Schwere:** niedrig (nur ein eigenes `OpenAiBackend` — die öffentliche Testnaht — ohne Bildfähigkeit; `LlamaModelBackend` überschreibt die Methode)
+- **Historie:** Folgepunkt des Prüfers aus dem Durchgang 2026-10-21 (Brief JR-23), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. Beobachtet vom Prüfer von J3-routes bei [F259](#f259), das `mediaMarker()` mit einer werfenden Default-Methode eingeführt hatte.
+- **Beschreibung:** Eine rohe Ollama-Anfrage (`raw: true`) mit `images` fragt das Backend nach dem Medien-Marker. Die Default-Methode wirft `UnsupportedOperationException`; die fiel in den generischen Zweig `IOException | RuntimeException` und wurde als Serverfehler 500 beantwortet (mit WARN-Log), obwohl dem Backend nur eine Fähigkeit fehlt — upstream antwortet darauf 501, wie das Repo es für `--embedding`/`--reranking`/FIM und die Token-Zählung (F261) tut.
+- **Fix:** `handleOllamaGenerate` fragt den Marker in einem eigenen `try` und beantwortet eine `UnsupportedOperationException` dort mit 501 und deren Meldung im Ollama-Fehlerformat (`{"error": "raw prompts with images are not supported by this backend"}`). Eng gefasst: eine `UnsupportedOperationException` aus anderen Backend-Aufrufen bleibt ein 500. `mediaMarker()` hat keinen weiteren Aufrufer (`grep`). Der Javadoc der Methode nennt den Vertrag.
+- **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented` (`FakeBackend` behält die Default-Methode; Status 501 und die Meldung).
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented:591 {"error":"raw prompts with images are not supported by this backend"} Expected: is <501> but: was <500>“; mit dem Fix grün, `OpenAiCompatServerHttpTest` 81/81, `OllamaApiSupportTest` 54/54.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

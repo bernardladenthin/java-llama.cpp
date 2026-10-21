@@ -108,7 +108,9 @@ public interface OpenAiBackend {
      * The placeholder a raw multimodal prompt puts where each image goes (llama.cpp's
      * {@code {"prompt_string": ..., "multimodal_data": [...]}} prompt object), which the server draws at
      * random per process. Asked only for a raw request that carries images. The default throws
-     * {@link UnsupportedOperationException}; backends that take images override it.
+     * {@link UnsupportedOperationException}, which the server answers {@code 501} with the exception's
+     * message (upstream's answer for a capability the server lacks, in the route's error shape);
+     * backends that take images override it.
      *
      * @return the media marker
      * @throws IOException if the marker cannot be read
