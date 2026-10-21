@@ -642,6 +642,13 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
+            try {
+                // Ollama refuses a non-string prompt when it binds the body, before anything else
+                OllamaApiSupport.requireTextualPrompt(request);
+            } catch (IllegalArgumentException e) {
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
+                return;
+            }
             if (OllamaApiSupport.hasRawConflict(request)) {
                 // refused before the load answer and fill-in-the-middle, in Ollama's order
                 sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(OllamaApiSupport.RAW_CONFLICT_MESSAGE));

@@ -530,6 +530,28 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     /**
+     * A {@code prompt} that is present but not a string is a malformed body, which Ollama refuses with
+     * a 400 when it binds the JSON. Ours read it as {@code ""} and answered 200 with the load answer.
+     */
+    @Test
+    public void ollamaGenerateWithANonTextPromptIsABadRequest() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String body : new String[] {
+                "{\"model\":\"test-model\",\"prompt\":[\"a\"]}",
+                "{\"model\":\"test-model\",\"prompt\":{},\"suffix\":\"x\"}",
+                "{\"model\":\"test-model\",\"prompt\":1,\"raw\":true,\"stream\":true}"
+            }) {
+                Response response = post(server.getPort(), "/api/generate", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(
+                        body, READER.readTree(response.body).path("error").asText(), is("'prompt' must be a string"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
+    /**
      * Ollama answers an {@code /api/chat} without messages by loading the model, which is how clients
      * preload one through the chat route; ours ran the empty conversation into the chat mapper, which
      * refused it with a 400. The answer is one object even when streaming was asked for (or defaulted).

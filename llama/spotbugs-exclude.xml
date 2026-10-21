@@ -570,7 +570,8 @@ SPDX-License-Identifier: MIT
         absent by definition at the throw point. Same rationale as the ChatMessage.requireNonNull WEM
         suppression above. OpenAiRequestMapper.applyLogprobs additionally keeps upstream's message
         verbatim ("top_logprobs requires logprobs to be set to true", oaicompat_chat_params_parse), so
-        a client sees the same 400 text from both server modes.
+        a client sees the same 400 text from both server modes. OllamaApiSupport.requireTextualPrompt
+        ("'prompt' must be a string", F244) is the same guard for Ollama's /api/generate.
     -->
     <Match>
         <Class name="net.ladenthin.llama.server.OaiRerankSupport"/>
@@ -588,6 +589,11 @@ SPDX-License-Identifier: MIT
             <Method name="toCompletionParameters"/>
             <Method name="applyLogprobs"/>
         </Or>
+    </Match>
+    <Match>
+        <Class name="net.ladenthin.llama.server.OllamaApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Method name="requireTextualPrompt"/>
     </Match>
 
     <!--

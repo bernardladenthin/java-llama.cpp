@@ -498,6 +498,31 @@ public class OllamaApiSupportTest {
     }
 
     /**
+     * Only an absent, {@code null} or empty textual {@code prompt} asks for the load answer. Jackson's
+     * {@code asText("")} reads an array or an object as {@code ""}, so a malformed prompt was answered
+     * as a successful preload, where Ollama refuses the body with a 400 when it binds the JSON.
+     */
+    @Test
+    public void aNonTextPromptIsNotALoadRequest() throws IOException {
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":[\"a\"]}")), is(false));
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":{}}")), is(false));
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":null}")), is(true));
+    }
+
+    @Test
+    public void aPromptThatIsNotAStringIsRefused() throws IOException {
+        for (String body : new String[] {"{\"prompt\":[\"a\"]}", "{\"prompt\":{}}", "{\"prompt\":1}"}) {
+            JsonNode request = read(body);
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> OllamaApiSupport.requireTextualPrompt(request), body);
+            assertThat(body, e.getMessage(), is("'prompt' must be a string"));
+        }
+        for (String body : new String[] {"{\"prompt\":\"a\"}", "{\"prompt\":\"\"}", "{\"prompt\":null}", "{}"}) {
+            OllamaApiSupport.requireTextualPrompt(read(body));
+        }
+    }
+
+    /**
      * A {@code messages} element that is not an object (a string, {@code null}, an array) failed the
      * translator's cast to an object with a {@link ClassCastException}, which left the HTTP handler
      * without an answer. Upstream refuses it as {@code "Expected 'message' to be an object"}

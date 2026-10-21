@@ -541,6 +541,22 @@ final class OllamaApiSupport {
     }
 
     /**
+     * Refuses an {@code /api/generate} request whose {@code prompt} is present but not a string. Ollama
+     * binds the body into a string field and answers such a request with a 400; here Jackson's
+     * {@code asText("")} would read an array or an object as an empty prompt, which the load answer and
+     * the three translators then took for "no prompt". A {@code null} prompt counts as absent.
+     *
+     * @param request the parsed Ollama generate request
+     * @throws IllegalArgumentException if {@code prompt} is present, not {@code null} and not a string
+     */
+    static void requireTextualPrompt(JsonNode request) {
+        JsonNode prompt = request.path("prompt");
+        if (!prompt.isMissingNode() && !prompt.isNull() && !prompt.isTextual()) {
+            throw new IllegalArgumentException("'prompt' must be a string");
+        }
+    }
+
+    /**
      * Whether the {@code /api/generate} request only asks for the model to be loaded: Ollama answers a
      * request without a prompt with {@code done} at once ({@code done_reason "load"}), which is how its
      * clients preload a model. The model of this server is always loaded, so there is nothing to do.
@@ -553,11 +569,19 @@ final class OllamaApiSupport {
      * {@code keep_alive} of {@code 0} without a prompt and answers {@code done_reason "unload"}, while
      * this server keeps its one model loaded and gives the load answer.
      *
+     * <p>Only an absent, {@code null} or empty string {@code prompt} counts as no prompt; a prompt that
+     * is an array, an object or a number is a malformed request, which {@link #requireTextualPrompt}
+     * refuses before this check runs.
+     *
      * @param request the parsed Ollama generate request
      * @return {@code true} when the request carries no prompt and no suffix
      */
     static boolean isLoadOnly(JsonNode request) {
-        return request.path("prompt").asText("").isEmpty() && !hasSuffix(request);
+        JsonNode prompt = request.path("prompt");
+        boolean noPrompt = prompt.isMissingNode()
+                || prompt.isNull()
+                || (prompt.isTextual() && prompt.asText().isEmpty());
+        return noPrompt && !hasSuffix(request);
     }
 
     /**

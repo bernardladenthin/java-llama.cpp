@@ -536,10 +536,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
 - **`/api/generate` without `raw` drops `template` and `context` without a word** (F215); Ollama
   applies them. The chat-template path has no slot for a caller's template or a token context, so the
   honest options are a `400` or a documented deviation.
-- **A non-text `prompt` (`["a"]`, `{}`) on `/api/generate` is answered `200` with `done_reason
-  "load"`** (F205): `isLoadOnly` treats every non-textual prompt as absent. Ollama's field is a string;
-  the fix is a `400` for a present, non-null, non-text prompt (`requireTextualPrompt`), with a
-  model-free `OllamaApiSupportTest` case and an HTTP test, red/green.
 
 **Server transport**
 - **After a stream started, a backend `IOException` is taken for a disconnect** (F214): it is logged

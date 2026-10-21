@@ -166,6 +166,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F241](#f241) — niedrig bis mittel — *gefixt*
 - [F242](#f242) — niedrig — *gefixt*
 - [F243](#f243) — niedrig — *gefixt*
+- [F244](#f244) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1727,6 +1728,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `200cc90`
 - **Nachtrag (Branch-Review 2026-10-20, Funde J1-4, J3-3, J16-2):** Beide Regeln sind bewusste Abweichungen von Ollama, nicht Ollamas Verhalten: Ollamas `GenerateHandler` prüft nur `req.Prompt == ""` (der `suffix` fügt dort nur `CapabilityInsert` hinzu), beantwortet also einen leeren Prompt mit `suffix` mit der Ladeantwort, und antwortet bei `keep_alive: 0` ohne Prompt mit `done_reason "unload"`. Hier bleibt der leere Prompt mit `suffix` FIM am Dateianfang (auch bei `"suffix":""`, `hasSuffix` fragt nur nach einem String), und `keep_alive: 0` bekommt die Ladeantwort, weil nichts entladen wird — ein „unload“ wäre eine Meldung über eine Aktion, die nicht stattfand. Die Javadoc von `isLoadOnly`/`toOllamaLoadResponse`, die README-Zeile der Ollama-Routen und `TODO.md` sagen das jetzt; vorher schrieb die Javadoc die `suffix`-Bedingung Ollama zu. Reine Doku, kein Test.
+- **Nachtrag (Branch-Review 2026-10-20, Fund J1-4, Verhaltenshälfte):** `isLoadOnly` las den Prompt mit `asText("")` und hielt damit auch einen `prompt`, der ein Array oder Objekt ist, für „kein Prompt“ — ein fehlerhafter Body bekam die Ladeantwort (200), wo Ollama beim Binden 400 antwortet. Behoben als [F244](#f244): nur ein fehlender, `null` oder leerer String-Prompt ist load-only, ein Prompt anderen Typs wird vorher mit 400 abgewiesen.
 
 <a id="f213"></a>
 ### F213 – java-llama.cpp: Ollama `/api/chat` mit einem `messages`-Element, das kein Objekt ist, schließt die Verbindung ohne Antwort
@@ -1779,6 +1781,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit Stubs, die `false` bzw. `{}` liefern) rot: der HTTP-Test mit „Expected: is <true> but: was <false>“ für `done` bei `{"model":"test-model"}` (das Testbackend streamte eine Antwort; das echte Backend weist die leere Konversation mit 400 ab), der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 41, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a4d0604`
+- **Nachtrag (Branch-Review 2026-10-20, Fund J1-4):** Die Chat-Route ist von F244 nicht betroffen: `isChatLoadOnly` prüft `messages` auf fehlend, `null` oder leeres Array, und ein `messages` falschen Typs weist die Übersetzung ab (F213). Auf `/api/generate` las `isLoadOnly` dagegen einen `prompt` falschen Typs als leer und gab die Ladeantwort; das behebt [F244](#f244), mit derselben Regel wie hier: nur die Abwesenheit ist Vorladen, ein falscher Typ ist 400.
 
 <a id="f217"></a>
 ### F217 – java-llama.cpp: Ollamas `think: true` wird verworfen — ein Server mit abgeschaltetem Denken übergeht es still
@@ -2132,6 +2135,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Code rot: „Expected: a collection containing "--alias" but: mismatches were: [was "", was "--fit", was "off", was "--model", was "m.gguf", …]“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix beide grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f10aa6a`
+
+<a id="f244"></a>
+### F244 – java-llama.cpp: Ollama `/api/generate` mit einem `prompt`, der kein String ist, bekommt die Ladeantwort (200) statt 400
+- **Zeit:** 2026-10-21 08:26 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`isLoadOnly`, neu `requireTextualPrompt`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaGenerate`), `llama/spotbugs-exclude.xml` (WEM-Unterdrückung der neuen Prüfung, Kategorie der Request-Parser)
+- **Schwere:** niedrig (ein fehlerhafter Body wird als erfolgreiches Vorladen beantwortet; mit `suffix` oder nach einer Verschärfung von `isLoadOnly` allein liefe er als leerer Prompt in die Generierung)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J1-4, Verhaltenshälfte; die Doku-Hälfte steht im Nachtrag zu F205). Eingeführt mit F205, dessen `isLoadOnly` den Prompt mit `asText("")` las.
+- **Beschreibung:** Jacksons `asText("")` liefert für ein Array oder Objekt `""` (Container-Knoten) und ersetzt nur `null`; `isLoadOnly` hielt `{"prompt":["a"]}` und `{"prompt":{}}` deshalb für eine Anfrage ohne Prompt, und `handleOllamaGenerate` antwortete 200 mit `done_reason "load"`, ohne das Backend zu rufen. Ollama bindet den Body in ein `string`-Feld (`api.GenerateRequest.Prompt`, `ShouldBindJSON`) und antwortet auf einen solchen Body mit 400. Ein 400-Weg existierte hier nicht: auch die drei Übersetzer (`toOpenAiChatRequestFromGenerate`, `toOpenAiCompletionRequest`, `toInfillRequest`) lesen den Prompt mit `asText("")` und werfen nie, sodass ein solcher Prompt mit `suffix` als leerer Prompt in die FIM-Generierung lief.
+- **Fix:** `requireTextualPrompt` wirft `IllegalArgumentException("'prompt' must be a string")`, wenn `prompt` vorhanden, nicht `null` und kein String ist; `handleOllamaGenerate` ruft es als erste Prüfung nach dem Einlesen, vor dem `raw`-Konflikt (F215), der Ladeantwort und FIM — Ollama scheitert schon beim Binden —, und beantwortet die Ausnahme mit 400 und Ollamas Fehlerkörper. `isLoadOnly` zählt nur einen fehlenden, `null` oder leeren String-Prompt als „kein Prompt“; seine Javadoc sagt das und verweist auf die Prüfung.
+- **Tests:** `OllamaApiSupportTest.aNonTextPromptIsNotALoadRequest` (`isLoadOnly` falsch für Array und Objekt, wahr für `null`), `OllamaApiSupportTest.aPromptThatIsNotAStringIsRefused` (wirft für Array, Objekt, Zahl mit dem Wortlaut; nicht für String, leeren String, `null`, fehlend), `OpenAiCompatServerHttpTest.ollamaGenerateWithANonTextPromptIsABadRequest` (Array, Objekt mit `suffix`, Zahl mit `raw` und `stream`: 400 mit `error`, das Backend wird nicht gerufen).
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Code (mit einem `requireTextualPrompt`, das nichts tut, damit der Test übersetzt) rot: `aNonTextPromptIsNotALoadRequest` mit „Expected: is <false> but: was <true>“, `aPromptThatIsNotAStringIsRefused` mit „{"prompt":["a"]} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, der HTTP-Test mit „{"model":"test-model","prompt":["a"]} Expected: is <400> but: was <200>“; mit dem Fix grün (`OllamaApiSupportTest` 48, `OpenAiCompatServerHttpTest` 70, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün. Der offene Punkt in `TODO.md` („Open points from the branch review“, Ollama routes) ist entfernt.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
