@@ -901,7 +901,8 @@ the first two items break every existing consumer at upgrade.
     `input_file` parts, an `input_image` without a URL (a `file_id` only), a tool output part that
     is neither `input_text` nor `input_image`, a `function_call` whose `arguments` is not a string
     (an object became `"{}"`), and an input item of an unknown type (`custom_tool_call`,
-    `item_reference`, ..., which became an empty user message), each with upstream's message.
+    `item_reference`, ..., which became an empty user message), each with upstream's message but the
+    `function_call` one, which names the call where upstream says "Cannot determine type of 'item'".
   - **An answer cut off by `max_output_tokens` is `incomplete`**, blocking and streamed: `status`
     `incomplete` with `incomplete_details.reason` `max_output_tokens`, the message item `incomplete`
     and `response.incomplete` as the last event, where it was reported `completed`. llama.cpp
