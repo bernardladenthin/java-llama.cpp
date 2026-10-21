@@ -236,6 +236,19 @@ public class RouterClientTest {
     }
 
     @Test
+    public void alreadyBracketedIpv6HostIsNotBracketedAgain() {
+        // "[::1]" (the pre-F07 workaround) must reach the socket as http://[::1]:1. Bracketing it again
+        // yields "[[::1]]", which java.net.URI rejects as a malformed IPv6 literal; URI.create turns
+        // that into an IllegalArgumentException, not the IOException request() declares, so it escapes
+        // assertThrows(IOException.class). The last line only mirrors the unbracketed case above.
+        RouterClient bracketed = new RouterClient("[::1]", 1);
+
+        IOException e = assertThrows(IOException.class, bracketed::listModels);
+
+        assertThat(e instanceof MalformedURLException, is(false));
+    }
+
+    @Test
     public void awaitModelLoaded_failsFastOnFailedWorker() {
         modelsBody.set("{\"data\":[{\"id\":\"qwen\","
                 + "\"status\":{\"value\":\"unloaded\",\"failed\":true,\"exit_code\":137}}]}");
