@@ -571,7 +571,7 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800, b11803 on 2026-10-21: Flint, SenseNova
 U1 and a jinja fix, nothing to wire; b11809 on 2026-10-22: LoRA on prism.hadamard folded weights, an OpenCL
 ARGMAX kernel, nothing to wire; b11814 on 2026-10-22: the `tokenizer.ggml.clean_spaces` key and the Pixtral
-pre-tokenizer change, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
+pre-tokenizer change, nothing to wire; b11815 on 2026-10-22: a SYCL CONV_2D layout fix, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
 `docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
 library does not expose, each a decision rather than an omission:
 
