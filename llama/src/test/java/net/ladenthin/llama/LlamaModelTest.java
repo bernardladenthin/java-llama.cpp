@@ -191,14 +191,22 @@ public class LlamaModelTest {
                 .withIgnoreEos(true)
                 .withNPredict(nPredict);
         StringBuilder sb = new StringBuilder();
+        int chunks = 0;
         for (LlamaOutput output : model.generate(params)) {
             sb.append(output);
+            if (!output.text.isEmpty()) {
+                chunks++;
+            }
         }
         String output = sb.toString();
 
-        assertTrue(output.matches("[ab]+"));
-        int generated = model.encode(output).length;
-        assertTrue(generated > 0 && generated <= nPredict + 1);
+        assertTrue(output.matches("[ab]+"), output + " doesn't match [ab]+");
+        // Every non-empty chunk carries at least one sampled token, so their number is a lower bound
+        // of the tokens generated and never exceeds n_predict. Re-tokenising the text is no measure of
+        // it: the grammar admits multi-letter pieces ("ab", "aab", ...), and the encoder splits their
+        // concatenation differently from how it was sampled (measured on the Windows job: a text of
+        // at most 10 sampled pieces re-encoded to more than 11 tokens).
+        assertTrue(chunks > 0 && chunks <= nPredict, "chunks with text: " + chunks + " for " + output);
     }
 
     @Test
@@ -263,10 +271,13 @@ public class LlamaModelTest {
                 .withGrammar("root ::= (\"a\" | \"b\")+")
                 .withIgnoreEos(true)
                 .withNPredict(nPredict);
-        String output = model.complete(params);
+        CompletionResult result = model.completeWithStats(params);
+        String output = result.getText();
         assertTrue(output.matches("[ab]+"), output + " doesn't match [ab]+");
-        int generated = model.encode(output).length;
-        assertTrue(generated > 0 && generated <= nPredict + 1, "generated count is: " + generated);
+        // The server's own count of the sampled tokens (see testGenerateGrammar for why the text
+        // is not re-tokenised to get it).
+        long generated = result.getTimings().getPredictedN();
+        assertTrue(generated > 0 && generated <= nPredict, "generated count is: " + generated + " for " + output);
     }
 
     @Test

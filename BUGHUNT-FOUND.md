@@ -191,6 +191,8 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F266](#f266) — mittel — *gefixt*
 - [F267](#f267) — niedrig — *gefixt*
 - [F269](#f269) — mittel — *gefixt*
+- [F270](#f270) — niedrig (Testfehler) — *gefixt*
+- [F271](#f271) — niedrig bis mittel — *gefixt*
 
 ## Funde
 
@@ -2513,6 +2515,30 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Manifest vor dem Fix ohne `Main-Class` (gemessen am Jar aus `mvn package`), der neue Smoke-Check liefe damit rot („names '' as Main-Class“); nach dem Fix enthält das Manifest den Eintrag, `bash -n` über das Skript, `check-natives.py` 0 Abweichungen. Kein Unit-Test: ein Manifest-Eintrag ist erst nach `package` beobachtbar, die Prüfung gehört in den Job, der die Jars lädt.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `68ab75d`
+
+<a id="f270"></a>
+### F270 – java-llama.cpp: `LlamaModelTest.testGenerateGrammar` / `testCompleteGrammar` zählen die erzeugten Token über eine Re-Tokenisierung des Textes
+- **Zeit:** 2026-10-22 01:10 UTC
+- **Datei:** `llama/src/test/java/net/ladenthin/llama/LlamaModelTest.java` (`testGenerateGrammar`, `testCompleteGrammar`)
+- **Schwere:** niedrig (Testfehler; der Windows-x86-64-Job des Laufs 39692853697 rot, `testGenerateGrammar:201 expected: <true> but was: <false>`)
+- **Historie:** Die Tests prüfen die Grammatik `root ::= ("a" | "b")+` mit `n_predict` 10 und ohne festen Seed; die zweite Zusicherung las die Zahl der erzeugten Token als `model.encode(output).length <= nPredict + 1`. Die Grammatik lässt mehrbuchstabige Stücke zu (`ab`, `aab`, …), und der Encoder zerlegt deren Verkettung anders, als sie gesampelt wurde: ein Text aus höchstens 10 Stücken re-tokenisierte auf dem Windows-Läufer zu mehr als 11 Token. Welche Stücke fallen, ist Zufall (kein Seed, Temperatur-Sampling) und hängt am CPU-Modul des Läufers; die Zusicherung war damit eine Lotterie, keine Messung. Die erste Zusicherung (`[ab]+`) hielt.
+- **Fix:** Der Stream-Test zählt die Chunks mit Text (jeder trägt mindestens ein gesampeltes Token, also eine untere Schranke, die `n_predict` nie überschreitet), der Blocking-Test liest `completeWithStats(...).getTimings().getPredictedN()`, die Zählung des Servers. Beide Zusicherungen nennen den Text und die Zahl in ihrer Meldung.
+- **Tests:** dieselben zwei Tests; modellgebunden (CodeLlama 7B Q2_K), lokal nicht ausführbar (kein Modell im Sandkasten).
+- **Rot-Grün-Nachweis:** rot im CI-Lauf 39692853697 (Windows 2025 x86-64, clang), grün erwartet im Lauf auf dem nächsten Head; `test-compile` und Spotless lokal.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
+<a id="f271"></a>
+### F271 – java-llama.cpp: `jllama_rpc_server_stop()` beendet auch den Serve, der startet, während der Stop auf den gemeinten wartet
+- **Zeit:** 2026-10-22 01:20 UTC
+- **Datei:** `llama/src/main/cpp/jllama_api.cpp` (`rpc_serve_state`, `rpc_serving_scope`, `jllama_rpc_server_stop`), `llama/src/main/cpp/jllama_api.h`, `llama/src/main/cpp/rpc_support.hpp` (Test-Naht `set_stop_hook_for_testing`), `llama-ffm/.../FfmRpcServer.java` (Javadoc)
+- **Schwere:** niedrig bis mittel (nur C- und FFM-Aufrufer, die aus einem anderen Thread neu starten; das Java-`RpcServer` hält seinen Slot bis `close()` zurück ist)
+- **Historie:** Gefunden vom Opus-Review des PR #554 am 2026-10-22. Seit F241 wiederholt der Stop ggmls `stop_server` alle 50 ms, bis `serving == 0`, und `stop_requested` wurde erst bei `serving == 0` zurückgesetzt. Nimmt ein neuer `jllama_rpc_server_serve()` den Mutex, bevor der wartende Stop `serving == 0` sieht, zählt der Neue mit: der Stop wartet auf ihn (bis zum 30-s-Timeout), er liest `stop_requested` noch als gesetzt und kehrt zurück, ohne je zu binden – oder, falls er gebunden hat, trifft ihn der wiederholte ggml-Stop. Header und FFM-Javadoc versprachen das Gegenteil („does not carry over to the next one“).
+- **Fix:** Jeder Serve-Aufruf bekommt eine Id (`active`, älteste zuerst); der Stop merkt sich die jüngste als Ziel (`stop_up_to`), ein Serve fragt `id <= stop_up_to`, und der Stop wartet nur, solange ein Serve mit Id bis zum Ziel aktiv ist. ggmls Stop wird unter dem Mutex ausgelöst, den die Registrierung eines neuen Serve zuerst nimmt; der Neue bindet danach, und ggml löscht sein Flag beim Binden. Header-Kommentar, FFM-Javadoc, CLAUDE.md und CHANGELOG angepasst.
+- **Tests:** `test_c_api.cpp` `CApiRpc.AStopDoesNotReachTheServeStartedAfterIt`: der erste Serve hängt in der Serve-Naht, der Stop läuft auf dem Testthread; die neue Stop-Naht (nach dem Vermerk des Ziels) startet den zweiten Serve, hält ihn in der Serve-Naht und gibt den ersten frei. Der Stop muss mit OK zurückkehren, sobald der erste beendet ist; der zweite muss nach der Freigabe binden und lauschen, ein zweiter Stop beendet ihn.
+- **Rot-Grün-Nachweis:** mit der alten Implementierung (nur die Naht eingezogen) rot: „the RPC server did not stop within 30 s of the stop request“ und „the stop of the first serve ended the second one“ (30 002 ms); mit dem Fix grün (12 ms), dreimal einzeln und zusammen mit den vier anderen `CApiRpc`-Fällen; ganze C++-Suite 686/686; clang-format 23.1.3.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
