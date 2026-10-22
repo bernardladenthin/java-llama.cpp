@@ -62,6 +62,10 @@ main_class="$(unzip -p "$classes" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/
 [ "$main_class" = "net.ladenthin.llama.server.ServerLauncher" ] \
     || { echo "::error::the classes jar $classes names '$main_class' as Main-Class, expected net.ladenthin.llama.server.ServerLauncher" >&2; exit 1; }
 echo "classes jar: $classes (Main-Class $main_class); ${#natives[@]} natives jars"
+# The consumer's classpath: the classes jar, every natives jar and the runtime dependencies. This
+# line went missing once (F269 replaced it with the Main-Class check above), and bash -n cannot see
+# an unbound variable: the first package job to reach this step after that died on `$path` below.
+path="$classes:$(IFS=:; echo "${natives[*]}"):$DEPS"
 
 run() {
     local label="$1"

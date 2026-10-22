@@ -532,7 +532,11 @@ the first two items break every existing consumer at upgrade.
   behind `package` with it (GitHub's dependency-chain rule), which is what the first form did -- the
   smoke sets, the report and both publish jobs of every run from 2026-10-16 to 2026-10-22 were
   skipped behind a green `package`, with the run concluding "success". (Azure Trusted Signing, the
-  first choice, takes no individual in Germany and was dropped before it ever ran.)
+  first choice, takes no individual in Germany and was dropped before it ever ran.) The first run to
+  reach `package`'s natives-jar load step after that (39763815465) died in `smoke-natives-jars.sh` on
+  `path: unbound variable`: the F269 commit had replaced the script's classpath line with the
+  Main-Class check, and `bash -n` cannot see an unbound variable. The line is back, proven with a
+  stub `java` that records the classpath it is given.
 - **A `v*` tag release is built without the shared compiler cache.** `USE_CACHE` is `false` on every
   tag ref whatever the dispatch input says, so each natives build of a release compiles every object
   in the job that ships it; snapshots and PR builds keep the sccache/Depot cache. The cache provider
