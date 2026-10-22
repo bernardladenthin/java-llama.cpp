@@ -2512,7 +2512,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `.github/smoke-natives-jars.sh` (Job `package`, lädt die echten Jars) liest `Main-Class` aus dem Klassen-Jar und bricht ab, wenn es nicht `net.ladenthin.llama.server.ServerLauncher` ist – aus dem Jar selbst, nicht aus dem POM, damit ein erneuter Verlust (etwa durch ein Profil, das das Manifest überschreibt) im selben Job auffällt wie damals der Verlust der Fat-Jars.
 - **Rot-Grün-Nachweis:** Manifest vor dem Fix ohne `Main-Class` (gemessen am Jar aus `mvn package`), der neue Smoke-Check liefe damit rot („names '' as Main-Class“); nach dem Fix enthält das Manifest den Eintrag, `bash -n` über das Skript, `check-natives.py` 0 Abweichungen. Kein Unit-Test: ein Manifest-Eintrag ist erst nach `package` beobachtbar, die Prüfung gehört in den Job, der die Jars lädt.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `68ab75d`
 
 ## Offene Verdachte ohne Fund-ID
 
