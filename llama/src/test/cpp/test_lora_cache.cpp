@@ -133,6 +133,8 @@ class LoraCache : public ::testing::Test {
     // How many prompt tokens the request took from the slot's cache (upstream's n_past). Not
     // tokens_cached: that is every token the slot holds afterwards, positive after any request.
     static int cache_n(const json &response) { return response.at("timings").at("cache_n").get<int>(); }
+    // How many prompt tokens the request evaluated.
+    static int prompt_n(const json &response) { return response.at("timings").at("prompt_n").get<int>(); }
     // The answer of the model with the current adapters, computed on an empty slot.
     static std::string fresh_answer() {
         erase_slot();
@@ -150,13 +152,22 @@ jllama_model *LoraCache::model_ = nullptr;
 } // namespace
 
 // Without these two, the tests below could pass for the wrong reason: an adapter that changes
-// nothing, or a slot that never reuses its cache.
+// nothing, or a slot that never reuses its cache. The reuse is compared between two requests over the
+// cache, not with the fresh answer: a request over the cache re-evaluates only the last prompt token,
+// in a batch of its own (upstream [TAG_PROMPT_LOGITS]), which does not reproduce the logits of the
+// fresh answer's one batch bit for bit, so a greedy near tie could flip between the two (F272). The
+// two requests over the cache take the same tokens from it and compute the same thing.
 TEST_F(LoraCache, TheAdapterChangesTheAnswerAndTheSlotReusesItsCache) {
     const std::string with_adapter = fresh_answer();
     const json again = complete();
     EXPECT_GT(cache_n(again), 0) << again.dump();
     EXPECT_LT(again.at("timings").at("prompt_n").get<int>(), again.at("tokens_evaluated").get<int>()) << again.dump();
-    EXPECT_EQ(again.at("content").get<std::string>(), with_adapter);
+    const json once_more = complete();
+    EXPECT_GT(cache_n(once_more), 0) << once_more.dump();
+    EXPECT_LT(prompt_n(once_more), once_more.at("tokens_evaluated").get<int>()) << once_more.dump();
+    EXPECT_EQ(cache_n(once_more), cache_n(again)) << once_more.dump() << "\n" << again.dump();
+    EXPECT_EQ(prompt_n(once_more), prompt_n(again)) << once_more.dump() << "\n" << again.dump();
+    EXPECT_EQ(once_more.at("content").get<std::string>(), again.at("content").get<std::string>());
 
     set_scale(0.0f);
     EXPECT_NE(fresh_answer(), with_adapter);
@@ -255,7 +266,7 @@ jllama_model *LoraCacheFreshSlot::model_ = nullptr;
 
 TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     ASSERT_NE(model_, nullptr);
-    const json first = complete_on(0);
+    complete_on(0); // the state to save: the prompt, evaluated in one batch, and an answer
     // The C API resolves the file name under --slot-save-path, as upstream's slots route does;
     // TearDownTestSuite's remove_all(save_dir_) takes the file away again.
     slot_action(JLLAMA_SLOT_SAVE, 0, "slot0.bin");
@@ -271,5 +282,20 @@ TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     const int prompt_n = restored.at("timings").at("prompt_n").get<int>();
     const int evaluated = restored.at("tokens_evaluated").get<int>();
     EXPECT_LE(prompt_n, 2) << "of " << evaluated << " prompt tokens: " << restored.dump();
-    EXPECT_EQ(restored.at("content").get<std::string>(), first.at("content").get<std::string>());
+
+    // The kept state answers like the slot it was saved from, asked again over its own cache. Not
+    // like slot 0's first answer: that one evaluated the prompt in one batch, while both requests here
+    // re-evaluate only the last prompt token in a batch of its own (upstream [TAG_PROMPT_LOGITS]),
+    // which does not reproduce the batched logits bit for bit, so a greedy near tie could flip (F272).
+    // Slot 0 still holds the saved state, and each slot has a KV stream of its own (-np 2 without a
+    // unified cache), so the two compute the same thing.
+    const json saved_slot = complete_on(0);
+    EXPECT_LE(saved_slot.at("timings").at("prompt_n").get<int>(), 2)
+        << "of " << saved_slot.at("tokens_evaluated").get<int>() << " prompt tokens: " << saved_slot.dump();
+    EXPECT_EQ(saved_slot.at("timings").at("cache_n").get<int>(), restored.at("timings").at("cache_n").get<int>())
+        << saved_slot.dump() << "\n"
+        << restored.dump();
+    EXPECT_EQ(saved_slot.at("timings").at("prompt_n").get<int>(), prompt_n) << saved_slot.dump() << "\n"
+                                                                            << restored.dump();
+    EXPECT_EQ(restored.at("content").get<std::string>(), saved_slot.at("content").get<std::string>());
 }

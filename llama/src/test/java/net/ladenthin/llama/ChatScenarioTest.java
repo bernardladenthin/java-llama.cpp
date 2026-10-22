@@ -167,15 +167,7 @@ public class ChatScenarioTest {
         String text = model.chatCompleteText(params);
         String rawJson = model.chatComplete(params);
 
-        ChatResponse response = chatParser.parseResponse(rawJson);
-        assertEquals(
-                0,
-                response.getTimings().getCacheN(),
-                "the second generation must take nothing from the prompt cache: " + rawJson);
-        assertEquals(
-                response.getUsage().getPromptTokens(),
-                response.getTimings().getPromptN(),
-                "the second generation must evaluate the whole prompt: " + rawJson);
+        assertWholePromptEvaluated(rawJson);
         String expected = chatParser.extractChoiceContent(rawJson);
         assertEquals(expected, text, "chatCompleteText must match choices[0].message.content");
     }
@@ -288,8 +280,17 @@ public class ChatScenarioTest {
     // ------------------------------------------------------------------
 
     /**
-     * A stop string set in the parameters must terminate generation in chat mode.
-     * The response content must be shorter than the unconstrained generation.
+     * A stop string set in the parameters must terminate generation in chat mode: the stopped
+     * content is the beginning of the unconstrained one, cut before the stop string.
+     *
+     * <p>That holds only when both generations compute the same tokens, so both requests run with
+     * {@code cache_prompt=false} and evaluate the whole prompt in one batch, which their timings prove.
+     * With the cache the second request would take every prompt token but the last from the slot and
+     * re-evaluate that one in a batch of its own (upstream {@code [TAG_PROMPT_LOGITS]}), whose logits
+     * are not bit-identical to the batched ones, so a greedy near tie could flip between the two (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). Over the same tokens the server cuts
+     * the stopped text at the first occurrence of the stop string, and the test model's chat format
+     * takes the content from the text as it is, so the stopped content is a prefix of the other.
      */
     @Test
     public void testChatCompleteWithStopString() {
@@ -301,27 +302,48 @@ public class ChatScenarioTest {
                 .withMessages(null, messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
-                .withTemperature(0.0f);
+                .withTemperature(0.0f)
+                .withCachePrompt(false);
         String unJson = model.chatComplete(unconstrained);
+        assertWholePromptEvaluated(unJson);
         String unContent = chatParser.extractChoiceContent(unJson);
 
-        // Stopped at "3"
+        // Stopped at "4"
         InferenceParameters stopped = new InferenceParameters("")
                 .withMessages(null, messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
                 .withTemperature(0.0f)
+                .withCachePrompt(false)
                 .withStopStrings("4");
         String stJson = model.chatComplete(stopped);
+        assertNotNull(stJson, "Stop-string response must not be null");
+        assertWholePromptEvaluated(stJson);
         String stContent = chatParser.extractChoiceContent(stJson);
 
-        assertNotNull(stJson, "Stop-string response must not be null");
-        // Content with stop should be shorter (or at most equal)
+        // The same generation, cut before the stop string
         assertTrue(
-                stContent.length() <= unContent.length(),
-                "Content with stop string must not exceed unconstrained content length");
+                unContent.startsWith(stContent),
+                "Content with stop string must be the beginning of the unconstrained content: '" + stContent + "' / '"
+                        + unContent + "'");
         // The stopped content must not contain "4" (the stop string itself is excluded)
         assertFalse(stContent.contains("4"), "Content stopped at '4' must not contain '4'");
+    }
+
+    /**
+     * The chat response {@code rawJson} took nothing from the prompt cache and evaluated its whole
+     * prompt in one batch -- the precondition for comparing its text with another generation's.
+     */
+    private void assertWholePromptEvaluated(String rawJson) {
+        ChatResponse response = chatParser.parseResponse(rawJson);
+        assertEquals(
+                0,
+                response.getTimings().getCacheN(),
+                "the generation must take nothing from the prompt cache: " + rawJson);
+        assertEquals(
+                response.getUsage().getPromptTokens(),
+                response.getTimings().getPromptN(),
+                "the generation must evaluate the whole prompt: " + rawJson);
     }
 
     // ------------------------------------------------------------------

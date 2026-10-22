@@ -1234,6 +1234,21 @@ json budget_request(int budget) {
     return request;
 }
 
+// The request with the prompt cache off, so it evaluates its whole prompt in one batch. With the cache
+// a request after one with the same prompt takes every prompt token but the last from the slot and
+// re-evaluates that one in a batch of its own (upstream [TAG_PROMPT_LOGITS]), whose logits are not
+// bit-identical to the batched ones, so a greedy near tie can flip between the two answers (F272).
+json without_prompt_cache(json request) {
+    request["cache_prompt"] = false;
+    return request;
+}
+
+// The result took nothing from the prompt cache and evaluated all prompt_tokens of its prompt.
+void expect_whole_prompt_evaluated(const json &result, int prompt_tokens) {
+    EXPECT_EQ(result.at("timings").at("cache_n").get<int>(), 0) << result.dump();
+    EXPECT_EQ(result.at("timings").at("prompt_n").get<int>(), prompt_tokens) << result.dump();
+}
+
 } // namespace
 
 TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate) {
@@ -1241,11 +1256,15 @@ TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfThe
     // declares, and the sampler forces the end tag once the budget is spent. The raw completion paths
     // rendered the messages and dropped the tags, so the same budget did nothing there. The random
     // model gets an end-of-generation byte of its own, so the '>' of the end tag can be generated.
+    // Every request below that is compared with another runs without the prompt cache and evaluates
+    // its whole prompt in one batch, which its timings prove: with the cache the raw request after the
+    // chat request re-evaluated only the last prompt token, which does not reproduce the chat path's
+    // batched logits bit for bit (F272).
     const std::string path = write_tiny_llama_gguf("jllama-c-api-budget", false, 4);
     ASSERT_FALSE(path.empty());
     jllama_model *model = load_with_chat_template(path, THINKING_TEMPLATE);
     ASSERT_NE(model, nullptr);
-    const json request = budget_request(1);
+    const json request = without_prompt_cache(budget_request(1));
 
     // The reference: on the chat path the budget closes the thinking block the generation prompt
     // opened (its "\n" after "<think>" spends the one token), and the chat parser takes the end tag
@@ -1253,32 +1272,39 @@ TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfThe
     // then the chat path's answer.
     Owned chat;
     ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
-    const std::string answer =
-        json::parse(chat.str()).at("choices").at(0).at("message").value("content", std::string());
+    const json chat_result = json::parse(chat.str());
+    expect_whole_prompt_evaluated(chat_result, chat_result.at("usage").at("prompt_tokens").get<int>());
+    const std::string answer = chat_result.at("choices").at(0).at("message").value("content", std::string());
     EXPECT_EQ(answer.find("</think>"), std::string::npos) << chat.str();
 
     Owned completion;
     ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
-    const std::string blocking = json::parse(completion.str()).at("content").get<std::string>();
+    const json raw_result = json::parse(completion.str());
+    expect_whole_prompt_evaluated(raw_result, raw_result.at("tokens_evaluated").get<int>());
+    const std::string blocking = raw_result.at("content").get<std::string>();
     EXPECT_EQ(blocking.rfind("</think>", 0), 0u) << completion.str();
     EXPECT_GE(blocking.size(), answer.size()) << completion.str();
     EXPECT_EQ(blocking.substr(blocking.size() - std::min(blocking.size(), answer.size())), answer)
         << completion.str() << "\n"
         << chat.str();
 
+    // The stream runs without the prompt cache too, so it is computed like the blocking request.
     int task = -1;
     ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
         << jllama_last_error();
     std::string streamed;
+    json last_chunk;
     bool stop = false;
     for (int i = 0; i < 50 && !stop; ++i) {
         Owned chunk;
         ASSERT_EQ(jllama_completions_stream_receive(model, task, &chunk.s, &stop), JLLAMA_STATUS_OK)
             << jllama_last_error();
-        streamed += json::parse(chunk.str()).value("content", std::string());
+        last_chunk = json::parse(chunk.str());
+        streamed += last_chunk.value("content", std::string());
     }
     EXPECT_TRUE(stop);
+    expect_whole_prompt_evaluated(last_chunk, last_chunk.at("tokens_evaluated").get<int>());
     EXPECT_EQ(streamed, blocking);
 
     // An output-format grammar beside the budget cannot take the generation prompt the budget is
@@ -1413,16 +1439,27 @@ TEST(CApiReasoningBudget, ARawCompletionWithoutMessagesForcesTheEndTagOfItsOwnTa
 
 TEST_F(CApi, ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget) {
     // A template that declares no thinking tags gives the budget nothing to act on, on the chat path
-    // and on the raw paths alike: the request runs unchanged, without an error.
+    // and on the raw paths alike: the request runs unchanged, without an error. Both requests run
+    // without the prompt cache and evaluate their whole prompt in one batch, which their timings
+    // prove; with the cache the second took all but the last prompt token from the slot, and the
+    // first did so too whenever the test before it left the same prompt there, so the two answers
+    // agreed only by the order the tests run in (F272).
     Owned without;
-    ASSERT_EQ(jllama_completions(model_, budget_request(-1).dump().c_str(), &without.s), JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_completions(model_, without_prompt_cache(budget_request(-1)).dump().c_str(), &without.s),
+              JLLAMA_STATUS_OK)
         << jllama_last_error();
     Owned with;
-    ASSERT_EQ(jllama_completions(model_, budget_request(1).dump().c_str(), &with.s), JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_completions(model_, without_prompt_cache(budget_request(1)).dump().c_str(), &with.s),
+              JLLAMA_STATUS_OK)
         << jllama_last_error();
-    EXPECT_EQ(json::parse(with.str()).at("content"), json::parse(without.str()).at("content")) << with.str();
-    EXPECT_EQ(json::parse(with.str()).at("content").get<std::string>().find("</think>"), std::string::npos)
+    const json without_result = json::parse(without.str());
+    const json with_result = json::parse(with.str());
+    expect_whole_prompt_evaluated(without_result, without_result.at("tokens_evaluated").get<int>());
+    expect_whole_prompt_evaluated(with_result, with_result.at("tokens_evaluated").get<int>());
+    EXPECT_EQ(with_result.at("tokens_evaluated").get<int>(), without_result.at("tokens_evaluated").get<int>())
         << with.str();
+    EXPECT_EQ(with_result.at("content"), without_result.at("content")) << with.str();
+    EXPECT_EQ(with_result.at("content").get<std::string>().find("</think>"), std::string::npos) << with.str();
 }
 
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {

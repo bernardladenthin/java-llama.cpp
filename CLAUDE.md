@@ -2613,6 +2613,10 @@ the MSVC Windows job (run 39702748614, F272). So a test that needs two generatio
 sets `withCachePrompt(false)` on both and proves it through the response's `timings` (`cache_n` 0,
 `prompt_n` equal to the prompt tokens), or compares the second with the third cached request and
 asserts the reuse (`cache_n == prompt_tokens - 1`, `prompt_n == 1`) -- never the first with the second.
+A sweep of every test tree the same day rewrote eight more (the ledger's F272 Nachtrag names them);
+the helpers to reuse are `MemoryManagementTest#assertCachedPrefixReused`,
+`ChatScenarioTest#assertWholePromptEvaluated` and `test_c_api.cpp`'s `without_prompt_cache` /
+`expect_whole_prompt_evaluated`.
 
 
 Test files are in `src/test/java/net/ladenthin/llama/` and `src/test/java/examples/`.

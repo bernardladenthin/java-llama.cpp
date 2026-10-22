@@ -438,13 +438,21 @@ public class LlamaModelTest {
      * Regression: {@link LlamaModel#completeAsync(InferenceParameters)}
      * must complete with the same text {@link LlamaModel#complete(InferenceParameters)}
      * would have produced, on a background thread.
+     *
+     * <p>Both requests run with {@code cache_prompt=false}, so each evaluates the whole prompt in one
+     * batch and the two compute the same thing. With the cache the second request would take every
+     * prompt token but the last from the slot and re-evaluate that one in a batch of its own (upstream
+     * {@code [TAG_PROMPT_LOGITS]}), whose logits are not bit-identical to the batched ones, so a near
+     * tie of the seeded sampling could flip between the two (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). {@code completeAsync} returns the text
+     * only, so the precondition is the request itself rather than its timings.
      */
     @Test
     public void testCompleteAsync() throws Exception {
         InferenceParameters params =
-                new InferenceParameters(prefix).withNPredict(8).withSeed(42);
-        String sync =
-                model.complete(new InferenceParameters(prefix).withNPredict(8).withSeed(42));
+                new InferenceParameters(prefix).withNPredict(8).withSeed(42).withCachePrompt(false);
+        String sync = model.complete(
+                new InferenceParameters(prefix).withNPredict(8).withSeed(42).withCachePrompt(false));
         String async = model.completeAsync(params).get(30, java.util.concurrent.TimeUnit.SECONDS);
         assertEquals(sync, async);
     }
