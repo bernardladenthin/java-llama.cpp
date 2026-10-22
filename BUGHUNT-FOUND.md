@@ -2516,6 +2516,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Manifest vor dem Fix ohne `Main-Class` (gemessen am Jar aus `mvn package`), der neue Smoke-Check liefe damit rot („names '' as Main-Class“); nach dem Fix enthält das Manifest den Eintrag, `bash -n` über das Skript, `check-natives.py` 0 Abweichungen. Kein Unit-Test: ein Manifest-Eintrag ist erst nach `package` beobachtbar, die Prüfung gehört in den Job, der die Jars lädt.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `68ab75d`
+- **Nachtrag (2026-10-22, Lauf 39763815465):** Der Smoke-Check selbst hatte mit diesem Commit seine Classpath-Zeile verloren (`path="$classes:…:$DEPS"` wich der `Main-Class`-Prüfung), und `bash -n` sieht eine unbelegte Variable nicht: der erste `package`-Job, der den Schritt seit dem Sign-Job-Fix erreichte, starb mit „line 84: path: unbound variable“. Zeile wiederhergestellt, mit einem Stub-`java` nachgewiesen (committetes Skript rot mit derselben Meldung, repariertes grün, der Stub bekommt Klassen-Jar, alle Natives-Jars und die Abhängigkeiten auf Classpath und Modulpfad). Commit java-llama.cpp `9c835e8`.
 
 <a id="f270"></a>
 ### F270 – java-llama.cpp: `LlamaModelTest.testGenerateGrammar` / `testCompleteGrammar` zählen die erzeugten Token über eine Re-Tokenisierung des Textes
