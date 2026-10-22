@@ -527,8 +527,12 @@ the first two items break every existing consumer at upgrade.
   `sign-windows-natives` (`.github/sign-windows-natives.sh`: jsign, the secrets of the `maven-central`
   environment, an RFC 3161 timestamp) re-uploads the Windows natives artifacts signed, `signed=yes`
   in each directory's `jllama-build.txt`, and `verify-native-deps.py` refuses an unsigned DLL on such a
-  run. Without the switch every build says `signed=no`, as before. (Azure Trusted Signing, the first
-  choice, takes no individual in Germany and was dropped before it ever ran.)
+  run. Without the switch every build says `signed=no`, as before, and the job runs as a no-op in
+  the unprotected environment `unsigned` rather than being skipped: a skipped job skips every job
+  behind `package` with it (GitHub's dependency-chain rule), which is what the first form did -- the
+  smoke sets, the report and both publish jobs of every run from 2026-10-16 to 2026-10-22 were
+  skipped behind a green `package`, with the run concluding "success". (Azure Trusted Signing, the
+  first choice, takes no individual in Germany and was dropped before it ever ran.)
 - **A `v*` tag release is built without the shared compiler cache.** `USE_CACHE` is `false` on every
   tag ref whatever the dispatch input says, so each natives build of a release compiles every object
   in the job that ships it; snapshots and PR builds keep the sccache/Depot cache. The cache provider

@@ -3190,10 +3190,20 @@ certificate and the secrets exist.
   every pull request, where that environment's rules must not apply -- `verify-signing-key` on the
   same environment is "red by design" on foreign branches. The job waits for the Windows Java test
   job because it reads `natives-cpu-windows-x86-64`: `overwrite` deletes the artifact for a moment,
-  and a download in that moment fails. `package` lists the job in `needs` with an `if` that
-  tolerates its skip (`!cancelled() && !contains(needs.*.result, 'failure') && ...`): skipped means
-  no switch, run and failed (wrong secrets, the environment refusing the branch) means `package`
-  is skipped too, because the signature was asked for.
+  and a download in that moment fails. **The job runs on every run and is never skipped**: without
+  the switch its steps are gated off (`env.SIGN_WINDOWS`) and it takes the unprotected environment
+  `unsigned` -- the environment name is an expression, `maven-central` only when signing, so that
+  environment's rules never apply to a pull request -- and `package` lists it in `needs` with the
+  default condition: run and failed (wrong secrets, the environment refusing the branch) means
+  `package` is skipped, because the signature was asked for. The first form had the job itself
+  `if:`-skipped without the switch and `package` tolerating the skip (`!cancelled() &&
+  !contains(needs.*.result, 'failure') && ...`), and that lost every job behind `package`: GitHub
+  applies a skip "to all jobs in the dependency chain from the point of failure or skip onwards",
+  past any `if:` in between, so run 38870889665 (attempt 2, the first run to reach `package` after
+  the job existed, a dispatch on main) ended "success" with `package` green and the smoke sets, the
+  report and both publish jobs skipped -- and so did every run since, until this was corrected on
+  2026-10-22 (the fix had sat on the unmerged branch `claude/jolly-brahmagupta-0ydzby` since
+  2026-10-16). A job that other jobs depend on must run or fail, never skip.
 - **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.6` from Maven Central,
   pinned by version and SHA-256; Java, runs on the Linux runner, no signtool) with
   `--storetype ESIGNER --keystore <endpoint> --storepass "<username>|<password>" --alias
@@ -3223,8 +3233,9 @@ certificate and the secrets exist.
   is on -- so a signed run cannot let an unsigned DLL into a jar, and a run without the switch is
   not blocked. Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without
   the security directory). `check-natives.py` holds the job itself (`natives.check_signing`): one
-  `overwrite: true` upload per Windows row of `natives.csv`, and the job waits for every job that
-  uploads one of them.
+  `overwrite: true` upload per Windows row of `natives.csv`, the job waits for every job that
+  uploads one of them, and it carries no job-level `if:` (the chain rule above; a step-level gate
+  is what it uses).
 - **What the owner does, in order** (TODO.md item 11 and "Code-sign the Windows DLLs" carry the
   details and the prices): delete the Azure Trusted Signing account; SSL.com's IV validation; the IV
   code-signing certificate enrolled in eSigner; the TOTP secret and the credential id from the

@@ -186,6 +186,18 @@ class ConsumerTest(unittest.TestCase):
                           "error` would leave the unsigned build artifact in place when the download matched "
                           "nothing"] * len(WINDOWS))
 
+    def test_the_sign_job_carries_no_job_level_condition(self):
+        """A skipped sign job skips every job behind package (GitHub's dependency-chain rule), so the job
+        must run on every run; a step-level `if:` (the per-step gate on the switch) is what it uses."""
+        skipped = ["    if: github.event_name == 'workflow_dispatch' && inputs.sign_windows"] + sign_uploads()
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=skipped)),
+                         ["publish.yml sign-windows-natives carries a job-level `if:` -- the job must run on every "
+                          "run (a no-op without the switch), never be skipped: a skipped job skips every job "
+                          "behind `package` in the dependency chain, past any condition in between"])
+        gated = [line for step in sign_uploads() for line in
+                 ([step, "        if: env.SIGN_WINDOWS == 'true'"] if step.startswith("      - ") else [step])]
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=gated)), [])
+
     def test_the_sign_job_waits_for_every_reader_of_a_windows_artifact(self):
         # a job reading the artifact between the build and the signed re-upload would race the overwrite
         self.assertEqual(natives.check_workflow(ROWS, jobs(consumer_needs="[build]")),
