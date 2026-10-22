@@ -2551,7 +2551,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** dieselben drei Tests. Messprogramm im Sandkasten (nicht eingecheckt): je Prompt zwei bzw. drei `completeWithStats` mit `n_probs`, Vergleich von Text, erstem Logprob und `timings`.
 - **Rot-Grün-Nachweis:** rot im CI-Lauf 39702748614 (Windows 2025 x86-64, MSVC) mit dem alten Vergleich; lokal mit dem Zufallsmodell der alte Vergleich (erste gegen zweite Anfrage) rot in 4 von 4000 Prompts, der neue (zweite gegen dritte) grün in 4000 von 4000; die drei umgebauten Tests grün mit `tiny2k.gguf` (je 1 Test, 0 übersprungen); Spotless. Modellgebunden (CodeLlama 7B Q2_K): grün erwartet im nächsten Lauf.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `85ebbfd`
 
 ## Offene Verdachte ohne Fund-ID
 
