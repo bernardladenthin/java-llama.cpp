@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11803** (from b11639, in five steps on the branch: b11760, b11761, b11799, b11800, b11803). What the
+- **llama.cpp b11809** (from b11639, in six steps on the branch: b11760, b11761, b11799, b11800, b11803, b11809). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -146,7 +146,11 @@ the first two items break every existing consumer at upgrade.
   (b11761, this project's #30505); two architectures from the last step, Flint (`FlintForCausalLM`, b11803,
   #30928) and SenseNova U1 (text plus its vision projector in mtmd, #28919), and a jinja fix (#30941: a
   `namespace` attribute is no longer shadowed by a dict method of the same name, so `ns.items` is the
-  attribute again, as in jinja2). Two patches dropped (`0016`, `0019`), `0007` refreshed.
+  attribute again, as in jinja2). The b11809 step (2026-10-22): LoRA adapters on prism.hadamard
+  folded matmul weights load now (#30910; an adapter on a latent lookup table such as `token_embd` is
+  still refused), dflash reads an optional `fc.input_scale`, OpenCL gets an F32-to-I32 ARGMAX kernel
+  (#30897, embedded in the two OpenCL module jars) and WebGPU Q2_0 -- nothing here changed. Two
+  patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
 - **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and
