@@ -575,8 +575,8 @@ stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer`
 The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800, b11803 on 2026-10-21: Flint, SenseNova
 U1 and a jinja fix, nothing to wire; b11809 on 2026-10-22: LoRA on prism.hadamard folded weights, an OpenCL
 ARGMAX kernel, nothing to wire; b11814 on 2026-10-22: the `tokenizer.ggml.clean_spaces` key and the Pixtral
-pre-tokenizer change, nothing to wire; b11815 on 2026-10-22: a SYCL CONV_2D layout fix, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
-`docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
+pre-tokenizer change, nothing to wire; b11815 on 2026-10-22: a SYCL CONV_2D layout fix, nothing to wire; b11820 on 2026-10-22: typed rerank items, `OpenAiCompatServer` reads their text and refuses images; b11827 on 2026-10-22: SYCL XMX mat-vec, OpenCL depthwise conv, MiniCPM-OCR, the `--mlock` split-buffer fix, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
+`docs/history/llama-cpp-breaking-changes.md` has the rows). Five things the range brings that this
 library does not expose, each a decision rather than an omission:
 
 - **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
@@ -586,6 +586,14 @@ library does not expose, each a decision rather than an omission:
   `/v1/audio/speech`-shaped route on `OpenAiCompatServer` would make it reachable without the native
   frontend; `TextToSpeech` (its own context over `mtmd_helper::gen_audio`) stays the one-shot path. Not before
   the release.
+- **Multimodal rerank through `LlamaModel` / the Java transport.** Since b11820 (#29625) upstream's rerank
+  route takes `{"text": ..., "image": ...}` items and splices the images through `process_mtmd_prompt`
+  (`format_prompt_rerank(..., query_files, doc_files, ...)`, `handle_media()` for the decoding); `NativeServer`
+  serves it. `engine::rerank` passes empty file lists, `jllama_rerank` and `LlamaModel.rerank` take strings,
+  and `OpenAiCompatServer` refuses an `image` with a `400` naming `NativeServer` rather than ranking the text
+  alone. Wiring it means items in the C API (text plus base64 media, as the multimodal prompt of
+  `jllama_completions` -- `multimodal_data` -- already carries) and a typed overload on `LlamaModel`; it
+  needs a multimodal reranker in the CI model set to be tested. Not before the release.
 - **Realtime transcription** (`/v1/realtime`, WebSocket, b11780, #30636: `mtmd_audio_stream`,
   `SERVER_TASK_TYPE_TRANSCRIBE_RT`, `SERVER_CONTROL_ACTION_AUDIO_*`). Served by `NativeServer`; the JDK's
   `com.sun.net.httpserver` has no WebSocket, so the Java transport cannot follow without a dependency. Not

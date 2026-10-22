@@ -39,23 +39,26 @@ final class OaiRerankSupport {
     private OaiRerankSupport() {}
 
     /**
-     * Read the required {@code query} string.
+     * Read the required {@code query}: a string, or an object whose {@code "text"} is a string or an
+     * array of strings (concatenated), the item shape llama.cpp's rerank route reads since b11820 (#29625;
+     * see {@link #readItem}).
      *
      * @param request the parsed rerank request
      * @return the query text
-     * @throws IllegalArgumentException if {@code query} is missing or not a string
+     * @throws IllegalArgumentException if {@code query} is missing or not such an item, or carries an image
      */
     static String readQuery(JsonNode request) {
         JsonNode query = request.path("query");
-        if (!query.isTextual()) {
-            throw new IllegalArgumentException("'query' must be a string");
+        if (query.isMissingNode() || query.isNull()) {
+            throw new IllegalArgumentException("'query' must be provided");
         }
-        return query.asText();
+        return readItem(query, "query");
     }
 
     /**
      * Read the required {@code documents} array. Each entry may be a plain string or an object carrying a
-     * {@code "text"} string (the Cohere/Jina document shape).
+     * {@code "text"} string or array of strings (the Cohere/Jina document shape, read as {@link #readItem}
+     * reads it).
      *
      * @param request the parsed rerank request
      * @return the documents, in request order
@@ -71,15 +74,69 @@ final class OaiRerankSupport {
         }
         List<String> out = new ArrayList<>(documents.size());
         for (JsonNode document : documents) {
-            if (document.isTextual()) {
-                out.add(document.asText());
-            } else if (document.isObject() && document.path("text").isTextual()) {
-                out.add(document.path("text").asText());
-            } else {
-                throw new IllegalArgumentException("each document must be a string or an object with a 'text' string");
-            }
+            out.add(readItem(document, "document"));
         }
         return out.toArray(new String[0]);
+    }
+
+    /**
+     * Read one rerank input item as llama.cpp's {@code handle_rerank_impl} reads it (b11820, #29625): a
+     * string, or an object whose {@code "text"} is a string or an array of strings (concatenated) and is
+     * empty text when absent or {@code null}; {@code "video"}, {@code "fps"} and {@code "max_frames"} are
+     * refused, as upstream refuses them.
+     *
+     * <p>One difference, a refusal rather than another answer: an {@code "image"} (a string, or an array
+     * with a string) upstream ranks through the multimodal projector, which this transport does not drive
+     * ({@link net.ladenthin.llama.LlamaModel}'s rerank takes text), so it is refused -- ranking the text
+     * alone would answer another question than the one asked. {@link NativeServer} serves llama.cpp's own
+     * route. An {@code "image"} that is {@code null} or an empty array carries no image there either, and
+     * is ignored here as there.
+     *
+     * @param item the query or one document
+     * @param what {@code "query"} or {@code "document"}, for the message
+     * @return the item's text
+     * @throws IllegalArgumentException if the item has none of these shapes or carries an image
+     */
+    private static String readItem(JsonNode item, String what) {
+        if (item.isTextual()) {
+            return item.asText();
+        }
+        if (!item.isObject()) {
+            throw new IllegalArgumentException(("query".equals(what) ? "'query'" : "each " + what)
+                    + " must be a string or an object with a 'text' string");
+        }
+        final String in = " (in the " + what + ")";
+        if (item.has("video") || item.has("fps") || item.has("max_frames")) {
+            throw new IllegalArgumentException("video/fps/max_frames are not supported for rerank input" + in);
+        }
+        final StringBuilder out = new StringBuilder();
+        final JsonNode text = item.path("text");
+        if (text.isTextual()) {
+            out.append(text.asText());
+        } else if (text.isArray()) {
+            for (JsonNode part : text) {
+                if (!part.isTextual()) {
+                    throw new IllegalArgumentException("\"text\" array elements must be strings" + in);
+                }
+                out.append(part.asText());
+            }
+        } else if (!text.isMissingNode() && !text.isNull()) {
+            throw new IllegalArgumentException("\"text\" must be a string or an array of strings" + in);
+        }
+        // upstream decodes the images in order, so the first element decides which refusal comes first
+        final JsonNode image = item.path("image");
+        final boolean list = image.isArray() && image.size() > 0;
+        if (list && !image.get(0).isTextual()) {
+            throw new IllegalArgumentException("\"image\" array elements must be strings" + in);
+        }
+        if (image.isTextual() || list) {
+            throw new IllegalArgumentException("an 'image' in a rerank " + what
+                    + " is ranked by llama.cpp's own server only (NativeServer); this transport ranks text");
+        }
+        if (!image.isArray() && !image.isMissingNode() && !image.isNull()) {
+            throw new IllegalArgumentException("\"image\" must be a string or an array of strings" + in);
+        }
+        return out.toString();
     }
 
     /**
@@ -95,9 +152,9 @@ final class OaiRerankSupport {
      * @param request the parsed rerank request
      * @return the requested cap, or {@code -1} when absent, not a number or outside the {@code int}
      *     range
-     * @throws IllegalArgumentException if {@code top_n} is negative, integer or float (upstream resizes
-     *     its result vector to {@code min(top_n, n)}, a huge size for a negative value, and fails inside
-     *     the server)
+     * @throws IllegalArgumentException if {@code top_n} is negative, integer or float (upstream refuses
+     *     it too since b11820, #29625, with {@code "top_n" must be >= 0}; before, it resized its result
+     *     vector to {@code min(top_n, n)}, a huge size for a negative value, and failed inside the server)
      */
     static int readTopN(JsonNode request) {
         JsonNode topN = request.path("top_n");

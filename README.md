@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11815](https://img.shields.io/badge/llama.cpp-%23b11815-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11815)  
+[![llama.cpp b11827](https://img.shields.io/badge/llama.cpp-%23b11827-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11827)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1015,7 +1015,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/chat/completions` | `LlamaModel.streamChatCompletion` (streaming SSE) / `chatComplete` (blocking) |
 | `POST /v1/completions` | `LlamaModel.streamCompletionsOai` (streaming SSE) / `handleCompletionsOai` (blocking) |
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
-| `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream) |
+| `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
