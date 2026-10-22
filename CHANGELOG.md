@@ -433,13 +433,21 @@ the first two items break every existing consumer at upgrade.
 - `TextToSpeech` follows llama.cpp b11796 (#30902): `mtmd_helper::gen_audio` is initialised explicitly and
   the synthesis input starts from upstream's defaults (a `stream` flag joined the struct, off here). No
   change to the Java API; a projector without audio generation is refused with a message, as before.
+- Build tooling bumped in step with the sibling repositories: `anthropics/claude-code-action` v1.0.258,
+  `github/codeql-action` v4.39.1 and `actions/setup-python` v7.1.0 (clang-format workflow).
+  maven-clean-plugin 3.5.0, maven-install-plugin 3.2.0, maven-deploy-plugin 3.2.0 and
+  maven-dependency-plugin 3.11.0 are now declared in the reactor's pluginManagement and in
+  `llama-atmosphere-agent`: no POM named them, so their versions came from whichever Maven ran the build.
+  Maven 3.9 runs clean 3.2.0, install and deploy 3.1.x and dependency 3.7.0; the Ubuntu runners' Maven
+  3.10.0 already matches, except that it leaves the dependency plugin to the newest release.
+  `dependency:build-classpath` and `copy-dependencies` give the same output under 3.7.0 and 3.11.0.
 - Dependencies and build tooling bumped in step with the sibling repositories: Jackson 2.22.3 ->
   2.22.4 (`jackson.version`, which the `jackson-bom` and the AAR pom follow), LogCaptor 2.12.7 ->
   2.13.0 (test; still requests log4j 2.26.1, so the log4j floor guard is unchanged); in the agent
   Atmosphere 4.0.72 -> 4.0.75 and central-publishing-maven-plugin 0.11.0 -> 0.12.0 (the reactor
   already had it); jsign 7.2 -> 7.6 for the Windows code signing (`sign-windows-natives.sh`, new
   SHA-256; same options, same eSigner authentication path); Gradle 9.8.1 -> 9.8.2 (`GRADLE_VERSION`
-  and the shared `verify-signing-key-gradle` job); `anthropics/claude-code-action` v1.0.255.
+  and the shared `verify-signing-key-gradle` job).
 - **Values that were ignored, misread or left to fail at load time are refused when they are set,
   with an `IllegalArgumentException` naming the value:**
   - `TrainingParameters.toJson()` (and so `LlamaTrainer.finetune`) checks the documented bounds before
