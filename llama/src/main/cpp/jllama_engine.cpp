@@ -1028,10 +1028,10 @@ std::string rerank(jllama_context *jctx, const std::string &query, const std::ve
     std::vector<server_task> tasks;
     tasks.reserve(documents.size());
     for (size_t i = 0; i < documents.size(); i++) {
-        tasks.push_back(indexed_token_task(
-            rd, SERVER_TASK_TYPE_RERANK,
-            format_prompt_rerank(model, jctx->vocab, nullptr, query, documents[i], mtmd_helper_init_opt_default()),
-            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
+        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
+                                           format_prompt_rerank(model, jctx->vocab, nullptr, query, documents[i], {},
+                                                                {}, mtmd_helper_init_opt_default()),
+                                           static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
     wake_and_post(rd, std::move(tasks));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });

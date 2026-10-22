@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11815** (from b11639, in eight steps on the branch: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815). What the
+- **llama.cpp b11820** (from b11639, in nine steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -157,6 +157,12 @@ the first two items break every existing consumer at upgrade.
   pre-tokenizer (#30960), KleidiAI v1.32.0 with SVE Q8_0 kernels (#30808, not built here) -- nothing
   here changed. The b11815 step (2026-10-22, one commit): the SYCL `CONV_2D` kernel accepts the
   channel-fastest CWHN layout instead of aborting (#30363), which reaches the two SYCL module jars.
+  The b11820 step (2026-10-22): llama.cpp's rerank route takes typed items (#29625) -- the query and each
+  document a string or `{"text": ..., "image": ...}`, the images ranked through the projector -- which
+  `NativeServer` serves; `OpenAiCompatServer` reads the text half (see "Reranking" under Fixed) and
+  `LlamaModel.rerank` stays text-only. Also Nemotron models with more Q heads than `n_embd / head_dim`,
+  the `domyn-small` pre-tokenizer and a `tokenizer.ggml.metaspace.prepend_scheme` GGUF key (#23343), and
+  `posix_memalign` in the Vulkan buffers (#30828).
   Two patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
@@ -1136,7 +1142,11 @@ the first two items break every existing consumer at upgrade.
   negative one is `400` in both spellings; `"documents": null` next to `texts` is served from
   `texts`; and a native answer that is not a JSON array is a `500` with the reason instead of an
   empty result list. `LlamaModel.rerank(String, String...)` returns its map in the order of the
-  documents instead of hash order.
+  documents instead of hash order. The query and each document are read as llama.cpp reads them since
+  b11820 (#29625): a string or `{"text": string or [strings]}` (an object query is accepted, a text array
+  concatenated), and an item with an `image` -- which upstream ranks through the projector -- is `400`
+  instead of being ranked by its text alone; `video` / `fps` / `max_frames` are refused with upstream's
+  message. `NativeServer` serves upstream's route, images included.
 - **Java API.**
   - **`InferenceParameters.withMessages(List<ChatMessage>)` keeps `tool_calls` and `tool_call_id`**,
     which only `ChatRequest` added, so a tool round built through it sent an assistant turn without

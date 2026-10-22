@@ -69,6 +69,59 @@ public class OaiRerankSupportTest {
     }
 
     @Test
+    public void readQueryAcceptsATextObjectLikeUpstream() throws IOException {
+        // llama.cpp b11820 (#29625) reads the query like a document: a string or {"text": ...}.
+        assertThat(OaiRerankSupport.readQuery(read("{\"query\":{\"text\":\"hello\"}}")), is("hello"));
+        assertThat(OaiRerankSupport.readQuery(read("{\"query\":{\"text\":[\"hel\",\"lo\"]}}")), is("hello"));
+    }
+
+    @Test
+    public void readDocumentsConcatenatesATextArrayLikeUpstream() throws IOException {
+        String[] docs = OaiRerankSupport.readDocuments(read("{\"documents\":[{\"text\":[\"a\",\"b\"]},\"c\"]}"));
+        assertThat(docs.length, is(2));
+        assertThat(docs[0], is("ab"));
+        assertThat(docs[1], is("c"));
+    }
+
+    @Test
+    public void readDocumentsRefusesATextArrayWithANonString() throws IOException {
+        JsonNode request = read("{\"documents\":[{\"text\":[\"a\",1]}]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
+        assertThat(e.getMessage(), containsString("'text' array elements must be strings"));
+    }
+
+    @Test
+    public void anImageInADocumentIsRefusedRatherThanDropped() throws IOException {
+        // Upstream ranks {"text", "image"} items through the projector since b11820; this transport ranks
+        // text only, so ranking the text alone would answer another question than the one asked.
+        JsonNode request = read("{\"documents\":[\"a\",{\"text\":\"x\",\"image\":\"data:image/png;base64,AA==\"}]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
+        assertThat(e.getMessage(), containsString("'image'"));
+        assertThat(e.getMessage(), containsString("NativeServer"));
+    }
+
+    @Test
+    public void anImageInTheQueryIsRefusedRatherThanDropped() throws IOException {
+        JsonNode request = read("{\"query\":{\"text\":\"q\",\"image\":[\"u\"]},\"documents\":[\"a\"]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readQuery(request));
+        assertThat(e.getMessage(), containsString("'image'"));
+        assertThat(e.getMessage(), containsString("NativeServer"));
+    }
+
+    @Test
+    public void videoIsRefusedLikeUpstream() throws IOException {
+        for (String key : new String[] {"video", "fps", "max_frames"}) {
+            JsonNode request = read("{\"documents\":[{\"text\":\"x\",\"" + key + "\":1}]}");
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
+            assertThat(key, e.getMessage(), containsString("video/fps/max_frames are not supported"));
+        }
+    }
+
+    @Test
     public void readTopNReturnsValueOrNegativeOne() throws IOException {
         assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":3}")), is(3));
         assertThat(OaiRerankSupport.readTopN(read("{}")), is(-1));
