@@ -20,6 +20,7 @@ import net.ladenthin.llama.json.ChatResponseParser;
 import net.ladenthin.llama.json.CompletionResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ChatResponse;
 import net.ladenthin.llama.value.LlamaOutput;
 import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.AfterAll;
@@ -142,8 +143,14 @@ public class ChatScenarioTest {
     }
 
     /**
-     * chatCompleteText() must return the same content as extracting choices[0].message.content
-     * from the raw chatComplete() JSON.
+     * {@code chatCompleteText} must return exactly {@code choices[0].message.content} of the response
+     * {@code chatComplete} gives for the same request. The two calls are two generations, so they agree
+     * only when both compute the same thing: {@code cache_prompt=false} makes each of them evaluate the
+     * whole prompt in one batch. With the cache the second request reuses the slot's prefix and
+     * re-evaluates one token in a batch of its own (upstream {@code [TAG_PROMPT_LOGITS]}), whose logits
+     * are not bit-identical to the batched ones, and a greedy near tie then flips -- the MSVC Windows
+     * job of run 39702748614 answered "2 plus 2 is 4.<|im" once and "4.<|im_end|>" once. The raw
+     * response of the second call proves the precondition: nothing was taken from the cache.
      */
     @Test
     public void testChatCompleteTextMatchesChatCompleteContent() {
@@ -154,11 +161,21 @@ public class ChatScenarioTest {
                 .withMessages("You are a helpful assistant.", messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
-                .withTemperature(0.0f);
+                .withTemperature(0.0f)
+                .withCachePrompt(false);
 
-        String rawJson = model.chatComplete(params);
         String text = model.chatCompleteText(params);
+        String rawJson = model.chatComplete(params);
 
+        ChatResponse response = chatParser.parseResponse(rawJson);
+        assertEquals(
+                0,
+                response.getTimings().getCacheN(),
+                "the second generation must take nothing from the prompt cache: " + rawJson);
+        assertEquals(
+                response.getUsage().getPromptTokens(),
+                response.getTimings().getPromptN(),
+                "the second generation must evaluate the whole prompt: " + rawJson);
         String expected = chatParser.extractChoiceContent(rawJson);
         assertEquals(expected, text, "chatCompleteText must match choices[0].message.content");
     }

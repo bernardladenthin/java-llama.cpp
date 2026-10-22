@@ -2601,6 +2601,20 @@ Locally the model tests self-skip when a GGUF is absent (`Assume.assumeTrue`), s
 checkout is fine.
 
 
+**Never compare two generations across a prompt-cache hit.** A second request with the same (or a
+prefix-equal) prompt and `cache_prompt` (the default) takes every prompt token but the last from the
+slot and re-evaluates that one token in a batch of its own (upstream `[TAG_PROMPT_LOGITS]`); its
+logits are not bit-identical to the batched prompt evaluation of the first request, and a greedy near
+tie flips -- measured on the random test model over 4000 prompts: the first token's logprob differs
+in 3999 first-vs-second pairs and the text in 4, while the second and the third request (both over
+the cached prefix) agree in all 4000 and two requests with `cache_prompt=false` are bit-identical.
+`ChatScenarioTest#testChatCompleteTextMatchesChatCompleteContent` was that lottery and lost once on
+the MSVC Windows job (run 39702748614, F272). So a test that needs two generations to agree either
+sets `withCachePrompt(false)` on both and proves it through the response's `timings` (`cache_n` 0,
+`prompt_n` equal to the prompt tokens), or compares the second with the third cached request and
+asserts the reuse (`cache_n == prompt_tokens - 1`, `prompt_n == 1`) -- never the first with the second.
+
+
 Test files are in `src/test/java/net/ladenthin/llama/` and `src/test/java/examples/`.
 
 ### C++ unit tests

@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * Advanced inference parameter scenarios covering code paths untested by
  * {@link LlamaModelTest} and {@link ChatScenarioTest}:
  * <ul>
- *   <li>setCachePrompt — repeated call produces consistent output</li>
+ *   <li>setCachePrompt — the second and third call reuse the cached prefix and agree</li>
  *   <li>nPredict=-1 with stop string — unbounded generation terminates</li>
  *   <li>setNProbs — streaming JSON contains probability data</li>
  *   <li>setChatTemplate — custom Jinja template applied by applyTemplate</li>
@@ -78,13 +78,21 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 1. setCachePrompt — repeated call with same prompt is consistent
+    // 1. setCachePrompt — repeated calls over the cached prefix are consistent
     // ------------------------------------------------------------------
 
     /**
-     * Two identical calls with {@code setCachePrompt(true)} and a fixed seed
-     * must produce the same output. This verifies that prompt caching does not
-     * corrupt the KV cache or alter sampling state between requests.
+     * Three identical greedy calls with {@code cache_prompt=true}: the second and the third reuse the
+     * slot's prefix (every prompt token but the last, which upstream re-evaluates so that the request
+     * has logits) and must produce the same output, because they compute the same thing over the same
+     * cache -- which verifies that prompt caching does not corrupt the KV cache or alter the sampling
+     * state between requests. The first call is deliberately not compared with them: it evaluated the
+     * prompt in one batch, and the one-token re-evaluation does not reproduce its logits bit for bit
+     * (measured on the random test model over 4000 prompts: the first token's logprob differs in 3999
+     * first-vs-second pairs and the greedy text in 4 of them, against 0 of 4000 between the second and
+     * the third call and 0 of 150 without the cache), so a greedy near tie can flip between a batched
+     * and a cached generation -- what the MSVC Windows job of run 39702748614 saw in
+     * {@code ChatScenarioTest}.
      */
     @Test
     public void testCachePromptConsistentOutput() {
@@ -94,11 +102,28 @@ public class ChatAdvancedTest {
                 .withTemperature(0.0f)
                 .withCachePrompt(true);
 
-        String first = model.complete(params);
-        String second = model.complete(params);
+        CompletionResult first = model.completeWithStats(params);
+        CompletionResult second = model.completeWithStats(params);
+        CompletionResult third = model.completeWithStats(params);
 
-        assertFalse(first.isEmpty(), "First cached call must produce output");
-        assertEquals(first, second, "Same prompt with cache_prompt must produce identical output");
+        assertFalse(first.getText().isEmpty(), "First cached call must produce output");
+        assertCachedPrefixReused(second);
+        assertCachedPrefixReused(third);
+        assertEquals(
+                second.getText(),
+                third.getText(),
+                "Two generations over the same cached prefix must produce identical output");
+    }
+
+    private static void assertCachedPrefixReused(CompletionResult result) {
+        assertEquals(
+                result.getUsage().getPromptTokens() - 1,
+                result.getTimings().getCacheN(),
+                "every prompt token but the last must come from the cache: " + result.getRawJson());
+        assertEquals(
+                1,
+                result.getTimings().getPromptN(),
+                "only the last prompt token must be evaluated: " + result.getRawJson());
     }
 
     // ------------------------------------------------------------------

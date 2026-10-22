@@ -193,6 +193,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F269](#f269) — mittel — *gefixt*
 - [F270](#f270) — niedrig (Testfehler) — *gefixt*
 - [F271](#f271) — niedrig bis mittel — *gefixt*
+- [F272](#f272) — niedrig (Testfehler) — *gefixt*
 
 ## Funde
 
@@ -2539,6 +2540,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** mit der alten Implementierung (nur die Naht eingezogen) rot: „the RPC server did not stop within 30 s of the stop request“ und „the stop of the first serve ended the second one“ (30 002 ms); mit dem Fix grün (12 ms), dreimal einzeln und zusammen mit den vier anderen `CApiRpc`-Fällen; ganze C++-Suite 686/686; clang-format 23.1.3.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `c59569a`
+
+<a id="f272"></a>
+### F272 – java-llama.cpp: `ChatScenarioTest`, `ChatAdvancedTest` und `MemoryManagementTest` vergleichen zwei Generierungen über einen Prompt-Cache-Treffer hinweg
+- **Zeit:** 2026-10-22 09:31 UTC
+- **Datei:** `llama/src/test/java/net/ladenthin/llama/ChatScenarioTest.java` (`testChatCompleteTextMatchesChatCompleteContent`), `ChatAdvancedTest.java` (`testCachePromptConsistentOutput`), `MemoryManagementTest.java` (`testPromptCacheStableAcrossMultipleCalls`); `CLAUDE.md` (Regel unter „Java tests“)
+- **Schwere:** niedrig (Testfehler; der MSVC-Windows-Job des Laufs 39702748614 rot: `ChatScenarioTest.testChatCompleteTextMatchesChatCompleteContent:163 … expected: <4.<|im_end|>\n> but was: <2 plus 2 is 4.<|im>`)
+- **Historie:** Die drei Tests stellen zwei bzw. drei identische Greedy-Anfragen (Temperatur 0, fester Seed) und setzen die Texte gleich. Zwischen der ersten und der zweiten Anfrage liegt ein Prompt-Cache-Treffer: mit `cache_prompt` (Vorgabe) übernimmt die zweite alle Prompt-Token bis auf das letzte aus dem Slot und wertet nur dieses eine neu aus (upstream `server-context.cpp`, `[TAG_PROMPT_LOGITS]`: „need to evaluate at least 1 token for each active slot“, „n_past was set to 158“). Die Logits dieser Ein-Token-Auswertung sind nicht bitgleich mit denen der gebündelten Prompt-Auswertung der ersten Anfrage (andere Batch-Form, andere Kernel und Summationsreihenfolge), und bei einem knappen Gleichstand kippt der Greedy-Argmax: CodeLlama 7B Q2_K antwortete auf „What is 2 plus 2?“ einmal „2 plus 2 is 4.<|im“ und einmal „4.<|im_end|>“. Gemessen am Zufallsmodell `tiny2k.gguf` (2 Schichten, 4000 Zufallsprompts, je drei Anfragen, `n_probs` 3): erste gegen zweite Anfrage – Logprob des ersten erzeugten Tokens verschieden in 3999 von 4000 Paaren (höchstens 5,6e-3), Text verschieden in 4 (etwa `'1Q]RNQ'` gegen `'Q]RNQ]'` bei `cache_n` 112, `prompt_n` 1); ohne Cache (150 Paare) 0 Unterschiede, bitgleich. Zweite gegen dritte Anfrage (beide über demselben Cache-Präfix, je ein Token neu): 0 Text- und 0 Logprob-Unterschiede in 4000 Paaren; in allen 8000 Cache-Anfragen galt `cache_n == prompt_tokens - 1` und `prompt_n == 1`. Der Vergleich erste gegen zweite war damit eine Lotterie mit kleiner Verlustwahrscheinlichkeit, kein Nachweis – dieselbe Klasse wie F270.
+- **Fix:** `ChatScenarioTest`: beide Anfragen mit `withCachePrompt(false)`; die zweite (`chatComplete`, die Rohantwort) belegt die Vorbedingung über `timings` (`cache_n` 0, `prompt_n` gleich `usage.prompt_tokens`), sodass ein später entferntes Flag den Test deterministisch rot macht statt ihn zur Lotterie zurückzubauen. `ChatAdvancedTest` und `MemoryManagementTest`: drei Anfragen über `completeWithStats`; die zweite und die dritte müssen den Cache nutzen (`cache_n == prompt_tokens - 1`, `prompt_n == 1`) und einander gleichen; die erste wird nur auf nicht-leer geprüft und absichtlich nicht mit ihnen verglichen (die Javadoc nennt den Grund). `CLAUDE.md` hält die Regel fest. Kein Produktionscode: das Verhalten ist upstreams und kein Fehler, der Server muss für die Logits mindestens ein Token auswerten.
+- **Tests:** dieselben drei Tests. Messprogramm im Sandkasten (nicht eingecheckt): je Prompt zwei bzw. drei `completeWithStats` mit `n_probs`, Vergleich von Text, erstem Logprob und `timings`.
+- **Rot-Grün-Nachweis:** rot im CI-Lauf 39702748614 (Windows 2025 x86-64, MSVC) mit dem alten Vergleich; lokal mit dem Zufallsmodell der alte Vergleich (erste gegen zweite Anfrage) rot in 4 von 4000 Prompts, der neue (zweite gegen dritte) grün in 4000 von 4000; die drei umgebauten Tests grün mit `tiny2k.gguf` (je 1 Test, 0 übersprungen); Spotless. Modellgebunden (CodeLlama 7B Q2_K): grün erwartet im nächsten Lauf.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

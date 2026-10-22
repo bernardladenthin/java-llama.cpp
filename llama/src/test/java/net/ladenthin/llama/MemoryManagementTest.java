@@ -265,9 +265,13 @@ public class MemoryManagementTest {
     }
 
     /**
-     * Three consecutive calls with the same prompt, seed, and {@code cache_prompt=true} must all
-     * produce identical output.  The third call reuses the cache path that was already exercised
-     * by the second call, verifying that the cache state remains stable across multiple reuses.
+     * Three consecutive calls with the same prompt, seed and {@code cache_prompt=true}: the second and
+     * the third both reuse the cached prefix (every prompt token but the last, which upstream
+     * re-evaluates) and must produce identical output, which verifies that the cache state stays
+     * stable across repeated reuses. The first call is not compared with them on purpose: it
+     * evaluated the prompt in one batch, and the one-token re-evaluation does not reproduce those
+     * logits bit for bit, so a greedy near tie can flip between the two paths (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}).
      */
     @Test
     public void testPromptCacheStableAcrossMultipleCalls() {
@@ -277,13 +281,25 @@ public class MemoryManagementTest {
                 .withTemperature(0f)
                 .withSeed(77);
 
-        String first = model.complete(params);
-        String second = model.complete(params);
-        String third = model.complete(params);
+        CompletionResult first = model.completeWithStats(params);
+        CompletionResult second = model.completeWithStats(params);
+        CompletionResult third = model.completeWithStats(params);
 
-        assertFalse(first.isEmpty(), "First call must produce output");
-        assertEquals(first, second, "Second call must match first");
-        assertEquals(first, third, "Third call must match first");
+        assertFalse(first.getText().isEmpty(), "First call must produce output");
+        for (CompletionResult cached : new CompletionResult[] {second, third}) {
+            assertEquals(
+                    cached.getUsage().getPromptTokens() - 1,
+                    cached.getTimings().getCacheN(),
+                    "every prompt token but the last must come from the cache: " + cached.getRawJson());
+            assertEquals(
+                    1,
+                    cached.getTimings().getPromptN(),
+                    "only the last prompt token must be evaluated: " + cached.getRawJson());
+        }
+        assertEquals(
+                second.getText(),
+                third.getText(),
+                "Third call must match the second: both generate over the same cached prefix");
     }
 
     // ------------------------------------------------------------------
