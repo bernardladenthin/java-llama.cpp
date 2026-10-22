@@ -85,7 +85,10 @@ smoke_classpath_without_natives() {
 # jllama-files.txt lines appended likewise, its own jllama-build.txt and jllama-sbom.json dropped
 # (same tag by contract, which the loader checked when the jars were built). Prints the directory.
 smoke_natives_directory() {
-    local set_dir="$1" out="$2"
+    # Absolute, because the jars are unpacked after a cd into the output directory and the
+    # workflows pass the set relative to the job's directory (`smoke`).
+    local set_dir out="$2"
+    set_dir="$(cd "$1" && pwd)" || { echo "::error::smoke set directory '$1' does not exist" >&2; return 1; }
     rm -rf "$out" && mkdir -p "$out"
     local rows
     rows="$(grep -v -e '^#' -e '^classifier,' -e '^$' "$SMOKE_LIST" | tr -d '\r')"
