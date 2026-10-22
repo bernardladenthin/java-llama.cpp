@@ -941,7 +941,15 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
 5. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
-6. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** **Measured in run
+6. **Addressed on 2026-10-22, the CI number still to read** (CLAUDE.md "sccache on every Windows
+   Ninja job" and "CI build cache"): the Windows ROCm job caches through
+   `llama/cmake/msvc-runtime-gnu-clang.cmake`, the Linux one through `CMAKE_HIP_COMPILER_LAUNCHER` in
+   `build.sh`; measured locally with one GPU target, 325 s -> 25 s and 310 s -> 10 s warm. **Open:** the
+   two jobs' build steps in the second run after the merge (the first fills the cache), with all 23 / 27
+   targets, and the cache size that adds on Depot. A llama.cpp bump that touches the headers every HIP TU
+   includes (`common.cuh`, `ggml.h`, ...) is still a cold build -- 6 of the 17 bumps from b11558 to b11815
+   did, 11 touched none of them. The history follows:
+   **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** **Measured in run
    38149667195: both ROCm jobs were still compiling after 2 h 23 min**, with every other build job
    finished (50 of 56 green) and `Package JARs` not started -- so everything behind `package`, which
    is the whole point of a round-0 run, waits on them. The dllimport flood above sits in the same job
@@ -954,7 +962,7 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
    its 158 ninja steps ~140 are HIP TUs, each compiled for the 23 `GPU_TARGETS`; on Windows upstream
    compiles them as C++ with TheRock's clang, a plain clang, so they go through sccache -- and sccache
    0.18.0 refuses every one of them for the `-Xclang` that CMake puts on any plain-clang Windows TU
-   (CLAUDE.md "sccache on every Windows Ninja job but one"; the job's stats table: 67 requests, all
+   (CLAUDE.md "sccache on every Windows Ninja job"; the job's stats table: 67 requests, all
    non-cacheable, 0 compilations). What would shorten it: a sccache that accepts `-Xclang` -- re-test
    on every `SCCACHE_DL_VERSION` bump, the stats table in the job summary answers at once, and do it
    on a branch with one dispatched run, because `build.bat`'s unconditional retry turns a sccache that
@@ -977,49 +985,27 @@ interface (what already happens), and keep one guard: a configure-time check tha
 is on `jllama`'s include path, so a future upstream move of the vendor directory cannot silently flip the order
 back. Not done in the bump PR on purpose -- a bump changes the pin, nothing else.
 
-### Waiting on sccache: four open issues, and they cost the pipeline hours
+### sccache and `-Xclang`: worked around here, one flag upstream
 
-**Nothing to do here but watch.** Checked 2026-10-12: `SCCACHE_DL_VERSION` is **0.18.0 and that is the
-newest release** (2026-09-14), so there is no bump to take, and the cause is a family of **open**
-issues upstream:
+**No longer waiting.** Until 2026-10-22 this entry read "nothing to do but watch": sccache refuses any
+TU carrying an `-Xclang` argument it does not know, CMake's `Platform/Windows-Clang.cmake` puts
+`-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt` on every plain-clang Windows
+TU (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`), and so `build-windows-x86_64` (719 of 720 requests
+non-cacheable at b11538) and `build-windows-x86_64-rocm` (the pipeline's critical path, 2:40-4:15 h)
+cached nothing. `llama/cmake/msvc-runtime-gnu-clang.cmake` now maps that runtime selection to the
+driver flag `-fms-runtime-lib=static`, which hands cc1 the same flags without `-Xclang`; measured and
+explained in CLAUDE.md "sccache on every Windows Ninja job".
 
-| issue | what it is |
-|---|---|
-| [mozilla/sccache#1122](https://github.com/mozilla/sccache/issues/1122) | *"Generically assume that unknown flags are `PassThrough`"* -- **the structural fix**: it would make every one of the others moot |
-| [#1603](https://github.com/mozilla/sccache/issues/1603) | handling `-Xclang` custom plugins and flags |
-| [#2522](https://github.com/mozilla/sccache/issues/2522) | `-Xclang -fopenmp` errors with `UnknownFlag` |
-| [#2717](https://github.com/mozilla/sccache/issues/2717) | add `-fno-cxx-modules` to the known `-Xclang` flags |
+**What the four issues this entry listed actually are, read in sccache's source** (`main` and v0.18.0,
+2026-10-22): sccache knows `--dependent-lib` (PR #1500, which was exactly "-Xclang on Windows CMake")
+and `-fno-pch-timestamp` (#1721); the one flag of the sequence it does not know is
+**`-flto-visibility-public-std`**, and no issue or PR names it. #1122 (generic pass-through) has been
+quiet since 2022, #1603 and #2522 are other flags, and #2717 is a PR (for `-fno-cxx-modules`), not an
+issue. sccache adds `-Xclang` flags one PR at a time.
 
-**Why this is not cosmetic.** sccache refuses any translation unit carrying an `-Xclang` argument, and
-CMake's `Platform/Windows-Clang.cmake` puts one on **every** plain-clang Windows TU, because that is
-how it implements `CMAKE_MSVC_RUNTIME_LIBRARY` -- the hybrid CRT every Windows job here sets
-(`-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt`). So two jobs cache
-nothing at all:
-
-* **`build-windows-x86_64`** (plain clang, modular CPU): measured at b11538, **719 of 720 compile
-  requests non-cacheable, 0.00% hit rate**. The job builds cold on every run, which is why it has no
-  sccache install step at all.
-* **`build-windows-x86_64-rocm`**: TheRock's clang is a plain clang too, and upstream compiles the HIP
-  sources as C++ on Windows, so its ~140 HIP TUs -- each compiled for **23** GPU targets -- all go
-  through the launcher and are all refused (run 38069595101: 67 requests, every one non-cacheable, 0
-  compilations). **This is the pipeline's critical path**: 2:40 h to 3:08 h for its build step in the
-  measured runs, against ~1 h for everything else in the run put together. A pipeline run is
-  three hours because of this one job, and a working cache is the only thing that would shorten it.
-
-**What is already in place, so nothing is blocked meanwhile:** `build.sh`/`build.bat` probe-compile
-through sccache before trusting it as the launcher, retry once without it when a build fails with a
-cache error, and pass `-DGGML_CCACHE=OFF` so ggml cannot re-enable a launcher behind the retry's back.
-The refusal therefore costs time, never a red build.
-
-**The re-check, when it is worth doing.** On the next sccache **release** (not on a schedule): bump
-`SCCACHE_DL_VERSION` in `build.sh`, add the install step back to `build-windows-x86_64`, and read the
-`### sccache statistics` table the build script writes into the job summary. A hit rate above zero on
-that job is the answer; anything else and the pin goes back. The ROCm job keeps its install step
-already, so its summary table answers the same question for free on any run.
-
-**Worth one comment upstream** rather than a new issue: this project's case -- CMake putting `-Xclang`
-on every Windows TU, so the flag is not exotic but unavoidable -- belongs in #1122, which is where the
-general fix is being discussed. That is the only action available until something merges.
+**Optional upstream follow-up:** a one-line PR adding `flag!("-flto-visibility-public-std",
+PassThroughFlag)` to `src/compiler/clang.rs` with a test of CMake's full sequence. It would let a
+plain-clang Windows build cache without this project's override; nothing here depends on it.
 
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
@@ -1314,13 +1300,11 @@ because each is a design decision in code this project does not own. And say pla
 downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
 maintainer can see what a merged change would let this project delete.
 
-A fifth report is **not** for llama.cpp: sccache refuses every TU carrying an `-Xclang` argument, and
-CMake's runtime-library selection puts one on every plain-clang Windows TU. Checked 2026-10-12:
-**0.18.0 is the newest release** (2026-09-14), so there is no bump to take, and the flag handling is a
-family of **open** sccache issues -- mozilla/sccache#1603, #2522, #2717 and #1122 (the structural one:
-treat an unknown flag as pass-through). So the measurement stands as recorded and the only action is
-to add this case to one of those issues, or wait. Re-check on the next sccache release before
-spending a CI run on it.
+A fifth report is **not** for llama.cpp: sccache refuses every TU carrying an `-Xclang` argument it
+does not know, and CMake's runtime-library selection puts `-Xclang -flto-visibility-public-std` on
+every plain-clang Windows TU. Worked around here since 2026-10-22
+(`llama/cmake/msvc-runtime-gnu-clang.cmake`); the upstream side is a one-flag PR to sccache, see
+"sccache and `-Xclang`" above.
 
 There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0014`-`0019`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.

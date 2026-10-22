@@ -8,6 +8,15 @@ if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACOSX_DEPLOYMENT
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version of libjllama.dylib")
 endif()
 
+# Plain clang on Windows: CMake's runtime-library flags carry an -Xclang argument sccache refuses,
+# so every TU of the plain-clang CPU and ROCm jobs went uncached. The override maps
+# CMAKE_MSVC_RUNTIME_LIBRARY to -fms-runtime-lib for that toolchain only; the file says why and what
+# was measured. It must be set before project(): CMake reads it while enabling each language. A
+# -DCMAKE_USER_MAKE_RULES_OVERRIDE from outside wins (and then the -Xclang flags come back).
+if(NOT CMAKE_USER_MAKE_RULES_OVERRIDE)
+    set(CMAKE_USER_MAKE_RULES_OVERRIDE "${CMAKE_CURRENT_LIST_DIR}/cmake/msvc-runtime-gnu-clang.cmake")
+endif()
+
 project(jllama CXX)
 
 # HYBRID CRT on Windows, for every toolchain but the two named below: the STL and vcruntime are

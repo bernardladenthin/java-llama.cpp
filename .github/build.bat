@@ -20,9 +20,14 @@ REM sccache is on PATH AND the probe succeeds; otherwise the build proceeds
 REM uncached and green. The Visual Studio generator jobs do NOT set USE_CACHE, so
 REM this stays inert for them (and the VS generator ignores
 REM CMAKE_{C,CXX}_COMPILER_LAUNCHER anyway -- only Ninja/Makefiles honor it).
+REM SCCACHE_IDLE_TIMEOUT=0 (unless the job sets it): the server the probe starts lives
+REM until the job ends. With sccache's default of 600 s it stopped during the long
+REM stretches of a build and a new one counted only what came after, so the stats
+REM table below showed a fraction of the requests (the Windows ROCm job: 67 of ~160).
 REM ---------------------------------------------------------------------------
 set "LAUNCH="
 if /I "%USE_CACHE%"=="true" (
+    if not defined SCCACHE_IDLE_TIMEOUT set "SCCACHE_IDLE_TIMEOUT=0"
     where sccache >nul 2>&1
     if errorlevel 1 (
         echo build.bat: USE_CACHE=true but sccache not on PATH; building WITHOUT cache.

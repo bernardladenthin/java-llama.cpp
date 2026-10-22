@@ -67,6 +67,12 @@ if [ "${USE_CACHE:-true}" = "true" ] && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE
   fi
 fi
 
+# The server the probe below starts should live until the job ends. With sccache's default idle
+# timeout (600 s) it stopped during the long stretches of a build and a new one counted only what
+# came after, so the stats table showed a fraction of the requests (the Linux ROCm job: 2 of ~160).
+# A job (or a developer) that sets SCCACHE_IDLE_TIMEOUT keeps its own value.
+export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
+
 # Health-check before trusting sccache as the compiler launcher. Because sccache *is* the
 # launcher (cmake runs `sccache <compiler> ...` for every TU), a present-but-crashing sccache
 # fails every compile and reds the whole build — exactly the in-container panic that stalled
@@ -110,8 +116,12 @@ sccache_can_wrap_compiler() {
 # USE_CACHE is true AND sccache + a cache token are present AND the probe confirms sccache can
 # wrap the compiler — so it stays inert before the DEPOT_TOKEN secret is configured, on fork PRs
 # (secrets hidden), and when sccache would crash; all of those just compile normally. sccache is
-# content-addressed, so a cache hit is bit-identical to a fresh -O3 compile (release-safe), and
-# it degrades to direct compilation if the cache is unreachable.
+# content-addressed, so a cache hit is the object the same command line compiles (release-safe),
+# and it degrades to direct compilation if the cache is unreachable. "The same command line" is
+# the precise claim: for HIP TUs clang hashes the command line into the per-TU CUID symbol
+# (`__hip_cuid_<hash>`), and sccache runs the compiler with a slightly different one, so a HIP
+# object built through sccache differs from one built without it in that name -- code identical,
+# measured with a pinned -cuid: byte-identical. Between two sccache builds nothing differs.
 LAUNCH=""
 if [ "${USE_CACHE:-true}" = "true" ] && command -v sccache >/dev/null 2>&1 \
    && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE_GHA_ENABLED:-}" ] \
@@ -140,6 +150,21 @@ if [ "${USE_CACHE:-true}" = "true" ] && command -v sccache >/dev/null 2>&1 \
       else
         echo "build.sh: nvcc runs uncached (CUDA build detected, SCCACHE_WRAP_NVCC is not 'true'); sccache wraps the C/C++ TUs only"
       fi ;;
+  esac
+  # ROCm builds: on Linux ggml compiles its ~150 HIP TUs as the CMake language HIP, which the
+  # C/CXX launchers do not reach -- the Linux ROCm job's stats table counted 2 requests (both
+  # C/C++) for a 2:50 h build of 27 GPU targets. sccache 0.18.0 caches clang's HIP compiles
+  # (measured in Docker with TheRock's clang 23, the job's 10.0.0 wheels and a WebDAV backend:
+  # 157/157 hits on the second build, 310 s -> 10 s for one target). One caveat, local only: with
+  # the *disk* backend sccache's preprocessor cache mode reads clang's -E output as text, and with
+  # --offload-compress that output is a compressed bundle -- some TUs then fail with "Failed to
+  # parse included file path" (mozilla/sccache#2788, unmerged). That mode exists only for the disk
+  # backend, so CI over Depot never takes that path; a local disk-cache build sets
+  # SCCACHE_DIRECT=false.
+  case " $* " in
+    *" -DGGML_HIP=ON "* | *" -DGGML_HIP=1 "* | *" -DGGML_HIP=on "*)
+      LAUNCH="$LAUNCH -DCMAKE_HIP_COMPILER_LAUNCHER=sccache"
+      echo "build.sh: sccache will also wrap the HIP compiler (HIP build detected)" ;;
   esac
   echo "build.sh: sccache ON (endpoint=${SCCACHE_WEBDAV_ENDPOINT:-default}), building with -j${JOBS}"
 else

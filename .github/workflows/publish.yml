@@ -1780,13 +1780,10 @@ jobs:
   #   * -DBUILD_TESTING: the option refuses it (jllama_test calls the CPU and RPC backends, which
   #     are modules here, not link-time libraries) -- test-cpp-windows-x86_64 runs the C++ suite in
   #     a static build with the same compiler, the split the Linux CPU jobs have.
-  #   * sccache: sccache 0.18.0 refuses any TU carrying an `-Xclang` argument, and CMake's
-  #     Platform/Windows-Clang.cmake puts one on every plain-clang TU for the runtime-library
-  #     selection (`-Xclang --dependent-lib=libcmt`; llama.cpp adds `-Xclang -fno-pch-timestamp`
-  #     on top for its own TUs) -- measured: every TU a miss, the build green and the cache inert
-  #     -- so the install would only cost time. The cl.exe TUs of the other Windows Ninja jobs
-  #     still cache; this one builds cold on every run, and so does the ROCm job (TheRock's clang
-  #     is a plain clang too; CLAUDE.md "sccache on every Windows Ninja job but one").
+  #   * sccache: like every Windows Ninja job. It went without from b11538 until the override
+  #     llama/cmake/msvc-runtime-gnu-clang.cmake: CMake's runtime-library flags for plain clang
+  #     carry `-Xclang -flto-visibility-public-std`, which sccache refuses, so every TU was a miss
+  #     (the ROCm job, TheRock's plain clang, the same; CLAUDE.md "sccache on every Windows Ninja job").
   # The MSVC job above keeps the Visual Studio generator as the test-only second toolchain; 32-bit
   # Windows is not built any more (upstream builds none either, and a 32-bit process addresses
   # ~2 GB, less than most models).
@@ -1796,6 +1793,11 @@ jobs:
     name: Build Windows 2025 x86_64 (modular, CPU variants, clang, default)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
+    # sccache again since llama/cmake/msvc-runtime-gnu-clang.cmake: CMake no longer puts the
+    # -Xclang runtime flags sccache refuses on these plain-clang TUs (CLAUDE.md, "sccache on every
+    # Windows Ninja job").
+    env:
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
@@ -1810,6 +1812,10 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        uses: ./.github/actions/install-sccache-windows
       # `clang --version` first: which LLVM the image put on PATH decides whether patches/0017's
       # compiler half is exercised as a warning (clang 20) or as the error it fixes (clang 22+).
       - name: Build libraries
