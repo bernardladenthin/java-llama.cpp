@@ -251,10 +251,10 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   loadable without the merge step (before, 57 Java tests failed on the load). A GPU module whose
   runtime is missing fails silently (`SEM_FAILCRITICALERRORS`, ggml logs it at `GGML_LOG_DEBUG` only),
   which is why `JNI_OnLoad` logs the backend registry and the devices ggml ends up with at INFO. And
-  sccache is off on the x86-64 CPU job: sccache 0.18.0 refuses any TU carrying an `-Xclang` argument,
-  and CMake puts one on every plain-clang Windows TU for the runtime-library selection (see "sccache
-  on every Windows Ninja job but one"; measured: every TU a miss, build green) -- the job builds cold,
-  and so does the Windows ROCm job, whose HIP TUs are plain-clang C++ on Windows (4:15 h, `TODO.md`).
+  the plain-clang jobs (this CPU job, the ROCm module) cache through sccache only because
+  `llama/cmake/msvc-runtime-gnu-clang.cmake` keeps CMake's `-Xclang` runtime flags off their TUs (see
+  "sccache on every Windows Ninja job"); before it every TU was a miss and the ROCm job built for
+  3-4 h on every run.
   **And the `windows-2025-vs2026` runners are a CPU lottery** (an AMD EPYC 7763 and an Intel Xeon
   6973P-C in two consecutive runs), so which CPU module `ggml_backend_load_best` picks in a Windows
   test or smoke job -- `haswell` on the AMD box, `sapphirerapids` with AMX on the Intel one --
@@ -440,7 +440,7 @@ repository name (`?repo` entries, see `sharedfiles.py`), `SUPPORT.md` and `ISSUE
 
 **Composite actions (`.github/actions/`, this repo only).** `restore-models` (restore the shared GGUF
 cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
-`install-sccache-windows` (9 call sites; the caller keeps `if:` and `continue-on-error`),
+`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`),
 `build-core` (parent + `llama`, optionally more modules, built without tests/checks/javadoc/signing,
 `install` or `package` -- the one copy of that skip-flag list, 9 call sites) and
 `publish-cpu-aar-local` (download + stage the Android CPU natives, publish the CPU AAR to mavenLocal;
@@ -820,8 +820,8 @@ Windows-specific wiring (the rest is the natives-jar wiring, see "Natives jars" 
 3. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
    sccache v0.18.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
    - `build-windows-x86_64` — **modular CPU, plain clang** (`-DJLLAMA_BACKEND_DL=ON
-     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`; no `-DBUILD_TESTING`, no sccache
-     install -- `test-cpp-windows-x86_64` builds the static library with the tests, same compiler).
+     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`; no `-DBUILD_TESTING` --
+     `test-cpp-windows-x86_64` builds the static library with the tests, same compiler).
    - `build-windows-x86_64-msvc` — **MSVC CPU, build + `ctest`, no jar** (artifact `msvc-windows-x86_64`
      for `test-java-windows-x86_64-msvc`).
    - `build-windows-x86_64-cuda` — CUDA `13.4` assembled from NVIDIA's redist archives (upstream's
@@ -839,27 +839,41 @@ way CMake's `FindVulkan` couldn't read → switched to `jakoch/install-vulkan-sd
 FindVulkan-compatible). Because every Windows build job is in the `package`/publish `needs:` graph, a
 GPU-toolchain failure blocks packaging — the same release-gating policy every build job follows.
 
-**sccache on every Windows Ninja job but one.** Every Ninja build job but one installs sccache
-(x86_64 or the native `aarch64` release) through the composite action
-`.github/actions/install-sccache-windows` (arch from `RUNNER_ARCH`; its version must equal
-`SCCACHE_DL_VERSION` in `build.sh`) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; the MSVC
-build-and-test job cannot, because the Visual Studio generator ignores compiler launchers, and
-`build-windows-x86_64` (plain clang, modular CPU) does not, because its TUs do not cache: sccache 0.18.0
-refuses any `-Xclang` argument (`Can't handle UnknownFlag arguments with -Xclang`), and every TU a plain
-clang -- the GNU driver -- compiles on Windows carries one, because CMake's `Platform/Windows-Clang.cmake`
-implements `CMAKE_MSVC_RUNTIME_LIBRARY` (the hybrid CRT every Windows job sets) as `-Xclang
--flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt`; llama.cpp's root CMakeLists adds
-`-Xclang -fno-pch-timestamp` to its own TUs on top, which ggml's never see (ggml is added before it, see
-"Modular natives"). Measured at b11538: 719 of 720 compile requests non-cacheable, 0.00% hits, build
-green. Re-test on an sccache bump, and if it caches, add the install step back. **The Windows ROCm job is
-in the same position** and keeps its install step: TheRock's clang is a plain clang too, and upstream
-compiles the HIP sources as C++ on Windows (`CXX_IS_HIPCC` on `WIN32`), so the ~140 HIP TUs -- each
-compiled for the 23 `GPU_TARGETS` -- do go through the launcher and are all refused (run 38069595101: the
-server's table counted 67 requests, fewer than the TUs, every one of them non-cacheable for `-Xclang`,
-0 compilations). That job is the pipeline's critical path -- 4:15 h for its build step in that run,
-3:35 h in the last full run before the modular natives, against 2:00 h for the Linux ROCm job and 1:41 h
-for the Windows CUDA job -- and only a sccache that caches those TUs could shorten it; `TODO.md`
-("Modular natives -- follow-ups") has the open measurement. It cannot red a build, by
+**sccache on every Windows Ninja job.** Every Ninja build job installs sccache (x86_64 or the native
+`aarch64` release) through the composite action `.github/actions/install-sccache-windows` (arch from
+`RUNNER_ARCH`; its version must equal `SCCACHE_DL_VERSION` in `build.sh`) with the same `USE_CACHE` /
+`SCCACHE_WEBDAV_*` env; only the MSVC build-and-test job cannot, because the Visual Studio generator
+ignores compiler launchers.
+
+**The plain-clang jobs cache because of `llama/cmake/msvc-runtime-gnu-clang.cmake`.** sccache refuses
+any TU carrying an `-Xclang` argument it does not know (`Can't handle UnknownFlag arguments with
+-Xclang`; 0.18.0, and `main` on 2026-10-22), and CMake's `Platform/Windows-Clang.cmake` implements
+`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` (the hybrid CRT every Windows job sets) for clang with the
+GNU front end as `-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt` -- and
+`-flto-visibility-public-std` is the one sccache does not know (`--dependent-lib` and llama.cpp's own
+`-Xclang -fno-pch-timestamp` it does). So `build-windows-x86_64` (plain clang, modular CPU; measured at
+b11538: 719 of 720 requests non-cacheable) ran without sccache, and **the Windows ROCm job** -- TheRock's
+clang is a plain clang, and upstream compiles the HIP sources as C++ on Windows (`CXX_IS_HIPCC` on
+`WIN32`) -- sent its ~150 HIP TUs, each compiled for the 23 `GPU_TARGETS`, through a launcher that refused
+every one: 2:40 h to 4:15 h for its build step, the pipeline's critical path. The override file, loaded
+through `CMAKE_USER_MAKE_RULES_OVERRIDE` (set before `project()` in `llama/CMakeLists.txt`, so CMake
+reads it after its platform files while enabling each language), maps `MultiThreaded[Debug]` to the
+driver flag `-fms-runtime-lib=static[_dbg]`, which `llama/CMakeLists.txt` already passed next to CMake's
+sequence: same runtime selection in cc1, no `-Xclang`. **Measured before the change** (locally, MSVC
+14.44 as on the `windows-2022` runner, TheRock 10.0.0 clang 23, Ninja Multi-Config, sccache 0.18.0 over
+a local WebDAV server, `GPU_TARGETS=gfx1100`): the build as it was, 157 requests all refused, 325 s;
+with the override, 0 refused, 377 s cold and **25 s warm**. Nine TUs (C, C++, seven HIP) compiled with
+a pinned `-cuid` from the same build directory: every section identical between the two flag sets --
+`.text` and the HIP device code included -- except `.drectve`, where CMake's sequence repeated
+`/DEFAULTLIB:libcmt.lib`; through sccache and without it identical up to the COFF timestamp clang
+writes on every compile. Two things that did **not** work, so nobody tries them again: an empty
+`CMAKE_MSVC_RUNTIME_LIBRARY` reaches `try_compile`, whose C compiler check then links `-nostdlib`
+without a CRT (`undefined symbol: mainCRTStartup`, configure fails); and `-fuse-cuid=none` to compare
+whole DLLs makes every TU define the same `__hip_cuid_` (`duplicate symbol` at link). The CUID is also
+why a HIP DLL built through sccache is not byte-identical to one built without it: clang hashes the
+command line into `__hip_cuid_<hash>`, sccache's command line differs slightly, and a hash with a
+leading zero is one byte shorter and shifts the device code layout -- names and addresses, not code
+(see "CI build cache"). It cannot red a build, by
 three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
 before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
 ROCm with its own `clang` and SYCL with `icx` — **a configure or build that fails with sccache as the
@@ -1228,7 +1242,23 @@ Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
 naturally invalidates the upstream entries (their content changed) with no manual step. It
-stays `-O3` and is **bit-identical** to a clean build (release-safe).
+stays `-O3`, and a hit is the object the same command line compiles (release-safe). That is
+**bit-identical** to a clean build for C and C++; for HIP it is identical up to the per-TU CUID symbol
+name, which clang derives from the command line sccache slightly changes (measured with a pinned
+`-cuid`: byte-identical; see "sccache on every Windows Ninja job").
+
+**HIP on Linux needs its own launcher.** There ggml compiles the HIP TUs as the CMake language HIP,
+which `CMAKE_{C,CXX}_COMPILER_LAUNCHER` do not reach, so `build.sh` adds
+`-DCMAKE_HIP_COMPILER_LAUNCHER=sccache` when `GGML_HIP` is in the cmake args. Before it the Linux ROCm
+job counted 2 requests (both C/C++) for a 2:50 h build. Measured in Docker with the job's toolchain
+(TheRock 10.0.0, clang 23, `GPU_TARGETS=gfx1100`, sccache 0.18.0 over a local WebDAV server): 310 s
+uncached, 157 of 157 hits and 10 s warm. With sccache's **disk** backend (a local build, never CI) some
+TUs fail with `Failed to parse included file path`: its preprocessor cache mode reads clang's `-E`
+output as text, and with `--offload-compress` that output is a compressed bundle
+(mozilla/sccache#2788, unmerged); `SCCACHE_DIRECT=false` avoids it, and the mode does not exist for
+the WebDAV backend. Both scripts also default `SCCACHE_IDLE_TIMEOUT` to 0: with sccache's 600 s the
+server stopped during long builds and the stats table counted only what came after (67 of ~160
+requests in the Windows ROCm job, 2 in the Linux one).
 
 **Safety / transparency.** It is **inert** until `DEPOT_TOKEN` is configured and on **fork
 PRs** (secrets are hidden there) — those simply compile normally; the `Install sccache` step

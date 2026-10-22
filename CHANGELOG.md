@@ -696,6 +696,19 @@ the first two items break every existing consumer at upgrade.
   backend filter had changed loaded a second copy of the library, or extracted a second module set, and
   replaced the build info while the JVM kept using the first library. A further call now loads nothing
   and names a property changed since the load once on stderr; a failed attempt is retried.
+- **CI: both ROCm jobs and the Windows plain-clang CPU job compile through sccache again.** On Windows,
+  CMake's runtime-library flags for plain clang carry `-Xclang -flto-visibility-public-std`, which
+  sccache refuses, so every TU of `build-windows-x86_64` and of the ROCm module (TheRock's clang, ~150
+  HIP TUs for 23 GPU targets, the pipeline's critical path at 2:40-4:15 h) was a miss; a make-rules
+  override (`llama/cmake/msvc-runtime-gnu-clang.cmake`) selects the same runtime with the driver flag
+  `-fms-runtime-lib=static` instead. On Linux the HIP TUs are the CMake language HIP, which the C/C++
+  launchers never reached; `build.sh` adds `CMAKE_HIP_COMPILER_LAUNCHER`. Measured with one GPU target
+  before the change: 325 s -> 25 s (Windows) and 310 s -> 10 s (Linux) on a warm cache, objects
+  identical (the duplicate `/DEFAULTLIB:libcmt.lib` CMake wrote is gone; HIP objects built through
+  sccache differ from uncached ones in the per-TU CUID symbol name only). A cold run -- the first after
+  this, and a llama.cpp bump that touches the HIP headers -- takes as long as before. `build.sh` and
+  `build.bat` also keep the sccache server alive for the whole job, so the job summary's statistics
+  count every request.
 - **CI: the Linux CUDA build no longer routes nvcc through sccache by default** (`SCCACHE_WRAP_NVCC=true`
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
