@@ -2538,7 +2538,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `test_c_api.cpp` `CApiRpc.AStopDoesNotReachTheServeStartedAfterIt`: der erste Serve hängt in der Serve-Naht, der Stop läuft auf dem Testthread; die neue Stop-Naht (nach dem Vermerk des Ziels) startet den zweiten Serve, hält ihn in der Serve-Naht und gibt den ersten frei. Der Stop muss mit OK zurückkehren, sobald der erste beendet ist; der zweite muss nach der Freigabe binden und lauschen, ein zweiter Stop beendet ihn.
 - **Rot-Grün-Nachweis:** mit der alten Implementierung (nur die Naht eingezogen) rot: „the RPC server did not stop within 30 s of the stop request“ und „the stop of the first serve ended the second one“ (30 002 ms); mit dem Fix grün (12 ms), dreimal einzeln und zusammen mit den vier anderen `CApiRpc`-Fällen; ganze C++-Suite 686/686; clang-format 23.1.3.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `c59569a`
 
 ## Offene Verdachte ohne Fund-ID
 
