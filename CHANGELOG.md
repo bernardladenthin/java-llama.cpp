@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11820** (from b11639, in nine steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820). What the
+- **llama.cpp b11827** (from b11639, in ten steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -162,7 +162,11 @@ the first two items break every existing consumer at upgrade.
   `NativeServer` serves; `OpenAiCompatServer` reads the text half (see "Reranking" under Fixed) and
   `LlamaModel.rerank` stays text-only. Also Nemotron models with more Q heads than `n_embd / head_dim`,
   the `domyn-small` pre-tokenizer and a `tokenizer.ggml.metaspace.prepend_scheme` GGUF key (#23343), and
-  `posix_memalign` in the Vulkan buffers (#30828).
+  `posix_memalign` in the Vulkan buffers (#30828). The b11827 step (2026-10-22): `--mlock` locks the
+  parts of a split host buffer too (a CUDA pinned host buffer above 4 GB, which it skipped before), SYCL
+  mat-vec kernels on the Intel XMX engines for short batches (#29864, `GGML_SYCL_ENABLE_XMX_ESIMD`), an
+  OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979) and DFlash drafter
+  fixes for qwen4exp and glm5-next -- nothing here changed.
   Two patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
