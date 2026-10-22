@@ -1474,11 +1474,12 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   looks the binaries up on `PATH`, which a JVM process frequently does not have them on.
 
   What is still missing is the content part. Upstream's wire type is
-  `{"type":"input_video","input_video":{"data":"<base64>"}}`, handled in
-  `oaicompat_chat_params_parse` and gated on `allow_video = mtmd_helper_support_video(mctx)`. Note it
-  calls `handle_media(..., accept_base64_uri = false)`, i.e. **raw base64 only** — unlike `image_url`,
-  it will not take a `data:` URI, so `ContentPart.videoFile(Path)` must emit the bare base64 payload,
-  not the `data:video/mp4;base64,...` form the image factories build.
+  `{"type":"input_video","input_video":{"data":"<base64>"}}` (`video_url` with a `url` is accepted as
+  an alias), handled in `oaicompat_chat_params_parse` and gated on
+  `allow_video = mtmd_helper_support_video(mctx)`. Since b11803 it goes through the same
+  `handle_media(out_files, url, media_path)` as `image_url` (the `accept_base64_uri = false` of the
+  first version is gone), so raw base64, a `data:video/mp4;base64,...` URI and an HTTP(S) URL are all
+  taken; `ContentPart.videoFile(Path)` can emit the `data:` form the image factories build.
 
   (An earlier draft of this entry suggested smuggling video through
   `ContentPart.imageBytes(bytes, "video/mp4")`, on the reasoning that `mtmd_helper_bitmap_init_from_buf`
@@ -1614,7 +1615,7 @@ flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test
   matters. Recorded with the reasoning so this is not reopened as an oversight.
 
 - **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
-  expects (`input_video`, raw base64, not a `data:` URI).
+  expects (`input_video`; raw base64, a `data:` URI or an HTTP(S) URL, as for images since b11803).
 
 ## Open — cross-cutting (slice for this repo)
 

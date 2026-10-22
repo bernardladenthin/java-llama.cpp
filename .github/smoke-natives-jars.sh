@@ -54,8 +54,14 @@ classes="$(find "$TARGET" -maxdepth 1 -name 'llama-*.jar' | grep -E '/llama-[0-9
 mapfile -t natives < <(find "$TARGET" -maxdepth 1 -name 'llama-*.jar' ! -path "$classes" ! -name '*-sources.jar' \
     ! -name '*-javadoc.jar' ! -name '*-jar-with-dependencies.jar' | sort)
 [ "${#natives[@]}" -gt 0 ] || { echo "::error::no natives jars in $TARGET" >&2; exit 2; }
-path="$classes:$(IFS=:; echo "${natives[*]}"):$DEPS"
-echo "classes jar: $classes; ${#natives[@]} natives jars"
+# The classes jar is runnable: its manifest names ServerLauncher, which is what the README's
+# `jbang --deps <natives jar> net.ladenthin:llama:<v>` lines rely on (JBang runs a GAV through its
+# Main-Class). Read from the jar itself, not from the pom: the entry went missing once, with the
+# fat-jar assembly that used to carry it, and nothing noticed.
+main_class="$(unzip -p "$classes" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/^Main-Class: //p')"
+[ "$main_class" = "net.ladenthin.llama.server.ServerLauncher" ] \
+    || { echo "::error::the classes jar $classes names '$main_class' as Main-Class, expected net.ladenthin.llama.server.ServerLauncher" >&2; exit 1; }
+echo "classes jar: $classes (Main-Class $main_class); ${#natives[@]} natives jars"
 
 run() {
     local label="$1"

@@ -14,12 +14,12 @@
 [![llama.cpp b11803](https://img.shields.io/badge/llama.cpp-%23b11803-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11803)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
-[![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
+[![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
 [![NullAway](https://img.shields.io/badge/NullAway-strict%20JSpecify-25A162)](https://github.com/uber/NullAway)  
 [![Checker Framework](https://img.shields.io/badge/Checker%20Framework-Nullness-25A162)](https://checkerframework.org)  
 [![Error Prone](https://img.shields.io/badge/Error%20Prone-12%20patterns%20at%20ERROR-25A162)](https://errorprone.info)  
 [![Maven Enforcer](https://img.shields.io/badge/Maven%20Enforcer-strict-25A162)](https://maven.apache.org/enforcer/)  
-[![Lombok](https://img.shields.io/badge/Lombok-1.18.46-bc3f3c)](https://projectlombok.org/)  
+[![Lombok](https://img.shields.io/badge/Lombok-1.18.48-bc3f3c)](https://projectlombok.org/)  
 [![jqwik](https://img.shields.io/badge/tested%20with-jqwik-1f6feb)](https://jqwik.net)  
 [![ArchUnit](https://img.shields.io/badge/tested%20with-ArchUnit-c71a36)](https://www.archunit.org)  
 [![SpotBugs](https://img.shields.io/badge/analyzed%20with-SpotBugs-3b5998)](https://spotbugs.github.io)  
@@ -37,7 +37,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/bernardladenthin/java-llama.cpp/badge.svg?branch=main)](https://coveralls.io/github/bernardladenthin/java-llama.cpp?branch=main)  
 [![codecov](https://codecov.io/gh/bernardladenthin/java-llama.cpp/graph/badge.svg)](https://codecov.io/gh/bernardladenthin/java-llama.cpp)  
 [![JaCoCo](https://img.shields.io/codecov/c/github/bernardladenthin/java-llama.cpp?label=JaCoCo&logo=java)](https://codecov.io/gh/bernardladenthin/java-llama.cpp)  
-[![PIT Mutation](https://img.shields.io/badge/PIT%20mutation-100%25%20(1%20class)-brightgreen)](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/publish.yml)  
+[![PIT Mutation](https://img.shields.io/badge/PIT%20mutation-100%25%20(value%2C%20exception%2C%20args%20%2B%205%20classes)-brightgreen)](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/publish.yml)  
 
 **Quality:**  
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bernardladenthin_java-llama.cpp&metric=alert_status)](https://sonarcloud.io/dashboard?id=bernardladenthin_java-llama.cpp)  
@@ -124,7 +124,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
 - **HTTPS built in** — model downloads from `https://` URLs (`--model-url`, `-hf`) and a TLS-capable embedded server (`--ssl-key-file`/`--ssl-cert-file`) on every desktop platform, with BoringSSL linked statically: no OpenSSL to install, and no dependency on one (Android and s390x ship without SSL).
-- Pre-built native binaries for Linux (x86-64, aarch64, s390x), macOS (arm64, Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64), plus GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) — one natives jar each, all loadable side by side with automatic CPU fallback; see [Choosing the natives jars](#choosing-the-natives-jars). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
+- Pre-built native binaries for Linux (x86-64, aarch64, s390x), macOS (arm64, Metal included), Windows (x86-64, arm64) and Android (arm64, x86-64), plus GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) — one natives jar each, loadable side by side and skipped when their vendor runtime is missing, so the model runs on the CPU modules; OpenVINO is opt-in (`-Dnet.ladenthin.llama.backend=openvino`). See [Choosing the natives jars](#choosing-the-natives-jars). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
 
 ## Quick Start
 
@@ -170,7 +170,7 @@ one more `//DEPS` line (see [Choosing the natives jars](#choosing-the-natives-ja
 
 ### Snapshot builds
 
-Every push to `main` publishes a snapshot to the [Sonatype Central snapshot repository](https://central.sonatype.com/repository/maven-snapshots/net/ladenthin/llama/).
+A run of the Publish workflow on `main` started by hand with `publish_to_central` enabled publishes a snapshot to the [Sonatype Central snapshot repository](https://central.sonatype.com/repository/maven-snapshots/net/ladenthin/llama/); a push to `main` alone builds and tests but does not deploy.
 
 To use the latest snapshot, add the repository and dependency to your `pom.xml`:
 
@@ -210,13 +210,16 @@ If any of these match your platform, you can include the Maven dependency and ge
 `net.ladenthin:llama` is the Java classes only. The native code ships as separate jars of the
 same artifact, selected by a Maven `<classifier>` of the form `<backend>-<os>-<arch>`, of two kinds:
 
-- **One library jar per platform** (`cpu-<os>-<arch>`, `metal-macos-aarch64`): `libjllama` with
-  llama.cpp, ggml's shared libraries and the CPU backend modules (one per instruction-set level,
-  the best one for the running CPU is loaded at start). Exactly one is loaded, the one of the
-  running platform; `llama-platform` collects them for every desktop platform.
+- **One library jar per platform** (`cpu-<os>-<arch>`, `metal-macos-aarch64`): `libjllama` -- on
+  Linux x86-64 / aarch64, Windows and Android next to llama.cpp's and ggml's shared libraries
+  (`libllama`, `libmtmd`, `libggml*`) and the CPU backend modules (one per instruction-set level, of
+  which the best for the running CPU is loaded at start; a single one on Windows arm64), on macOS
+  and s390x one static library with llama.cpp and ggml linked in. Exactly one is loaded, the one of
+  the running platform; `llama-platform` collects them for every desktop platform.
 - **GPU module jars** (`cuda13-…`, `rocm-…`, `sycl-…`, `vulkan-…`, `opencl-…`, `openvino-…`): each
   holds only ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`, …). They are
-  **additive**: the loader puts every GPU module jar of the platform next to the library, ggml loads
+  **additive**: the loader puts every GPU module jar of the platform next to the library (the opt-in
+  OpenVINO jar only when `net.ladenthin.llama.backend` names it, see below), ggml loads
   each module whose vendor runtime is installed and registers its devices, and a module whose runtime
   is missing is skipped with a log line — the model then runs on the CPU, so a GPU jar on a machine
   without that GPU just works. Several GPU jars together are fine (llama.cpp lists every device they
@@ -284,7 +287,8 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 > whose runtime is installed but finds no device (e.g. the CUDA toolkit without an NVIDIA GPU)
 > simply registers none -- **with two measured exceptions, both described below.** `-Dnet.ladenthin.llama.backend=<a>,<b>` restricts the modules put in
 > place to the named ones (`cpu` for none) and fails loud when a named jar is not on the
-> classpath; unset, every GPU module jar on the classpath is used.
+> classpath; unset, every GPU module jar on the classpath is used except the opt-in `openvino` one
+> (see below).
 
 > [!IMPORTANT]
 > **Two GPU jars need more than their runtime, and both were found by measurement rather than by
@@ -366,9 +370,11 @@ java -jar examples/server/target/llama-server-6.0.0-jar-with-dependencies.jar -m
 ```
 
 The GitHub Release of a version attaches the Maven artifacts themselves — the classes jar, every
-natives jar, the poms, sources and javadoc, each with the detached GPG `.asc` that signed it for
-Central — and nothing else; a jar of every backend of every platform would be the opposite of
-modular natives.
+natives jar, the poms, sources and javadoc, the two Android AARs and the agent's jar (not
+`llama-ffm`'s, which is on Central only), each with the detached GPG `.asc` that signed it for
+Central — plus the signed llama.cpp source archive the natives were built from
+(`llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz`), and nothing else; a jar of every backend of every
+platform would be the opposite of modular natives.
 
 ### Setup required
 
@@ -380,19 +386,19 @@ This consists of two steps: 1) Compiling the libraries and 2) putting them in th
 ##### Library Compilation
 
 First, have a look at [llama.cpp](https://github.com/ggerganov/llama.cpp/blob/master/docs/build.md) to know which build arguments to use (e.g. for CUDA support).
-Any build option of llama.cpp works equivalently for this project.
+Most build options of llama.cpp work the same way for this project; the ones it pins are overridden whatever you pass: `GGML_NATIVE` is always OFF, the x86 instruction-set flags are fixed at the Haswell level (AVX2, no AVX-512) in the default static build, `GGML_OPENMP` is OFF on Linux and Android, and `GGML_RPC` is ON with `GGML_RPC_RDMA` OFF.
 You then have to run the following commands in the `llama/` module directory (the native core lives
 there; the repository root is just the Maven reactor aggregator):
 
 ```shell
 cd llama       # the native core module
 mvn compile    # don't forget this line
-cmake -B build # add any other arguments for your backend, e.g. -DGGML_CUDA=ON
+cmake -B build # the library; on Linux and Windows add -DJLLAMA_BACKEND_DL=ON for the modular layout their jars ship
 cmake --build build --config Release
 ```
 
 > [!TIP]
-> Use `-DLLAMA_CURL=ON` to download models via Java code using `ModelParameters#setModelUrl(String)`.
+> Downloading a model from Java (`ModelParameters#setModelUrl(String)`, `setHfRepo(String)`) needs no build option: the build links BoringSSL statically and fetches `https://` URLs out of the box (not on Android, s390x or a Linux SYCL build). `-DLLAMA_CURL` is deprecated upstream and ignored.
 
 The library is put in a directory matching your platform and backend, which appears in the cmake output. For example:
 
@@ -403,13 +409,25 @@ The library is put in a directory matching your platform and backend, which appe
 `mvn test` puts that directory on the test classpath; `mvn -P natives package` turns it into a
 natives jar (in CI, together with every other platform's).
 
+A GPU backend is not an argument of this build: it is a ggml module next to a modular library. Build
+the library above with `-DJLLAMA_BACKEND_DL=ON` (Linux and Windows, x86-64 and aarch64; on Windows
+x86-64 with plain clang, `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`), then the module
+in a build directory of its own, which writes into the same natives tree: e.g.
+`cmake -B build-cuda -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON` and
+`cmake --build build-cuda --config Release` (likewise `GGML_VULKAN`, `GGML_HIP`, `GGML_SYCL`,
+`GGML_OPENCL`, `GGML_OPENVINO`). A plain `cmake -B build -DGGML_CUDA=ON` writes its library into the
+`cuda13/` directory, from which the classpath loader takes no library; such a build loads only
+through `-Dnet.ladenthin.llama.lib.path=<that directory>`.
+
 #### Library Location
 
 The loader looks for a **natives directory** -- the `jllama` library (`jllama.dll`, `libjllama.so`,
 `libjllama.dylib`) together with the files next to it: on the modular platforms ggml's shared
 libraries and the CPU backend modules, any GPU backend modules, and the three list files
 `jllama-build.txt`, `jllama-files.txt` and (on Windows) `jllama-extras.txt`. It searches in this
-order and stops at the first directory that holds the library:
+order and stops at the first directory from which the library loads (a directory whose library
+fails to load is reported on stderr and the next place is tried; on Android,
+`System.loadLibrary("jllama")`, which finds the AAR's `jni/`, is tried between the first two):
 
 - **net.ladenthin.llama.lib.path**: one directory you name, `-Dnet.ladenthin.llama.lib.path=/path/to/directory`.
   This is the "natives outside Maven" path, see the next section.
@@ -421,8 +439,9 @@ order and stops at the first directory that holds the library:
   [Choosing the natives jars](#choosing-the-natives-jars).
 
 The first two load **the same way as the third, minus the extraction**: the files
-`jllama-extras.txt` names are loaded first (on Windows `ggml-base.dll` and `ggml.dll`, which
-`jllama.dll` imports and which the system loader does not look for next to the DLL), then the
+`jllama-extras.txt` names are loaded first (on Windows `ggml-base.dll`, `ggml.dll`, `llama.dll` and
+`mtmd.dll`, which `jllama.dll` imports and which the system loader does not look for next to the
+DLL), then the
 library; ggml then loads every backend module that lies in the directory. The start-up line
 `[jllama] native backend '<backend>' loaded from <directory> ...` says which branch loaded what.
 
@@ -459,8 +478,9 @@ java -cp 'llama-6.0.0.jar:lib/*' -Dnet.ladenthin.llama.lib.path=natives/net/lade
 
 To add a GPU backend, unpack its module jar the same way and copy the files of its directory
 (`net/ladenthin/llama/Linux/x86_64/cuda13/` for example) **flat** into the library's directory: the
-module library next to the CPU set; if the module ships a `jllama-extras.txt` (a vendor loader it
-needs preloaded), append its lines to the library's; its own `jllama-build.txt` and `jllama-sbom.json`
+module library next to the CPU set; its `jllama-files.txt` and, if it ships one, its
+`jllama-extras.txt` (a vendor loader it needs preloaded) are appended to the library's files of the
+same name rather than copied over them; its own `jllama-build.txt` and `jllama-sbom.json`
 are not needed (the module and the library must come from the same `net.ladenthin:llama` version,
 which the loader checks when the jars are on the classpath and you check by taking both from the same
 version here). What the directory tells you: `jllama-build.txt` names the llama.cpp tag and commit,
@@ -471,15 +491,15 @@ stderr at start. `net.ladenthin.llama.backend` has no effect on a directory (ggm
 that lies in it); the loader says so when it is set. Nothing is extracted and nothing is written:
 the directory may be read-only.
 
-**The directory is also a C library.** On the modular platforms (Linux, Windows, Android) it holds
+**The directory is also a C library.** On the modular platforms (Linux x86-64 / aarch64, Windows, Android) it holds
 upstream's own `libllama` / `libmtmd` / `libggml*` as shared libraries built from this project's
 patched source -- the same files and symbols as upstream's release zips, usable with upstream's
 `llama.h` / `mtmd.h` / `ggml.h` -- and on every platform `libjllama` exports this project's own
 **C API** (`jllama_api.h`, shipped in the directory, with the import library `jllama.lib` on
 Windows): everything the Java API offers -- model loading, chat and raw completions, streaming,
 embeddings, rerank, tokenisation, metrics and slots, LoRA, the embedded HTTP server, the RPC
-server, text to speech, quantisation, fine-tuning, logging -- callable from C, Rust, Python or
-Java 22+ without a JVM; the Java entry points are shells over the same functions. See
+server, text to speech, quantisation, fine-tuning, logging -- callable from C, Rust or Python without a JVM, and from Java 22+ without JNI; the Java entry
+points are shells over the same functions. See
 [docs/c-api.md](docs/c-api.md).
 
 **Java 22+ without JNI: `net.ladenthin:llama-ffm`.** The same C API through the Foreign Function
@@ -501,8 +521,8 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`, then the natives jars) | runtime | `LlamaLoader` | A natives directory (see [Natives outside Maven](#natives-outside-maven-the-natives-directory)): the `jllama` library with the files next to it, loaded with the same logic as from the natives jars but without extraction. Checked first. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
 | `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Directory the natives are extracted into, one subdirectory per backend and build (`jllama-backend-<backend>-<key>`). It is kept across runs: the next start of the same build compares each file with the jar and copies nothing; a directory of a build that is no longer on the classpath is removed by a later start once it is 10 minutes old. Point it elsewhere when the default temp directory is on a slow or policy-restricted volume. |
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
-| `net.ladenthin.llama.backend` | unset (every GPU module jar on the classpath is put next to the library) | runtime | `LlamaLoader` | A comma-separated filter over the GPU module jars (e.g. `vulkan`, `cuda13,vulkan`): only the named modules are put in place, `cpu` names none; a named module whose jar is not on the classpath, or an unknown name, fails the load. The library jar is never a choice — it is the one of the running platform. See [Choosing the natives jars](#choosing-the-natives-jars). |
-| `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
+| `net.ladenthin.llama.backend` | unset (every GPU module jar on the classpath is put next to the library, except the opt-in `openvino` one) | runtime | `LlamaLoader` | A comma-separated filter over the GPU module jars (e.g. `vulkan`, `cuda13,vulkan`): only the named modules are put in place, `cpu` (or `metal`) names none, and an opt-in module (`openvino`) is used only when named; a named module whose jar is not on the classpath, or an unknown name, fails the load. The library jar is never a choice — it is the one of the running platform. See [Choosing the natives jars](#choosing-the-natives-jars). |
+| `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest`, `TtsIntegrationTest` and `ReactorIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
 | `net.ladenthin.llama.text.model` | `models/codellama-7b.Q2_K.gguf` (tests self-skip if missing) | test | `LlamaModelTest` and most model-backed tests (`TestConstants.MODEL_PATH`) | Path to the main text-generation GGUF. Most tests only need an instruct-capable model; a few assertions are tuned to the CI model. |
 | `net.ladenthin.llama.draft.model` | `models/AMD-Llama-135m-code.Q2_K.gguf` (tests self-skip if missing) | test | Speculative-decoding tests and the tests that need a small, fast model (`TestConstants.DRAFT_MODEL_PATH`) | Path to the draft GGUF. |
 | `net.ladenthin.llama.reasoning.model` | `models/Qwen3-0.6B-Q4_K_M.gguf` (tests self-skip if missing) | test | Reasoning-budget tests (`TestConstants.REASONING_MODEL_PATH`) | Path to a thinking model (one that emits a thinking block). |
@@ -519,6 +539,11 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.tts.model` | `models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
 | `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
+| `net.ladenthin.llama.model.path` | the `reasoning.model` path (`models/Qwen3-0.6B-Q4_K_M.gguf`; tests self-skip if missing) | test | `IdleSleepWakeIntegrationTest`, `SessionForkRewindIntegrationTest` | Path to the model these two tests load; unset, they use the reasoning model. |
+| `net.ladenthin.llama.server.model` | the `text.model` path (`models/codellama-7b.Q2_K.gguf`) | test | `examples.OpenAiServerExample` (a `@Disabled` demo, run by hand) | GGUF the demo's OpenAI-compatible endpoint serves. |
+| `net.ladenthin.llama.server.port` | `9931` | test | `examples.OpenAiServerExample` | Port of the demo's endpoint. |
+
+The other modules read their own test properties (`net.ladenthin.llama.ffm.model`, `net.ladenthin.llama.langchain4j.*`), documented in [`llama-ffm/README.md`](llama-ffm/README.md) and [`llama-langchain4j/README.md`](llama-langchain4j/README.md).
 
 The test-model defaults are exactly CI's model set (`.github/models.csv`, URLs included), so a model downloaded into `models/` is found without any property; the properties only point a test at another file. `MultimodalIntegrationTest` self-skips when any of the three `vision.*` paths is missing, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.model` and `tts.mmproj` paths exist, and `LlamaTrainerIntegrationTest` unless `train.model` (default `models/stories260K.gguf`, an **F32** model) does.
 
@@ -582,8 +607,7 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
     }
     // Calculate a whole response before returning it.
     String response = model.complete(inferParams);
-    // Returns the hidden representation of the context + prompt.
-    float[] embedding = model.embed("Embed this");
+    // Embeddings need a model loaded with enableEmbedding(), see "Embeddings & Reranking" below.
 }
 ```
 
@@ -656,7 +680,8 @@ every other llama-server flag.
 
 `setMmprojDevice(...)` and `setMmprojOffload(...)` write the **same** upstream field
 (`common_params::mmproj_use_gpu`), so where they disagree the outcome would depend on argv order —
-and the rendered argv comes from a `HashMap`, whose order is unspecified. The builder therefore
+and the rendered argv keeps each option at the position where it was first set (a `LinkedHashMap`),
+so a later call does not necessarily come last. The builder therefore
 resolves the two genuinely ambiguous combinations by dropping the earlier call, and leaves the rest
 alone:
 
@@ -665,7 +690,7 @@ alone:
 | named device + `setMmprojOffload(true)` | `(use_gpu=true, device)` in either order | both kept — no clash |
 | named device + `setMmprojOffload(false)` | order-dependent | **last call wins** |
 | `"none"` + `setMmprojOffload(true)` | order-dependent | **last call wins** |
-| `"none"` + `setMmprojOffload(false)` | `(use_gpu=false)` in either order | both kept — no clash |
+| `"none"` + `setMmprojOffload(false)` | `(use_gpu=false)` in either order | both kept when `"none"` is set last; `setMmprojOffload(false)` after it drops the `"none"` (same end state) |
 
 So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only a call that would
 actually contradict the other is dropped. If you need a device after disabling offload, call
@@ -674,16 +699,17 @@ actually contradict the other is dropped. If you need a device after disabling o
 **Video input — decode settings only, so far.** `mtmd` has carried a video path since llama.cpp
 **b9562** (#24269); **b10647** (#24318) added the `--video-*` CLI flags and the
 `mtmd_helper_init_opt` plumbing that surfaces them. It is compiled into the shipped desktop library
-(`MTMD_VIDEO` is on by default, gated on `LLAMA_SUBPROCESS`, which upstream force-disables on
-Android and iOS). Its decode settings are exposed
+(`MTMD_VIDEO` is on by default and forced off when `LLAMA_SUBPROCESS` is off, which is upstream's
+default on Android and iOS). Its decode settings are exposed
 as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
 one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
 which an application server, an Android app or a JAR-only container frequently does not have them on —
 naming the directory is then the only way for video to work at all.
 
 What is **not** here yet is the content part: upstream's wire type for a video is
-`{"type":"input_video","input_video":{"data":"<base64>"}}` (raw base64, not a `data:` URI, unlike
-`image_url`), gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
+`{"type":"input_video","input_video":{"data":"..."}}` (OpenAI's `video_url` is accepted as an alias; as
+for `image_url`, the value may be raw base64, a `data:video/...;base64,` URI or an HTTP(S) URL),
+gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
 factory emitting that shape, so these knobs currently configure a path this API cannot yet feed
 directly. Tracked in `TODO.md`.
 
@@ -714,8 +740,9 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 ### Tool Calling
 
 Use a tool-aware instruct model and enable Jinja when loading it. A typed request can either return
-the model's tool calls through `chat`, or execute registered handlers until the model produces a
-normal assistant response through `chatWithTools`:
+the model's tool calls through `chat`, or execute registered handlers through `chatWithTools` until the model produces a normal assistant
+response or `ChatRequest#withMaxToolRounds(int)` chat calls (default 8) have been made; the last
+response is then returned as it is, tool calls included:
 
 ```java
 ToolDefinition weather = new ToolDefinition(
@@ -749,7 +776,7 @@ unknown tool names are returned to the model as valid `{"error":"..."}` tool-res
 
 Set both `InferenceParameters#withInputPrefix(String)` and `InferenceParameters#withInputSuffix(String)`;
 `complete`, `completeWithStats` and `generate` then format the prompt around the model's fill-in-the-middle tokens,
-exactly as `handleInfill` does (an optional `withPrompt` is the text after the middle). A request with only one of
+exactly as `handleInfill` does (an optional `withPrompt` is appended to the prefix). A request with only one of
 the two fields is an `InvalidRequestException`, a model without FIM tokens a `LlamaException`.
 
 ### Embeddings & Reranking
@@ -775,10 +802,13 @@ reasoning model for German and English (about 3.5B parameters active per token, 
 the architecture since b11709 ([ggml-org/llama.cpp#30673](https://github.com/ggml-org/llama.cpp/pull/30673)), and
 this library has carried it as a patch before that (`0016-model-kolibri1.patch`, dropped at the b11760 bump). Use a
 GGUF converted with upstream's `convert_hf_to_gguf.py` at b11709 or later: the GGUFs the two community ports
-published earlier (e.g. [Hob-forge/Kolibri-1-GGUF](https://huggingface.co/Hob-forge/Kolibri-1-GGUF) and
-[Eliasfpv28/Kolibri-1-Q3_K_S-GGUF](https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF)) carry other metadata
-(a pre-tokenizer name upstream does not know, another gating-function value, keys upstream requires left out),
-which the dropped patch tolerated and upstream's loader refuses. The embedded chat template handles reasoning and
+published earlier were written before upstream's converter existed, and the dropped patch tolerated metadata
+upstream does not: [Hob-forge/Kolibri-1-GGUF](https://huggingface.co/Hob-forge/Kolibri-1-GGUF) uses a
+pre-tokenizer name upstream does not know (`kolibri1`) and a tied output, both refused at load (its other
+gating-function value is not checked there; on its own it would abort the process when the context is
+created); [Eliasfpv28/Kolibri-1-Q3_K_S-GGUF](https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF) uses
+upstream's gating value and pre-tokenizer and loads only if it carries every key upstream requires (not
+verified here). The embedded chat template handles reasoning and
 Hermes-style tool calls; for a split GGUF, point the model path at the first part.
 
 ```java
@@ -888,7 +918,10 @@ For direct access to the upstream llama.cpp server API, the following methods ta
 a JSON response, matching the HTTP server's contract:
 
 `handleCompletions`, `handleCompletionsOai`, `handleChatCompletions`, `handleInfill`,
-`handleEmbeddings`, `handleTokenize`, `handleDetokenize`.
+`handleEmbeddings` (its second argument, `oaiCompat`, selects the OpenAI response format).
+
+`handleTokenize(String content, boolean addSpecial, boolean withPieces)` and `handleDetokenize(int... tokens)`
+take plain arguments and return the JSON response of the server's `/tokenize` and `/detokenize` routes.
 
 Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, String)`,
 `restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
@@ -961,8 +994,10 @@ speculative-decoding tallies (`getDraftTokensTotal()`, `getDraftAcceptedTotal()`
 `getDraftVerifyStepsTotal()`, `getDraftAcceptedPerPosition()`, plus the derived
 `getDraftAcceptanceRate()`), which upstream otherwise exposes only as Prometheus text.
 
-The embedded HTTP server exposes the same native JSON at authenticated `GET /metrics`, with the slot
-array alone at `GET /slots`. OpenAI responses preserve
+`OpenAiCompatServer` exposes the same JSON at `GET /metrics` (behind the API key when one is
+configured), with the slot array alone at `GET /slots`; `NativeServer` serves upstream's routes
+instead, where `GET /metrics` is Prometheus text and needs `--metrics`
+(`ModelParameters.enableMetricsEndpoint()` in attach mode). OpenAI responses preserve
 `usage.prompt_tokens_details.cached_tokens`; Responses API output uses
 `usage.input_tokens_details.cached_tokens`; Anthropic output uses `cache_read_input_tokens`.
 
@@ -991,8 +1026,8 @@ Chat completions support **streaming via Server-Sent Events** and non-streaming,
 `messages`/`tools` verbatim. The streaming path carries `delta.tool_calls` and (with
 `stream_options.include_usage`) a trailing `usage` chunk, so **agent/tool-calling clients work** —
 this is the recommended surface for VS Code Copilot agent mode, Cline, Roo Code and Continue.
-`response_format` (`json_object` / `json_schema`) is forwarded for structured outputs. Completions,
-embeddings, rerank and infill are non-streaming.
+`response_format` (`json_object` / `json_schema`) is forwarded for structured outputs. `/v1/completions` streams with `"stream": true` (upstream's own `text_completion` chunks, `usage` on the
+last); embeddings, rerank and infill are non-streaming.
 
 Every route is also reachable **without the `/v1` prefix**, the server answers **CORS preflight**
 (`OPTIONS`) and stamps `Access-Control-Allow-Origin` (so browser/webview clients work), and
@@ -1078,7 +1113,7 @@ java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--embedding`, `--reranking`). The tuning flags mirror
+`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
 works directly.
@@ -1121,8 +1156,8 @@ endpoint (the host/port go here, not in the form):
 Notes: BYOK powers the chat/agent experience only (inline completions and embeddings still require a
 GitHub account). On CPU, prefer a smaller model and a modest context window — the server emits SSE
 heartbeats so a long prompt prefill does not trip the client's stream-inactivity timeout. Agent-mode
-tool calling depends on the model's own tool-calling quality. Pass `--api-key` (or
-`OpenAiServerConfig.apiKey(...)`) to require an `Authorization: Bearer` token; the server binds to
+tool calling depends on the model's own tool-calling quality. Pass `--api-key` (or `OpenAiServerConfig.builder().apiKey(...)`) to require the key, sent as
+`Authorization: Bearer <key>` (or as `x-api-key`, the header Anthropic clients send); the server binds to
 `127.0.0.1` by default.
 
 ### Native server with the built-in WebUI (`NativeServer`)
@@ -1162,7 +1197,8 @@ the arguments (an independent lifecycle, like `llama-server.exe`), it is **singl
 process**, it serves the **WebUI** (in released jars — local `cmake` builds ship the empty-asset
 stub, so no UI there), and it is **not available on Android** (the upstream server needs
 `posix_spawn`). Readiness: poll `GET /health`. TLS: pass `--ssl-key-file` and `--ssl-cert-file`
-(BoringSSL is linked statically into every desktop natives jar, nothing to install). The same
+(BoringSSL is linked statically into every desktop library jar except `cpu-linux-s390x`, which ships
+without SSL; nothing to install). The same
 build fetches models from `https://` URLs (`--model-url`, `-hf`), verified against the OS
 certificate store -- on Linux `/etc/ssl/certs` or `/etc/ssl/cert.pem`, overridable with
 `SSL_CERT_FILE` / `SSL_CERT_DIR`. Note that `--model-url` alone starts the router; name the
@@ -1226,7 +1262,8 @@ client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 ```
 
 `RouterModel` carries the identifier, the lifecycle status
-(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), the router's
+(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`INCOMPLETE`/`DOWNLOADED`, and `UNKNOWN` for a
+status this binding does not recognise), the router's
 failed-worker marker, and the model's input/output modalities (`getInputModalities()`,
 `getOutputModalities()`), which the router computes without loading the model: `isDecisionModel()`
 picks out a [decision model](#decision-models-v1systemone) for `/v1/systemone` before its first load.
@@ -1256,9 +1293,9 @@ the router itself does; `RouterModel.getAliases()` lists them.
 llama.cpp's RPC backend spreads one model over the devices of several machines: every machine
 that contributes runs an **RPC server**, and the machine that loads the model names them with
 `--rpc`. Layers are then distributed over local and remote devices exactly as over several local
-GPUs (`setGpuLayers`, `setTensorSplit`). Both halves are in every natives jar — CPU and GPU —
-with **no additional runtime dependency** (plain TCP over the system socket
-library the library already links).
+GPUs (`setGpuLayers`, `setTensorSplit`). Both halves are in every library jar (`cpu-<os>-<arch>`,
+`metal-macos-aarch64`), so they are there whatever GPU module jars you add, with **no additional
+runtime dependency** (plain TCP over the system socket library the library already links).
 
 Serve this machine's devices (every GPU this library found, else the CPU):
 
@@ -1354,13 +1391,13 @@ try (LlamaModel llama = new LlamaModel(new ModelParameters().setModel("models/qw
 | Adapter | LangChain4j interface | java-llama.cpp call |
 |---------|-----------------------|---------------------|
 | `JllamaChatModel` | `ChatModel` | `LlamaModel.chat(...)` |
-| `JllamaStreamingChatModel` | `StreamingChatModel` | `LlamaModel.generateChat(...)` (token streaming) |
+| `JllamaStreamingChatModel` | `StreamingChatModel` | `LlamaModel.streamChatCompletion(...)` (OAI chunk streaming: text, thinking, tool calls) |
 | `JllamaEmbeddingModel` | `EmbeddingModel` | `LlamaModel.embed(...)` (model loaded with `enableEmbedding()`) |
 | `JllamaScoringModel` | `ScoringModel` (re-ranking) | `LlamaModel.handleRerank(...)` (model loaded with `enableReranking()`) |
 
 See [`llama-langchain4j/README.md`](llama-langchain4j/) for streaming/embedding/re-ranking
-examples and the current mapping limitations (tool calling, JSON mode, and multimodal input are
-not yet forwarded).
+examples and the mapped features: tool calling (blocking and streamed), JSON mode / JSON-schema structured output
+and multimodal input are forwarded; `modelName()` is ignored (one model per adapter).
 
 ### Local agent: terminal, browser, IDE via ACP
 
@@ -1387,7 +1424,7 @@ jbang net.ladenthin:llama-atmosphere-agent:6.0.0 \
     --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
 ```
 
-Or clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the core jar from Maven Central ships the natives:
+Or clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the agent's pom pulls in the CPU natives jar of every desktop platform through `llama-platform`:
 
 ```bash
 # get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)
@@ -1396,7 +1433,7 @@ cd java-llama.cpp/llama-atmosphere-agent
 curl -L --create-dirs -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
   https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 
-# the agent with the model loaded in-process — a you> prompt appears (/clear, /exit)
+# the agent with the model loaded in-process — an input prompt appears (/clear, /exit)
 mvn -q compile exec:java \
     -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
 ```
@@ -1425,8 +1462,9 @@ published core jars on every run (`smoke-agent-linux`) before anything is publis
 > workspace you are willing to hand to the model.
 
 In the REPL, `/help` lists the commands (`/status`, `/tools`, `/mode manual|auto`, `/compact`,
-`/clear`, `/exit`); anything else goes to the model. A status line shows the approval mode and the
-context used (`[manual · ctx ~3.1k/16k · 9 tools · local-model]`), and the answer is rendered with
+`/clear`, `/exit`); anything else goes to the model. A status line shows the workspace, the approval mode, the context used, the tool count and the model
+(`[▤ /path/to/project · ⏸  manual · ▦ ~3.1k/16k · ⚒ 9 · ◆ local-model]`; `◇` instead of `◆` for a model
+reached with `--base-url`), and the answer is rendered with
 headings, bullets and code spans.
 
 **Also in a browser or an editor.** The same agent session has two more front ends. `--web` serves it
@@ -1446,7 +1484,8 @@ jbang net.ladenthin:llama-atmosphere-agent:6.0.0 --model model.gguf --allow-shel
 On Windows PowerShell quote the whole argument (`"-Dexec.args=--model models\… --allow-shell"`); for
 the GPU add e.g. `-Dllama.classifier=vulkan-windows-x86-64` and `--ngl 99`. The agent's
 [README](llama-atmosphere-agent/) walks through all of it step by step. Other ways to run it, e.g.
-against a java-llama.cpp server that is already running (`--jinja` is required for tool calling;
+against a java-llama.cpp server that is already running (tool calling needs the Jinja chat template, which the server enables by default:
+`--jinja` below only makes that explicit, and `--no-jinja` would make it refuse tool requests;
 see [Running the server from Maven Central](#running-the-server-from-maven-central) for a GPU
 backend):
 
@@ -1455,7 +1494,7 @@ backend):
 jbang --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 \
     -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 9931
 
-# 2. the agent, from the llama-atmosphere-agent/ folder — a you> prompt appears (/clear, /exit)
+# 2. the agent, from the llama-atmosphere-agent/ folder — an input prompt appears (/clear, /exit)
 mvn -q compile exec:java \
     -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace /path/to/project --allow-shell"
 
@@ -1509,11 +1548,11 @@ library wraps it in a few lines without `java-llama.cpp` pulling in a runtime
 reactive dependency.
 
 **Always wrap with the library's resource-management primitive** — `Flux.using`,
-`Flowable.using`, Kotlin `use {}`, etc. — so that subscription cancellation
-flows into `LlamaIterable.close()` and from there into llama.cpp's native
-`cancelCompletion`. A plain `Flux.fromIterable(iterable)` or `for (x in iter)`
-loop will NOT close the iterable on cancel; the native task slot stays
-occupied until the model is closed.
+`Flowable.using`, Kotlin `use {}`, etc. — so that subscription cancellation flows into `LlamaIterable.close()`, which releases the task's
+native reader and so cancels the generation in llama.cpp's server. A plain
+`Flux.fromIterable(iterable)` or `for (x in iter)` loop will NOT close the iterable on cancel: the
+generation keeps its slot until it stops on its own (e.g. `n_predict`, an end-of-generation token
+or the end of the context), and its undelivered results stay queued until the model is closed.
 
 #### Project Reactor (Spring WebFlux)
 ```java
@@ -1536,8 +1575,9 @@ Flowable<LlamaOutput> tokens = Flowable.using(
 #### Kotlin Flow (Android / coroutines)
 
 Ready-made: the optional [`net.ladenthin:llama-kotlin`](llama-kotlin/README.md) artifact ships
-`generateFlow`/`generateChatFlow` extensions (close-on-cancellation included) plus `suspend`
-wrappers whose coroutine cancellation is wired to the binding's cooperative `CancellationToken`:
+`generateFlow`/`generateChatFlow` extensions (close-on-cancellation included) plus `suspend` wrappers (`completeSuspend`, `chatSuspend`, `chatCompleteTextSuspend`, `embedSuspend`).
+Only `completeSuspend` wires coroutine cancellation to the binding's cooperative `CancellationToken`;
+the other three resume only after the native call has returned:
 
 ```kotlin
 model.generateChatFlow(params).flowOn(Dispatchers.IO).collect { print(it.text) }
@@ -1554,14 +1594,16 @@ fun llama(model: LlamaModel, params: InferenceParameters) = flow {
 The companion Android sample [LLaMAndroid](https://github.com/Rattlyy/LLaMAndroid)
 demonstrates the `flow { for (output in model.generate(params)) emit(output) }`
 shape against the upstream binding. Wrap the `for` loop in
-`.use { }` if your collector may cancel mid-stream — otherwise the native task
-slot will not be released until the model is closed.
+`.use { }` if your collector may cancel mid-stream — otherwise the generation keeps its slot until its natural stop, and its undelivered results stay
+queued until the model is closed.
 
 #### Akka Streams
 ```scala
 val tokens: Source[LlamaOutput, NotUsed] = Source
-    .fromIterator(() => model.generate(params).iterator())
-    .async("blocking-io-dispatcher")
+    .unfoldResource[LlamaOutput, LlamaIterator](
+        () => model.generate(params).iterator(),
+        it => if (it.hasNext) Some(it.next()) else None,
+        _.close()) // Akka's blocking-IO dispatcher by default; closes the iterator on completion, failure and cancellation
 ```
 
 **Why no built-in `Publisher`?** Earlier snapshots of this fork shipped a
@@ -1575,7 +1617,8 @@ app already uses. The pattern is verified end-to-end by
 ### Logging
 
 Per default, llama.cpp writes its log as text to **stderr** (`0.00.035.060 I slot …` once a model is
-loaded): the server's own `srv …` / `slot …` lines and, from verbosity 4 on, the llama/ggml lines.
+loaded): the server's own `srv …` / `slot …` lines, the llama/ggml warnings and errors and, from
+verbosity 4 on, the llama/ggml info lines as well.
 All of it can be intercepted via the static method
 `LlamaModel.setLogger(LogFormat, BiConsumer<LogLevel, String>)`: with a callback set, every line goes
 to the callback instead of the console (a `setLogFile` file keeps receiving them). The callback
@@ -1630,13 +1673,15 @@ dependencies {
 ```
 
 The AAR carries the full `net.ladenthin:llama` Java API, the CI-built native library with ggml's
-CPU backend modules (one per ARM feature level, the best for the device loaded at start) for
+CPU backend modules (one per instruction-set level, ARM feature levels on `arm64-v8a` and x86
+levels on `x86_64`, the best for the device loaded at start) for
 `arm64-v8a` (devices) **and** `x86_64` (Android Studio emulator, Chromebooks — app bundles
 split per ABI so phones download only arm64), all 16 KB page-size compliant, consumer
 R8/ProGuard rules (applied automatically), and a manifest `minSdkVersion 28` that AGP
 enforces against your app. The OpenCL AAR adds the `libggml-opencl.so` module, which the same
 start loads when the device has an OpenCL ICD and skips otherwise. CI boots an x86_64 emulator
-and runs real on-device inference against every AAR build.
+and runs real on-device inference against the CPU AAR's `x86_64` libraries on every run; the
+`arm64-v8a` libraries and the OpenCL AAR are checked for structure and dependencies, not run on a device.
 Do **not** also depend on the desktop `net.ladenthin:llama` JAR in the same app — the AAR
 already contains those classes (the JAR carries no natives since 6.0.0, it would only duplicate
 every class). See [`llama-android/README.md`](llama-android/README.md) and
@@ -1665,12 +1710,8 @@ android {
 
     // Execute "mvn compile" in the llama/ core module if its target/ doesn't exist
     // (the repository root is the Maven reactor aggregator; the native core lives in llama/).
-    if (!file("$jllamaLib/llama/target").exists()) {
-        exec {
-            commandLine = listOf("mvn", "compile")
-            workingDir = file("java-llama.cpp/llama/")
-        }
-    }
+    // No "mvn compile" step is needed: under AGP, CMake takes OS_NAME/OS_ARCH from ANDROID_ABI,
+    // and the JNI header (llama/src/main/cpp/jllama.h) is committed.
 
     ...
     defaultConfig {
@@ -1687,7 +1728,7 @@ android {
     // Declare c++ sources
     externalNativeBuild {
         cmake {
-            path = file("$jllamaLib/CMakeLists.txt")
+            path = file("$jllamaLib/llama/CMakeLists.txt")
             version = "3.22.1"
         }
     }
@@ -1696,28 +1737,30 @@ android {
     sourceSets {
         named("main") {
             // Add source directory for java-llama.cpp
-            java.srcDir("$jllamaLib/src/main/java")
+            java.srcDir("$jllamaLib/llama/src/main/java")
         }
     }
 }
 ```
-3. Exclude `net.ladenthin.llama` in proguard-rules.pro
+The sources need the core's compile dependencies in the app's `dependencies { }`: `com.fasterxml.jackson.core:jackson-databind`, `org.slf4j:slf4j-api` and `org.jspecify:jspecify`, plus `org.projectlombok:lombok` as `compileOnly` + `annotationProcessor` and `org.codehaus.mojo:animal-sniffer-annotations` as `compileOnly` (versions in `pom.xml` and `llama/pom.xml`). Three files of `llama/src/main/java` do not compile against `android.jar` and have to be excluded from the source set: `module-info.java`, `net/ladenthin/llama/server/OpenAiCompatServer.java` (the JDK's `com.sun.net.httpserver`) and `net/ladenthin/llama/server/ServerLauncher.java`, which calls it. The AAR of Option 1 avoids all of this: it ships the classes jar Maven compiled.
+
+3. Exclude `net.ladenthin.llama` in proguard-rules.pro (the full rule set the AAR ships is [`llama-android/consumer-proguard.txt`](llama-android/consumer-proguard.txt))
 ```proguard
-keep class net.ladenthin.llama.** { *; }
+-keep class net.ladenthin.llama.** { *; }
 ```
 
 ## TODO
 
 Open work items live in [`TODO.md`](TODO.md).
 
-- **Expand PIT mutation-testing scope.** PIT is wired in `pom.xml` and runs on every CI build (in the `test-java-linux-x86_64` job) with `<mutationThreshold>100</mutationThreshold>`. `<targetClasses>` currently covers `net.ladenthin.llama.value.*`, `exception.*`, `args.*` and four `json` parsers (295 mutations, 100% killed, hermetic — no model or fixture needed); widen it incrementally as additional classes reach mutation-test parity. Final target: `<param>net.ladenthin.llama.*</param>` matching the streambuffer pattern.
+- **Expand PIT mutation-testing scope.** PIT is wired in `llama/pom.xml` and runs on every CI build (in the `test-java-linux-x86_64` job) with `<mutationThreshold>100</mutationThreshold>`. `<targetClasses>` currently covers `net.ladenthin.llama.value.*`, `exception.*`, `args.*`, four `json` classes (`TimingsLogger`, `RerankResponseParser`, `ChatResponseParser`, `CompletionResponseParser`) and `parameters.JsonParameters` (100% killed, hermetic — no model or fixture needed); widen it incrementally as additional classes reach mutation-test parity. The rest of the `parameters` package (one-line builder setters) is deliberately kept off the gate.
 
 ## Feature Ideas
 
 Forward-looking ideas being tracked for this fork:
 
 - **Adopt feature ideas from the Kotlin Llama Stack client.** Candidates (multimodal image input, typed chat messages, async API, batch inference, typed usage/timings) are inventoried with effort estimates in [`docs/feature-investigation-llama-stack-client-kotlin.md`](docs/feature-investigation-llama-stack-client-kotlin.md), derived from [`ogx-ai/llama-stack-client-kotlin`](https://github.com/ogx-ai/llama-stack-client-kotlin).
-- **Ship a directly Android-capable artifact — DONE.** `net.ladenthin:llama-android` / `llama-android-opencl` (AAR, arm64-v8a, minSdk 28, consumer ProGuard rules, 16 KB page-size compliant) plus the optional `net.ladenthin:llama-kotlin` coroutines façade ship from this repo — see [Importing in Android](#importing-in-android). Typed image input for VLMs is covered by `ContentPart.imageBytes(...)` / `imageFile(...)` (see the multimodal section), so downstream Android projects can drop their dependency on [`ogx-ai/llama-stack-client-kotlin`](https://github.com/ogx-ai/llama-stack-client-kotlin) entirely. A dedicated KISS example app — **"LLM Service"** (SAF model picker + Compose streaming chat, 13-language flag picker, private local save/load, plain Gradle/AGP, signed `.aab`, on-device emulator UI test) — ships in [`android-llmservice/`](android-llmservice/README.md).
+- **Ship a directly Android-capable artifact — DONE.** `net.ladenthin:llama-android` / `llama-android-opencl` (AARs: the CPU one for arm64-v8a and x86_64, the OpenCL one for arm64-v8a; minSdk 28, consumer ProGuard rules, 16 KB page-size compliant) plus the optional `net.ladenthin:llama-kotlin` coroutines façade ship from this repo — see [Importing in Android](#importing-in-android). Typed image input for VLMs is covered by `ContentPart.imageBytes(...)` / `imageFile(...)` (see the multimodal section), so downstream Android projects can drop their dependency on [`ogx-ai/llama-stack-client-kotlin`](https://github.com/ogx-ai/llama-stack-client-kotlin) entirely. A dedicated KISS example app — **"LLM Service"** (SAF model picker + Compose streaming chat, 13-language flag picker, private local save/load, plain Gradle/AGP, signed `.aab`, on-device emulator UI test) — ships in [`android-llmservice/`](android-llmservice/README.md).
 - **Resolve all upstream `kherud/java-llama.cpp` open issues.** All 37 open issues at fork time are catalogued with per-issue verdicts in [`docs/history/49be664_open_issues.md`](docs/history/49be664_open_issues.md); fixes land in this fork as they are completed. Vision inputs (issues [#103](docs/history/49be664_open_issues.md#103--vlm-support--image-input-for-multimodal-models) and [#34](docs/history/49be664_open_issues.md#34--support-multimodal-inputs)) are now wired end to end through blocking, typed, streaming, and OpenAI-compatible request surfaces.
 
 ## Troubleshooting
@@ -1735,10 +1778,11 @@ C [msvcp140.dll+0x12f58]
 `msvcp140.dll` from your JDK — is obsolete. Do not do it.** The Windows natives link the C++
 standard library and vcruntime statically (hybrid CRT), so they do not import `msvcp140.dll`,
 `vcruntime140.dll` or `vcruntime140_1.dll` at all; the only non-OS import left is the Universal
-CRT, which Windows itself provides and keeps updated. Measured on the current build, the whole
-import table of `jllama.dll` is `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32` and the
-`api-ms-win-crt-*` forwarders. CI enforces that per release
-(`.github/buildcheck/nativedeps.py` holds every Windows CPU directory to an exact allowlist).
+CRT, which Windows itself provides and keeps updated. The import table of `jllama.dll` is `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32`, `CRYPT32`
+(cpp-httplib's certificate-store lookup for HTTPS), the `api-ms-win-crt-*` forwarders, and the
+`ggml-base.dll`, `ggml.dll`, `llama.dll` and `mtmd.dll` shipped next to it. CI enforces that per
+release (`.github/buildcheck/nativedeps.py` holds every Windows CPU directory to an exact allowlist
+of those OS DLLs plus the files next to the library).
 
 The report dates from before that: the troubleshooting note was written on 2026-04-04 and the
 switch from the DLL runtime (`/MD`) to a static one landed on 2026-05-13, so releases from
@@ -1784,7 +1828,7 @@ the same tree; `mvn -version` shows which JDK Maven runs on.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 
-> ⚠️ **DO NOT UPGRADE jqwik past 1.9.3.** jqwik 1.10.0 added an anti-AI prompt-injection string to test stdout; the 1.10.1 user guide states the library "is not meant to be used by any 'AI' coding agents at all." 1.9.3 is the last pre-disclosure release and is the pinned version. See `CLAUDE.md` section "jqwik prompt-injection in test output" for the full context. Dependabot is configured to ignore **all** `net.jqwik` updates (every version, including patches) — see the `ignore` rule in [`.github/dependabot.yml`](./.github/dependabot.yml).
+> ⚠️ **DO NOT UPGRADE jqwik past 1.9.3.** jqwik 1.10.0 added an anti-AI prompt-injection string to test stdout; the 1.10.1 user guide states the library "is not meant to be used by any 'AI' coding agents at all." 1.9.3 is the last pre-disclosure release and is the pinned version. See the "jqwik Policy" section of `CLAUDE.md`, which points to the cross-repo policy `workspace/policies/jqwik-prompt-injection.md`, for the full context. Dependabot is configured to ignore **all** `net.jqwik` updates (every version, including patches) — see the `ignore` rule in [`.github/dependabot.yml`](./.github/dependabot.yml).
 
 ## Similar Projects / Usage
 

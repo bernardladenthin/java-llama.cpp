@@ -93,7 +93,8 @@ SPDX-License-Identifier: MIT
 		     coding agents at all." 1.9.3 is the last pre-disclosure release
 		     and is the pinned version for this repo. Any CI / Dependabot /
 		     contributor PR that bumps this MUST be rejected. See CLAUDE.md
-		     section "jqwik prompt-injection in test output" for full context. -->
+		     section "jqwik Policy", which points to the cross-repo policy
+		     workspace/policies/jqwik-prompt-injection.md, for full context. -->
 		<jqwik.version>1.9.3</jqwik.version>
 		<archunit.version>1.5.1</archunit.version>
 		<spotbugs.version>4.10.5.0</spotbugs.version>
@@ -584,6 +585,28 @@ SPDX-License-Identifier: MIT
 			</plugin>
 			<plugin>
 				<artifactId>maven-resources-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<!-- The classes jar names ServerLauncher as its Main-Class, so `java -jar llama-<v>.jar` and a
+				     JBang line that resolves it from Central next to a natives jar start the embedded server
+				     (NativeServer by default, OpenAiCompatServer with the jllama-openai-compat flag), as the
+				     README says. Only the default execution: the natives jars of the `natives` profile keep
+				     their own manifest (an Automatic-Module-Name, no entry point). smoke-natives-jars.sh holds
+				     the manifest to this in the package job; the entry was lost with the fat-jar assembly. -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>default-jar</id>
+						<configuration>
+							<archive>
+								<manifest>
+									<mainClass>net.ladenthin.llama.server.ServerLauncher</mainClass>
+								</manifest>
+							</archive>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

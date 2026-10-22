@@ -393,6 +393,22 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
+- **README corrected against the code** (an audit of every section, 63 findings): no 32-bit Windows
+  natives; the snapshot channel is a manual Publish run, not every push; OpenVINO is opt-in wherever
+  the loader's additive rule is described; the static library jars (macOS, s390x) and the single
+  Windows-arm64 CPU module; the release assets (AARs, the agent jar, the signed source archive); the
+  build options the configure overrides; GPU backends are module builds, not a `-DGGML_CUDA=ON` of
+  the library, and `-DLLAMA_CURL` is gone; the loader's search order and the four Windows extras; the
+  `jllama-files.txt` rule when a module is added to a natives directory; `handleTokenize` /
+  `handleDetokenize` take plain arguments; `/v1/completions` streams; `OpenAiServerConfig.builder()`
+  and the `x-api-key` header; `--rpc` in the CLI list; the `INCOMPLETE` / `UNKNOWN` router statuses;
+  RPC ships in the library jars; the LangChain4j streaming adapter and its mapped features; the agent's
+  prompt and status line; `chatWithTools` stops at `withMaxToolRounds`; the infill prompt position;
+  the mmproj device-offload table; video input takes `data:` URIs and URLs; the reactive sections'
+  cancellation semantics (a reader released cancels the generation; an unclosed one runs to its natural
+  stop), the Kotlin wrappers' cancellation, the Akka snippet; the logging verbosity split; the Android
+  AAR's ABIs, the emulator coverage, the from-source recipe (paths, Gradle 9, dependencies, ProGuard);
+  the Windows import table; the PIT scope; three test properties added to the reference table.
 - **The SYCL natives jobs install upstream's toolchain**, as llama.cpp's `ubuntu-24-sycl` / `windows-sycl`
   release jobs do: Intel's Deep Learning Essentials 2026.1.4 and oneDNN 2026.0.2 offline installers (upstream
   since b11654, #30131), pinned by URL, instead of the unpinned apt packages on Linux and the 2025.3.3 bundle on
@@ -887,6 +903,13 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **The classes jar carries `Main-Class: net.ladenthin.llama.server.ServerLauncher` again.** The entry
+  had gone with the fat-jar assembly, so `java -jar llama-<v>.jar` and the README's
+  `jbang --deps <natives jar> net.ladenthin:llama:<v>` lines, which run a GAV through its manifest,
+  had no entry point ("no main class deduced") although the README, CLAUDE.md and the launcher class
+  all described one. The default jar execution names it now (the natives jars keep their
+  Automatic-Module-Name manifests), and `smoke-natives-jars.sh` reads it back from the built jar in the
+  `package` job (F269).
 - **`OpenAiCompatServer`: what every surface shares.**
   - **`--api-key` accepts Anthropic clients.** Only `Authorization: Bearer <key>` with a capital
     `Bearer` passed, so every Anthropic SDK -- which sends `x-api-key` -- got `401` on `/v1/messages`

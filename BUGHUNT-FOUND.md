@@ -190,6 +190,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F265](#f265) — niedrig — *gefixt*
 - [F266](#f266) — mittel — *gefixt*
 - [F267](#f267) — niedrig — *gefixt*
+- [F269](#f269) — mittel — *gefixt*
 
 ## Funde
 
@@ -2499,6 +2500,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.ollamaGenerateWithRawImagesOnABackendWithoutAMediaMarkerIsNotImplemented:591 {"error":"raw prompts with images are not supported by this backend"} Expected: is <501> but: was <500>“; mit dem Fix grün, `OpenAiCompatServerHttpTest` 81/81, `OllamaApiSupportTest` 54/54.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a4edb90`
+
+<a id="f269"></a>
+### F269 – java-llama.cpp: das Klassen-Jar hat keine `Main-Class`, obwohl README, CLAUDE.md und `ServerLauncher` sie versprechen
+- **Zeit:** 2026-10-22 00:40 UTC
+- **Datei:** `llama/pom.xml` (`maven-jar-plugin`, Execution `default-jar`), `.github/smoke-natives-jars.sh`
+- **Schwere:** mittel (jede dokumentierte JBang-Zeile `jbang --deps <natives jar> net.ladenthin:llama:<v> …` und `java -jar llama-<v>.jar` scheitern mit „no main class deduced“; der Server ist nur über `java -cp … ServerLauncher` erreichbar)
+- **Historie:** Gefunden beim README-Audit am 2026-10-22 (Workflow-Befund L119/L342/L974/L1064/L1134, fünf Stellen). Der `<mainClass>` stand im Assembly-Profil der Fat-Jars (`4f811a2`) und ging mit ihnen; das Klassen-Jar hatte nie einen eigenen. Der `ServerLauncher`-Dispatcher, die README und CLAUDE.md („the classes jar's `Main-Class` is `ServerLauncher`“) beschreiben den Einstiegspunkt, kein CI-Schritt startete ihn über das Manifest (die Smokes nennen die Klasse explizit).
+- **Beschreibung:** `META-INF/MANIFEST.MF` des gebauten `llama-6.0.0-SNAPSHOT.jar` enthielt nur `Manifest-Version`, `Created-By`, `Java-Version`, `Build-Jdk-Spec`. JBang startet eine GAV ausschließlich über deren `Main-Class` (oder `--main`), also liefen alle fünf dokumentierten Zeilen ins Leere.
+- **Fix:** Die Execution `default-jar` des `maven-jar-plugin` in `llama/pom.xml` setzt `<mainClass>net.ladenthin.llama.server.ServerLauncher</mainClass>`; nur sie – die 23 Natives-Executions des `natives`-Profils behalten ihr Manifest (nur `Automatic-Module-Name`), geprüft über `help:effective-pom -P natives` (genau eine `mainClass` neben der des JMH-`exec`). Das Manifest des gebauten Jars: `Main-Class: net.ladenthin.llama.server.ServerLauncher`.
+- **Tests:** `.github/smoke-natives-jars.sh` (Job `package`, lädt die echten Jars) liest `Main-Class` aus dem Klassen-Jar und bricht ab, wenn es nicht `net.ladenthin.llama.server.ServerLauncher` ist – aus dem Jar selbst, nicht aus dem POM, damit ein erneuter Verlust (etwa durch ein Profil, das das Manifest überschreibt) im selben Job auffällt wie damals der Verlust der Fat-Jars.
+- **Rot-Grün-Nachweis:** Manifest vor dem Fix ohne `Main-Class` (gemessen am Jar aus `mvn package`), der neue Smoke-Check liefe damit rot („names '' as Main-Class“); nach dem Fix enthält das Manifest den Eintrag, `bash -n` über das Skript, `check-natives.py` 0 Abweichungen. Kein Unit-Test: ein Manifest-Eintrag ist erst nach `package` beobachtbar, die Prüfung gehört in den Job, der die Jars lädt.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
