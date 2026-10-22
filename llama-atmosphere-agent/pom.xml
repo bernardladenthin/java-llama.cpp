@@ -84,6 +84,10 @@ SPDX-License-Identifier: MIT
 		<gpg.plugin.version>3.2.8</gpg.plugin.version>
 		<central.publishing.version>0.12.0</central.publishing.version>
 		<exec.plugin.version>3.6.4</exec.plugin.version>
+		<clean.plugin.version>3.5.0</clean.plugin.version>
+		<install.plugin.version>3.2.0</install.plugin.version>
+		<deploy.plugin.version>3.2.0</deploy.plugin.version>
+		<dependency.plugin.version>3.11.0</dependency.plugin.version>
 		<spotless.version>3.10.4</spotless.version>
 		<palantir-java-format.version>2.102.0</palantir-java-format.version>
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
@@ -215,6 +219,38 @@ SPDX-License-Identifier: MIT
 	</dependencies>
 
 	<build>
+		<pluginManagement>
+			<plugins>
+				<!--
+					Bound by the clean and default lifecycles (clean, install, deploy) or invoked by prefix
+					(mvn dependency:...) and configured nowhere else, so their versions came from whichever Maven ran the
+					build: Maven 3.10.0 binds clean 3.5.0, install 3.2.0 and deploy 3.2.0 and manages no dependency plugin
+					(dependency:... then takes the newest release); Maven 3.9 binds clean 3.2.0, install and deploy 3.1.x and
+					manages dependency 3.7.0. Stated here so the build does not depend on the Maven that runs it, and so
+					check-versions.py compares them across the repositories.
+				-->
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-clean-plugin</artifactId>
+					<version>${clean.plugin.version}</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-install-plugin</artifactId>
+					<version>${install.plugin.version}</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-deploy-plugin</artifactId>
+					<version>${deploy.plugin.version}</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-dependency-plugin</artifactId>
+					<version>${dependency.plugin.version}</version>
+				</plugin>
+			</plugins>
+		</pluginManagement>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

@@ -3012,7 +3012,8 @@ construction** (no CI guard needed). The parent also holds the shared `release` 
 Central Publishing) and a `<pluginManagement>` with every plugin version more than one module uses
 (compiler, jar, resources, surefire, source, javadoc, gpg, central-publishing -- a module names such a
 plugin without a version; without it a module that pins nothing builds with the default of whatever
-Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all six
+Maven runs it, which differed between CI and a local build; and, for the same reason, clean, install,
+deploy and dependency, which no module configures but the lifecycle and CI's `mvn dependency:...` run), so one reactor `mvn -P release,natives deploy` signs and publishes all six
 Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
 `llama-kotlin`, `llama-ffm`, `llama-platform` pom) at the same version.
 
