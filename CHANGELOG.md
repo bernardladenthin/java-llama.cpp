@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11809** (from b11639, in six steps on the branch: b11760, b11761, b11799, b11800, b11803, b11809). What the
+- **llama.cpp b11814** (from b11639, in seven steps on the branch: b11760, b11761, b11799, b11800, b11803, b11809, b11814). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -149,8 +149,13 @@ the first two items break every existing consumer at upgrade.
   attribute again, as in jinja2). The b11809 step (2026-10-22): LoRA adapters on prism.hadamard
   folded matmul weights load now (#30910; an adapter on a latent lookup table such as `token_embd` is
   still refused), dflash reads an optional `fc.input_scale`, OpenCL gets an F32-to-I32 ARGMAX kernel
-  (#30897, embedded in the two OpenCL module jars) and WebGPU Q2_0 -- nothing here changed. Two
-  patches dropped (`0016`, `0019`), `0007` refreshed.
+  (#30897, embedded in the two OpenCL module jars) and WebGPU Q2_0 -- nothing here changed. The b11814
+  step (2026-10-22): `tokenizer.ggml.clean_spaces` is a GGUF key (#30940; the converter writes it from
+  `tokenizer_config.json`, and the pre-tokenizer defaults turn the clean-up of spaces before punctuation
+  off for `lfm2`, `glm4`/`glm5`, `dbrx`, `exaone4`, `mellum2`, `minicpm5`, `gemma-4` and `chatglm-bpe`
+  models, whose detokenized text keeps that space now), Pixtral GGUFs tokenize with the Tekken
+  pre-tokenizer (#30960), KleidiAI v1.32.0 with SVE Q8_0 kernels (#30808, not built here) -- nothing
+  here changed. Two patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
 - **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and
