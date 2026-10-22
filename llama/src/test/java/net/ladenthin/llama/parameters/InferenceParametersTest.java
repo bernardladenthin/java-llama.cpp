@@ -100,6 +100,19 @@ public class InferenceParametersTest {
         assertThat(
                 InferenceParameters.empty().withTimingsPerToken(true).parameters.get("timings_per_token"), is("true"));
         assertThat(InferenceParameters.empty().withReturnTokens(true).parameters.get("return_tokens"), is("true"));
+        assertThat(InferenceParameters.empty().withVerbose(true).parameters.get("verbose"), is("true"));
+    }
+
+    @Test
+    public void withResponseFieldsWritesTheProjectionAsAStringArray() {
+        assertThat(
+                InferenceParameters.empty()
+                        .withResponseFields("stopping_word", "timings/predicted_n")
+                        .parameters
+                        .get("response_fields"),
+                is("[\"stopping_word\",\"timings/predicted_n\"]"));
+        InferenceParameters empty = InferenceParameters.empty();
+        assertThat(empty.withResponseFields(), is(empty));
     }
 
     @Test
@@ -344,6 +357,21 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void aChatTemplateKwargHoldingTwoValuesIsKeptAsText() {
+        // used to become its first value: "true false" reached the template as true
+        java.util.Map<String, String> kwargs = java.util.Collections.singletonMap("enable_thinking", "true false");
+        assertThat(
+                new InferenceParameters("")
+                        .withChatTemplateKwargs(kwargs)
+                        .parameters
+                        .get("chat_template_kwargs"),
+                is("{\"enable_thinking\":\"true false\"}"));
+        assertThat(
+                new ModelParameters().setChatTemplateKwargs(kwargs).parameters.get("--chat-template-kwargs"),
+                is("{\"enable_thinking\":\"true false\"}"));
+    }
+
+    @Test
     public void testSetChatTemplateKwargsEmpty() {
         java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
         InferenceParameters params = new InferenceParameters("").withChatTemplateKwargs(kwargs);
@@ -410,6 +438,49 @@ public class InferenceParametersTest {
     public void testSetReasoningBudgetTokensDisabled() {
         InferenceParameters params = new InferenceParameters("").withReasoningBudgetTokens(-1);
         assertThat(params.parameters.get("reasoning_budget_tokens"), is("-1"));
+    }
+
+    @Test
+    public void testSetReasoningBudgetStartTag() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetStartTag("<think>");
+        assertThat(params.parameters.get("reasoning_budget_start_tag"), is("\"<think>\""));
+    }
+
+    @Test
+    public void testSetReasoningBudgetEndTags() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetEndTags("</think>", "\"done\"");
+        assertThat(params.parameters.get("reasoning_budget_end_tags"), is("[\"</think>\",\"\\\"done\\\"\"]"));
+    }
+
+    @Test
+    public void testSetReasoningBudgetMessage() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetMessage("Time is up.");
+        assertThat(params.parameters.get("reasoning_budget_message"), is("\"Time is up.\""));
+    }
+
+    @Test
+    public void testAnEmptyMessageForcesTheBareEndTag() {
+        InferenceParameters params = new InferenceParameters("").withReasoningBudgetMessage("");
+        assertThat(params.parameters.get("reasoning_budget_message"), is("\"\""));
+    }
+
+    @Test
+    public void testReasoningBudgetTagsMustNotBeEmpty() {
+        InferenceParameters params = new InferenceParameters("");
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetStartTag(""));
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetEndTags());
+        assertThrows(IllegalArgumentException.class, () -> params.withReasoningBudgetEndTags("</think>", ""));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_start_tag")));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_end_tags")));
+    }
+
+    @Test
+    public void testReasoningBudgetTagWithersReturnNewInstance() {
+        InferenceParameters params = new InferenceParameters("");
+        assertThat(params.withReasoningBudgetStartTag("<think>"), is(not(sameInstance(params))));
+        assertThat(params.withReasoningBudgetEndTags("</think>"), is(not(sameInstance(params))));
+        assertThat(params.withReasoningBudgetMessage("m"), is(not(sameInstance(params))));
+        assertThat(params.parameters, not(hasKey("reasoning_budget_message")));
     }
 
     @Test
@@ -603,6 +674,21 @@ public class InferenceParametersTest {
     // -------------------------------------------------------------------------
 
     @Test
+    public void withChatMessagesKeepsToolCallsAndToolCallIds() {
+        // ChatMessage.assistantToolCalls / toolResult carry the fields a tool-calling round trip needs.
+        // ChatRequest added them itself, but the shared serializer behind withMessages(List<ChatMessage>)
+        // wrote only role and content, so the model saw a tool turn it could not pair with its call.
+        List<net.ladenthin.llama.value.ChatMessage> messages = Arrays.asList(
+                net.ladenthin.llama.value.ChatMessage.assistantToolCalls(
+                        "", Collections.singletonList(new net.ladenthin.llama.value.ToolCall("call_1", "f", "{}"))),
+                net.ladenthin.llama.value.ChatMessage.toolResult("call_1", "42"));
+        String value =
+                InferenceParameters.empty().withMessages(messages).parameters.get("messages");
+        assertThat(value, containsString("\"tool_calls\""));
+        assertThat(value, containsString("\"tool_call_id\":\"call_1\""));
+    }
+
+    @Test
     public void testSetMessagesWithSystemAndUserMessages() {
         List<Pair<String, String>> messages = Collections.singletonList(new Pair<>("user", "Hi"));
         InferenceParameters params = new InferenceParameters("").withMessages("System msg", messages);
@@ -728,6 +814,40 @@ public class InferenceParametersTest {
     public void testToJsonStringEscapesCarriageReturn() {
         InferenceParameters params = new InferenceParameters("a\rb");
         assertThat(params.parameters.get("prompt"), is("\"a\\rb\""));
+    }
+
+    @Test
+    public void testPromptNullClearsAnEarlierValue() {
+        InferenceParameters params = InferenceParameters.empty().withPrompt("x").withPrompt(null);
+        assertThat(params.parameters, not(hasKey("prompt")));
+    }
+
+    @Test
+    public void testInputPrefixNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withInputPrefix("x").withInputPrefix(null);
+        assertThat(params.parameters, not(hasKey("input_prefix")));
+    }
+
+    @Test
+    public void testInputSuffixNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withInputSuffix("x").withInputSuffix(null);
+        assertThat(params.parameters, not(hasKey("input_suffix")));
+    }
+
+    @Test
+    public void testGrammarNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withGrammar("x").withGrammar(null);
+        assertThat(params.parameters, not(hasKey("grammar")));
+    }
+
+    @Test
+    public void testToolChoiceNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withToolChoice("x").withToolChoice(null);
+        assertThat(params.parameters, not(hasKey("tool_choice")));
     }
 
     @Test
@@ -889,5 +1009,23 @@ public class InferenceParametersTest {
         assertThat(params.withDryAllowedLength(2), is(not(sameInstance(params))));
         assertThat(params.withDryPenaltyLastN(512), is(not(sameInstance(params))));
         assertThat(params.withDrySequenceBreakers("\n"), is(not(sameInstance(params))));
+    }
+
+    @Test
+    public void withLogitBiasJson_storesTheValueAndRefusesASecondOne() throws Exception {
+        String json = InferenceParameters.empty()
+                .withLogitBiasJson("{\"15043\":-100}")
+                .toJson();
+        assertThat(
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree(json)
+                        .path("logit_bias")
+                        .path("15043")
+                        .asInt(),
+                is(-100));
+        // one JSON value only: a sibling field cannot be injected through the fragment
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withLogitBiasJson("{}, \"n_predict\": 999999"));
     }
 }

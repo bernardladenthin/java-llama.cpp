@@ -4,7 +4,10 @@
 
 package net.ladenthin.llama.parameters;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
@@ -16,7 +19,6 @@ import java.util.function.UnaryOperator;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import net.ladenthin.llama.value.ChatMessage;
-import net.ladenthin.llama.value.ToolCall;
 import net.ladenthin.llama.value.ToolDefinition;
 import org.jspecify.annotations.Nullable;
 
@@ -77,6 +79,15 @@ import org.jspecify.annotations.Nullable;
 public final class ChatRequest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Reads a tool's parameter schema. FAIL_ON_TRAILING_TOKENS makes a string holding more than one
+    // JSON value fail instead of being truncated to its first value without a word -- the same reason
+    // JsonParameters reads with it.
+    private static final ObjectReader SCHEMA_READER =
+            MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
+    // Longest part of a rejected schema the exception message quotes, as JsonParameters does.
+    private static final int REJECTED_SCHEMA_EXCERPT = 80;
     private static final ParameterJsonSerializer MESSAGE_SERIALIZER = new ParameterJsonSerializer();
 
     /**
@@ -174,10 +185,19 @@ public final class ChatRequest {
     /**
      * Returns a new request with {@code tool} added to the tool registry.
      *
+     * <p>The tool's parameter schema is checked here, not in the native server: it must be exactly
+     * one well-formed JSON value. An empty or blank schema, unparseable text, or a value followed by
+     * more text is refused, because llama.cpp would reject it only at request time with a message
+     * naming neither the tool nor the cause. A tool without parameters declares
+     * {@code {"type":"object","properties":{}}}.
+     *
      * @param tool the tool to expose to the model
      * @return a new request with the appended tool; this request is unchanged
+     * @throws IllegalArgumentException if the tool's parameter schema is not exactly one well-formed
+     *     JSON value; the message names the tool
      */
     public ChatRequest appendTool(ToolDefinition tool) {
+        parseSchemaOrThrow(tool);
         List<ToolDefinition> next = new ArrayList<ToolDefinition>(tools.size() + 1);
         next.addAll(tools);
         next.add(tool);
@@ -296,32 +316,14 @@ public final class ChatRequest {
     /**
      * Build the OAI-style {@code messages} array as a JSON string. Each entry carries
      * role and content; assistant tool-call turns add a {@code tool_calls} array; tool-
-     * result turns add a {@code tool_call_id} field.
+     * result turns add a {@code tool_call_id} field. Empty or blank tool-call arguments are
+     * written as {@code {}}, because chat templates that take object arguments parse the
+     * history's arguments as JSON and an empty string would fail the whole request.
      *
      * @return the JSON array as a string
      */
     public String buildMessagesJson() {
-        ArrayNode arr = MESSAGE_SERIALIZER.buildMessages(messages);
-        for (int i = 0; i < messages.size(); i++) {
-            ChatMessage m = messages.get(i);
-            ObjectNode obj = (ObjectNode) arr.get(i);
-            m.getToolCallId().ifPresent(id -> obj.put("tool_call_id", id));
-            if (!m.getToolCalls().isEmpty()) {
-                ArrayNode tc = MAPPER.createArrayNode();
-                for (ToolCall call : m.getToolCalls()) {
-                    ObjectNode entry = MAPPER.createObjectNode();
-                    entry.put("id", call.getId());
-                    entry.put("type", "function");
-                    ObjectNode fn = MAPPER.createObjectNode();
-                    fn.put("name", call.getName());
-                    fn.put("arguments", call.getArgumentsJson());
-                    entry.set("function", fn);
-                    tc.add(entry);
-                }
-                obj.set("tool_calls", tc);
-            }
-        }
-        return arr.toString();
+        return MESSAGE_SERIALIZER.buildMessages(messages).toString();
     }
 
     /**
@@ -338,15 +340,42 @@ public final class ChatRequest {
             ObjectNode fn = MAPPER.createObjectNode();
             fn.put("name", t.getName());
             fn.put("description", t.getDescription());
-            try {
-                fn.set("parameters", MAPPER.readTree(t.getParametersSchemaJson()));
-            } catch (IOException e) {
-                fn.put("parameters", t.getParametersSchemaJson());
-            }
+            // appendTool already refused a schema that does not parse, so this cannot throw here.
+            fn.set("parameters", parseSchemaOrThrow(t));
             entry.set("function", fn);
             arr.add(entry);
         }
         return Optional.of(arr.toString());
+    }
+
+    /**
+     * Parse a tool's parameter schema, refusing anything that is not exactly one well-formed JSON
+     * value.
+     *
+     * @throws IllegalArgumentException naming the tool, with a bounded excerpt of the schema
+     */
+    private static JsonNode parseSchemaOrThrow(ToolDefinition tool) {
+        String schema = tool.getParametersSchemaJson();
+        final JsonNode node;
+        try {
+            node = SCHEMA_READER.readTree(schema);
+        } catch (IOException e) {
+            throw rejectedSchema(tool.getName(), schema, e);
+        }
+        // For empty or blank text Jackson returns MissingNode instead of throwing.
+        if (node.isMissingNode()) {
+            throw rejectedSchema(tool.getName(), schema, null);
+        }
+        return node;
+    }
+
+    private static IllegalArgumentException rejectedSchema(String name, String schema, @Nullable IOException cause) {
+        String excerpt = schema.length() > REJECTED_SCHEMA_EXCERPT
+                ? schema.substring(0, REJECTED_SCHEMA_EXCERPT) + "..."
+                : schema;
+        return new IllegalArgumentException(
+                "tool '" + name + "': parameters must be exactly one well-formed JSON value, but was: " + excerpt,
+                cause);
     }
 
     /**

@@ -217,6 +217,7 @@ public class MultimodalIntegrationTest {
     @Timeout(value = 240_000, unit = TimeUnit.MILLISECONDS)
     @Test
     public void imageBytesAffectTheAnswer() throws Exception {
+        ModelAssumptions.assumeTrainedVisionModel(model); // naming a colour needs a trained model
         String red = identifyColor(RED_PNG);
         String blue = identifyColor(BLUE_PNG);
         assertTrue(red.contains("red"), "red image must be identified as red; got: " + red);
@@ -249,6 +250,36 @@ public class MultimodalIntegrationTest {
         assertTrue(
                 secondReply.trim().length() > 0,
                 "text-only call after multimodal must still produce tokens; got: \"" + secondReply + "\"");
+    }
+
+    /**
+     * llama.cpp's raw schema takes an image as {@code "prompt": {"prompt_string": "... <marker> ...",
+     * "multimodal_data": ["<base64>"]}}, with the server's media marker where the image goes. The raw
+     * completion paths tokenized that object without the projector and refused it with "model does not
+     * support multimodal requests" although one was loaded.
+     */
+    @Timeout(value = 240_000, unit = TimeUnit.MILLISECONDS)
+    @Test
+    public void aRawCompletionTakesTheMultimodalPromptObject() throws Exception {
+        String marker = model.getModelMeta().getMediaMarker();
+        assertFalse(marker.isEmpty(), "a vision model must report its media marker");
+        int textTokens = MAPPER.readTree(
+                        model.handleCompletionsOai("{\"prompt\":\"Describe: \",\"max_tokens\":1,\"temperature\":0}"))
+                .path("usage")
+                .path("prompt_tokens")
+                .asInt();
+        com.fasterxml.jackson.databind.node.ObjectNode request = MAPPER.createObjectNode();
+        request.putObject("prompt")
+                .put("prompt_string", "Describe: " + marker + " in one word:")
+                .putArray("multimodal_data")
+                .add(Base64.getEncoder().encodeToString(RED_PNG));
+        request.put("max_tokens", 1).put("temperature", 0);
+
+        JsonNode answer = MAPPER.readTree(model.handleCompletionsOai(request.toString()));
+
+        assertTrue(
+                answer.path("usage").path("prompt_tokens").asInt() > textTokens,
+                "the image must add its embeddings to the prompt; got: " + answer);
     }
 
     private static String identifyColor(byte[] png) {

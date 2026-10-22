@@ -78,10 +78,12 @@ each vendor publishes next to the file.)* Still open, each with the reason:
       measured hash so it can be pinned after a check on a trusted machine instead of costing another
       run; and the CUDA archive names come from the manifest (`relative_path`) instead of upstream's
       hand-written list, whose `cuda_crt 13.4.59` was not the `cuda_crt` the newest manifest hashes.
-- [ ] **The oneAPI Windows installer has no checksum endpoint** Intel publishes next to the file
-      (`registrationcenter-download.intel.com/.../intel-deep-learning-essentials-2025.3.3.18_offline.exe`);
-      pinning needs one download of the 1.6 GB installer on a machine that can reach it, then
-      `Get-FileHash` into a `ONEAPI_INSTALLER_SHA256` check like the Vulkan one.
+- [ ] **The oneAPI installers have no checksum endpoint** Intel publishes next to the files (since the b11800
+      bump both SYCL jobs take upstream's: Deep Learning Essentials 2026.1.4 and oneDNN 2026.0.2 for Linux
+      and Windows, `ONEAPI_DLE_URL` / `ONEAPI_ONEDNN_URL` in `publish.yml`); pinning needs one download of
+      each installer on a machine that can reach `registrationcenter-download.intel.com`, then `sha256sum` /
+      `Get-FileHash` into a check like the Vulkan one. The Level Zero debs and SDK zip come from a GitHub
+      release and could be hashed the same way.
 - [ ] **ROCm wheels come from a moving index** (`stable.repo.amd.com/rocm/whl-next/`, version-pinned
       with `==` but not hashed): `pip install --require-hashes` needs a requirements file with the
       hash of every wheel of `rocm[libraries,devel]`, which only a machine that can download the
@@ -216,9 +218,13 @@ only under that environment's rules -- never a step of `package`, which runs on 
 *(The code side landed 2026-10-15: `.github/sign-windows-natives.sh` (jsign 7.2 pinned by SHA-256,
 `--storetype ESIGNER`, every `Windows/*/*/*.dll`, `signed=yes` afterwards; measured with a real DLL
 and dummy credentials: the options are accepted and the run fails at SSL.com's authentication), the
-job `sign-windows-natives` (environment `maven-central`, re-uploads the ten Windows artifacts with
-`overwrite: true`, `check-natives.py` holds the uploads to the Windows rows of `natives.csv`),
-`package` waiting for it with a skip-tolerant `if`, `--require-signed` in `package` and both publish
+job `sign-windows-natives` (environment `maven-central` only when signing, else the unprotected
+`unsigned`; re-uploads the ten Windows artifacts with `overwrite: true`, `check-natives.py` holds
+the uploads to the Windows rows of `natives.csv`), `package` waiting for it -- the job runs on every
+run and is never `if:`-skipped, because GitHub applies a skip to the whole dependency chain behind
+the skipped job past any condition in between, which is how run 38870889665 (attempt 2) ended
+"success" with every job behind `package` skipped; `check-natives.py` refuses a job-level `if:` on
+it now --, `--require-signed` in `package` and both publish
 jobs whenever `SIGN_WINDOWS` is on, `pe_signed()` + `signature_violations()` in
 `verify-native-deps.py` with unit tests; CLAUDE.md "Code signing of the Windows DLLs", README.
 Unexercised until the certificate exists.)*
@@ -258,32 +264,14 @@ them to ggml's `if (NOT MSVC)` block). All 14 x86 modules were measured on one G
 and 6 of 8 aarch64 ones on a Graviton 4 -- before that, no module had ever been *chosen* on hardware
 the project could inspect.
 
-**Where it sticks, in the order that matters for a consumer:**
-
-1. **The library jar is not self-contained** (item 1 below). Java runs in containers, and the usual
-   slim base images have no `libgomp`; the jar then fails to load at all. Measured, decided, not yet
-   changed.
-2. **"A module that cannot help is skipped" holds for Vulkan and breaks for the other two**
-   (items 2 and 3): CUDA on an incompatible driver `abort()`s the JVM in *every* configuration,
-   OpenVINO on a CPU-only host takes over and runs 172x slower. The premise the whole additive design
-   rests on is therefore conditional, and that was unknown until a module was actually used.
-3. **Nothing behind `package` has ever run on the modular natives.** `package` was red until the
-   Windows OpenVINO module jar was unblocked, so the smoke-set assembly, `smoke-natives-jars.sh` with
-   all 23 jars on classpath *and* module path, the four `smoke-natives` rows, the macOS smoke, the
-   agent smoke, the bytecode gate and `verify-native-deps.py` over all 23 jars have never executed
-   together. **This is what the next Publish run is for.**
-
-**So the next CI run should be the current `main`, unchanged.** It is the first opportunity to see
-everything behind `package`, and bundling the decided changes into it would confound the result: a red
-run would not say whether the pipeline or the change is at fault. Expect several rounds there -- a
-stage that has never run is unlikely to pass first time -- and note that the `windows-x86-64` smoke
-row draws the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it
-an Intel runner.
-
-**The batch for the run after that**, assembled while the first one runs: `GGML_OPENMP=OFF` plus
-`-static-libstdc++ -static-libgcc` on Linux and s390x with the dependency allowlist inverted, the
-explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
-point (item 5). These are independent of each other and each is verifiable in the same run.
+**What stuck after the first runs, and where it went** (kept so it is not re-derived): the library
+jar was not self-contained (`libgomp` missing on slim images) -- Linux builds with `GGML_OPENMP=OFF`
+now and `verify-native-deps.py` holds the absence, while `libstdc++`/`libgcc_s` stay dynamic on
+purpose (CLAUDE.md "Windows natives", the Linux OpenMP paragraph); CUDA aborted the JVM on an old
+driver -- the explicit `CMAKE_CUDA_ARCHITECTURES` fixed it (T4 measured); OpenVINO on a CPU-only host
+took over and ran 172x slower -- it is opt-in (`LlamaLoader.OPT_IN_BACKENDS`); nothing behind
+`package` had ever run -- it has, in the two green runs above; and the shipped diagnostic entry point
+is `net.ladenthin.llama.Diagnose`. The rounds that got there follow.
 
 ### Round 0 found one defect, and it was mine
 
@@ -507,6 +495,127 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ## Open — jllama-specific
 
+### Open points from the bug hunt of 2026-10-16 … 19 (details: `BUGHUNT-FOUND.md`)
+
+Everything the bug hunt left open, so nothing is lost when the session ends. The ledger entry
+named in each item holds the analysis, the upstream references (b11639) and the reproduction;
+delete an item here when it is done.
+
+**Open suspicions without a finding id**: none left -- the last ones, numbered (1) to (16) while they
+were open (comments and ledger entries still cite those numbers), were fixed as F181 to F186 on
+2026-10-20. The local measurement run of that brief
+(`BUGHUNT-MEASUREMENTS.md`, M1 … M10, Windows) confirmed all of them with the real models and found
+four more, fixed as F187 … F190. It left limits that are decided and documented, recorded here so
+they are not rediscovered:
+
+- **`--lora-scaled` / `--control-vector-scaled` cannot carry an absolute Windows path** (F187).
+  Upstream reads `FNAME:SCALE,...` and `string_split` splits on *every* colon, so `X:\a.gguf:1.0`
+  is three parts. `ModelParameters` refuses such a path with the reason and the two ways out (a
+  relative path, or load unscaled and call `LlamaModel.setLoraAdapter`). A candidate for the upstream
+  inventory below (split on the last colon); nothing to do downstream.
+- **The embedded `OpenAiCompatServer(LlamaModel, config)` reports the model's loaded name, not
+  `config.getModelId()`** (F189). An already-loaded model cannot take `--alias` any more; the Javadoc
+  of `OpenAiServerConfig.getModelId()` tells an embedding caller to load with
+  `ModelParameters.setAlias(…)`. Rewriting the `model` field of every answer was rejected (it would
+  claim something the engine did not do, and attach-mode `NativeServer` could not follow it).
+- **`OpenAiCompatServer` cannot unload a model**: an Ollama `/api/generate` with `keep_alive: 0`
+  and no prompt gets the "load" answer (F205), the model stays resident (one model per server).
+  Ollama itself unloads there and answers `done_reason "unload"`; this server does not claim an
+  unload it did not do.
+
+### Open points from the branch review of 2026-10-20/21 (details: `BUGHUNT-FOUND.md`)
+
+The review of the bug-hunt branch confirmed its findings; the fixes are F213 … F267 and the dated
+addenda in the ledger (F250 … F267 closed every open point of this list on 2026-10-21, before
+6.0.0, by the owner's decision). What is still open, or what the reviewers raised outside the
+findings' scope, is listed here; the ledger entry in brackets holds the analysis. Delete an item when
+it is done.
+
+**Anthropic Messages**
+- **Upstream candidate:** `stop_reason` `stop_sequence` for a matched stop word (F221); recorded in
+  the upstream inventory ("Upstream submissions", last bullet) for the day after the release.
+
+**Decided deviations, recorded so they are not rediscovered** (no action): unknown part types inside
+a Responses `message` are not refused, because the same branch carries assistant `output_text` /
+`refusal` parts (F224); upstream's stricter Responses role checks are not adopted (F228); a boolean or
+string rerank `top_n` and one outside the `int` range keep every result, where upstream converts
+`true` to 1 and wraps the cast (F230); a `documents` of the wrong type stays `400` rather than
+falling back to `texts` (F231); `chat_template_kwargs` keeps its string fallback, because a string
+literal is a valid kwarg value while a tool schema must be an object (F233); a stop issued before
+the serving thread has entered `jllama_rpc_server_serve` cannot be told from "nothing running" and
+stays a no-op -- callers repeat the stop until the serve returns, as `RpcServer` does (F241).
+
+**Tests**
+- **The model-backed rerank tests were not run locally** (no reranker model in the sandbox):
+  `OpenAiServerRerankIntegrationTest` covers F230 … F232 end to end only in CI, and F177's caveat that
+  its end-to-end case had not run locally can go once a CI run with the jina reranker shows it green.
+- **Proven only by the first CI run with the real models** (the closing pass ran each touched class
+  against the random two-layer test model, whose 128-token context and missing special tokens cannot
+  carry them): the text assertion F250 added to
+  `ChatAdvancedTest#testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag` can
+  only be red with Qwen3, whose `</think>` is a special token -- the C++ case
+  `CApiReasoningBudget.ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText` pins the
+  behaviour on every platform; `ChatScenarioTest#testChatCompleteMultiTurnThreeTurns` and the
+  `Session` tests ran locally only with a 4096-token variant of the test model;
+  `MultimodalIntegrationTest#imageBytesAffectTheAnswer` needs SmolVLM; and whether
+  `llama-atmosphere-agent` and `llama-langchain4j` ever send `OpenAiCompatServer` a `tool_choice`
+  object of a type other than `function` or a number as a string (F254, F253 refuse both now) --
+  their sources send string `tool_choice` values only, their integration jobs are the proof.
+- **`ErrorHandlingTest#testSaveSlotWithoutSlotSavePathIsRefused` is not hermetic** (F251): it checks
+  that `slot.bin` is absent from the working directory, so a file left there by a run of an older
+  library fails it. Deterministic against the fixed library; a temporary working directory, or
+  asserting the native answer alone, would make it independent of what lies around.
+- **A custom `OpenAiBackend` without `mediaMarker()` answers `/api/generate` with images `500`**
+  (F259): the default method throws `UnsupportedOperationException`, which the route does not map to
+  `501` as `countTokens` is. `LlamaModelBackend` implements it, so the shipped backend is not
+  affected; a `501` with the reason would match the other optional capabilities.
+
+### After the llama.cpp bump to b11800 (2026-10-21): what the range offers and is not wired yet
+
+The bump itself is done (b11639 -> b11760 -> b11761 -> b11799 -> b11800, b11803 on 2026-10-21: Flint, SenseNova
+U1 and a jinja fix, nothing to wire; b11809 on 2026-10-22: LoRA on prism.hadamard folded weights, an OpenCL
+ARGMAX kernel, nothing to wire; b11814 on 2026-10-22: the `tokenizer.ggml.clean_spaces` key and the Pixtral
+pre-tokenizer change, nothing to wire; b11815 on 2026-10-22: a SYCL CONV_2D layout fix, nothing to wire; patches `0016` and `0019` dropped, `0007` refreshed;
+`docs/history/llama-cpp-breaking-changes.md` has the rows). Four things the range brings that this
+library does not expose, each a decision rather than an omission:
+
+- **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
+  `SERVER_TASK_TYPE_TTS` on a chat model loaded with a TTS mmproj and streams `server_task_result_tts` chunks
+  (`audio`, `sample_rate`, `final`; WAV or PCM per `out_type`). `NativeServer` serves it already (classic and
+  attach mode, the route is in `0007`'s common table). A `LlamaModel.tts(...)` over the C API and a
+  `/v1/audio/speech`-shaped route on `OpenAiCompatServer` would make it reachable without the native
+  frontend; `TextToSpeech` (its own context over `mtmd_helper::gen_audio`) stays the one-shot path. Not before
+  the release.
+- **Realtime transcription** (`/v1/realtime`, WebSocket, b11780, #30636: `mtmd_audio_stream`,
+  `SERVER_TASK_TYPE_TRANSCRIBE_RT`, `SERVER_CONTROL_ACTION_AUDIO_*`). Served by `NativeServer`; the JDK's
+  `com.sun.net.httpserver` has no WebSocket, so the Java transport cannot follow without a dependency. Not
+  planned.
+- **`server_context_meta::has_cap_chat` / `has_cap_tts` / `has_audio_stream`** are not in the meta JSON
+  (`ModelMeta` shows `"audio"` among the output modalities for a TTS-capable model, which covers the second).
+  Add a `capabilities` object when the first item lands; `value.*` is PIT-gated at 100 %, so each getter
+  needs its test.
+- **`--connect` / `--connect-code`** (b11744, #28277): the server spawns the separate `llama-connect`
+  binary (WebRTC tunnel to a browser outside the LAN). `LLAMA_CONNECT` stays OFF (a prebuilt download at
+  configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
+  flag answers with upstream's "not available" message. No plan to bundle a binary.
+
+**The SYCL jobs follow upstream's installers since this bump** (owner's ask, 2026-10-21): Deep Learning
+Essentials 2026.1.4 + oneDNN 2026.0.2 offline installers on both OSes (upstream since b11654, #30131), pinned by
+URL under `KEEP IN SYNC WITH UPSTREAM`, instead of Intel's unpinned apt packages (Linux) and the 2025.3.3 bundle
+(Windows); and the Level Zero loader/SDK upstream's jobs have carried since #21597 / #29273. **That last part is
+a change to the shipped modules, not only to the toolchain:** the modules built so far never found a Level Zero
+loader (the package job of run 38870889665 listed none among their imports), so from this bump on
+`libggml-sycl.so` imports `libze_loader.so.1` and `ggml-sycl.dll` imports `ze_loader.dll` (Intel's GPU driver
+ships both) and both carry ggml-sycl's Level Zero allocation path; and the Windows module moves from the oneAPI
+2025.3 runtime (`sycl8.dll`, `mkl_sycl_blas.5.dll`) to 2026.1 (`sycl9.dll`, `mkl_sycl_blas.6.dll`). CHANGELOG
+and the README classifier table say so. **Unverified here** -- Intel's download host answers this sandbox with
+403, and no job runs locally -- so the first Publish run proves it; what to read there: both installers download
+and install silently, `setvars.sh` / `setvars.bat` exist, the configure prints `Level Zero loader found` and no
+`oneDNN not found` FATAL_ERROR, and the package job's dependency lines show `libze_loader.so.1` / `ze_loader.dll`
+and `sycl9.dll` (`verify-native-deps.py` holds a GPU directory to a denylist only, so a vendor loader passes). The OpenSSL half of upstream's change (b11676, #30456: the
+Linux job builds against `libssl-dev`) does not apply: the SYCL jars are module-only builds without
+cpp-httplib, and a shipped `libjllama` must not import a dynamic `libssl` anyway.
+
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
 **Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and
@@ -522,8 +631,9 @@ from 5.1 would look:
   load with `UnsatisfiedLinkError`;
 - `slf4j-simple` instead of `logback-classic` as the shipped binding; the ROCm jars on ROCm 10; the
   `LazyMode` rename and the `enableFlashAttn()` rework; twelve dead builder methods removed;
-  `NativeServer` on port 9931 (llama.cpp's new default) while `OpenAiServerConfig` stays on 8080
-  (open item below); the floors Windows 10, macOS 15 and glibc 2.28.
+  both servers on port 9931 (llama.cpp's new default; `OpenAiServerConfig` moved from 8080 on
+  2026-10-21); slot files named inside `--slot-save-path`; the floors Windows 10, macOS 15 and
+  glibc 2.28.
 
 Semantic versioning says that is **6.0.0**, not 5.2.0, and the owner decided so on 2026-10-15; the
 timing of the tag stays the owner's. What the release needs, in order:
@@ -531,16 +641,19 @@ timing of the tag stays the owner's. What the release needs, in order:
 1. **Round 0 green through `package` and the smokes** -- the modular natives have never passed the
    stages that assemble and launch the published jars (top of this file); a release before that
    ships jars CI has not loaded, which the smoke jobs exist to prevent.
-2. **An "Upgrading from 5.1" section at the top of the release's changelog entry**: the dependency
-   change (`llama-platform` as `pom`, or the classifier jars by name, plus a GPU module jar where
-   wanted), the logging binding, the port, the floors, the renamed and removed builder methods -- one
-   place, written for someone who reads nothing else. The `[Unreleased]` bullets stay as the record.
+2. ~~**An "Upgrading from 5.1" section at the top of the release's changelog entry**~~ -- **done**
+   (`CHANGELOG.md`, `[Unreleased]`, "Upgrading from 5.1", 18 items, completed 2026-10-21 with the
+   closing pass): the dependency change, the logging binding, the port, the floors, the renamed and
+   removed builder methods, the requests refused instead of dropped, the slot file names, the loader
+   and the stream envelope -- one place, written for someone who reads nothing else. The
+   `[Unreleased]` bullets stay as the record. Keep it current until the tag: a breaking change that
+   lands later needs its item there too.
 3. **The version in every place the bump touches**: `mvn versions:set` for the five reactor poms,
    then by hand the two READMEs' snippets, `examples/jbang/Chat.java`, `examples/server/pom.xml`,
    `llama-atmosphere-agent/pom.xml` and its READMEs, the Android and Kotlin READMEs (CLAUDE.md
-   "Version bump" lists them; `check-natives.py` fails on the ones it can see), then the CHANGELOG
-   heading and footer links, which `../workspace/workflows/release-process.md` names as the
-   most-missed step.
+   "Version bump" lists them; `check-natives.py` fails on the ones it can see), the supported-versions
+   table of `SECURITY.md` (it names `5.x` as the supported line), then the CHANGELOG heading and
+   footer links, which `../workspace/workflows/release-process.md` names as the most-missed step.
 4. After the release: the upstream submissions (policy, below) and the `main` bump back to a
    `-SNAPSHOT` of the next version.
 
@@ -1151,12 +1264,14 @@ three different subsystems and a combined report gets triaged as one.
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
 
-#### ~~A fifth: the ARM fp16 conversion~~ -- FILED as llama.cpp#30505
+#### ~~A fifth: the ARM fp16 conversion~~ -- MERGED as llama.cpp#30505 (b11761), patch 0019 dropped
 
-**Done 2026-10-14.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
-one commit, `+13/-3` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
-`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`; the full measurement
-record is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
+**Done 2026-10-14, merged 2026-10-20.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
+one commit, `+13/-3` in `ggml/src/ggml-cpu/simd-mappings.h`, merged as `119f68d7d` = **b11761** (the code lines
+as submitted, the comments shortened by the maintainers). Carried downstream until then as
+`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`, dropped at the b11761 bump
+(`docs/history/dropped-llama-patches.md`); the full measurement record is
+[`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
 
 **Rebased the same day, at the maintainer's request, and the rebase changed the change.** `#30343`
 (`685f70894`) landed 26 minutes before that request and takes back half of `#30270`: F16C keeps
@@ -1288,6 +1403,19 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   own CPU picks. Worth an issue with the table from `docs/local-test-plan.md`; **no patch here** --
   overriding upstream's scoring downstream would be a maintenance burden with no end.
 
+- **A fourth, measured 2026-10-19 (F187): `--lora-scaled` / `--control-vector-scaled` cannot name an
+  absolute Windows path.** `common/arg.cpp` splits each `FNAME:SCALE` item with `string_split(item, ':')`
+  and demands exactly two parts, so `X:\models\a.gguf:1.0` is rejected as three. Measured against the
+  real parser in `BUGHUNT-MEASUREMENTS.md` M6 (of four argv forms only a relative path and plain
+  `--lora` were accepted). The obvious fix is to split on the **last** colon; small enough for a PR,
+  so draft it then. Downstream `ModelParameters` refuses such a path with the reason meanwhile.
+
+- **From the branch review of 2026-10-20 (F221): upstream's Anthropic answer names a matched stop
+  word in `stop_sequence` but says `stop_reason` `end_turn`**, where the Messages API specifies
+  `stop_reason` `stop_sequence`. The fix is one line in each of the two `to_json_anthropic*` functions
+  of `tools/server/server-task.cpp` plus an assertion in `test_compat_anthropic.py`; downstream
+  `AnthropicApiSupport` corrects it meanwhile. Small enough for a PR, so draft it then.
+
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
 
@@ -1352,11 +1480,12 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   looks the binaries up on `PATH`, which a JVM process frequently does not have them on.
 
   What is still missing is the content part. Upstream's wire type is
-  `{"type":"input_video","input_video":{"data":"<base64>"}}`, handled in
-  `oaicompat_chat_params_parse` and gated on `allow_video = mtmd_helper_support_video(mctx)`. Note it
-  calls `handle_media(..., accept_base64_uri = false)`, i.e. **raw base64 only** — unlike `image_url`,
-  it will not take a `data:` URI, so `ContentPart.videoFile(Path)` must emit the bare base64 payload,
-  not the `data:video/mp4;base64,...` form the image factories build.
+  `{"type":"input_video","input_video":{"data":"<base64>"}}` (`video_url` with a `url` is accepted as
+  an alias), handled in `oaicompat_chat_params_parse` and gated on
+  `allow_video = mtmd_helper_support_video(mctx)`. Since b11803 it goes through the same
+  `handle_media(out_files, url, media_path)` as `image_url` (the `accept_base64_uri = false` of the
+  first version is gone), so raw base64, a `data:video/mp4;base64,...` URI and an HTTP(S) URL are all
+  taken; `ContentPart.videoFile(Path)` can emit the `data:` form the image factories build.
 
   (An earlier draft of this entry suggested smuggling video through
   `ContentPart.imageBytes(bytes, "video/mp4")`, on the reasoning that `mtmd_helper_bitmap_init_from_buf`
@@ -1384,7 +1513,7 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
 
 - **Expose `--spec-draft-backend-sampling` toggle via `ModelParameters.setSpecDraftBackendSampling(boolean)`.** Added in b9437 (env `LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING`). Backend sampling for the speculative draft is enabled by default upstream but auto-disabled on `LLAMA_SPLIT_MODE_TENSOR` setups; an explicit Java-side setter lets callers force-disable it for benchmarking or for backends with sampler bugs. Speculative-decoding power users.
 
-- **Expose runtime reasoning control via `InferenceParameters.setReasoningControl(boolean)` + `LlamaModel.endReasoning(...)`.** Added in b9444–b9490: new `common_params_sampling::reasoning_control` flag arms the budget sampler so reasoning can be ended at runtime, and new `common_sampler_reasoning_budget_force(common_sampler *)` triggers the end-of-thinking token injection on the next sample. Upstream also adds a `POST /v1/chat/completions/control` server endpoint accepting `{"id": "...", "action": "reasoning_end"}`. Java mapping would be: (a) `InferenceParameters.setReasoningControl(boolean)` arms the sampler on the inference run, (b) a new `LlamaModel.endReasoning(int slotId)` (or per-streaming-task-id) JNI method calls the upstream `common_sampler_reasoning_budget_force` against the slot's sampler. Useful for interactive UIs that want a "skip thinking and answer now" button. Relevant only for reasoning-trained models (DeepSeek-R1, Qwen3-Thinking, GPT-OSS-Reasoner, etc.).
+- **Expose runtime reasoning control via `InferenceParameters.setReasoningControl(boolean)` + `LlamaModel.endReasoning(...)`.** (F252, 2026-10-21, added the budget's tag fields to the builder but deliberately not `reasoning_control`: the flag only arms the sampler for the `reasoning_end` action below, so a setter without that action would do nothing. Both land together or not at all.) Added in b9444–b9490: new `common_params_sampling::reasoning_control` flag arms the budget sampler so reasoning can be ended at runtime, and new `common_sampler_reasoning_budget_force(common_sampler *)` triggers the end-of-thinking token injection on the next sample. Upstream also adds a `POST /v1/chat/completions/control` server endpoint accepting `{"id": "...", "action": "reasoning_end"}`. Java mapping would be: (a) `InferenceParameters.setReasoningControl(boolean)` arms the sampler on the inference run, (b) a new `LlamaModel.endReasoning(int slotId)` (or per-streaming-task-id) JNI method calls the upstream `common_sampler_reasoning_budget_force` against the slot's sampler. Useful for interactive UIs that want a "skip thinking and answer now" button. Relevant only for reasoning-trained models (DeepSeek-R1, Qwen3-Thinking, GPT-OSS-Reasoner, etc.).
 
 - **Expose `llama_context_params::n_outputs_max` via `ModelParameters.setMaxOutputs(int)`.** Added in b9444–b9490 (default `-1` = derived from `n_batch`). Caps the number of output slots allocated per context; relevant for memory-constrained setups that always run with `logits_all=false` and want to prevent over-allocation when `n_batch` is large. Trivial JNI plumbing (one `cparams` field passthrough); add when a user reports OOM on context creation tied to output slot pre-allocation.
 
@@ -1492,7 +1621,7 @@ flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test
   matters. Recorded with the reasoning so this is not reopened as an oversight.
 
 - **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
-  expects (`input_video`, raw base64, not a `data:` URI).
+  expects (`input_video`; raw base64, a `data:` URI or an HTTP(S) URL, as for images since b11803).
 
 ## Open — cross-cutting (slice for this repo)
 
@@ -1551,32 +1680,11 @@ SME**, which Graviton 4 lacks and no current instance provides. EC2 Mac also bil
 minimum** (dedicated host), so it is the expensive way to answer nothing.
 
 
-## Handed over from the modular-natives session (2026-10-11) -- read the first item before merging #507
+## Handed over from the modular-natives session (2026-10-11)
 
 Appended on `local/cpu-module-isolation-test` by the session that shipped the modular natives
-(#504 to #506) and watched their two full runs (38065017595, 38069595101). Nothing above was moved.
-Items `main` already carries through #506 are named, not repeated.
-
-### Before #507 merges: two `0018` patches for the same hunk
-
-`main` (cfc10fd2, #506) carries `llama/patches/0018-ggml-amx-free-the-aligned-buffer.patch`; this
-branch carries `llama/patches/0018-ggml-amx-aligned-free.patch`. Both replace the same line of
-`ggml/src/ggml-cpu/amx/amx.cpp` (main's adds a four-line comment above the call, this one is bare).
-After a merge both files exist, the applier takes them in filename order, the first applies, the
-second no longer finds its `-` line and aborts the configure with "does not apply cleanly" -- every
-native build job red, on every platform. `git merge-tree main HEAD` (2026-10-11) reports a textual
-conflict in `TODO.md` **only**; the two patch files, CLAUDE.md (two `0018` rows in the patch table)
-and CHANGELOG.md (two "Fixed" bullets for the same defect) merge *silently*. Resolve in the merge
-commit: keep exactly one patch file (the comment is the only difference), one patch-table row and
-one CHANGELOG bullet, and keep this branch's `llama/cmake/check-aligned-free-pairing.cmake` guard
-either way (main has none). For the `TODO.md` conflict: take main's wording for the three places
-#506 touched -- a fifth "Modular natives -- follow-ups" item (the Windows ROCm job is the pipeline's
-critical path at 4:15 h and builds uncached), the corrected sccache sentence under "Upstream
-submissions" (the `-Xclang` that sccache 0.18.0 refuses comes from CMake's
-`Platform/Windows-Clang.cmake` runtime-library selection on every plain-clang Windows TU, not only
-from llama.cpp's `-fno-pch-timestamp`; CLAUDE.md "sccache on every Windows Ninja job but one" on
-main has the measurement) and the AMX bullet under "Needs a machine" -- and this branch's structure
-for everything else.
+(#504 to #506) and watched their two full runs (38065017595, 38069595101); merged as #507 with one
+`0018` patch and the `check-aligned-free-pairing.cmake` guard. What is still open from it:
 
 ### Open from that session, recorded nowhere else
 
@@ -1619,33 +1727,28 @@ for everything else.
   every probe "failed" until the fixtures were given a `#!/bin/sh` line. The first run of that probe
   reported all five layouts broken, including the one that demonstrably works in CI -- the harness,
   not the logic.
-- **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
-  `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
-  38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of
-  this file). Still unexercised after that: the smoke-set assembly (`package-smoke-sets.sh`),
-  `smoke-natives-jars.sh` (classes + all 23 natives jars on the classpath **and** the module path),
-  the bytecode gate and `verify-native-deps.py` over all 23 jars, the four `smoke-natives` rows
-  (loader line naming every module jar of the platform, the HTTPS round, the RPC smoke, the
-  bytecode gate over the set), `smoke-natives-macos`, `smoke-agent-linux`, and the publish jobs
-  attaching the Maven artifacts. Expect further rounds there; the `windows-x86-64` smoke row runs
-  on the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it an
-  Intel runner.
-- **The two server defaults disagree, by design or not -- owner's call.** Upstream #30159 (b11529)
-  moved llama-server's default port from 8080 to 9931, which `NativeServer.DEFAULT_PORT` follows
-  because it inherits the forwarded argv; `OpenAiServerConfig.DEFAULT_PORT` stayed 8080 as the
-  project's own constant. Raised 2026-10-09, never answered: align `OpenAiCompatServer` to 9931
-  (one constant, its tests, README) or keep the split and say so in the README.
 - **Maven plugins without a pinned version, and no `requirePluginVersions` enforcer rule** (all
   four repos; raised 2026-10-01, never answered). `clean`, `resources`, `install`, `deploy`, `site`
   and in places `compiler`/`jar` run at whatever version the Maven on the runner defaults to, which
   differs between CI and a local build (the parent's `<pluginManagement>` here covers the plugins
   more than one module uses, not these). `check-versions.py` would then also compare them across
   the siblings. One pull request per repo, warnings-only until all four have landed.
-- **`SECURITY.md` and `CONTRIBUTING.md` are the two per-repo files never compared.** Every other
-  file that was "probably the same" across the four repos is either in `shared-files.sha256`
-  byte-for-byte or as a `?repo` entry; these two were left out on 2026-10-01 as "differs per repo,
-  probably wanted, not checked". Diff them once and either add `?repo` entries or write down why
-  they differ.
+- ~~**`SECURITY.md` and `CONTRIBUTING.md` are the two per-repo files never compared.**~~ **Compared
+  on 2026-10-21 (with the repository name replaced by `{repo}`, as a `?repo` entry hashes): no two
+  of the four are equal, so no `?repo` entry is possible, and they differ for content, not for
+  wording alone.** `SECURITY.md`: the supported-versions table and the scope are per repository by
+  nature (`5.x` and the JNI layer here, `1.x` and the OpenCL kernels in BitcoinAddressFinder, the
+  `1.2.x` reactor line in srcmorph, one class in streambuffer); the shared part -- the private
+  advisory form, the mail address, 14 days to acknowledge, 30 to a remediation timeline, a 90-day
+  embargo -- says the same in four wordings. `CONTRIBUTING.md`: build commands, prerequisites and test
+  policy are per repository (CMake and natives here, the LMDB switch in BitcoinAddressFinder, PIT and
+  jcstress in streambuffer, the reactor in srcmorph); the PR workflow, the commit convention and the
+  conduct and licence paragraphs are shared in substance, again in different words. Making the shared
+  part byte-identical would need a split into a shared file and a per-repository one, which GitHub
+  does not read (it shows one `SECURITY.md` / `CONTRIBUTING.md`); a shared-files entry is therefore
+  not proposed. The comparison found this repository's copies stale and they were corrected
+  (Java 8 floor, JUnit Jupiter, the `llama/` paths, the hand-written `jllama.h`); the `5.x` row of
+  `SECURITY.md` changes with the release (release item 3 above).
 - **SonarCloud reported "1 new issue" on #486 and nobody looked.** The sandbox's proxy answers 403
   for sonarcloud.io, so the finding was never read; the quality gate has passed since, so it is
   low, but it is unread.

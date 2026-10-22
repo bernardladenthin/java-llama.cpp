@@ -5,7 +5,9 @@
 package net.ladenthin.llama.parameters;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,6 +43,25 @@ class TrainingParametersTest {
         assertThat(node.get("n_batch").asInt(), is(0));
         // training_file is omitted when only inline text is given.
         assertThat(node.has("training_file"), is(false));
+    }
+
+    @Test
+    void nonAsciiTextIsEscapedSoTheJsonCrossesJniIntact() throws Exception {
+        // The native trainer takes the JSON through GetStringUTFChars, which yields Modified UTF-8: a
+        // character outside the BMP (an emoji) becomes two 3-byte surrogates, which nlohmann rejects
+        // as "ill-formed UTF-8" -- the whole run failed with "invalid training config". Only ASCII
+        // survives Modified UTF-8 unchanged, so the JSON must carry everything else as \\u escapes.
+        String text = "Grüße \uD83D\uDE00 und 中文";
+        TrainingParameters parameters = TrainingParameters.builder()
+                .modelPath(Paths.get("base.gguf"))
+                .trainingText(text)
+                .outputPath(Paths.get("tuned.gguf"))
+                .build();
+
+        String jsonText = parameters.toJson();
+
+        assertThat(jsonText.chars().filter(c -> c > 0x7F).count(), is(0L));
+        assertThat(MAPPER.readTree(jsonText).get("training_text").asText(), is(text));
     }
 
     @Test
@@ -96,5 +117,58 @@ class TrainingParametersTest {
         assertThat(node.get("decay_epochs").floatValue(), is(3.0f));
         assertThat(node.get("weight_decay").floatValue(), is(0.01f));
         assertThat(node.get("val_split").floatValue(), is(0.2f));
+    }
+
+    private static TrainingParameters.TrainingParametersBuilder valid() {
+        return TrainingParameters.builder()
+                .modelPath(Paths.get("base.gguf"))
+                .trainingText("hello world")
+                .outputPath(Paths.get("tuned.gguf"));
+    }
+
+    /** epochs below 1 would train nothing and write the untouched model, a silent success. */
+    @Test
+    void lessThanOneEpochIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> valid().epochs(0).build().toJson());
+        assertThat(e.getMessage(), containsString("epochs"));
+    }
+
+    /** A held-out fraction outside [0, 1) leaves no training data, or a negative split. */
+    @Test
+    void validationSplitOutsideZeroToOneIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(1f).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(-0.1f).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(Float.NaN).build().toJson());
+    }
+
+    /** Exactly one corpus: with both set the native layer silently ignored trainingText. */
+    @Test
+    void bothOrNoCorpusIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().trainingFile(Paths.get("corpus.txt")).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().trainingText(null).build().toJson());
+    }
+
+    /** A missing path names the field instead of failing with a bare NullPointerException. */
+    @Test
+    void missingPathsNameTheField() {
+        NullPointerException model = assertThrows(
+                NullPointerException.class,
+                () -> valid().modelPath(null).build().toJson());
+        assertThat(model.getMessage(), is("modelPath"));
+        NullPointerException output = assertThrows(
+                NullPointerException.class,
+                () -> valid().outputPath(null).build().toJson());
+        assertThat(output.getMessage(), is("outputPath"));
     }
 }

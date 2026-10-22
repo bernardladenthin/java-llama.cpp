@@ -896,6 +896,193 @@ TEST(JniGuard, DoesNotThrowWithoutAnExceptionClass) {
 }
 
 // ============================================================
+// jni_utf8.hpp — message text to Java as standard UTF-8 (F181)
+//
+// ThrowNew and NewStringUTF read Modified UTF-8, where a 4-byte sequence is invalid input:
+// HotSpot mangles it, Android's CheckJNI aborts. An error message quotes paths and request text,
+// so it can hold any character. The mock records which path a message took and the bytes the
+// String(byte[], "UTF-8") constructor received.
+// ============================================================
+namespace {
+
+struct utf8_probe {
+    bool exception_pending = false;
+    int throw_new_calls = 0;
+    std::string throw_new_message;
+    int new_string_utf_calls = 0;
+    std::string new_string_utf_value;
+    std::string bytes;
+    std::string string_ctor_charset;
+    jobject thrown = nullptr;
+    jobject exception_ctor_message = nullptr;
+    jclass exception_ctor_class = nullptr;
+};
+
+utf8_probe g_utf8;
+
+jclass const kStringClass = reinterpret_cast<jclass>(0x5100);
+jmethodID const kStringCtor = reinterpret_cast<jmethodID>(0x5101);
+jmethodID const kExceptionCtor = reinterpret_cast<jmethodID>(0x5102);
+jbyteArray const kBytes = reinterpret_cast<jbyteArray>(0x5103);
+jstring const kCharsetName = reinterpret_cast<jstring>(0x5104);
+jstring const kDecoded = reinterpret_cast<jstring>(0x5105);
+jobject const kException = reinterpret_cast<jobject>(0x5106);
+jclass const kExceptionClass = reinterpret_cast<jclass>(0x5107);
+
+JNIEnv *make_utf8_env(JNIEnv_ &fake_env, JNINativeInterface_ &iface) {
+    g_utf8 = utf8_probe{};
+    iface = {};
+    iface.ExceptionCheck = [](JNIEnv *) -> jboolean { return g_utf8.exception_pending ? JNI_TRUE : JNI_FALSE; };
+    iface.ThrowNew = [](JNIEnv *, jclass, const char *msg) -> jint {
+        g_utf8.throw_new_calls++;
+        g_utf8.throw_new_message = msg != nullptr ? msg : "";
+        return 0;
+    };
+    iface.Throw = [](JNIEnv *, jthrowable t) -> jint {
+        g_utf8.thrown = t;
+        return 0;
+    };
+    iface.NewStringUTF = [](JNIEnv *, const char *utf) -> jstring {
+        g_utf8.new_string_utf_calls++;
+        g_utf8.new_string_utf_value = utf != nullptr ? utf : "";
+        return g_utf8.new_string_utf_value == "UTF-8" ? kCharsetName : kDecoded;
+    };
+    iface.FindClass = [](JNIEnv *, const char *name) -> jclass {
+        return std::string(name) == "java/lang/String" ? kStringClass : nullptr;
+    };
+    iface.GetMethodID = [](JNIEnv *, jclass cls, const char *name, const char *sig) -> jmethodID {
+        if (std::string(name) != "<init>") {
+            return nullptr;
+        }
+        if (cls == kStringClass && std::string(sig) == "([BLjava/lang/String;)V") {
+            return kStringCtor;
+        }
+        if (cls != kStringClass && std::string(sig) == "(Ljava/lang/String;)V") {
+            return kExceptionCtor;
+        }
+        return nullptr;
+    };
+    iface.NewByteArray = [](JNIEnv *, jsize) -> jbyteArray { return kBytes; };
+    iface.SetByteArrayRegion = [](JNIEnv *, jbyteArray, jsize, jsize len, const jbyte *buf) {
+        g_utf8.bytes.assign(reinterpret_cast<const char *>(buf), static_cast<size_t>(len));
+    };
+    iface.NewObjectV = [](JNIEnv *, jclass cls, jmethodID mid, va_list args) -> jobject {
+        if (mid == kStringCtor) {
+            EXPECT_EQ(va_arg(args, jobject), (jobject)kBytes);
+            EXPECT_EQ(va_arg(args, jobject), (jobject)kCharsetName);
+            g_utf8.string_ctor_charset = "UTF-8";
+            return (jobject)kDecoded;
+        }
+        if (mid == kExceptionCtor) {
+            g_utf8.exception_ctor_class = cls;
+            g_utf8.exception_ctor_message = va_arg(args, jobject);
+            return kException;
+        }
+        return nullptr;
+    };
+    iface.DeleteLocalRef = [](JNIEnv *, jobject) {};
+    fake_env = {};
+    fake_env.functions = &iface;
+    return &fake_env;
+}
+
+const char *const kEmojiMessage = "model not found: /models/\xF0\x9F\x98\x80.gguf"; // U+1F600
+
+} // namespace
+
+TEST(JniUtf8, AnAsciiMessageIsThrownWithThrowNew) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    throw_utf8_impl(env, kExceptionClass, "plain text");
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 1);
+    EXPECT_EQ(g_utf8.throw_new_message, "plain text");
+    EXPECT_EQ(g_utf8.thrown, nullptr);
+}
+
+// The defect: the 4-byte sequence reached ThrowNew, which reads it as Modified UTF-8.
+TEST(JniUtf8, AFourByteCharacterReachesTheExceptionAsStandardUtf8Bytes) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    throw_utf8_impl(env, kExceptionClass, kEmojiMessage);
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 0) << "ThrowNew got: " << g_utf8.throw_new_message;
+    EXPECT_EQ(g_utf8.bytes, kEmojiMessage);
+    EXPECT_EQ(g_utf8.string_ctor_charset, "UTF-8");
+    EXPECT_EQ(g_utf8.exception_ctor_class, kExceptionClass);
+    EXPECT_EQ(g_utf8.exception_ctor_message, (jobject)kDecoded);
+    EXPECT_EQ(g_utf8.thrown, kException);
+}
+
+// A pending Java exception is the more precise error, and the JNI spec forbids most calls while one
+// is pending: neither path may replace it, nor call FindClass/NewObject over it.
+TEST(JniUtf8, APendingExceptionIsLeftInPlaceOnBothPaths) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+    g_utf8.exception_pending = true;
+
+    throw_utf8_impl(env, kExceptionClass, "plain text");
+    throw_utf8_impl(env, kExceptionClass, kEmojiMessage);
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 0) << "ThrowNew got: " << g_utf8.throw_new_message;
+    EXPECT_EQ(g_utf8.bytes, "") << "a String was built over the pending exception";
+    EXPECT_EQ(g_utf8.thrown, nullptr);
+    EXPECT_EQ(new_string_utf8_impl(env, kEmojiMessage), nullptr);
+    EXPECT_EQ(g_utf8.new_string_utf_calls, 0);
+}
+
+// An invalid sequence is not ours to repair either: Java's decoder replaces it with U+FFFD.
+TEST(JniUtf8, AnInvalidByteSequenceIsLeftToJavasDecoder) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    throw_utf8_impl(env, kExceptionClass, "bad \xC3 byte");
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 0);
+    EXPECT_EQ(g_utf8.bytes, "bad \xC3 byte");
+    EXPECT_EQ(g_utf8.thrown, kException);
+}
+
+TEST(JniUtf8, NewStringKeepsAsciiOnNewStringUtf) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    EXPECT_EQ(new_string_utf8_impl(env, "done"), kDecoded);
+    EXPECT_EQ(g_utf8.new_string_utf_value, "done");
+    EXPECT_TRUE(g_utf8.bytes.empty());
+}
+
+TEST(JniUtf8, NewStringBuildsAFourByteCharacterFromBytes) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    EXPECT_EQ(new_string_utf8_impl(env, kEmojiMessage), kDecoded);
+    EXPECT_EQ(g_utf8.bytes, kEmojiMessage);
+    EXPECT_EQ(g_utf8.new_string_utf_value, "UTF-8") << "only the charset name may go through NewStringUTF";
+}
+
+// The JNI exception boundary carries the same messages.
+TEST(JniUtf8, TheGuardReportsAFourByteCharacterAsStandardUtf8) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+
+    jni_guard_impl(env, kExceptionClass, [&]() -> void { throw std::runtime_error(kEmojiMessage); });
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 0);
+    EXPECT_EQ(g_utf8.bytes, kEmojiMessage);
+    EXPECT_EQ(g_utf8.thrown, kException);
+}
+
+// ============================================================
 // acquire_jllama_context_impl / release_jllama_context_impl / jllama_context_guard
 //
 // These three ARE the close()-vs-inference use-after-free defence: close() nulls the Java

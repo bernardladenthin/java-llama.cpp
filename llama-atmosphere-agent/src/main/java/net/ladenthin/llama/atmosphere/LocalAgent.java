@@ -27,7 +27,7 @@ import org.jspecify.annotations.Nullable;
  * <p>Two ways to reach a model:
  *
  * <ul>
- *   <li>{@code --base-url http://127.0.0.1:8080/v1} — a server you started yourself (java-llama.cpp's fat
+ *   <li>{@code --base-url http://127.0.0.1:9931/v1} — a server you started yourself (java-llama.cpp's fat
  *       jar {@code NativeServer} with {@code --jinja}, its {@code OpenAiCompatServer}, or upstream
  *       {@code llama-server}), so you keep full control over model parameters.
  *   <li>{@code --model model.gguf} — loads the GGUF in this JVM and serves it to the agent over a loopback

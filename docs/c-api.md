@@ -34,19 +34,20 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_build_info()` | the llama.cpp build inside, `b<number>-<commit>` |
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
 | `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |
-| `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`), with an optional load-progress callback |
-| `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, chat template, the GGUF key/value map) |
+| `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`, which loads the tokenizer only: such a model answers the meta, tokenize and detokenize calls and refuses every other with `JLLAMA_STATUS_ERROR`), with an optional load-progress callback |
+| `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, the `media_marker` a raw multimodal prompt places, chat template, the GGUF key/value map) |
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
 | `jllama_chat_completions_stream_request()` / `_receive()` / `jllama_task_release()` | a streamed one: a task id, then one `{"data": <chunk>, "stop": <bool>}` envelope per call until `stop` |
 | `jllama_chat_completions_request()` | a streamed chat completion whose results are llama.cpp's raw result objects (received with `jllama_completions_stream_receive`) |
-| `jllama_completions()`, `jllama_completions_oai()`, `jllama_infill()` | a raw `/completion`, an OpenAI `/v1/completions`, a fill-in-the-middle request, blocking |
-| `jllama_completions_stream_request()` / `jllama_completions_stream_receive()` | a raw streamed completion (an infill one when the body has the infill fields): each result object with a `"stop"` key |
+| `jllama_completions()`, `jllama_completions_oai()`, `jllama_infill()` | a raw `/completion` (an infill one when the body has the infill fields, the chat template rendered into the prompt when it has `messages`, with the template's own stop strings and, for a template with thinking tags, `reasoning_budget_tokens` kept to those tags as on the chat paths, the tokens the template preserves rendered as text beside the request's own `preserved_tokens`; without `messages` the request names the budget's tags itself, and a missing `reasoning_budget_message` is the server's default as on the chat paths, so the first end tag is forced; a chat field it cannot apply beside them -- `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `top_logprobs`, `thinking_budget_tokens` -- is `JLLAMA_STATUS_INVALID_REQUEST`), an OpenAI `/v1/completions`, a fill-in-the-middle request, blocking |
+| `jllama_completions_oai_stream_request()` | a streamed OpenAI `/v1/completions` (the body as for `jllama_completions_oai()`), received with `jllama_chat_completions_stream_receive()`: `text_completion` chunks, the last with `usage` |
+| `jllama_completions_stream_request()` / `jllama_completions_stream_receive()` | a raw streamed completion (infill fields and `messages` as for `jllama_completions()`): each result object with a `"stop"` key |
 | `jllama_apply_template()` | the chat template applied to a messages body: the prompt text |
 | `jllama_embed()`, `jllama_embeddings()` | one embedding vector; an `/embeddings` or `/v1/embeddings` request (`--embedding`) |
 | `jllama_rerank()` | documents scored against a query (`--reranking`) |
 | `jllama_tokenize()`, `jllama_tokenize_json()`, `jllama_detokenize()`, `jllama_detokenize_json()` | ids or the `/tokenize` response (with pieces on request); bytes with their length, or the `/detokenize` response |
 | `jllama_metrics()` | the counters plus the `slots` array (`LlamaModel.getMetrics()`) |
-| `jllama_slot_action()` | save, restore or erase a slot's KV cache |
+| `jllama_slot_action()` | save, restore or erase a slot's KV cache; the file of a save or restore is a file name inside the `--slot-save-path` directory, as upstream's `/slots` route takes it (a name with a directory part or `..` is `JLLAMA_STATUS_INVALID_REQUEST`, a model without the directory `JLLAMA_STATUS_ERROR`) |
 | `jllama_lora_adapters()`, `jllama_set_lora_adapters()` | the LoRA list; the scales from `[{"id", "scale"}]` |
 | `jllama_configure()` | `n_threads`, `n_threads_batch`, `slot_prompt_similarity` at run time |
 | `jllama_systemone()` | a `/v1/systemone` request to a decision model |
@@ -77,6 +78,12 @@ And the `jllama_api.h` header ships in every natives directory, so a consumer of
   or out-parameter), `INTERRUPTED` (the model was freed under the call). On anything but `OK`,
   `jllama_last_error()` has the message. The Java side maps `INVALID_REQUEST` to
   `InvalidRequestException` and the rest to `LlamaException`, the same rule as before.
+- **One request, one answer.** A completion or chat request takes one prompt and asks for one
+  choice: several prompts in one request (an array of strings or of token arrays) and `"n"` greater
+  than 1 are `INVALID_REQUEST` on the blocking, raw and streamed paths. llama.cpp's HTTP server
+  answers them with several choices from child tasks, which this engine does not create; answering
+  with one would drop the rest silently. Send separate requests (several slots, `-np`, run them at
+  once).
 - **Logging.** `jllama_set_log_callback(cb, user_data)` is process-wide and routes *every* line
   (llama.cpp, ggml, the server's `srv`/`slot` lines) to `cb` instead of the console, on the logger's
   worker thread. `jllama_set_log_callback(NULL, NULL)` drains the lines queued for the previous

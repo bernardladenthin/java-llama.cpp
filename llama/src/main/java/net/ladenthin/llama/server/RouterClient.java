@@ -36,8 +36,8 @@ import org.jspecify.annotations.Nullable;
  *
  * <pre>{@code
  * NativeServer.setWorkerCommand(javaBin, "-cp", classpath, "net.ladenthin.llama.server.NativeServer");
- * try (NativeServer router = new NativeServer("--models-dir", dir, "--port", "8080").start()) {
- *     RouterClient client = new RouterClient(8080);
+ * try (NativeServer router = new NativeServer("--models-dir", dir, "--port", "9931").start()) {
+ *     RouterClient client = new RouterClient(9931);
  *     List<RouterModel> models = client.listModels();
  *     client.loadModel(models.get(0).getId());
  *     client.awaitModelLoaded(models.get(0).getId(), 240_000L);
@@ -138,15 +138,15 @@ public final class RouterClient {
     }
 
     /**
-     * Look up a single model by identifier.
+     * Look up a single model by identifier or alias, as the router resolves a model name.
      *
-     * @param modelId the model identifier (as listed by {@link #listModels()})
+     * @param modelId the model identifier (as listed by {@link #listModels()}) or one of its aliases
      * @return the entry, or {@link Optional#empty()} when the router does not list it
      * @throws IOException if the request fails or the router answers non-2xx
      */
     public Optional<RouterModel> findModel(String modelId) throws IOException {
         for (RouterModel model : listModels()) {
-            if (model.getId().equals(modelId)) {
+            if (model.isNamed(modelId)) {
                 return Optional.of(model);
             }
         }
@@ -179,8 +179,9 @@ public final class RouterClient {
 
     /**
      * Poll {@link #listModels()} until {@code modelId} reaches
-     * {@link RouterModel.Status#LOADED}, its worker is flagged as failed, or the timeout
-     * elapses. Fails fast (instead of running out the timeout) when the router does not list
+     * {@link RouterModel.Status#LOADED} (or {@link RouterModel.Status#SLEEPING}: an idle worker
+     * that wakes on the next request, which upstream also counts as ready), its worker is flagged
+     * as failed, or the timeout elapses. Fails fast (instead of running out the timeout) when the router does not list
      * the model or marks it failed.
      *
      * <p><strong>Hidden models cannot be awaited here.</strong> Since llama.cpp b10505 (upstream
@@ -194,16 +195,21 @@ public final class RouterClient {
      *
      * @param modelId the model identifier to wait for
      * @param timeoutMillis how long to keep polling
-     * @return the entry in its {@code LOADED} state
+     * @return the entry in its {@code LOADED} or {@code SLEEPING} state
      * @throws IOException if a poll request fails
      * @throws InterruptedException if the calling thread is interrupted while waiting
      * @throws IllegalStateException if the model is not listed by the router, its worker
      *     failed (exit code included), or the timeout elapses
      */
     public RouterModel awaitModelLoaded(String modelId, long timeoutMillis) throws IOException, InterruptedException {
-        long deadline = System.currentTimeMillis() + timeoutMillis;
+        long now = System.currentTimeMillis();
+        // Saturate instead of overflowing: Long.MAX_VALUE ("as long as it takes") would otherwise wrap
+        // into a deadline in the past and time out before the first poll.
+        long deadline = timeoutMillis > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + timeoutMillis;
         RouterModel last = null;
-        while (System.currentTimeMillis() < deadline) {
+        // Polls at least once, then until the deadline: a timeout of 0 (or one that elapses before the
+        // first poll) would otherwise report a timeout for a model that is already loaded.
+        while (true) {
             Optional<RouterModel> model = findModel(modelId);
             if (!model.isPresent()) {
                 throw new IllegalStateException("Router does not list model '" + modelId
@@ -216,8 +222,13 @@ public final class RouterClient {
                 throw new IllegalStateException(
                         "Router worker for model '" + modelId + "' failed with exit code " + last.getExitCode());
             }
-            if (last.getStatus() == RouterModel.Status.LOADED) {
+            // A sleeping worker (--sleep-idle-seconds) is still running and wakes on the next request;
+            // upstream's own wait for a model treats it as ready too.
+            if (last.getStatus() == RouterModel.Status.LOADED || last.getStatus() == RouterModel.Status.SLEEPING) {
                 return last;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                break;
             }
             // Interruptible pause between polls; a latch that is never counted down is the
             // project's Thread.sleep-free wait primitive (see LlamaArchitectureTest#noThreadSleep).
@@ -244,7 +255,7 @@ public final class RouterClient {
     private String request(String method, String path, @Nullable String body) throws IOException {
         // URI.create(...).toURL() instead of the URL(String) constructor: the latter is
         // deprecated (no validation/encoding) — flagged by CodeQL; this form is Java-8-safe.
-        URL url = URI.create("http://" + host + ":" + port + path).toURL();
+        URL url = URI.create("http://" + urlHost(host) + ":" + port + path).toURL();
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         try {
             connection.setRequestMethod(method);
@@ -272,9 +283,20 @@ public final class RouterClient {
         }
     }
 
+    /**
+     * Returns {@code host} as it goes into a URL authority: an IPv6 literal is bracketed
+     * ({@code ::1} -> {@code [::1]}), anything else is unchanged.
+     *
+     * @param host the configured host name or address
+     * @return the host part of the request URL
+     */
+    private static String urlHost(String host) {
+        return host.indexOf(':') >= 0 && !host.startsWith("[") ? "[" + host + "]" : host;
+    }
+
     @Override
     public String toString() {
-        return "RouterClient(http://" + host + ":" + port + ")";
+        return "RouterClient(http://" + urlHost(host) + ":" + port + ")";
     }
 
     private static String readFully(@Nullable InputStream stream) throws IOException {

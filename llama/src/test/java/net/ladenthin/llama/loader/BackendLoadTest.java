@@ -11,13 +11,18 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.ladenthin.llama.ClaudeGenerated;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.io.TempDir;
 
 @ClaudeGenerated(
@@ -30,7 +35,10 @@ import org.junit.jupiter.api.io.TempDir;
                 + "the library's directory, an extra that fails to load, the clean failure of the library load "
                 + "and the no-library case; backendtest-ok/ has a trivial real x86-64 ELF dummy as the library "
                 + "and as cuda13's extra, so the success path executes too, with and without modules. "
-                + "Linux-only (the trees are committed under the Linux OS folder); self-skips elsewhere.")
+                + "Linux-only (the trees are committed under the Linux OS folder); self-skips elsewhere. "
+                + "The dummy loads publish the fixture's jllama-build.txt; every test puts back the build "
+                + "info it found, so a real library loaded earlier in the same fork keeps its record.")
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class BackendLoadTest {
 
     /** Arch-folder override selecting the committed fixture tree {@code Linux/backendtest/}. */
@@ -44,11 +52,29 @@ public class BackendLoadTest {
     private String previousTmpDir;
     private String previousBackend;
 
+    /** What {@link LlamaLoader#getBuildInfo()} reported before the first test of this class. */
+    private static Map<String, String> buildInfoBeforeThisClass;
+
+    /** What {@link LlamaLoader#getBuildInfo()} reported at the start of the current test (after the reset). */
+    private Map<String, String> buildInfoBeforeThisTest;
+
+    /** Puts back the loader state the reset before the current test found. */
+    private Runnable restoreLoaderState;
+
     @TempDir
     Path tempDir;
 
+    @BeforeAll
+    public static void rememberTheBuildInfoOfThisJvm() {
+        buildInfoBeforeThisClass = LlamaLoader.getBuildInfo();
+    }
+
     @BeforeEach
     public void redirectLoaderToFixtures() {
+        // initialize() does nothing once a library is loaded, and an earlier test class of this fork
+        // may have loaded the real one: every test starts from "nothing loaded"
+        restoreLoaderState = LlamaLoader.resetForTesting();
+        buildInfoBeforeThisTest = LlamaLoader.getBuildInfo();
         previousArch = System.getProperty(ARCH_PROP);
         previousTmpDir = System.getProperty(TMPDIR_PROP);
         previousBackend = System.getProperty(BACKEND_PROP);
@@ -59,6 +85,7 @@ public class BackendLoadTest {
 
     @AfterEach
     public void restoreProperties() {
+        restoreLoaderState.run();
         restore(ARCH_PROP, previousArch);
         restore(TMPDIR_PROP, previousTmpDir);
         restore(BACKEND_PROP, previousBackend);
@@ -121,6 +148,8 @@ public class BackendLoadTest {
         assertTrue(message.contains("'rocm' was built from llama.cpp bOTHER"), message);
         assertTrue(message.contains("'cpu' from llama.cpp bTEST"), message);
         assertTrue(extractionDirs().isEmpty(), "nothing may be extracted: " + extractionDirs());
+        // nothing was loaded either, so the record of whatever this JVM loaded before stays
+        assertEquals(buildInfoBeforeThisTest, LlamaLoader.getBuildInfo(), "a refused start touched the build info");
     }
 
     @Test
@@ -200,6 +229,7 @@ public class BackendLoadTest {
     }
 
     @Test
+    @Order(1)
     public void loadsTheLibraryWithEveryModuleNextToIt() throws IOException {
         assumeLinuxFixtureTree();
         assumeX86_64();
@@ -225,6 +255,7 @@ public class BackendLoadTest {
     }
 
     @Test
+    @Order(1)
     public void loadsTheLibraryAloneWhenCpuIsForced() throws IOException {
         assumeLinuxFixtureTree();
         assumeX86_64();
@@ -237,5 +268,60 @@ public class BackendLoadTest {
                         "cpu", LlamaLoader.resource("net/ladenthin/llama/Linux/backendtest-ok/cpu/libjllama.so")),
                 dir.getFileName().toString());
         assertEquals(java.util.Collections.singleton("libjllama.so"), names(dir));
+    }
+
+    /**
+     * Once a library is loaded, {@link LlamaLoader#initialize()} does nothing: a changed property can
+     * no longer take effect (the JVM cannot unload a library), and a second search used to load a
+     * second copy and replace the build info. Here the module filter changes between the two calls,
+     * which would select another set of modules and therefore another extraction directory.
+     */
+    @Test
+    @Order(1)
+    public void aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores() throws IOException {
+        assumeLinuxFixtureTree();
+        assumeX86_64();
+        System.setProperty(ARCH_PROP, "backendtest-ok");
+        System.setProperty(BACKEND_PROP, "cpu");
+        LlamaLoader.initialize();
+        Path first = theExtractionDir();
+        System.setProperty(BACKEND_PROP, "cuda13,vulkan");
+        String stderr = captureStderr(LlamaLoader::initialize);
+        assertEquals(java.util.Collections.singletonList(first), extractionDirs(), "a second start extracted again");
+        assertTrue(stderr.contains(BACKEND_PROP + "=cuda13,vulkan"), stderr);
+        assertTrue(stderr.contains("already loaded"), stderr);
+    }
+
+    /**
+     * Runs after the two dummy loads above: they really load a library and publish the fixture's
+     * build file ({@code bTEST}), which must not outlive them. In a shared fork a real library loaded
+     * by an earlier test class would otherwise be reported as {@code bTEST} from here on, and
+     * {@code NativeLibraryLoadSmokeTest} after it failed on exactly that.
+     */
+    @Test
+    @Order(2)
+    public void theDummyLoadsLeaveTheBuildInfoOfThisJvmAsTheyFoundIt() {
+        // the reset before this test forgot the state the earlier tests put back: look at that state
+        restoreLoaderState.run();
+        assertEquals(
+                buildInfoBeforeThisClass,
+                LlamaLoader.getBuildInfo(),
+                "build info after the dummy loads: " + LlamaLoader.getBuildInfo() + ", before: "
+                        + buildInfoBeforeThisClass);
+    }
+
+    private static String captureStderr(Runnable body) {
+        java.io.PrintStream previous = System.err;
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (java.io.PrintStream capture =
+                new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8.name())) {
+            System.setErr(capture);
+            body.run();
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            System.setErr(previous);
+        }
+        return new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
     }
 }

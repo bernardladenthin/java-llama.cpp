@@ -189,6 +189,31 @@ TEST(RerankResultsToJson, TwoResults_CorrectShape) {
     EXPECT_EQ(out[1].value("document", ""), "doc B");
 }
 
+namespace {
+// The shape upstream's server_task_result_rerank::to_json emits, with the evaluated tokens.
+struct fake_rerank_result_with_tokens : server_task_result {
+    int index;
+    float score;
+    int n_tokens;
+    fake_rerank_result_with_tokens(int idx, float sc, int n) : index(idx), score(sc), n_tokens(n) {}
+    json to_json() override { return {{"index", index}, {"score", score}, {"tokens_evaluated", n_tokens}}; }
+};
+} // namespace
+
+TEST(RerankResultsToJson, TokensEvaluatedArePassedOnAndDefaultToZero) {
+    // The OpenAI-shaped /v1/rerank answer carries usage (prompt_tokens = the sum of the evaluated
+    // tokens, as upstream's format_response_rerank computes it), so the array has to carry them.
+    std::vector<server_task_result_ptr> results;
+    results.push_back(std::make_unique<fake_rerank_result_with_tokens>(0, 0.9f, 7));
+    results.push_back(make_rerank(2, 1, 0.4f)); // a result without the field
+    std::vector<std::string> docs = {"doc A", "doc B"};
+
+    json out = rerank_results_to_json(results, docs);
+
+    EXPECT_EQ(out[0].value("tokens_evaluated", -1), 7);
+    EXPECT_EQ(out[1].value("tokens_evaluated", -1), 0);
+}
+
 TEST(RerankResultsToJson, EmptyResults_ReturnsEmptyArray) {
     std::vector<server_task_result_ptr> results;
     json out = rerank_results_to_json(results, {});

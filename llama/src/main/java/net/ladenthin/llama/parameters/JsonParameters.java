@@ -125,7 +125,7 @@ abstract class JsonParameters {
     /**
      * Serialize a non-null string to its JSON string form. Use
      * {@link #withOptionalJson(RequestField, String)} when the input may be null and the
-     * caller wants null to behave as "do not set this parameter".
+     * caller wants null to clear the parameter.
      *
      * @param text the non-null input
      * @return the JSON-encoded string
@@ -170,15 +170,25 @@ abstract class JsonParameters {
      *     value so a large or hostile fragment cannot flood a log through the message
      */
     private static JsonNode parseOrThrow(String key, String value) {
+        final JsonNode node;
         try {
-            return STRICT_JSON_READER.readTree(value);
+            node = STRICT_JSON_READER.readTree(value);
         } catch (Exception e) {
-            String excerpt = value.length() > REJECTED_VALUE_EXCERPT
-                    ? value.substring(0, REJECTED_VALUE_EXCERPT) + "..."
-                    : value;
-            throw new IllegalArgumentException(
-                    key + " must be exactly one well-formed JSON value, but was: " + excerpt, e);
+            throw rejected(key, value, e);
         }
+        // For empty or blank input readTree returns a MissingNode instead of throwing; it would be
+        // rendered as "key":null, a value the caller never wrote.
+        if (node.isMissingNode()) {
+            throw rejected(key, value, null);
+        }
+        return node;
+    }
+
+    private static IllegalArgumentException rejected(String key, String value, @Nullable Exception cause) {
+        String excerpt =
+                value.length() > REJECTED_VALUE_EXCERPT ? value.substring(0, REJECTED_VALUE_EXCERPT) + "..." : value;
+        return new IllegalArgumentException(
+                key + " must be exactly one well-formed JSON value, but was: " + excerpt, cause);
     }
 
     /**
@@ -223,18 +233,25 @@ abstract class JsonParameters {
 
     /**
      * Conditionally store a JSON-encoded string under {@code key}: when {@code text}
-     * is {@code null} the call is a no-op (returns {@code this}); otherwise the value
-     * is JSON-encoded and a new instance is returned.
+     * is {@code null} an earlier value is removed (and {@code this} returned when there is
+     * none); otherwise the value is JSON-encoded and a new instance is returned.
      *
      * @param field the field to set
-     * @param text  the optional input; {@code null} means "leave the parameter unset"
+     * @param text  the optional input; {@code null} clears any earlier value of the field
      * @param <T>  the concrete subtype of this parameter set
-     * @return {@code this} if {@code text} is null, otherwise a new instance with the entry set
+     * @return {@code this} if {@code text} is null and the field is unset, otherwise a new
+     *     instance with the entry set or removed
      */
     @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
     protected final <T extends JsonParameters> T withOptionalJson(RequestField field, @Nullable String text) {
         if (text == null) {
-            return (T) this;
+            // the withers built on this document "null clears": an earlier value must not survive
+            if (!parameters.containsKey(field.getKey())) {
+                return (T) this;
+            }
+            Map<String, String> next = new HashMap<>(parameters);
+            next.remove(field.getKey());
+            return withParameters(Collections.unmodifiableMap(next));
         }
         return withPut(field, serializer.toJsonString(text));
     }

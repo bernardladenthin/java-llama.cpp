@@ -6,7 +6,9 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,6 +31,133 @@ public class OpenAiRequestMapperTest {
     private JsonNode mapAndSerialize(String requestJson) throws IOException {
         InferenceParameters params = mapper.toInferenceParameters(MAPPER.readTree(requestJson));
         return MAPPER.readTree(params.toJson());
+    }
+
+    @Test
+    public void logitBiasAndNProbsAreForwarded() throws IOException {
+        // Upstream reads logit_bias (OpenAI's object form included) and n_probs from the request; the
+        // mapper dropped them, so a client's banned token was generated anyway.
+        JsonNode chat = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"logit_bias\":{\"15043\":-100,\"2\":false},\"n_probs\":3}");
+        assertThat(chat.path("logit_bias").path("15043").asInt(), is(-100));
+        assertThat(chat.path("logit_bias").path("2").asBoolean(true), is(false));
+        assertThat(chat.path("n_probs").asInt(), is(3));
+
+        JsonNode pairs =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"logit_bias\":[[7,1.5]]}");
+        assertThat(pairs.path("logit_bias").path(0).path(1).asDouble(), closeTo(1.5, 1e-9));
+    }
+
+    @Test
+    public void verboseIsForwarded() throws IOException {
+        // upstream's "verbose" adds __verbose to the answer, which carries the matched stop word (F183)
+        JsonNode chat = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"verbose\":true}");
+        assertThat(chat.path("verbose").asBoolean(false), is(true));
+        JsonNode without = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+        assertThat(without.has("verbose"), is(false));
+    }
+
+    @Test
+    public void responseFieldsAreForwarded() throws IOException {
+        // upstream's projection of the native result, which also narrows __verbose
+        JsonNode chat = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":[\"stopping_word\"]}");
+        assertThat(chat.path("response_fields").size(), is(1));
+        assertThat(chat.path("response_fields").path(0).asText(), is("stopping_word"));
+        JsonNode without = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+        assertThat(without.has("response_fields"), is(false));
+    }
+
+    @Test
+    public void responseFieldsThatAreNotStringsAreRefused() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":[1]}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":\"stopping_word\"}"));
+    }
+
+    @Test
+    public void moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack() throws IOException {
+        // Upstream reads "n" as n_cmpl; the chat paths return one answer, so n > 1 silently gave one.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":2}"));
+        assertDoesNotThrow(() -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":1}"));
+    }
+
+    @Test
+    public void zeroOrNegativeChoicesAreRefusedLikeUpstream() {
+        // upstream's n_cmpl (alias "n") has the hard limits [1, n_parallel] (server-schema.cpp, b11639);
+        // "n" never reaches it from here, so 0 and -1 ran silently with one answer.
+        IllegalArgumentException zero = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":0}"));
+        assertThat(zero.getMessage(), is("'n' must be 1 (one answer is returned) but was 0"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":-1}"));
+    }
+
+    @Test
+    public void chatTemplateKwargsAreForwarded() throws IOException {
+        // Qwen3 clients switch thinking off with chat_template_kwargs; upstream's chat parser merges the
+        // request's kwargs into the template variables.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"chat_template_kwargs\":{\"enable_thinking\":false}}");
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(), is(false));
+    }
+
+    @Test
+    public void reasoningEffortNoneSwitchesThinkingOffLikeUpstream() throws IOException {
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}");
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(), is(false));
+        assertThat(out.path("chat_template_kwargs").has("reasoning_effort"), is(false));
+    }
+
+    @Test
+    public void reasoningEffortLevelBecomesATemplateVariableLikeUpstream() throws IOException {
+        JsonNode out =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}");
+        assertThat(out.path("chat_template_kwargs").path("reasoning_effort").asText(), is("low"));
+    }
+
+    @Test
+    public void reasoningBudgetIsForwardedUnderEitherUpstreamName() throws IOException {
+        JsonNode thinking = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"thinking_budget_tokens\":512}");
+        assertThat(thinking.path("reasoning_budget_tokens").asInt(), is(512));
+        JsonNode reasoning = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_budget_tokens\":256}");
+        assertThat(reasoning.path("reasoning_budget_tokens").asInt(), is(256));
+    }
+
+    @Test
+    public void anthropicAndResponsesReasoningControlsReachTheInferenceParameters() throws IOException {
+        // The translation layers produce these fields (F75, F76); they only take effect if the chat
+        // mapper carries them on into the request the native side parses.
+        InferenceParameters anthropic = mapper.toInferenceParameters(AnthropicApiSupport.toOpenAiChatRequest(
+                MAPPER.readTree("{\"max_tokens\":64,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")));
+        assertThat(
+                MAPPER.readTree(anthropic.toJson())
+                        .path("reasoning_budget_tokens")
+                        .asInt(),
+                is(1024));
+        InferenceParameters responses = mapper.toInferenceParameters(ResponsesApiSupport.toOpenAiChatRequest(
+                MAPPER.readTree("{\"input\":\"hi\",\"reasoning\":{\"effort\":\"none\"}}")));
+        assertThat(
+                MAPPER.readTree(responses.toJson())
+                        .path("chat_template_kwargs")
+                        .path("enable_thinking")
+                        .asBoolean(true),
+                is(false));
     }
 
     @Test
@@ -90,6 +219,119 @@ public class OpenAiRequestMapperTest {
         assertThat(out.path("n_predict").asInt(), is(128));
     }
 
+    // Upstream's oaicompat_chat_params_parse (server-common.cpp, b11639) turns logprobs=true into
+    // n_probs = top_logprobs, 20 when top_logprobs is absent; the native layer then reports them.
+
+    @Test
+    public void logprobsWithTopLogprobsBecomesNProbs() throws IOException {
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"logprobs\":true,\"top_logprobs\":3}");
+        assertThat(out.path("n_probs").asInt(-1), is(3));
+    }
+
+    @Test
+    public void logprobsWithoutTopLogprobsDefaultsToTwentyLikeUpstream() throws IOException {
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":true}");
+        assertThat(out.path("n_probs").asInt(-1), is(20));
+    }
+
+    @Test
+    public void logprobsFalseLeavesNProbsUnset() throws IOException {
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":false}");
+        assertThat(out.has("n_probs"), is(false));
+    }
+
+    @Test
+    public void topLogprobsWithoutLogprobsIsRefusedLikeUpstream() {
+        // upstream's chat parser: "top_logprobs requires logprobs to be set to true" (400); the mapper
+        // dropped top_logprobs, so that refusal could never fire.
+        IllegalArgumentException absent = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"top_logprobs\":3}"));
+        assertThat(absent.getMessage(), is("top_logprobs requires logprobs to be set to true"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":false,\"top_logprobs\":3}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":null,\"top_logprobs\":3}"));
+        // an integer logprobs is not the chat form, so upstream refuses top_logprobs next to it too
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":2,\"top_logprobs\":3}"));
+    }
+
+    @Test
+    public void topLogprobsNullWithoutLogprobsIsTheDefault() throws IOException {
+        // upstream refuses only a non-null top_logprobs
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"top_logprobs\":null}");
+        assertThat(out.has("n_probs"), is(false));
+    }
+
+    @Test
+    public void anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias() throws IOException {
+        // upstream's chat parser reads only a boolean logprobs, copies the rest of the body through, and its
+        // schema reads "logprobs" as an alias of n_probs: an integer is n_probs, not the chat form's 20.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":2}");
+        assertThat(out.path("n_probs").asInt(-1), is(2));
+    }
+
+    @Test
+    public void nProbsWinsOverAnIntegerLogprobsLikeUpstream() throws IOException {
+        // the schema reads n_probs first and its alias only without it
+        JsonNode out =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"n_probs\":5,\"logprobs\":2}");
+        assertThat(out.path("n_probs").asInt(-1), is(5));
+    }
+
+    @Test
+    public void aLogprobsThatIsNeitherBooleanNorNumberIsRefused() throws IOException {
+        // upstream's schema reads the copied "logprobs" as a number and answers 400 for anything else;
+        // Jackson's asBoolean read the string "true" as the chat form.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":\"true\"}"));
+        assertThat(e.getMessage(), is("'logprobs' must be a boolean or a number"));
+        // with n_probs the schema never reads the alias, so upstream does not refuse it either
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"n_probs\":4,\"logprobs\":\"true\"}");
+        assertThat(out.path("n_probs").asInt(-1), is(4));
+    }
+
+    private static final String TOOLS = "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}]";
+
+    @Test
+    public void logprobsWithToolsAndStreamIsRefusedLikeUpstream() {
+        // upstream's oaicompat_chat_params_parse (server-common.cpp:1457-1461, b11639): "logprobs is not
+        // supported with tools + stream" (400); the mapper turned logprobs into n_probs and never refused it.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,"
+                        + "\"logprobs\":true," + TOOLS + "}"));
+        assertThat(e.getMessage(), is("logprobs is not supported with tools + stream"));
+    }
+
+    @Test
+    public void logprobsWithToolsOrStreamAloneIsAccepted() throws IOException {
+        // the refusal needs all three, as upstream's: without stream, without tools, or with an integer
+        // logprobs (the schema's n_probs alias, which upstream's chat parser does not read as the chat form)
+        JsonNode blocking = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":true," + TOOLS + "}");
+        assertThat(blocking.path("n_probs").asInt(-1), is(20));
+        JsonNode noTools = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,\"logprobs\":true}");
+        assertThat(noTools.path("n_probs").asInt(-1), is(20));
+        JsonNode emptyTools = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"stream\":true,\"logprobs\":true,\"tools\":[]}");
+        assertThat(emptyTools.path("n_probs").asInt(-1), is(20));
+        JsonNode alias = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,\"logprobs\":2," + TOOLS + "}");
+        assertThat(alias.path("n_probs").asInt(-1), is(2));
+    }
+
     @Test
     public void maxCompletionTokensPreferredOverMaxTokens() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
@@ -109,6 +351,81 @@ public class OpenAiRequestMapperTest {
         // --jinja), and upstream never reads a "use_jinja" key from a request body -- it would be
         // discarded silently. Native tool-call parsing depends on how the model was loaded.
         assertThat(out.has("use_jinja"), is(false));
+    }
+
+    @Test
+    public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
+        // {"type":"function","function":{"name":...}} asks for that tool; llama.cpp's chat parser reads
+        // tool_choice only as a string and fell back to "auto". "required" is the closest it allows, as
+        // for Anthropic's {"type":"tool"}.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"f\"}}}");
+        assertThat(out.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAFunctionForwardsOnlyThatTool() throws IOException {
+        // "required" over every tool let the model call another one than the one named; llama.cpp knows
+        // only auto/none/required, so the named function is enforced by forwarding it alone.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
+                + "{\"type\":\"function\",\"function\":{\"name\":\"g\",\"description\":\"gee\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"g\"}}}");
+        assertThat(out.path("tools").size(), is(1));
+        assertThat(out.path("tools").path(0).path("function").path("name").asText(), is("g"));
+        assertThat(
+                out.path("tools").path(0).path("function").path("description").asText(), is("gee"));
+        assertThat(out.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAnUnknownFunctionIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"g\"}}}"));
+        assertThat(e.getMessage(), containsString("tool_choice names unknown tool 'g'"));
+    }
+
+    @Test
+    public void toolChoiceOfTypeFunctionWithoutANameIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"function\"}}"));
+        assertThat(e.getMessage(), containsString("tool_choice of type 'function' needs the function's 'name'"));
+    }
+
+    @Test
+    public void aToolChoiceObjectOfAnotherTypeIsRefused() {
+        // allowed_tools, custom and the like cannot be expressed in llama.cpp's auto/none/required;
+        // upstream reads a non-string tool_choice as "auto", so the request ran without the restriction.
+        for (String type : new String[] {"allowed_tools", "custom", "mcp", ""}) {
+            String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                    + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                    + "\"tool_choice\":{\"type\":\"" + type + "\",\"name\":\"f\"}}";
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+            assertThat(
+                    request,
+                    e.getMessage(),
+                    is("tool_choice type '" + type + "' is not supported; use auto, none, required or a function"));
+        }
+    }
+
+    @Test
+    public void aToolChoiceThatIsNeitherAStringNorAnObjectIsRefused() {
+        for (String value : new String[] {"3", "true", "[\"auto\"]"}) {
+            String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                    + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                    + "\"tool_choice\":" + value + "}";
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+            assertThat(request, e.getMessage(), is("'tool_choice' must be a string or an object (got " + value + ")"));
+        }
     }
 
     @Test
@@ -165,9 +482,196 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void slotMinusOneMeansAnySlotLikeUpstream() throws IOException {
+        // upstream reads id_slot with -1 as its default ("any slot"); a client echoing that default must
+        // not get a 400 here, which the non-streamed /v1/completions (forwarded verbatim) never gives.
+        JsonNode request = MAPPER.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"id_slot\":-1}");
+        InferenceParameters params = assertDoesNotThrow(() -> mapper.toInferenceParameters(request));
+        assertThat(MAPPER.readTree(params.toJson()).path("id_slot").asInt(-1), is(-1));
+    }
+
+    @Test
+    public void zeroTokenCapIsForwardedAsUpstreamReadsIt() throws IOException {
+        // Dropping a 0 made the mapped routes generate without a cap, while the verbatim /v1/completions
+        // forwarded it. The server then generates one token (withNPredict), not none: upstream's README
+        // ("When 0, no tokens will be generated") is older than the budget check that replaced it.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":0}");
+        assertThat(out.path("n_predict").asInt(-1), is(0));
+    }
+
+    @Test
+    public void tokenCapBelowMinusOneReachesUpstreamsRefusal() throws IOException {
+        // upstream's n_predict has the hard limits [-1, INT32_MAX] and refuses -2 with 400, as the verbatim
+        // /v1/completions does; dropping it here ran the mapped routes without a cap.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":-2}");
+        assertThat(out.path("n_predict").asInt(-1), is(-2));
+    }
+
+    @Test
+    public void explicitTokenCapMinusOneLeavesTheServerDefault() throws IOException {
+        // upstream treats -1 as "use the server's --predict" (server-context.cpp), the same as no field.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":-1}");
+        assertThat(out.has("n_predict"), is(false));
+    }
+
+    @Test
+    public void llamaCppSamplingExtensionsReachTheMappedRequest() throws IOException {
+        // Upstream's schema reads these fields from a chat body too; the mapped chat routes must not
+        // answer the same request with other sampling.
+        JsonNode out = MAPPER.readTree(
+                mapper.toInferenceParameters(MAPPER.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                                + "\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,"
+                                + "\"top_n_sigma\":1.5,\"xtc_probability\":0.3,\"xtc_threshold\":0.2,"
+                                + "\"dynatemp_range\":0.4,\"dynatemp_exponent\":1.2,\"min_keep\":2,\"n_keep\":8,"
+                                + "\"ignore_eos\":true,\"grammar\":\"root ::= \\\"a\\\"\"}"))
+                        .toJson());
+        assertThat(out.path("min_p").asDouble(), is(closeTo(0.05, 1e-4)));
+        assertThat(out.path("typical_p").asDouble(), is(closeTo(0.9, 1e-4)));
+        assertThat(out.path("repeat_penalty").asDouble(), is(closeTo(1.1, 1e-4)));
+        assertThat(out.path("repeat_last_n").asInt(), is(32));
+        assertThat(out.path("top_n_sigma").asDouble(), is(closeTo(1.5, 1e-4)));
+        assertThat(out.path("xtc_probability").asDouble(), is(closeTo(0.3, 1e-4)));
+        assertThat(out.path("xtc_threshold").asDouble(), is(closeTo(0.2, 1e-4)));
+        assertThat(out.path("dynatemp_range").asDouble(), is(closeTo(0.4, 1e-4)));
+        assertThat(out.path("dynatemp_exponent").asDouble(), is(closeTo(1.2, 1e-4)));
+        assertThat(out.path("min_keep").asInt(), is(2));
+        assertThat(out.path("n_keep").asInt(), is(8));
+        assertThat(out.path("ignore_eos").asBoolean(false), is(true));
+        assertThat(out.path("grammar").asText(), is("root ::= \"a\""));
+    }
+
+    @Test
+    public void nPredictWinsOverMaxTokensLikeUpstream() throws IOException {
+        // upstream reads n_predict with max_completion_tokens and max_tokens as aliases, n_predict first.
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":50,\"n_predict\":7}");
+        assertThat(out.path("n_predict").asInt(), is(7));
+    }
+
+    @Test
+    public void jsonSchemaReachesTheMappedRequest() throws IOException {
+        JsonNode schema = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"json_schema\":{\"type\":\"object\"}}");
+        assertThat(schema.path("json_schema").path("type").asText(), is("object"));
+    }
+
+    @Test
+    public void jsonSchemaAndGrammarAreBothForwardedSoUpstreamCanRefuseThePair() throws IOException {
+        // upstream's chat parser answers a body carrying both with 400 "Cannot use both json_schema and
+        // grammar" (server-common.cpp, b11639); dropping the schema here answered 200 without it.
+        JsonNode both = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"grammar\":\"root ::= \\\"a\\\"\",\"json_schema\":{\"type\":\"object\"}}");
+        assertThat(both.path("json_schema").path("type").asText(), is("object"));
+        assertThat(both.path("grammar").asText(), is("root ::= \"a\""));
+    }
+
+    /** Every number field the mapper reads, as upstream's request schema or chat parser reads it. */
+    private static final String[] NUMBER_FIELDS = {
+        "n_predict",
+        "max_completion_tokens",
+        "max_tokens",
+        "n",
+        "n_probs",
+        "n_cache_reuse",
+        "id_slot",
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "min_p",
+        "typical_p",
+        "repeat_penalty",
+        "top_n_sigma",
+        "xtc_probability",
+        "xtc_threshold",
+        "dynatemp_range",
+        "dynatemp_exponent",
+        "repeat_last_n",
+        "min_keep",
+        "n_keep",
+        "reasoning_budget_tokens",
+        "thinking_budget_tokens"
+    };
+
+    @Test
+    public void aStringMaxTokensIsRefusedRatherThanReadAsNoLimit() {
+        // upstream's schema reads max_tokens as a number (field_num::eval, server-schema.cpp, b11639) and
+        // answers "Field 'max_tokens': ... type must be number, but is string" with 400; the mapper read
+        // the string as no field at all, so the request ran without a cap.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":\"100\"}"));
+        assertThat(e.getMessage(), is("Field 'max_tokens': type must be number, but is string"));
+    }
+
+    @Test
+    public void everyNumberFieldThatIsNotANumberIsRefusedLikeUpstreamsSchema() {
+        // A string, a boolean, an object or an array in a number field was skipped without a word (n:"2"
+        // answered once, n_probs:"3" returned no probabilities); upstream answers 400. A boolean is
+        // refused too, where upstream's nlohmann conversion would read it as 0 or 1.
+        String[][] values = {{"\"3\"", "string"}, {"true", "boolean"}, {"{}", "object"}, {"[3]", "array"}};
+        for (String field : NUMBER_FIELDS) {
+            for (String[] value : values) {
+                String request =
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"" + field + "\":" + value[0] + "}";
+                IllegalArgumentException e =
+                        assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+                assertThat(
+                        request, e.getMessage(), is("Field '" + field + "': type must be number, but is " + value[1]));
+            }
+        }
+    }
+
+    @Test
+    public void aTopLogprobsThatIsNotANumberIsRefused() {
+        // upstream's chat parser falls back to 20 with a log warning; a wrong type is the client's mistake
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                        + "\"logprobs\":true,\"top_logprobs\":\"3\"}"));
+        assertThat(e.getMessage(), is("Field 'top_logprobs': type must be number, but is string"));
+    }
+
+    @Test
+    public void aNullNumberFieldIsTheDefaultLikeUpstream() throws IOException {
+        // upstream's schema treats null as absent ("clients can send null to request the server default")
+        StringBuilder request = new StringBuilder("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]");
+        for (String field : NUMBER_FIELDS) {
+            request.append(",\"").append(field).append("\":null");
+        }
+        JsonNode out = mapAndSerialize(request.append('}').toString());
+        assertThat(out.has("n_predict"), is(false));
+        assertThat(out.has("temperature"), is(false));
+        assertThat(out.has("repeat_last_n"), is(false));
+    }
+
+    @Test
+    public void aFractionalIntegerFieldIsTruncatedLikeUpstream() throws IOException {
+        // upstream converts a JSON float to the field's integer type; repeat_last_n 32.7 was dropped here
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"max_tokens\":100.5,\"repeat_last_n\":32.7,\"n_probs\":3.9}");
+        assertThat(out.path("n_predict").asInt(), is(100));
+        assertThat(out.path("repeat_last_n").asInt(-1), is(32));
+        assertThat(out.path("n_probs").asInt(-1), is(3));
+    }
+
+    @Test
+    public void onlyTheFirstPresentTokenCapAliasIsReadLikeUpstream() throws IOException {
+        // upstream's schema reads n_predict, then max_completion_tokens, then max_tokens, and stops at the
+        // first one present; a later alias is not looked at
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n_predict\":7,\"max_tokens\":\"x\"}");
+        assertThat(out.path("n_predict").asInt(), is(7));
+    }
+
+    @Test
     public void unknownFieldsIgnored() throws IOException {
         JsonNode out = mapAndSerialize(
-                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true,\"n\":3}");
+                // "n" is not unknown: anything but one answer is refused (moreThanOneChoiceIsRefused...)
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true}");
         assertThat(out.path("messages").isArray(), is(true));
         assertThat(out.has("some_future_field"), is(false));
     }

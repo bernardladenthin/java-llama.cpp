@@ -28,20 +28,20 @@ public class SessionCheckpointTest {
     }
 
     private static SessionCheckpoint sample() {
-        return new SessionCheckpoint("/tmp/cp.bin", turns());
+        return new SessionCheckpoint("cp.bin", turns());
     }
 
     @Test
     public void gettersRoundTrip() {
         SessionCheckpoint checkpoint = sample();
-        assertThat(checkpoint.getFilepath(), is("/tmp/cp.bin"));
+        assertThat(checkpoint.getFilename(), is("cp.bin"));
         assertThat(checkpoint.getTurns(), is(turns()));
     }
 
     @Test
     public void turnsAreCopiedAndUnmodifiable() {
         List<Pair<String, String>> input = new ArrayList<>(turns());
-        SessionCheckpoint checkpoint = new SessionCheckpoint("/tmp/cp.bin", input);
+        SessionCheckpoint checkpoint = new SessionCheckpoint("cp.bin", input);
         input.clear(); // later mutation of the input must not leak in
 
         assertThat(checkpoint.getTurns().size(), is(2));
@@ -58,12 +58,12 @@ public class SessionCheckpointTest {
     @Test
     public void equals_differsPerField() {
         SessionCheckpoint base = sample();
-        assertNotEquals(base, new SessionCheckpoint("/tmp/other.bin", turns()));
-        assertNotEquals(base, new SessionCheckpoint("/tmp/cp.bin", Collections.<Pair<String, String>>emptyList()));
+        assertNotEquals(base, new SessionCheckpoint("other.bin", turns()));
+        assertNotEquals(base, new SessionCheckpoint("cp.bin", Collections.<Pair<String, String>>emptyList()));
     }
 
     @Test
     public void toString_isCompactSummary() {
-        assertThat(sample().toString(), is("/tmp/cp.bin (2 turns)"));
+        assertThat(sample().toString(), is("cp.bin (2 turns)"));
     }
 }

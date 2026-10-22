@@ -5,8 +5,10 @@
 package net.ladenthin.llama.parameters;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
@@ -17,6 +19,7 @@ import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.ContentPart;
 import net.ladenthin.llama.value.Pair;
+import net.ladenthin.llama.value.ToolCall;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -41,6 +44,13 @@ public class ParameterJsonSerializer {
     /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /**
+     * Reads exactly one JSON value: {@code FAIL_ON_TRAILING_TOKENS} refuses text after it, which a plain
+     * {@code readTree} parses past and drops ({@code "true false"} would become {@code true}).
+     */
+    private static final ObjectReader SINGLE_VALUE_READER =
+            OBJECT_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
     // ------------------------------------------------------------------
     // String escaping
     // ------------------------------------------------------------------
@@ -57,6 +67,7 @@ public class ParameterJsonSerializer {
      */
     public String toJsonString(String value) {
         if (value == null) return "null";
+
         try {
             return OBJECT_MAPPER.writeValueAsString(value);
         } catch (JsonProcessingException e) {
@@ -106,7 +117,11 @@ public class ParameterJsonSerializer {
      * {@link net.ladenthin.llama.value.ChatMessage} objects directly so messages with non-null
      * {@link net.ladenthin.llama.value.ChatMessage#getParts()} can be serialized as the OAI-compatible
      * array-form {@code content} the upstream {@code mtmd} pipeline expects.
-     * Plain text messages still emit the legacy string-form {@code content}.
+     * Plain text messages still emit the legacy string-form {@code content}. A tool-result message
+     * carries its {@code tool_call_id}, an assistant turn with tool calls a {@code tool_calls} array.
+     * Empty or blank tool-call arguments are written as {@code {}}, because chat templates that take
+     * object arguments parse the history's arguments as JSON and an empty string would fail the
+     * whole request.
      *
      * @param messages messages in order; must not be {@code null}
      * @return a Jackson {@link ArrayNode} ready for the {@code messages} request field
@@ -146,6 +161,24 @@ public class ParameterJsonSerializer {
             } else {
                 msg.put("content", message.getContent());
             }
+            // Tool-calling round trips: without these the model sees a tool turn it cannot pair with
+            // the call it made (and InferenceParameters.withMessages dropped them, unlike ChatRequest).
+            message.getToolCallId().ifPresent(id -> msg.put("tool_call_id", id));
+            if (!message.getToolCalls().isEmpty()) {
+                ArrayNode toolCalls = msg.putArray("tool_calls");
+                for (ToolCall call : message.getToolCalls()) {
+                    ObjectNode entry = toolCalls.addObject();
+                    entry.put("id", call.getId());
+                    entry.put("type", "function");
+                    ObjectNode function = entry.putObject("function");
+                    function.put("name", call.getName());
+                    // Templates that take object arguments make upstream json::parse the arguments
+                    // of the history, so an empty string fails the whole request with 400; a call
+                    // without arguments is "{}".
+                    final String arguments = call.getArgumentsJson();
+                    function.put("arguments", arguments.trim().isEmpty() ? "{}" : arguments);
+                }
+            }
             arr.add(msg);
         }
         return arr;
@@ -154,6 +187,18 @@ public class ParameterJsonSerializer {
     // ------------------------------------------------------------------
     // Simple array builders
     // ------------------------------------------------------------------
+
+    /**
+     * Build a JSON array of strings.
+     *
+     * @param values the strings
+     * @return a Jackson {@link ArrayNode} of the strings
+     */
+    public ArrayNode buildStringArray(String... values) {
+        ArrayNode arr = OBJECT_MAPPER.createArrayNode();
+        for (String value : values) arr.add(value);
+        return arr;
+    }
 
     /**
      * Build a JSON string array from the given stop strings
@@ -190,16 +235,18 @@ public class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for integer token IDs:
      * {@code [[15043, 1.0], [50256, -0.5]]}.
+     * A bias of {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param biases map from token ID to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code [tokenId, biasValue]} pairs
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public ArrayNode buildTokenIdBiasArray(Map<Integer, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Map.Entry<Integer, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
             pair.add(entry.getKey());
-            pair.add(entry.getValue());
+            addBias(pair, entry.getValue());
             arr.add(pair);
         }
         return arr;
@@ -208,19 +255,41 @@ public class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for string tokens:
      * {@code [["Hello", 1.0], [" world", -0.5]]}.
+     * A bias of {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param biases map from token string to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code ["token", biasValue]} pairs
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public ArrayNode buildTokenStringBiasArray(Map<String, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Map.Entry<String, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
             pair.add(entry.getKey());
-            pair.add(entry.getValue());
+            addBias(pair, entry.getValue());
             arr.add(pair);
         }
         return arr;
+    }
+
+    /**
+     * Appends one bias value in a form llama.cpp's {@code logit_bias} parser accepts: a number, or
+     * {@code false} for negative infinity (a ban). JSON has no infinity, and Jackson writes a
+     * non-finite float as a string, which that parser skips -- a {@code -Infinity} bias then
+     * silently did nothing.
+     *
+     * @param pair the {@code [token, bias]} pair to append to
+     * @param bias the bias value
+     * @throws IllegalArgumentException if {@code bias} is NaN or positive infinity
+     */
+    private static void addBias(ArrayNode pair, float bias) {
+        if (bias == Float.NEGATIVE_INFINITY) {
+            pair.add(false);
+        } else if (Float.isFinite(bias)) {
+            pair.add(bias);
+        } else {
+            throw new IllegalArgumentException("logit bias must be finite or negative infinity, got " + bias);
+        }
     }
 
     /**
@@ -269,7 +338,7 @@ public class ParameterJsonSerializer {
      * produces {@code {"enable_thinking": true}}, not {@code {"enable_thinking": "true"}}.
      *
      * <p>Used for {@code chat_template_kwargs} which stores raw JSON values.
-     * If a value cannot be parsed as JSON, it is stored as a JSON string literal.
+     * If a value is not exactly one JSON value, it is stored as a JSON string literal.
      *
      * @param map map of key to pre-serialized JSON value strings
      * @return a Jackson {@link ObjectNode} with each value embedded as a parsed JSON node
@@ -278,8 +347,13 @@ public class ParameterJsonSerializer {
         ObjectNode node = OBJECT_MAPPER.createObjectNode();
         for (Map.Entry<String, String> entry : map.entrySet()) {
             try {
-                JsonNode val = OBJECT_MAPPER.readTree(entry.getValue());
-                node.set(entry.getKey(), val);
+                JsonNode val = SINGLE_VALUE_READER.readTree(entry.getValue());
+                // An empty or blank value is no JSON either, but Jackson returns MissingNode (written as null).
+                if (val.isMissingNode()) {
+                    node.put(entry.getKey(), entry.getValue());
+                } else {
+                    node.set(entry.getKey(), val);
+                }
             } catch (IOException e) {
                 node.put(entry.getKey(), entry.getValue());
             }

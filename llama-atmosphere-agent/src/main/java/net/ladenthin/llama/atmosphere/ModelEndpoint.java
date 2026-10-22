@@ -85,6 +85,9 @@ public final class ModelEndpoint implements AutoCloseable {
                 .setCtxSize(options.getCtxSize())
                 .setGpuLayers(options.getGpuLayers())
                 .setFit(false)
+                // Without an alias llama.cpp names every answer after the model's path; the alias makes the
+                // answers carry the id /v1/models lists.
+                .setAlias(options.getModelId())
                 // Jinja rendering is what lets the native parser apply the model's tool-call template.
                 .enableJinja();
         // llama.cpp logs to stderr, which shares the console with the streamed answer on stdout; the
@@ -103,7 +106,7 @@ public final class ModelEndpoint implements AutoCloseable {
     /**
      * The OpenAI-compatible base URL.
      *
-     * @return e.g. {@code http://127.0.0.1:8080/v1}
+     * @return e.g. {@code http://127.0.0.1:9931/v1}
      */
     public String baseUrl() {
         return baseUrl;

@@ -9,9 +9,13 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.Arrays;
+import java.util.List;
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link OpenAiServerCli}: parsing of long/short/alias flags, defaults, model-id
@@ -202,6 +206,60 @@ public class OpenAiServerCliTest {
         assertThat(options.getModelId(), is("x"));
     }
 
+    // The answers name the model llama.cpp knows (its alias, else the file); without passing the
+    // advertised id on, /v1/models said "x" while every answer said "Llama-3.gguf" (F185).
+    //
+    // The DEFAULT needs it just as much, which this used to assert the opposite of: with no
+    // --model-id no alias was set at all, and llama.cpp's fallback for the model name is
+    // alias -> common_params_model::get_name() -> file name, where get_name() returns the PATH for a
+    // local file -- so /v1/models reported the file name while every answer reported the absolute
+    // path. Measured against b11639 with both servers; the alias is therefore always set, from
+    // getModelId(), which is the one name the server advertises.
+    @Test
+    public void theAdvertisedModelIdBecomesTheModelsAliasWithAndWithoutTheFlag() {
+        List<String> explicitId =
+                Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf", "--model-id", "x")
+                        .toModelParameters()
+                        .toArray());
+        assertThat(explicitId.get(explicitId.indexOf("--alias") + 1), is("x"));
+
+        OpenAiServerCli.Options defaulted = OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf");
+        List<String> argv = Arrays.asList(defaulted.toModelParameters().toArray());
+        assertThat(argv.contains("--alias"), is(true));
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is("Llama-3.gguf"));
+        // the alias and /v1/models are the same string, which is the whole point
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is(defaulted.getModelId()));
+    }
+
+    // llama.cpp's --alias splits its value at commas and strips each part into a SET of aliases, and
+    // the answers name the first of that set: "my,model" made /v1/models say "my,model" while every
+    // answer said "model". So an id llama.cpp would change is refused, and a file name it would change
+    // is advertised in the form it keeps.
+    @Test
+    public void aModelIdWithACommaIsRefused() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", "my,model"));
+        assertThat(ex.getMessage(), containsString("--model-id"));
+        assertThat(ex.getMessage(), containsString("comma"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-alias", "my,model"));
+    }
+
+    @Test
+    public void aModelIdLlamaCppWouldStripIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", " x"));
+        assertThrows(IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", ""));
+    }
+
+    @Test
+    public void aFileNameWithACommaIsAdvertisedAsItsAlias() {
+        OpenAiServerCli.Options options = OpenAiServerCli.parse("-m", "/opt/models/a,b.gguf");
+        assertThat(options.getModelId(), is("a_b.gguf"));
+        List<String> argv = Arrays.asList(options.toModelParameters().toArray());
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is("a_b.gguf"));
+    }
+
     @Test
     public void missingModelThrows() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, OpenAiServerCli::parse);
@@ -229,6 +287,27 @@ public class OpenAiServerCliTest {
         assertThat(ex.getMessage(), containsString("expects an integer"));
     }
 
+    /**
+     * A port outside the TCP range is a usage error like a non-numeric one. Accepted here, it only
+     * fails when the server binds, which happens after the model has loaded, and as a stack trace.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"-1", "65536", "70000"})
+    public void portOutsideTheTcpRangeThrows(String port) {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--port", port));
+        assertThat(ex.getMessage(), containsString("--port expects a port in 0..65535"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 65535})
+    public void portAtTheEndsOfTheTcpRangeIsAccepted(int port) {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--port", Integer.toString(port))
+                        .getPort(),
+                is(port));
+    }
+
     @Test
     public void helpRequestedDetection() {
         assertThat(OpenAiServerCli.isHelpRequested("-h"), is(true));
@@ -243,6 +322,7 @@ public class OpenAiServerCliTest {
         assertThat(usage, containsString("/v1/chat/completions"));
         assertThat(usage, containsString("/v1/embeddings"));
         assertThat(usage, containsString("/health"));
+        assertThat(usage, containsString("(default: 9931)"));
     }
 
     @Test
@@ -270,6 +350,77 @@ public class OpenAiServerCliTest {
                 OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192").toServerConfig();
         assertThat(config.getMaxOutputTokens(), is(2048));
         assertThat(config.getMaxInputTokens(), is(6144));
+    }
+
+    @Test
+    public void loadedSlotContextIsAdvertisedWithoutContextSize() {
+        // Without -c the advertised window was the fixed 8192 + 2048, whatever the model loaded with:
+        // a slot of 2048 tokens was advertised as 10240 (measured at b11639).
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf").toServerConfig(false, "", 2048);
+        assertThat(config.getMaxOutputTokens(), is(1024));
+        assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(2048));
+    }
+
+    @Test
+    public void loadedSlotContextWinsOverTheContextSizeArgument() {
+        // -c 16384 with 4 slots would be 4096 per slot, but the load can end with less (llama.cpp's
+        // --fit shrinks the context to the device memory); what the slot holds is what a request gets.
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", "16384", "--parallel", "4")
+                .toServerConfig(false, "", 3000);
+        assertThat(config.getMaxOutputTokens(), is(1500));
+        assertThat(config.getMaxInputTokens(), is(1500));
+    }
+
+    @Test
+    public void slotCountOfTheLoadedModelIsAdvertised() {
+        // Without --parallel llama.cpp picks the slot count itself, so the loaded model is the only
+        // source; /props reported a constant 1.
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf")
+                        .toServerConfig(false, "", 0, 4)
+                        .getTotalSlots(),
+                is(4));
+    }
+
+    @Test
+    public void unknownSlotCountFallsBackToTheParallelArgumentAndThenToOne() {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--parallel", "3")
+                        .toServerConfig()
+                        .getTotalSlots(),
+                is(3));
+        assertThat(OpenAiServerCli.parse("-m", "m.gguf").toServerConfig().getTotalSlots(), is(1));
+    }
+
+    @Test
+    public void unknownSlotContextFallsBackToTheContextSizeArgument() {
+        OpenAiServerConfig config =
+                OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192").toServerConfig(false, "", 0);
+        assertThat(config.getMaxOutputTokens(), is(2048));
+        assertThat(config.getMaxInputTokens(), is(6144));
+    }
+
+    @Test
+    public void smallContextSizeSplitsTheWholeWindowBetweenInputAndOutput() {
+        // Below twice the output default the output budget is ctx/2. The input budget must be the rest
+        // of the window, not ctx minus the 2048 default: with -c 2048 that advertised a single input
+        // token, and clients that size their prompt from it (Copilot's maxInputTokens) send none.
+        for (int ctx : new int[] {1024, 2048, 3000}) {
+            OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", String.valueOf(ctx))
+                    .toServerConfig();
+            assertThat(config.getMaxOutputTokens(), is(ctx / 2));
+            assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(ctx));
+        }
+    }
+
+    @Test
+    public void parallelSlotsShareTheContextSoTheBudgetIsPerSlot() {
+        // With an explicit --parallel N (and no unified KV cache, which llama.cpp enables only when the
+        // slot count is "auto") every slot gets n_ctx / N, and upstream's /props reports that per-slot
+        // size. Advertising the whole -c made clients size prompts for 8192 tokens a request cannot hold.
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192", "--parallel", "4")
+                .toServerConfig();
+        assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(2048));
     }
 
     @Test

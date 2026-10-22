@@ -46,7 +46,7 @@ public final class AgentRunner {
     /**
      * Configure the runtime for one endpoint.
      *
-     * @param baseUrl the OpenAI-compatible base URL, e.g. {@code http://127.0.0.1:8080/v1}
+     * @param baseUrl the OpenAI-compatible base URL, e.g. {@code http://127.0.0.1:9931/v1}
      * @param apiKey the bearer token (sent as {@code Authorization: Bearer ...})
      * @param modelId the model id carried in every request
      * @param tools the tools offered to the model on every turn

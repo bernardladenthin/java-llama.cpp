@@ -138,6 +138,8 @@ final class OpenAiSseFormatter {
         ObjectNode model = OBJECT_MAPPER.createObjectNode();
         model.put("id", modelId);
         model.put("object", "model");
+        // Required by the OpenAI model object; upstream's get_res_model_info sends the current time.
+        model.put("created", System.currentTimeMillis() / 1000L);
         model.put("owned_by", "llama.cpp");
         if (ftype != null && !ftype.isEmpty()) {
             model.put("ftype", ftype);
@@ -147,37 +149,6 @@ final class OpenAiSseFormatter {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("object", "list");
         root.set("data", data);
-        return root.toString();
-    }
-
-    /**
-     * Build one OpenAI {@code text_completion} streaming chunk for {@code POST /v1/completions}.
-     *
-     * @param id the completion id, stable across the whole stream
-     * @param created the creation timestamp in epoch seconds
-     * @param model the served model id
-     * @param text the incremental token text carried by this chunk
-     * @param finishReason the finish reason on the final chunk, or {@code null} for intermediate chunks
-     * @return the chunk serialized as JSON
-     */
-    static String completionChunk(String id, long created, String model, String text, @Nullable String finishReason) {
-        ObjectNode choice = OBJECT_MAPPER.createObjectNode();
-        choice.put("text", text);
-        choice.put("index", 0);
-        choice.putNull("logprobs");
-        if (finishReason == null) {
-            choice.putNull("finish_reason");
-        } else {
-            choice.put("finish_reason", finishReason);
-        }
-        ArrayNode choices = OBJECT_MAPPER.createArrayNode();
-        choices.add(choice);
-        ObjectNode root = OBJECT_MAPPER.createObjectNode();
-        root.put("id", id);
-        root.put("object", "text_completion");
-        root.put("created", created);
-        root.put("model", model);
-        root.set("choices", choices);
         return root.toString();
     }
 
@@ -195,14 +166,15 @@ final class OpenAiSseFormatter {
      * @param modelId the served model id
      * @param nCtx the advertised context length
      * @param vision whether image input is supported
+     * @param totalSlots the number of inference slots ({@code total_slots}, upstream's {@code n_parallel})
      * @return the props object serialized as JSON
      */
-    static String propsJson(String modelId, int nCtx, boolean vision) {
+    static String propsJson(String modelId, int nCtx, boolean vision, int totalSlots) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         ObjectNode defaults = root.putObject("default_generation_settings");
         defaults.put("n_ctx", nCtx);
         defaults.put("model", modelId);
-        root.put("total_slots", 1);
+        root.put("total_slots", totalSlots);
         root.put("model_alias", modelId);
         root.put("chat_template", "");
         ObjectNode modalities = root.putObject("modalities");

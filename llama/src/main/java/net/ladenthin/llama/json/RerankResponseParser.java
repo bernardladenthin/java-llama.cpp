@@ -8,8 +8,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import net.ladenthin.llama.value.Pair;
 
 /**
@@ -71,5 +74,21 @@ public class RerankResponseParser {
             results.add(new Pair<String, Float>(doc, score));
         }
         return results;
+    }
+
+    /**
+     * The document/score pairs of {@link #parse(String)} as a map from document to score, in the
+     * order of the results (the input order of the documents). Equal documents score the same and
+     * share one entry, at the position of their first occurrence; the list form keeps every entry.
+     *
+     * @param results the parsed rerank results
+     * @return a map from document text to score, in result order
+     */
+    public Map<String, Float> toDocumentScores(Collection<Pair<String, Float>> results) {
+        Map<String, Float> scores = new LinkedHashMap<String, Float>(results.size());
+        for (Pair<String, Float> pair : results) {
+            scores.put(pair.getKey(), pair.getValue());
+        }
+        return scores;
     }
 }

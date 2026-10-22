@@ -12,6 +12,7 @@
 #include "server-common.h"
 #include "server-chat.h"
 #include "server-http.h"
+#include "base64.hpp"
 #include "json-schema-to-grammar.h"
 #include "utils.hpp"
 #include "jllama_engine.hpp"
@@ -300,6 +301,14 @@ void free(jllama_context *jctx) {
     delete jctx;
 }
 
+void require_server(const jllama_context *jctx, const char *operation) {
+    if (jctx->vocab_only) {
+        throw std::runtime_error(std::string(operation != nullptr ? operation : "This operation") +
+                                 " is not available in vocab-only mode: the model was loaded with --vocab-only, "
+                                 "which loads the tokenizer only (model meta, tokenize, detokenize)");
+    }
+}
+
 // Wake the server from the idle-sleep state and re-sync the state this layer caches from the model.
 //
 // Upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees the model and context and
@@ -352,15 +361,85 @@ json parse_oai_chat_params(jllama_context *jctx, json &body, std::vector<raw_buf
 void populate_completion_task(server_task &task, jllama_context *jctx,
                               const std::vector<llama_logit_bias> &logit_bias_eog, const json &data, bool has_mtmd,
                               std::vector<raw_buffer> files) {
-    if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
+    // upstream's raw multimodal prompt, {"prompt_string": "...<marker>...", "multimodal_data": [base64]},
+    // is tokenized by its HTTP handler with the projector, which this engine cannot reach; the task's
+    // CLI fields carry it to the worker, which tokenizes it with the projector as the chat paths do.
+    // Tokenized here without one, it was refused as if the model had no projector.
+    const json *prompt_field = data.contains("prompt") ? &data.at("prompt") : nullptr;
+    if (files.empty() && prompt_field != nullptr && prompt_field->is_object() &&
+        prompt_field->contains("prompt_string") && prompt_field->contains("multimodal_data")) {
+        const json &prompt = *prompt_field;
+        if (!has_mtmd) {
+            throw std::invalid_argument("Multimodal data provided, but model does not support multimodal requests.");
+        }
+        const json &media = prompt.at("multimodal_data");
+        if (!media.is_array() || media.empty()) {
+            throw std::invalid_argument("\"multimodal_data\" must be a non-empty array of base64 strings");
+        }
+        for (const auto &entry : media) {
+            if (!entry.is_string()) {
+                throw std::invalid_argument("\"multimodal_data\" must be a non-empty array of base64 strings");
+            }
+            const std::string bytes = base64::decode(entry.get<std::string>());
+            files.emplace_back(bytes.begin(), bytes.end());
+        }
+        // A prompt that ends with its media leaves the slot no text token to take the logits from, and
+        // the server aborts the process on it (GGML_ASSERT(batch.size() > 0) in update_slots); upstream's
+        // chat paths never get there because the template puts text after the last image.
+        const json &prompt_string = prompt.at("prompt_string");
+        if (prompt_string.is_string() && string_ends_with(prompt_string.get<std::string>(), get_media_marker())) {
+            throw std::invalid_argument("a multimodal prompt must have text after its last media marker");
+        }
+        json multimodal = data;
+        multimodal["prompt"] = prompt.at("prompt_string");
+        if (!configure_multimodal_task_impl(task, has_mtmd, multimodal, std::move(files))) {
+            throw std::logic_error("a multimodal prompt carried no media");
+        }
+    } else if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
         auto tokenized_prompts =
             tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
+        // A task carries one prompt. Upstream answers several prompts with one choice each; taking the
+        // first here dropped the others without a word, so they are refused instead.
+        if (tokenized_prompts.size() > 1) {
+            throw jllama_invalid_request("a request takes one prompt, this one has " +
+                                         std::to_string(tokenized_prompts.size()) +
+                                         " prompts; send them as separate requests");
+        }
         if (!tokenized_prompts.empty()) {
             task.tokens = std::move(tokenized_prompts[0]);
         }
     }
     task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
+    // The completion schema sets the sequence the reasoning budget forces only in the handler of
+    // reasoning_budget_message, so a request naming the end tags without a message armed a budget that
+    // forced nothing when it ran out. The chat paths always pass the message (the server's default,
+    // --reasoning-budget-message, empty unless set); a request without one gets the same default here.
+    common_params_sampling &sampling = task.params.sampling;
+    if (!sampling.reasoning_budget_end.empty() && sampling.reasoning_budget_forced.empty()) {
+        llama_tokens forced = sampling.reasoning_budget_end.front();
+        const std::string &message = jctx->params.sampling.reasoning_budget_message;
+        if (!message.empty()) {
+            const llama_tokens message_tokens = common_tokenize(jctx->vocab, message, false, true);
+            forced.insert(forced.begin(), message_tokens.begin(), message_tokens.end());
+        }
+        sampling.reasoning_budget_forced = std::move(forced);
+    }
+    // Several completions of one prompt ("n", upstream's n_cmpl): upstream answers them in child tasks
+    // the server creates, the engine posts this one task alone, so the others were dropped without a
+    // word. Refused like several prompts.
+    if (task.params.n_cmpl > 1) {
+        throw jllama_invalid_request("a request takes one completion, this one asks for 'n' = " +
+                                     std::to_string(task.params.n_cmpl) + "; send separate requests");
+    }
     configure_task_slot_impl(task, data);
+}
+
+// The id and the model name every OpenAI answer and chunk carries, set as upstream's
+// handle_completions_impl sets them: a fresh completion id, and the name the server answers to (the
+// alias, else the model's name). Left unset, they were "" in every answer.
+static void name_completion_task(server_task &task, const server_context_meta &meta) {
+    task.params.oaicompat_cmpl_id = gen_chatcmplid();
+    task.params.oaicompat_model = meta.model_name;
 }
 
 // Wake the queue before posting, then post.
@@ -390,10 +469,27 @@ void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
     rd.post_tasks(std::move(tasks), session);
 }
 
+// A raw task posts no session, so what apply_chat_session gives a chat task is applied here for a raw
+// completion with "messages". The generation prompt is what the sampler of a chat task is primed with
+// (common_sampler_init feeds it to the reasoning budget), so a template that opens the thinking block
+// in the generation prompt starts the budget counting at the first generated token. An output-format
+// grammar (json_schema) is primed with the same prompt, which it cannot accept; beside one the prompt
+// is left unset, and the budget then counts only from a start tag the model writes itself. The
+// template's preserved tokens join the request's own (the schema has put those in already): the chat
+// path drops a request's preserved_tokens because the session owns them, but on a raw completion the
+// field is a completion field of its own, so both are kept.
+static void apply_raw_chat_sampling(server_task &task, const raw_chat_sampling &raw_chat) {
+    if (!raw_chat.generation_prompt.empty() && !common_grammar_needs_prefill(task.params.sampling.grammar)) {
+        task.params.sampling.generation_prompt = raw_chat.generation_prompt;
+    }
+    task.params.sampling.preserved_tokens.insert(raw_chat.preserved_tokens.begin(), raw_chat.preserved_tokens.end());
+}
+
 std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files,
-                                                        const common_chat_session &session) {
+                                                        const common_chat_session &session,
+                                                        const raw_chat_sampling &raw_chat) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = jctx->server.get_response_reader();
     server_task task(task_type);
@@ -404,7 +500,9 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
         throw jllama_invalid_request(e.what());
     }
     task.apply_chat_session(session);
+    apply_raw_chat_sampling(task, raw_chat);
     task.params.res_type = res_type;
+    name_completion_task(task, meta);
     std::vector<server_task> tasks;
     tasks.push_back(std::move(task));
     wake_and_post(rd, std::move(tasks), session);
@@ -414,7 +512,8 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
 }
 
 int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
-                      std::vector<raw_buffer> files, const common_chat_session &session) {
+                      std::vector<raw_buffer> files, const common_chat_session &session,
+                      const raw_chat_sampling &raw_chat) {
     auto meta = wake_and_get_meta(jctx);
     auto rd = std::make_shared<server_response_reader>(jctx->server.get_response_reader());
     const int tid = rd->get_new_id();
@@ -423,7 +522,9 @@ int streaming_request(jllama_context *jctx, const json &data, server_task_type t
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.apply_chat_session(session);
+        apply_raw_chat_sampling(task, raw_chat);
         task.params.res_type = res_type;
+        name_completion_task(task, meta);
         std::vector<server_task> tasks;
         tasks.push_back(std::move(task));
         wake_and_post(*rd, std::move(tasks), session);
@@ -547,6 +648,10 @@ std::string model_meta(jllama_context *jctx) {
         {"name", m.model_name},
         {"architecture", arch},
         {"ftype", m.model_ftype},
+        // The placeholder a raw multimodal prompt puts where each image goes ({"prompt_string": ...,
+        // "multimodal_data": [...]}). Random per process unless LLAMA_MEDIA_MARKER pins it, so a caller
+        // reads it here, as upstream's /props publishes it.
+        {"media_marker", get_media_marker()},
     };
     // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
     // flattened to the top level because "architecture" above already names the GGUF architecture
@@ -580,12 +685,6 @@ std::string model_meta(jllama_context *jctx) {
     return safe_json_to_str(j);
 }
 
-std::string completions(jllama_context *jctx, const std::string &body_text) {
-    const json data = parse_json_body(body_text);
-    return safe_json_to_str(
-        results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE)));
-}
-
 std::string completions_oai(jllama_context *jctx, const std::string &body_text) {
     const json body = parse_json_body(body_text);
     json data;
@@ -598,15 +697,23 @@ std::string completions_oai(jllama_context *jctx, const std::string &body_text) 
         results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL)));
 }
 
-std::string infill(jllama_context *jctx, const std::string &body_text) {
-    // FIM token support via server_context_meta (populated from the same llama_vocab_fim_* calls
-    // inside server-context). Upstream answers 501 here, a server-side error.
-    auto meta = wake_and_get_meta(jctx);
+// The FIM check of llama.cpp's /infill handler (handle_infill). Upstream answers 501 here, a
+// server-side error. The tokens come from server_context_meta (populated from the same
+// llama_vocab_fim_* calls inside server-context).
+static void require_fim_tokens(const server_context_meta &meta) {
     if (meta.fim_pre_token == LLAMA_TOKEN_NULL || meta.fim_sub_token == LLAMA_TOKEN_NULL ||
         meta.fim_mid_token == LLAMA_TOKEN_NULL) {
         throw std::runtime_error("Model does not support fill-in-the-middle infill");
     }
-    json data = parse_json_body(body_text);
+}
+
+// The rest of handle_infill's preparation: both fields required, input_extra defaulted, and the
+// prompt formatted around the FIM tokens into data["prompt"] (an optional "prompt" of the request is
+// the text after the middle token). Shared by the infill endpoint and the raw completion paths,
+// which take input_prefix/input_suffix as an infill request -- upstream formats the infill prompt in
+// its HTTP handler alone and runs an infill task in the slot like a completion, so a completion
+// request carrying the fields used to complete its (mostly empty) prompt and drop both.
+static void prepare_infill_prompt(jllama_context *jctx, const server_context_meta &meta, json &data) {
     for (const char *field : {"input_prefix", "input_suffix"}) {
         if (!data.contains(field)) {
             throw jllama_invalid_request(std::string("\"") + field + "\" is required");
@@ -624,14 +731,174 @@ std::string infill(jllama_context *jctx, const std::string &body_text) {
     } catch (const std::exception &e) {
         rethrow_by_type(e);
     }
+}
+
+// The request fields oaicompat_chat_params_parse consumes that have no effect on a raw completion:
+// response_format becomes the session's grammar, tools/tool_choice/parallel_tool_calls its tool-call
+// grammar with its triggers and preserved tokens, top_logprobs the n_probs of a chat answer and
+// thinking_budget_tokens an alias of reasoning_budget_tokens, which the raw paths take under its own
+// name. The completion schema reads none of them, and the raw paths take from the parser only the
+// rendered prompt, the template's stops and its reasoning budget, so each used to be dropped without
+// a word. The fields that act while rendering (chat_template_kwargs, reasoning_effort,
+// add_generation_prompt, continue_final_message) and the completion fields the schema reads itself
+// (json_schema, grammar, logprobs as n_probs, reasoning_budget_tokens, stop) stay allowed.
+static constexpr const char *CHAT_ONLY_FIELDS[] = {"response_format",     "tools",        "tool_choice",
+                                                   "parallel_tool_calls", "top_logprobs", "thinking_budget_tokens"};
+
+// The stop strings a chat template adds of its own (upstream's Laguna workaround adds "</assistant>",
+// which the model can spell out as text), which the chat paths append to the request's stops in
+// server_task::apply_chat_session. The raw paths post no session, so they are written into "stop"
+// here, after the stops the completion schema would take: the request's (a string or an array), or
+// the CLI defaults when it names none -- the schema falls back to those only when "stop" holds no
+// word. An array element that is no string is left for the schema to refuse.
+static void add_template_stops(jllama_context *jctx, json &data, const std::vector<std::string> &template_stops) {
+    if (template_stops.empty()) {
+        return;
+    }
+    json stops = json::array();
+    const json requested = data.contains("stop") ? data.at("stop") : json();
+    if (requested.is_string()) {
+        stops.push_back(requested);
+    } else if (requested.is_array()) {
+        for (const auto &word : requested) {
+            if (!word.is_string() || !word.get<std::string>().empty()) {
+                stops.push_back(word);
+            }
+        }
+    }
+    if (stops.empty()) {
+        for (const std::string &word : jctx->params.antiprompt) {
+            stops.push_back(word);
+        }
+    }
+    for (const std::string &word : template_stops) {
+        bool present = false;
+        for (const auto &existing : stops) {
+            present = present || (existing.is_string() && existing.get<std::string>() == word);
+        }
+        if (!present) {
+            stops.push_back(word);
+        }
+    }
+    data["stop"] = std::move(stops);
+}
+
+// The reasoning-budget fields oaicompat_chat_params_parse derives from a template that declares
+// thinking tags: the budget (the request's reasoning_budget_tokens, else the server's default), the
+// template's start and end tags, the message forced before the end tag and reasoning_control. The
+// completion schema reads each of them, so a raw completion with "messages" takes them as the chat
+// paths do -- the parser's values win over the request's, as in the parser's own copy of the request.
+// A template without thinking tags yields none of them, and the budget then has nothing to act on,
+// on the chat paths as here.
+static constexpr const char *REASONING_BUDGET_FIELDS[] = {"reasoning_budget_tokens", "reasoning_budget_start_tag",
+                                                          "reasoning_budget_end_tags", "reasoning_budget_message",
+                                                          "reasoning_control"};
+
+// A raw completion request with "messages" completes the prompt the chat template renders from them,
+// as applyTemplate renders it; the other fields stay completion fields. The field used to be read on
+// the chat paths alone (oaicompat_chat_params_parse), so a raw completion ignored it and completed
+// the prompt next to it, mostly the empty one. A non-empty prompt, the infill fields or one of
+// CHAT_ONLY_FIELDS beside the messages are refused rather than dropped; an empty prompt is no prompt
+// (InferenceParameters("") writes one). The media files of array-form content come back in files.
+// The template's stop strings and its reasoning budget are carried over (add_template_stops,
+// REASONING_BUDGET_FIELDS), and what the chat paths hand to the sampler is returned for the raw paths to
+// apply (see apply_raw_chat_sampling): the template's preserved tokens, and its generation prompt when
+// the budget is carried over.
+static raw_chat_sampling render_messages_into_prompt(jllama_context *jctx, json &data, std::vector<raw_buffer> &files) {
+    for (const char *field : CHAT_ONLY_FIELDS) {
+        if (data.contains(field) && !data.at(field).is_null()) {
+            throw jllama_invalid_request(std::string("'") + field +
+                                         "' is a chat field and has no effect on a raw completion with 'messages': "
+                                         "send the request as a chat completion");
+        }
+    }
+    if (is_infill_request(data)) {
+        throw jllama_invalid_request(
+            "'messages' cannot be combined with 'input_prefix'/'input_suffix': send an infill request or a chat");
+    }
+    if (data.contains("prompt") && !(data.at("prompt").is_string() && data.at("prompt").get<std::string>().empty())) {
+        throw jllama_invalid_request(
+            "'messages' and 'prompt' cannot both be set: the messages are rendered into the prompt");
+    }
+    json body = data;
+    common_chat_session session; // the raw path parses no chat output; the prompt and the stops are used
+    const json chat = parse_oai_chat_params(jctx, body, files, session);
+    if (!chat.contains("prompt") || !chat.at("prompt").is_string()) {
+        throw std::runtime_error("the chat template did not produce a string prompt");
+    }
+    data["prompt"] = chat.at("prompt");
+    add_template_stops(jctx, data, session.additional_stops());
+    raw_chat_sampling raw_chat;
+    common_params_sampling applied; // the session's sampler fields, as apply_chat_session takes them
+    session.apply_sampling(applied);
+    raw_chat.preserved_tokens = std::move(applied.preserved_tokens);
+    if (!chat.contains("reasoning_budget_end_tags")) {
+        return raw_chat;
+    }
+    for (const char *field : REASONING_BUDGET_FIELDS) {
+        if (chat.contains(field)) {
+            data[field] = chat.at(field);
+        }
+    }
+    raw_chat.generation_prompt = session.generation_prompt();
+    return raw_chat;
+}
+
+// A raw completion request with input_prefix/input_suffix is an infill one: refused like the infill
+// endpoint refuses it (no FIM tokens, a field missing), otherwise its prompt formatted the same way.
+// One with "messages" completes their templated prompt, and raw_chat receives what
+// render_messages_into_prompt returns. Returns the task type to post.
+static server_task_type prepare_raw_completion(jllama_context *jctx, json &data, std::vector<raw_buffer> &files,
+                                               raw_chat_sampling &raw_chat) {
+    if (data.contains("messages")) {
+        raw_chat = render_messages_into_prompt(jctx, data, files);
+        return SERVER_TASK_TYPE_COMPLETION;
+    }
+    if (!is_infill_request(data)) {
+        return SERVER_TASK_TYPE_COMPLETION;
+    }
+    const auto meta = wake_and_get_meta(jctx);
+    require_fim_tokens(meta);
+    prepare_infill_prompt(jctx, meta, data);
+    return SERVER_TASK_TYPE_INFILL;
+}
+
+std::string infill(jllama_context *jctx, const std::string &body_text) {
+    const auto meta = wake_and_get_meta(jctx);
+    require_fim_tokens(meta);
+    json data = parse_json_body(body_text);
+    prepare_infill_prompt(jctx, meta, data);
     return safe_json_to_str(
         results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_INFILL, TASK_RESPONSE_TYPE_NONE)));
 }
 
+std::string completions(jllama_context *jctx, const std::string &body_text) {
+    json data = parse_json_body(body_text);
+    std::vector<raw_buffer> files;
+    raw_chat_sampling raw_chat;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, raw_chat);
+    return safe_json_to_str(results_to_json(
+        blocking_completion(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, raw_chat)));
+}
+
 int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
-    const json data = parse_json_body(body_text);
-    const server_task_type type = is_infill_request(data) ? SERVER_TASK_TYPE_INFILL : SERVER_TASK_TYPE_COMPLETION;
-    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE);
+    json data = parse_json_body(body_text);
+    std::vector<raw_buffer> files;
+    raw_chat_sampling raw_chat;
+    const server_task_type type = prepare_raw_completion(jctx, data, files, raw_chat);
+    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE, std::move(files), {}, raw_chat);
+}
+
+int completions_oai_stream_request(jllama_context *jctx, const std::string &body_text) {
+    const json body = parse_json_body(body_text);
+    json data;
+    try {
+        data = oaicompat_completion_params_parse(body);
+    } catch (const std::exception &e) {
+        throw jllama_invalid_request(e.what());
+    }
+    data["stream"] = true;
+    return streaming_request(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL);
 }
 
 std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop) {
@@ -834,20 +1101,31 @@ std::string metrics(jllama_context *jctx) {
     return safe_json_to_str(server_metrics_to_json(*counters, *slots));
 }
 
+// Saving and restoring follow upstream's slots route (handle_slots_save/handle_slots_restore): the
+// file is a name, validated by fs_validate_filename (no directory part, no ".."), inside the
+// --slot-save-path directory, and without that directory the actions are not offered (upstream
+// answers 501 there, before the name is looked at). The C API used to take the name as the path, so
+// the directory had no effect and a file could be written anywhere the process may write. Erasing
+// needs no file and stays available.
 std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename) {
     if (op == slot_op::erase) {
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = id_slot;
         return one_shot(jctx, std::move(task));
     }
-    if (filename.empty()) {
-        throw std::runtime_error(op == slot_op::save ? "Filename is required for slot save"
-                                                     : "Filename is required for slot restore");
+    const std::string &directory = jctx->params.slot_save_path; // the parser ends it with a separator
+    if (directory.empty()) {
+        throw std::runtime_error("Saving or restoring a slot needs a slot directory: load the model with "
+                                 "--slot-save-path <dir> (ModelParameters.setSlotSavePath)");
+    }
+    if (!fs_validate_filename(filename)) {
+        throw jllama_invalid_request("Invalid slot file name '" + filename +
+                                     "': name a file inside the --slot-save-path directory, without a directory part");
     }
     server_task task(op == slot_op::save ? SERVER_TASK_TYPE_SLOT_SAVE : SERVER_TASK_TYPE_SLOT_RESTORE);
     task.slot_action.id_slot = id_slot;
     task.slot_action.filename = filename;
-    task.slot_action.filepath = filename;
+    task.slot_action.filepath = directory + filename;
     return one_shot(jctx, std::move(task));
 }
 
@@ -903,9 +1181,7 @@ std::string systemone(jllama_context *jctx, const std::string &body) {
     // parsing, the per-model prompt layout, the shared-prefix grouping and the answer formatting live
     // in server_decision_context, private to server_context_impl and reachable only through
     // server_routes. The handler waits for the server to leave sleep itself (create_response()).
-    if (!jctx->routes) {
-        throw std::runtime_error("systemone is not available in vocab-only mode");
-    }
+    require_server(jctx, "systemone");
     const std::function<bool()> should_stop = [jctx] { return jctx->closing.load(); };
     const server_http_req req{{}, {}, "/v1/systemone", "", body, {}, should_stop};
     server_http_res_ptr res;

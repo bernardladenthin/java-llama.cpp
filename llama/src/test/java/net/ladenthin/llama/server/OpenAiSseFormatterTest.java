@@ -108,6 +108,19 @@ public class OpenAiSseFormatterTest {
     }
 
     @Test
+    public void modelsJsonCarriesTheRequiredCreatedTimestampLikeUpstream() throws IOException {
+        // The OpenAI model object requires an integer "created"; strictly typed clients fail to read a
+        // list without it. upstream's get_res_model_info sends the current Unix time.
+        long before = System.currentTimeMillis() / 1000L;
+        JsonNode created = MAPPER.readTree(OpenAiSseFormatter.modelsJson("m"))
+                .path("data")
+                .path(0)
+                .path("created");
+        assertThat(created.isIntegralNumber(), is(true));
+        assertThat(created.asLong() >= before, is(true));
+    }
+
+    @Test
     public void modelsJsonIncludesFtypeWhenKnownAndOmitsWhenBlank() throws IOException {
         JsonNode withFtype = MAPPER.readTree(OpenAiSseFormatter.modelsJson("gemma-local", "Q4_K - Medium"));
         assertThat(withFtype.path("data").get(0).path("ftype").asText(), is("Q4_K - Medium"));
@@ -129,7 +142,8 @@ public class OpenAiSseFormatterTest {
 
     @Test
     public void propsJsonReportsContextLengthAndModalities() throws IOException {
-        JsonNode root = MAPPER.readTree(OpenAiSseFormatter.propsJson("local", 8192, true));
+        JsonNode root = MAPPER.readTree(OpenAiSseFormatter.propsJson("local", 8192, true, 3));
+        assertThat(root.path("total_slots").asInt(), is(3));
         assertThat(root.path("default_generation_settings").path("n_ctx").asInt(), is(8192));
         assertThat(root.path("model_alias").asText(), is("local"));
         assertThat(root.path("modalities").path("vision").asBoolean(), is(true));

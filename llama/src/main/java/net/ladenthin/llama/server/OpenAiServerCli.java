@@ -104,7 +104,7 @@ public final class OpenAiServerCli {
                     break;
                 case "-p":
                 case "--port":
-                    port = intValue(args, ++i, arg);
+                    port = portValue(args, ++i, arg);
                     break;
                 case "-c":
                 case "--ctx-size":
@@ -151,7 +151,7 @@ public final class OpenAiServerCli {
                     break;
                 case "--model-id":
                 case "--model-alias":
-                    modelId = nextValue(args, ++i, arg);
+                    modelId = modelIdValue(nextValue(args, ++i, arg), arg);
                     break;
                 case "--api-key":
                     apiKey = nextValue(args, ++i, arg);
@@ -243,7 +243,7 @@ public final class OpenAiServerCli {
                 "  --chat-template-kwargs <j> JSON object of chat-template variables (requires --jinja),",
                 "                             e.g. {\"reasoning_effort\":\"low\"}",
                 "  --parallel <n>             Parallel inference slots (default: llama.cpp default)",
-                "  --model-id <name>          Model id reported by /v1/models (default: file name)",
+                "  --model-id <name>          Model id reported by /v1/models (default: file name; no comma)",
                 "  --api-key <key>            Require an 'Authorization: Bearer <key>' header",
                 "  --mmproj <path>            Multimodal projector for vision models (enables image input)",
                 "  -mmdev, --mmproj-device <d>  Device for the multimodal projector ('none' = keep on CPU)",
@@ -269,12 +269,49 @@ public final class OpenAiServerCli {
         return args[valueIndex];
     }
 
+    /**
+     * Reads a model id. It becomes llama.cpp's {@code --alias}, which splits its value at commas and
+     * strips each part into a set of aliases, and the answers name the first of that set; an id it
+     * would change would make {@code /v1/models} and the answers disagree, so it is refused here.
+     *
+     * @param value the id
+     * @param flag the flag the value belongs to, for the message
+     * @return the id
+     */
+    private static String modelIdValue(String value, String flag) {
+        if (value.indexOf(',') >= 0) {
+            throw error(flag + " must not contain a comma (llama.cpp reads it as a list of aliases), got: " + value);
+        }
+        if (value.isEmpty() || !value.equals(value.trim())) {
+            throw error(flag + " must be non-empty without leading or trailing whitespace, got: '" + value + "'");
+        }
+        return value;
+    }
+
     private static List<RpcEndpoint> rpcValue(String value, String flag) {
         try {
             return RpcEndpoint.parseList(value);
         } catch (IllegalArgumentException e) {
             throw error("Invalid value for " + flag + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Reads a TCP port. {@code 0} stays allowed (the system picks a free port, which
+     * {@code getPort()} of the started server reports); anything outside {@code 0..65535} is a usage
+     * error here, not a failure of the bind that only follows the model load.
+     *
+     * @param args the command line
+     * @param valueIndex the index of the value
+     * @param flag the flag the value belongs to, for the message
+     * @return the port
+     */
+    private static int portValue(String[] args, int valueIndex, String flag) {
+        final int port = intValue(args, valueIndex, flag);
+        if (port < 0 || port > 65535) {
+            throw error(flag + " expects a port in 0..65535, got: " + port);
+        }
+        return port;
     }
 
     private static int intValue(String[] args, int valueIndex, String flag) {
@@ -446,7 +483,8 @@ public final class OpenAiServerCli {
         }
 
         /**
-         * The advertised model id, resolved from {@code --model-id} or derived from the model file name.
+         * The advertised model id, resolved from {@code --model-id} or derived from the model file name
+         * (commas replaced by {@code _}, surrounding whitespace removed: the form llama.cpp's alias keeps).
          *
          * @return the model id reported by {@code GET /v1/models}
          */
@@ -455,7 +493,11 @@ public final class OpenAiServerCli {
                 return modelId;
             }
             final Path name = Paths.get(modelPath).getFileName();
-            return name != null ? name.toString() : OpenAiServerConfig.DEFAULT_MODEL_ID;
+            // the form llama.cpp's --alias keeps (no comma, stripped), so the advertised id and the
+            // name in the answers agree
+            final String derived =
+                    name != null ? name.toString().replace(',', '_').trim() : "";
+            return derived.isEmpty() ? OpenAiServerConfig.DEFAULT_MODEL_ID : derived;
         }
 
         /**
@@ -623,6 +665,15 @@ public final class OpenAiServerCli {
         public ModelParameters toModelParameters() {
             final ModelParameters params =
                     new ModelParameters().setModel(modelPath).setGpuLayers(gpuLayers);
+            // The answers name the model as llama.cpp knows it, so this keeps them equal to
+            // /v1/models -- and it is set from getModelId() rather than from `modelId`, so the
+            // DEFAULT carries the same promise as the flag. It used to run only when --model-id was
+            // given, and without the flag the two surfaces then disagreed: /v1/models reported the
+            // file name (getModelId()) while every answer reported the full model path, because
+            // upstream's fallback chain for the model name is alias -> common_params_model::get_name()
+            // -> file name, and get_name() returns the PATH for a local file, so the file-name branch
+            // upstream's own comment describes is unreachable. Measured at b11639.
+            params.setAlias(getModelId());
             if (mmprojDevice != null) {
                 params.setMmprojDevice(mmprojDevice);
             }
@@ -673,7 +724,8 @@ public final class OpenAiServerCli {
 
         /**
          * Build the {@link OpenAiServerConfig} describing the server side of these options. When a
-         * context size is given, the advertised input/output token budgets are derived from it.
+         * context size is given, the advertised input/output token budgets are derived from it (per slot
+         * when {@code --parallel} is greater than one).
          *
          * @return the server configuration
          */
@@ -703,19 +755,67 @@ public final class OpenAiServerCli {
          * @return the server configuration
          */
         public OpenAiServerConfig toServerConfig(boolean supportsVision, String modelFtype) {
+            return toServerConfig(supportsVision, modelFtype, 0);
+        }
+
+        /**
+         * Build the server configuration with the context window a slot of the loaded model really
+         * has. Without it the advertised window comes from {@code -c} or, without {@code -c}, from the
+         * fixed defaults (8192 + 2048), whatever the model loaded with: measured at b11639, a model
+         * whose slots hold 2048 tokens was advertised with 10240 in {@code /props} and
+         * {@code /api/show}, and a client sizing its prompt from that sends up to five times too much.
+         *
+         * @param supportsVision whether the loaded model reports usable vision input
+         * @param modelFtype the model's file-type (quantization) label, or {@code ""} if unknown
+         * @param slotContextSize the context size of one slot of the loaded model ({@code n_ctx} of
+         *     its slot metrics), or {@code 0} if unknown
+         * @return the server configuration
+         */
+        public OpenAiServerConfig toServerConfig(boolean supportsVision, String modelFtype, int slotContextSize) {
+            return toServerConfig(supportsVision, modelFtype, slotContextSize, 0);
+        }
+
+        /**
+         * Build the server configuration with the context window and the slot count the loaded model
+         * really has. The slot count is advertised in {@code GET /props} ({@code total_slots}, upstream's
+         * {@code n_parallel}); without it {@code --parallel} decides, and without that {@code 1}.
+         *
+         * @param supportsVision whether the loaded model reports usable vision input
+         * @param modelFtype the model's file-type (quantization) label, or {@code ""} if unknown
+         * @param slotContextSize the context size of one slot of the loaded model ({@code n_ctx} of
+         *     its slot metrics), or {@code 0} if unknown
+         * @param totalSlots the number of slots of the loaded model, or {@code 0} if unknown
+         * @return the server configuration
+         */
+        public OpenAiServerConfig toServerConfig(
+                boolean supportsVision, String modelFtype, int slotContextSize, int totalSlots) {
             final OpenAiServerConfig.Builder builder = OpenAiServerConfig.builder()
                     .host(host)
                     .port(port)
                     .modelId(getModelId())
                     .supportsVision(supportsVision)
-                    .modelFtype(modelFtype);
+                    .modelFtype(modelFtype)
+                    .totalSlots(totalSlots > 0 ? totalSlots : Math.max(1, parallel));
             if (apiKey != null) {
                 builder.apiKey(apiKey);
             }
-            if (ctxSize > 0) {
-                builder.maxOutputTokens(
-                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, ctxSize / 2)));
-                builder.maxInputTokens(Math.max(1, ctxSize - OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS));
+            final int slotCtx;
+            if (slotContextSize > 0) {
+                slotCtx = slotContextSize;
+            } else if (ctxSize > 0) {
+                // An explicit --parallel N splits the context: llama.cpp unifies the KV cache only when
+                // the slot count is "auto", so each request gets n_ctx / N (what upstream's /props reports).
+                slotCtx = parallel > 1 ? Math.max(1, ctxSize / parallel) : ctxSize;
+            } else {
+                slotCtx = 0;
+            }
+            if (slotCtx > 0) {
+                final int maxOutputTokens =
+                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, slotCtx / 2));
+                builder.maxOutputTokens(maxOutputTokens);
+                // The rest of the window, not ctx minus the output default: below twice that default
+                // the output budget is ctx/2, and the subtraction of the default left 1 input token.
+                builder.maxInputTokens(Math.max(1, slotCtx - maxOutputTokens));
             }
             return builder.build();
         }

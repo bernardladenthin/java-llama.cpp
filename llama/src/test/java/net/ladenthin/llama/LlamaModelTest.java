@@ -8,6 +8,7 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -39,6 +40,7 @@ public class LlamaModelTest {
     private static final String prefix = "def remove_non_ascii(s: str) -> str:\n    \"\"\" ";
     private static final String suffix = "\n    return result\n";
     private static final int nPredict = 10;
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * Minimum expected tokens when testing cancellation.
@@ -58,6 +60,19 @@ public class LlamaModelTest {
      * @see #minExpectedTokensOnCancel
      */
     private static final int maxExpectedTokensOnCancel = 5;
+
+    /** How long a cancel may take to reach the native task, as in OpenAiServerCompletionIntegrationTest. */
+    private static final long CANCEL_TIMEOUT_MILLIS = 30_000L;
+
+    /**
+     * The prompt of the grammar tests. It must not be empty: an empty prompt is no token at all on a
+     * model that adds no BOS, and upstream then releases the slot and answers an empty result
+     * ({@code "empty prompt - releasing slot"}, {@code stop_type} {@code none}) without sampling, so
+     * the grammar is never exercised and only a model that adds a BOS (CodeLlama) produced anything.
+     * The tests also ignore EOS: the grammar admits EOS once it has matched a letter, and a model
+     * whose EOS is not a control token (a test model's plain byte token) then appends its text.
+     */
+    private static final String GRAMMAR_PROMPT = "Letters: ";
 
     private static LlamaModel model;
 
@@ -105,6 +120,7 @@ public class LlamaModelTest {
 
     @Test
     public void testGenerateInfill() {
+        FimAssumptions.assumeFimTokens(model);
         Map<Integer, Float> logitBias = new HashMap<>();
         logitBias.put(2, 2.0f);
         InferenceParameters params = new InferenceParameters("")
@@ -170,18 +186,27 @@ public class LlamaModelTest {
 
     @Test
     public void testGenerateGrammar() {
-        InferenceParameters params = new InferenceParameters("")
+        InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
+                .withIgnoreEos(true)
                 .withNPredict(nPredict);
         StringBuilder sb = new StringBuilder();
+        int chunks = 0;
         for (LlamaOutput output : model.generate(params)) {
             sb.append(output);
+            if (!output.text.isEmpty()) {
+                chunks++;
+            }
         }
         String output = sb.toString();
 
-        assertTrue(output.matches("[ab]+"));
-        int generated = model.encode(output).length;
-        assertTrue(generated > 0 && generated <= nPredict + 1);
+        assertTrue(output.matches("[ab]+"), output + " doesn't match [ab]+");
+        // Every non-empty chunk carries at least one sampled token, so their number is a lower bound
+        // of the tokens generated and never exceeds n_predict. Re-tokenising the text is no measure of
+        // it: the grammar admits multi-letter pieces ("ab", "aab", ...), and the encoder splits their
+        // concatenation differently from how it was sampled (measured on the Windows job: a text of
+        // at most 10 sampled pieces re-encoded to more than 11 tokens).
+        assertTrue(chunks > 0 && chunks <= nPredict, "chunks with text: " + chunks + " for " + output);
     }
 
     @Test
@@ -201,6 +226,7 @@ public class LlamaModelTest {
 
     @Test
     public void testCompleteInfillCustom() {
+        FimAssumptions.assumeFimTokens(model);
         Map<Integer, Float> logitBias = new HashMap<>();
         logitBias.put(2, 2.0f);
         InferenceParameters params = new InferenceParameters("")
@@ -216,15 +242,42 @@ public class LlamaModelTest {
         assertFalse(output.isEmpty());
     }
 
+    /**
+     * {@code complete}/{@code completeWithStats}/{@code generate} with an input prefix and suffix
+     * evaluate the infill prompt {@code handleInfill} builds from the same fields (the FIM tokens
+     * around prefix and suffix), not the empty prompt next to them: the completion path dropped both
+     * fields without a word and completed {@code ""} ({@code tokens_evaluated} 0). The prompt token
+     * count is the full prompt whether or not the slot's cache served it, so it is compared exactly.
+     */
+    @Test
+    public void testCompleteWithStatsInfillEvaluatesTheInfillPrompt() throws Exception {
+        FimAssumptions.assumeFimTokens(model);
+        String infill = model.handleInfill("{\"input_prefix\":" + JSON.writeValueAsString(prefix) + ",\"input_suffix\":"
+                + JSON.writeValueAsString(suffix) + ",\"n_predict\":1}");
+        long expected = JSON.readTree(infill).path("tokens_evaluated").asLong();
+        assertTrue(expected > 0, "the infill endpoint evaluated no prompt: " + infill);
+
+        CompletionResult result = model.completeWithStats(new InferenceParameters("")
+                .withInputPrefix(prefix)
+                .withInputSuffix(suffix)
+                .withNPredict(1));
+
+        assertEquals(expected, result.getUsage().getPromptTokens(), result.getRawJson());
+    }
+
     @Test
     public void testCompleteGrammar() {
-        InferenceParameters params = new InferenceParameters("")
+        InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
+                .withIgnoreEos(true)
                 .withNPredict(nPredict);
-        String output = model.complete(params);
+        CompletionResult result = model.completeWithStats(params);
+        String output = result.getText();
         assertTrue(output.matches("[ab]+"), output + " doesn't match [ab]+");
-        int generated = model.encode(output).length;
-        assertTrue(generated > 0 && generated <= nPredict + 1, "generated count is: " + generated);
+        // The server's own count of the sampled tokens (see testGenerateGrammar for why the text
+        // is not re-tokenised to get it).
+        long generated = result.getTimings().getPredictedN();
+        assertTrue(generated > 0 && generated <= nPredict, "generated count is: " + generated + " for " + output);
     }
 
     @Test
@@ -306,38 +359,31 @@ public class LlamaModelTest {
      * Regression: {@link LlamaModel#complete(InferenceParameters, CancellationToken)}
      * must return when {@link CancellationToken#cancel()} is invoked from another
      * thread, returning whatever text was generated up to that point without
-     * throwing. Cancellation is cooperative — the loop checks the flag at token
-     * boundaries — so the budget here is "much less than full n_predict completion
-     * would take", not instantaneous.
+     * throwing, and reset the token on its way out.
+     *
+     * <p>The request has no token limit and ignores EOS, and the model shifts its context
+     * ({@link #openEndlessGenerationModel()}), so the call can only end through the cancel: without
+     * it the wait below runs out whatever the speed of the model. The cancel is issued once a slot is
+     * generating, not after a fixed sleep.</p>
      */
     @Test
     public void testCompleteWithCancellationToken() throws Exception {
-        InferenceParameters params = new InferenceParameters(prefix).withNPredict(512);
-        CancellationToken token = new CancellationToken();
-
-        Thread canceller = new Thread(() -> {
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException ignored) {
-            }
+        try (LlamaModel endless = openEndlessGenerationModel()) {
+            CancellationToken token = new CancellationToken();
+            java.util.concurrent.CompletableFuture<String> call =
+                    java.util.concurrent.CompletableFuture.supplyAsync(() -> endless.complete(endlessRequest(), token));
+            awaitProcessingSlots(endless, true);
             token.cancel();
-        });
 
-        long start = System.currentTimeMillis();
-        canceller.start();
-        String partial = model.complete(params, token);
-        long elapsed = System.currentTimeMillis() - start;
-        canceller.join();
+            String partial = call.get(CANCEL_TIMEOUT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertNotNull(partial);
+            // Token is reset on return so it can be reused.
+            assertFalse(token.isCancelled(), "token should be reset after call returns");
+            awaitProcessingSlots(endless, false);
 
-        // 512 tokens on CPU would take many tens of seconds; cancellation should bring
-        // this well under that. Tolerate ~10s for the in-flight token to finish.
-        assertTrue(elapsed < 30000, "complete should return within 30s of cancel, took " + elapsed + "ms");
-        assertNotNull(partial);
-        // Token is reset on return so it can be reused.
-        assertFalse(token.isCancelled(), "token should be reset after call returns");
-
-        // Model is still usable
-        assertNotNull(model.complete(new InferenceParameters(prefix).withNPredict(3)));
+            // Model is still usable
+            assertNotNull(endless.complete(new InferenceParameters(prefix).withNPredict(3)));
+        }
     }
 
     /**
@@ -392,41 +438,94 @@ public class LlamaModelTest {
      * Regression: {@link LlamaModel#completeAsync(InferenceParameters)}
      * must complete with the same text {@link LlamaModel#complete(InferenceParameters)}
      * would have produced, on a background thread.
+     *
+     * <p>Both requests run with {@code cache_prompt=false}, so each evaluates the whole prompt in one
+     * batch and the two compute the same thing. With the cache the second request would take every
+     * prompt token but the last from the slot and re-evaluate that one in a batch of its own (upstream
+     * {@code [TAG_PROMPT_LOGITS]}), whose logits are not bit-identical to the batched ones, so a near
+     * tie of the seeded sampling could flip between the two (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). {@code completeAsync} returns the text
+     * only, so the precondition is the request itself rather than its timings.
      */
     @Test
     public void testCompleteAsync() throws Exception {
         InferenceParameters params =
-                new InferenceParameters(prefix).withNPredict(8).withSeed(42);
-        String sync =
-                model.complete(new InferenceParameters(prefix).withNPredict(8).withSeed(42));
+                new InferenceParameters(prefix).withNPredict(8).withSeed(42).withCachePrompt(false);
+        String sync = model.complete(
+                new InferenceParameters(prefix).withNPredict(8).withSeed(42).withCachePrompt(false));
         String async = model.completeAsync(params).get(30, java.util.concurrent.TimeUnit.SECONDS);
         assertEquals(sync, async);
     }
 
     /**
      * Regression: cancelling the future from {@link LlamaModel#completeAsync(InferenceParameters, CancellationToken)}
-     * must not leak the underlying inference loop or destabilise the model. The
-     * worker thread keeps running until the next token boundary, then returns;
-     * future.cancel(true) only flips the future's state, the whenComplete handler
-     * flips the token, and the cooperative loop unwinds shortly after.
+     * must reach the inference loop through the token: {@code future.cancel(true)} flips the future's
+     * state, the {@code whenComplete} handler cancels the token, and the cooperative loop releases the
+     * native task, after which the model stays usable.
+     *
+     * <p>The generation never ends on its own ({@link #openEndlessGenerationModel()}), so the future is
+     * still running when it is cancelled, and the slot becomes idle only through the propagated cancel:
+     * without it the wait for an idle slot runs out.</p>
      */
     @Test
     public void testCompleteAsyncCancelPropagates() throws Exception {
-        InferenceParameters params = new InferenceParameters(prefix).withNPredict(512);
-        CancellationToken token = new CancellationToken();
-        java.util.concurrent.CompletableFuture<String> future = model.completeAsync(params, token);
+        try (LlamaModel endless = openEndlessGenerationModel()) {
+            CancellationToken token = new CancellationToken();
+            java.util.concurrent.CompletableFuture<String> future = endless.completeAsync(endlessRequest(), token);
+            awaitProcessingSlots(endless, true);
 
-        Thread.sleep(200);
-        future.cancel(true);
-        assertTrue(future.isCancelled(), "future should report cancelled");
+            future.cancel(true);
+            assertTrue(future.isCancelled(), "future should report cancelled");
+            awaitProcessingSlots(endless, false);
 
-        // Give the cooperative cancel time to unwind the worker thread before the
-        // next call. Polling the model state directly is racy; sleeping a generous
-        // interval (one token + cancel propagation) is sufficient on CPU.
-        Thread.sleep(5000);
+            // Model is still usable
+            assertNotNull(endless.complete(new InferenceParameters(prefix).withNPredict(3)));
+        }
+    }
 
-        // Model is still usable
-        assertNotNull(model.complete(new InferenceParameters(prefix).withNPredict(3)));
+    /**
+     * Opens an own instance of the text model that shifts its context, so that a request without a
+     * token limit that ignores EOS ({@link #endlessRequest()}) never ends on its own -- whatever the
+     * speed of the model, a cancel is then the only way out.
+     *
+     * @return the model, to be closed by the caller
+     */
+    private static LlamaModel openEndlessGenerationModel() {
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping");
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        return new LlamaModel(new ModelParameters()
+                .setCtxSize(128)
+                .setModel(TestConstants.MODEL_PATH)
+                .setGpuLayers(gpuLayers)
+                .setFit(false)
+                .enableContextShift());
+    }
+
+    /**
+     * A completion request without a token limit that ignores EOS.
+     *
+     * @return the request
+     */
+    private static InferenceParameters endlessRequest() {
+        return new InferenceParameters(prefix).withNPredict(-1).withIgnoreEos(true);
+    }
+
+    /**
+     * Polls the metrics until a slot is generating ({@code busy}) or none is, for at most {@link
+     * #CANCEL_TIMEOUT_MILLIS}.
+     *
+     * @param m the model
+     * @param busy whether to wait for a generating slot or for every slot to be idle
+     */
+    private static void awaitProcessingSlots(LlamaModel m, boolean busy) throws InterruptedException {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CANCEL_TIMEOUT_MILLIS);
+        while ((m.getMetricsTyped().getProcessingSlots() != 0) != busy) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError((busy ? "no slot started generating" : "a slot is still processing")
+                        + " within " + CANCEL_TIMEOUT_MILLIS + " ms");
+            }
+            Thread.sleep(20L);
+        }
     }
 
     /**
@@ -437,6 +536,12 @@ public class LlamaModelTest {
      */
     @Test
     public void testSessionMultiTurn() {
+        ModelAssumptions.assumeConversationFits(
+                model,
+                "You are a terse assistant.",
+                java.util.Arrays.asList(
+                        new Pair<>("user", "Say hi."), new Pair<>("assistant", ""), new Pair<>("user", "Say bye.")),
+                2 * 8);
         try (Session session = new Session(
                 model,
                 0,
@@ -554,6 +659,7 @@ public class LlamaModelTest {
 
     @Test
     public void testEmbedding() {
+        ModelAssumptions.assumeEmbeddingDimension(model, 4096);
         float[] embedding = model.embed(prefix);
         assertEquals(4096, embedding.length);
     }
@@ -580,6 +686,7 @@ public class LlamaModelTest {
 
     @Test
     public void testTokenization() {
+        ModelAssumptions.assumeSentencePieceSpacePrefix(model);
         String prompt = "Hello, world!";
         int[] encoded = model.encode(prompt);
         String decoded = model.decode(encoded);
@@ -589,6 +696,7 @@ public class LlamaModelTest {
 
     @Test
     public void testVocabOnly() {
+        ModelAssumptions.assumeSentencePieceSpacePrefix(model); // the same file, loaded in full
         try (LlamaModel vocabModel = new LlamaModel(
                 new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly())) {
             String prompt = "Hello, world!";
@@ -956,6 +1064,7 @@ public class LlamaModelTest {
         messages.add(new Pair<>("user", "What is 2+2?"));
         messages.add(new Pair<>("assistant", "4"));
         messages.add(new Pair<>("user", "And 3+3?"));
+        ModelAssumptions.assumeConversationFits(model, null, messages, nPredict);
 
         InferenceParameters params = new InferenceParameters("")
                 .withMessages(null, messages)

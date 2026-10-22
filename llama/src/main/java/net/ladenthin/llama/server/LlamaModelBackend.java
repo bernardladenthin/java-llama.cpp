@@ -5,13 +5,14 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
-import java.util.UUID;
-import net.ladenthin.llama.LlamaIterable;
+import java.io.UncheckedIOException;
+import java.util.function.Consumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.InferenceParameters;
-import net.ladenthin.llama.value.LlamaOutput;
-import net.ladenthin.llama.value.StopReason;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Production {@link OpenAiBackend} that runs requests against a loaded {@link LlamaModel}.
@@ -25,8 +26,8 @@ import net.ladenthin.llama.value.StopReason;
  *
  * <p>The streaming sink may fail with {@link IOException} (client disconnect); because the underlying
  * model API takes a {@link java.util.function.Consumer} (no checked exceptions), that failure is
- * relayed across the boundary via {@link java.io.UncheckedIOException} and unwrapped here so the
- * in-flight native task is cancelled.
+ * relayed across the boundary via {@link UncheckedIOException} and unwrapped here so the
+ * in-flight native task is cancelled ({@link #relay}).
  *
  * <p>A request the native layer rejects -- a body that is not valid JSON, a missing field, an empty
  * embedding input, a prompt over the context size -- arrives as
@@ -35,6 +36,8 @@ import net.ladenthin.llama.value.StopReason;
  * {@link net.ladenthin.llama.exception.LlamaException} stays a {@code 500}.
  */
 final class LlamaModelBackend implements OpenAiBackend {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final LlamaModel model;
     private final OpenAiRequestMapper mapper;
@@ -63,25 +66,7 @@ final class LlamaModelBackend implements OpenAiBackend {
     @Override
     public void stream(JsonNode request, ChunkSink sink) throws IOException {
         InferenceParameters params = mapper.toInferenceParameters(request);
-        // Holds an IOException thrown by the sink so it can be rethrown after the model API (which
-        // only understands unchecked exceptions) unwinds and cancels the native task.
-        final IOException[] sinkFailure = new IOException[1];
-        try {
-            model.streamChatCompletion(params, chunkJson -> {
-                try {
-                    sink.accept(chunkJson);
-                } catch (IOException e) {
-                    sinkFailure[0] = e;
-                    throw new java.io.UncheckedIOException(e);
-                }
-            });
-        } catch (java.io.UncheckedIOException e) {
-            IOException cause = sinkFailure[0];
-            if (cause != null) {
-                throw cause;
-            }
-            throw e;
-        }
+        relay(chunkConsumer -> model.streamChatCompletion(params, chunkConsumer), sink);
     }
 
     @Override
@@ -92,32 +77,90 @@ final class LlamaModelBackend implements OpenAiBackend {
 
     @Override
     public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
-        InferenceParameters params = mapper.toCompletionParameters(request);
-        String modelId = request.path("model").asText("llama");
-        String id = "cmpl-" + UUID.randomUUID().toString().replace("-", "");
-        long created = System.currentTimeMillis() / 1000L;
-        // Relays a sink IOException (client disconnect) out of the token loop; try-with-resources then
-        // cancels the in-flight native task via LlamaIterable.close().
-        IOException sinkFailure = null;
-        try (LlamaIterable it = model.generate(params)) {
-            for (LlamaOutput out : it) {
-                String finishReason = out.stop ? completionFinishReason(out.stopReason) : null;
+        // The native handler parses the OpenAI body itself, as for the blocking request; forward it.
+        ObjectNode body = request.deepCopy();
+        body.put("stream", true);
+        relay(chunkConsumer -> model.streamCompletionsOai(body.toString(), chunkConsumer), sink);
+    }
+
+    /**
+     * Run a streaming model call, handing its chunks to {@code sink}, and give back an
+     * {@link IOException} of the sink as that same exception.
+     *
+     * <p>The model API takes a {@link Consumer}, which cannot throw a checked exception, so the sink's
+     * {@link IOException} (a client that disconnected) crosses it as an {@link UncheckedIOException}.
+     * The model call cancels its native task when that exception unwinds it; afterwards the original
+     * {@link IOException} is rethrown, so that the server takes its disconnect path rather than the one
+     * for a failed completion. An {@link UncheckedIOException} the sink did not cause, and every other
+     * exception of the model call, propagate unchanged.
+     *
+     * @param modelCall the model call, given the consumer its chunks go to
+     * @param sink where each chunk is written
+     * @throws IOException the sink's own exception, if it threw one
+     */
+    static void relay(Consumer<Consumer<String>> modelCall, ChunkSink sink) throws IOException {
+        // Holds an IOException thrown by the sink so it can be rethrown after the model API (which
+        // only understands unchecked exceptions) unwinds and cancels the native task.
+        final IOException[] sinkFailure = new IOException[1];
+        try {
+            modelCall.accept(chunkJson -> {
                 try {
-                    sink.accept(OpenAiSseFormatter.completionChunk(id, created, modelId, out.text, finishReason));
+                    sink.accept(chunkJson);
                 } catch (IOException e) {
-                    sinkFailure = e;
-                    break;
+                    sinkFailure[0] = e;
+                    throw new UncheckedIOException(e);
                 }
+            });
+        } catch (UncheckedIOException e) {
+            IOException cause = sinkFailure[0];
+            if (cause != null) {
+                throw cause;
             }
-        }
-        if (sinkFailure != null) {
-            throw sinkFailure;
+            throw e;
         }
     }
 
-    /** Map a {@link StopReason} to the OpenAI {@code finish_reason} ("length" on the token cap, else "stop"). */
-    private static String completionFinishReason(StopReason reason) {
-        return reason == StopReason.MAX_TOKENS ? "length" : "stop";
+    @Override
+    public int countTokens(JsonNode request) throws IOException {
+        String mediaType = mediaPartType(request);
+        if (mediaType != null) {
+            // upstream counts an image's embeddings with the projector, which only its worker reaches
+            throw new UnsupportedOperationException("counting the tokens of a '" + mediaType
+                    + "' content part is not supported; image, audio and video input is counted by the projector");
+        }
+        // the prompt a generation evaluates: the chat template rendered over the request, tokenized with
+        // the special tokens added and parsed, as upstream's handle_count_tokens does
+        String prompt = model.applyTemplate(mapper.toInferenceParameters(request));
+        String answer = model.handleTokenize(prompt, true, false);
+        JsonNode tokens = OBJECT_MAPPER.readTree(answer).path("tokens");
+        if (!tokens.isArray()) {
+            throw new IOException("the tokenizer answered without a token array: " + answer);
+        }
+        return tokens.size();
+    }
+
+    /**
+     * The type of the first content part of a chat request that is not text (an image, audio or a
+     * video), which the token count cannot see.
+     *
+     * @param request the OpenAI chat request
+     * @return the part's {@code type}, or {@code null} if every message's content is text
+     */
+    static @Nullable String mediaPartType(JsonNode request) {
+        for (JsonNode message : request.path("messages")) {
+            for (JsonNode part : message.path("content")) {
+                String type = part.path("type").asText("");
+                if (part.isObject() && !"text".equals(type)) {
+                    return type;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public String mediaMarker() {
+        return model.getModelMeta().getMediaMarker();
     }
 
     @Override
@@ -134,12 +177,12 @@ final class LlamaModelBackend implements OpenAiBackend {
     }
 
     @Override
-    public String rerank(JsonNode request) {
+    public String rerank(JsonNode request) throws IOException {
         final String query = OaiRerankSupport.readQuery(request);
         final String[] documents = OaiRerankSupport.readDocuments(request);
-        final int topN = OaiRerankSupport.readTopN(request);
+        OaiRerankSupport.readTopN(request); // a negative top_n is refused before anything is evaluated
         final String requestModel = request.path("model").asText("");
         final String nativeJson = model.handleRerank(query, documents);
-        return OaiRerankSupport.toOaiResponse(nativeJson, requestModel, topN);
+        return OaiRerankSupport.toResponse(request, nativeJson, requestModel);
     }
 }

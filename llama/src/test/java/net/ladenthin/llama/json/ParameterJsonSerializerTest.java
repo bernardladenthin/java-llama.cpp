@@ -19,8 +19,12 @@ import java.util.List;
 import java.util.Map;
 import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.parameters.ParameterJsonSerializer;
+import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.Pair;
+import net.ladenthin.llama.value.ToolCall;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link ParameterJsonSerializer}.
@@ -77,6 +81,30 @@ public class ParameterJsonSerializerTest {
     // ------------------------------------------------------------------
     // buildMessages
     // ------------------------------------------------------------------
+
+    /**
+     * Upstream parses every {@code function.arguments} of the history with {@code json::parse}
+     * (templates with object arguments, Qwen and Llama 3 among them), so an empty string failed the
+     * whole follow-up request with 400 "Failed to parse tool call arguments as JSON" (measured at
+     * b11639); {@code "{}"} goes through. An empty string can come from a client or from an
+     * accumulator that saw no argument delta.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\n"})
+    public void testBuildMessages_emptyToolCallArguments_areWrittenAsAnEmptyObject(String arguments) {
+        ArrayNode arr = serializer.buildMessages(Collections.singletonList(ChatMessage.assistantToolCalls(
+                "", Collections.singletonList(new ToolCall("call_1", "get_time", arguments)))));
+        JsonNode function = arr.get(0).get("tool_calls").get(0).get("function");
+        assertThat(function.get("arguments").asText(), is("{}"));
+    }
+
+    @Test
+    public void testBuildMessages_toolCallArguments_arePassedOnVerbatim() {
+        ArrayNode arr = serializer.buildMessages(Collections.singletonList(ChatMessage.assistantToolCalls(
+                "", Collections.singletonList(new ToolCall("call_1", "get_weather", "{\"city\":\"Berlin\"}")))));
+        JsonNode function = arr.get(0).get("tool_calls").get(0).get("function");
+        assertThat(function.get("arguments").asText(), is("{\"city\":\"Berlin\"}"));
+    }
 
     @Test
     public void testBuildMessages_withSystemMessage() {
@@ -205,6 +233,31 @@ public class ParameterJsonSerializerTest {
     }
 
     @Test
+    public void testBuildTokenIdBiasArray_negativeInfinityBansTheToken() {
+        // JSON has no -Infinity: Jackson wrote the string "-Infinity", which llama.cpp's logit_bias
+        // parser skips (only a number or false is a bias), so the ban silently did nothing. false is
+        // llama.cpp's spelling of -inf.
+        ArrayNode ids = serializer.buildTokenIdBiasArray(Collections.singletonMap(15043, Float.NEGATIVE_INFINITY));
+        assertThat(ids.get(0).get(1).isBoolean(), is(true));
+        assertThat(ids.get(0).get(1).asBoolean(), is(false));
+        ArrayNode strings =
+                serializer.buildTokenStringBiasArray(Collections.singletonMap("Hello", Float.NEGATIVE_INFINITY));
+        assertThat(strings.get(0).get(1).isBoolean(), is(true));
+        assertThat(strings.get(0).get(1).asBoolean(), is(false));
+    }
+
+    @Test
+    public void testBuildTokenIdBiasArray_nanOrPositiveInfinityIsRejected() {
+        // Neither has a JSON spelling llama.cpp accepts; silently dropping the entry hides the mistake.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> serializer.buildTokenIdBiasArray(Collections.singletonMap(1, Float.NaN)));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> serializer.buildTokenStringBiasArray(Collections.singletonMap("a", Float.POSITIVE_INFINITY)));
+    }
+
+    @Test
     public void testBuildTokenIdBiasArray_empty() {
         ArrayNode arr = serializer.buildTokenIdBiasArray(Collections.emptyMap());
         assertThat(arr.size(), is(0));
@@ -298,6 +351,32 @@ public class ParameterJsonSerializerTest {
         Map<String, String> map = Collections.singletonMap("key", "not-valid-json{{{");
         ObjectNode node = serializer.buildRawValueObject(map);
         assertThat(node.path("key").asText(), is("not-valid-json{{{"));
+    }
+
+    /**
+     * A value holding more than one JSON value is no JSON value either. The plain readTree parsed the
+     * first and dropped the rest without a word: "true false" became true, "1, 2" became 1.
+     */
+    @Test
+    public void testBuildRawValueObject_trailingTokensFallBackToString() {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("two", "true false");
+        map.put("list", "1, 2");
+        map.put("object", "{\"a\":1} {\"b\":2}");
+        ObjectNode node = serializer.buildRawValueObject(map);
+        assertThat(
+                node.toString(),
+                is("{\"two\":\"true false\",\"list\":\"1, 2\",\"object\":\"{\\\"a\\\":1} {\\\"b\\\":2}\"}"));
+    }
+
+    /** Jackson parses an empty or blank text to MissingNode, which would be written as null. */
+    @Test
+    public void testBuildRawValueObject_emptyOrBlankValueFallsBackToString() {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("empty", "");
+        map.put("blank", "   ");
+        ObjectNode node = serializer.buildRawValueObject(map);
+        assertThat(node.toString(), is("{\"empty\":\"\",\"blank\":\"   \"}"));
     }
 
     @Test

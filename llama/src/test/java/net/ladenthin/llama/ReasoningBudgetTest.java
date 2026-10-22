@@ -100,6 +100,7 @@ public class ReasoningBudgetTest {
      */
     @Test
     public void testThinkingDefault_reasoningContentAndAnswerPresent() {
+        ModelAssumptions.assumeThinkingTemplate(model);
         InferenceParameters params = new InferenceParameters("")
                 .withMessages(null, Collections.singletonList(new Pair<>("user", "What is 2+2?")))
                 .withTemperature(0.0f)

@@ -6,7 +6,6 @@ package net.ladenthin.llama;
 
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -153,6 +152,15 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Completes a prompt and returns the generated text once generation has ended. The prompt is used
      * verbatim -- no chat template, no role markers; for a conversation use {@link #chat(ChatRequest)}.
+     * Two request shapes build the prompt instead: messages set with
+     * {@link InferenceParameters#withMessages(java.util.List)} are rendered through the model's chat
+     * template, as {@link #applyTemplate(InferenceParameters)} renders them, stopping also at the stop
+     * strings the template adds of its own and keeping a reasoning budget to the template's thinking
+     * tags (a non-empty prompt next to them is refused, and so is a chat field this path cannot apply: a
+     * response format or tools, which {@link #chatComplete} applies), and
+     * {@link InferenceParameters#withInputPrefix(String)} together with
+     * {@link InferenceParameters#withInputSuffix(String)} is an infill request, formatted as
+     * {@link #handleInfill(String)} formats it.
      *
      * @param parameters the prompt and its sampling settings
      * @return the generated text, without the prompt
@@ -183,37 +191,23 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Dispatch a list of completion requests in parallel and return the generated texts
-     * in the same order. Each request is sent immediately; the native scheduler dispatches
-     * tasks across whatever slot count {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} was
-     * configured with. With a default single-slot model the requests still run, but
-     * sequentially.
+     * in the same order. Every request is submitted on the calling thread before the first result
+     * is awaited, so the native scheduler runs as many at once as
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} gives it slots,
+     * independent of the number of processors. With a default single-slot model the requests
+     * still run, but sequentially. If a submission fails, the requests already submitted are
+     * released before the exception propagates. If a request fails, the others are still received;
+     * the first failure propagates afterwards, with the later ones attached to it as suppressed.
      *
      * @param requests the inference parameter blocks (must be distinct instances)
      * @return the generated texts in input order
      */
     public java.util.List<String> completeBatch(java.util.Collection<InferenceParameters> requests) {
-        java.util.List<CompletableFuture<String>> futures =
-                new java.util.ArrayList<CompletableFuture<String>>(requests.size());
-        for (InferenceParameters req : requests) {
-            futures.add(completeAsync(req));
-        }
-        java.util.List<String> out = new java.util.ArrayList<String>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<String> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                // Keep joining the rest so no sibling request is left running unobserved (a native
-                // slot/reader leak) before propagating the first failure.
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.submitAllThenReceive(
+                requests,
+                req -> requestCompletion(req.withStream(false).toJson()),
+                taskId -> completionParser.parse(receiveCompletionJson(taskId)).text,
+                this::releaseTask);
     }
 
     /**
@@ -224,57 +218,27 @@ public class LlamaModel implements AutoCloseable {
      * @return parsed completion results in input order
      */
     public java.util.List<CompletionResult> completeBatchWithStats(java.util.Collection<InferenceParameters> requests) {
-        java.util.List<CompletableFuture<CompletionResult>> futures =
-                new java.util.ArrayList<CompletableFuture<CompletionResult>>(requests.size());
-        for (final InferenceParameters req : requests) {
-            futures.add(CompletableFuture.supplyAsync(() -> completeWithStats(req)));
-        }
-        java.util.List<CompletionResult> out = new java.util.ArrayList<CompletionResult>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<CompletionResult> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.submitAllThenReceive(
+                requests,
+                req -> requestCompletion(req.withStream(false).toJson()),
+                taskId -> completionParser.parseCompletionResult(receiveCompletionJson(taskId)),
+                this::releaseTask);
     }
 
     /**
      * Dispatch a list of typed chat requests in parallel and return the parsed responses
-     * in the same order. Requires {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
-     * actual parallelism; otherwise the calls run sequentially on the single slot.
+     * in the same order. Each request runs on a thread of its own (the chat endpoint submits and
+     * waits in one native call), up to 64 at once; the rest start as threads free up. Requires
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
+     * actual parallelism; otherwise the calls run sequentially on the single slot. If a request
+     * fails, the call still waits for the others; the first failure in input order propagates
+     * afterwards, with the later ones attached to it as suppressed.
      *
      * @param requests the typed chat requests (must be distinct instances)
      * @return parsed responses in input order
      */
     public java.util.List<ChatResponse> chatBatch(java.util.Collection<ChatRequest> requests) {
-        java.util.List<CompletableFuture<ChatResponse>> futures =
-                new java.util.ArrayList<CompletableFuture<ChatResponse>>(requests.size());
-        for (final ChatRequest req : requests) {
-            futures.add(CompletableFuture.supplyAsync(() -> chat(req)));
-        }
-        java.util.List<ChatResponse> out = new java.util.ArrayList<ChatResponse>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<ChatResponse> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.runEachOnItsOwnThread(requests, BatchDispatch.MAX_CHAT_THREADS, this::chat);
     }
 
     /**
@@ -378,7 +342,8 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Streams the completion of a prompt: each element is the next piece of text as soon as it is
-     * generated. Like {@link #complete(InferenceParameters)}, the prompt is used verbatim.
+     * generated. Like {@link #complete(InferenceParameters)}, the prompt is used verbatim, and messages
+     * or the two infill fields build it instead.
      *
      * <p>The returned {@link LlamaIterable} implements {@link AutoCloseable}. Wrap it in a
      * try-with-resources block to guarantee the native task slot is released even when the
@@ -603,33 +568,30 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Rerank the given documents against the query, returning a {@link net.ladenthin.llama.value.LlamaOutput} with scored documents
-     * in the probabilities map.
+     * in the probabilities map. The map is keyed by document text in the order of the documents, so
+     * equal documents share one entry (they score the same); {@link #rerank(boolean, String, String...)}
+     * returns one pair per document.
      *
      * @param query the query string
      * @param documents the documents to rank
-     * @return a LlamaOutput with document/score pairs in the probabilities map
+     * @return a LlamaOutput with document/score pairs in the probabilities map, in document order
      */
     public LlamaOutput rerank(String query, String... documents) {
         String json = handleRerank(query, documents);
-        List<Pair<String, Float>> results = rerankParser.parse(json);
-        Map<String, Float> probabilities = new HashMap<>(results.size());
-        for (Pair<String, Float> pair : results) {
-            probabilities.put(pair.getKey(), pair.getValue());
-        }
-        return new LlamaOutput(query, probabilities, true, StopReason.EOS);
+        return new LlamaOutput(query, rerankParser.toDocumentScores(rerankParser.parse(json)), true, StopReason.EOS);
     }
 
     /**
      * Rerank {@code documents} against {@code query} and return the raw native JSON array of results.
-     * Each element carries {@code "document"}, {@code "index"} (the position in the input array) and
-     * {@code "score"}. This is the JSON-in/JSON-out form behind
+     * Each element carries {@code "document"}, {@code "index"} (the position in the input array),
+     * {@code "score"} and {@code "tokens_evaluated"} (the tokens the model evaluated for it). This is the JSON-in/JSON-out form behind
      * {@link #rerank(boolean, String, String...)}; the OpenAI-compatible server reshapes it into the
      * {@code POST /v1/rerank} response. Requires the model loaded in reranking mode
      * ({@link net.ladenthin.llama.parameters.ModelParameters#enableReranking()}).
      *
      * @param query the query string
      * @param documents the documents to score against the query
-     * @return a JSON array of {@code {document, index, score}} objects
+     * @return a JSON array of {@code {document, index, score, tokens_evaluated}} objects
      */
     public native String handleRerank(String query, String... documents);
 
@@ -811,7 +773,8 @@ public class LlamaModel implements AutoCloseable {
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (see
      *     {@link #handleChatCompletions(String)}); a prompt over the context size is reported this way too, on
      *     the first chunk
-     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the native layer delivers a
+     *     malformed stream envelope
      */
     public void streamChatCompletion(InferenceParameters parameters, Consumer<String> chunkSink) {
         InferenceParameters streaming = parameters.withStream(true);
@@ -819,8 +782,7 @@ public class LlamaModel implements AutoCloseable {
         boolean stopped = false;
         try {
             while (!stopped) {
-                String envelope = receiveChatCompletionChunk(taskId);
-                stopped = chatStreamParser.feed(envelope, chunkSink);
+                stopped = StreamEnvelope.feed(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
             }
         } finally {
             // On a clean stop the native reader was already released when the final chunk was
@@ -834,14 +796,57 @@ public class LlamaModel implements AutoCloseable {
     }
 
     /**
+     * Stream an OpenAI {@code /v1/completions} request as {@code text_completion} chunk JSON objects,
+     * feeding each chunk's JSON string to {@code chunkSink} as it is produced.
+     * <p>
+     * The body is parsed natively exactly as {@link #handleCompletionsOai(String)} parses it, so a
+     * request means the same streamed and blocking: a prompt as text or as a token array,
+     * {@code logprobs}, the sampling fields upstream reads. Each chunk is upstream's own streaming
+     * event; the last carries the {@code finish_reason} and the {@code usage}. Streaming is forced on.
+     * Forward each chunk as one {@code data:} line and emit {@code data: [DONE]} after this method
+     * returns. If {@code chunkSink} throws, the in-flight native task is cancelled and the exception
+     * propagates to the caller.
+     *
+     * @param requestJson the OpenAI completion body ({@code {"prompt": ..., "max_tokens": ..., ...}})
+     * @param chunkSink receiver for each {@code text_completion} chunk JSON string, in order
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (no
+     *     {@code prompt}, a parameter upstream refuses, several prompts, {@code "n"} greater than 1, a prompt
+     *     over the context size; see {@link #handleCompletionsOai(String)})
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the native layer delivers a
+     *     malformed stream envelope
+     */
+    public void streamCompletionsOai(String requestJson, Consumer<String> chunkSink) {
+        int taskId = requestCompletionOaiStream(requestJson);
+        boolean stopped = false;
+        try {
+            while (!stopped) {
+                stopped = StreamEnvelope.feed(chatStreamParser, receiveChatCompletionChunk(taskId), chunkSink);
+            }
+        } finally {
+            // as in streamChatCompletion: an early exit (chunkSink threw) releases the native task
+            if (!stopped) {
+                cancelCompletion(taskId);
+            }
+        }
+    }
+
+    /**
      * Run a blocking completion and return the full result as a JSON string.
      * This is the JSON-in/JSON-out equivalent of {@link #complete(InferenceParameters)}.
      *
-     * @param paramsJson JSON string with at least a "prompt" field
+     * @param paramsJson JSON string with a "prompt" field, a "messages" array (rendered through the chat
+     *     template into the prompt) or both "input_prefix" and "input_suffix" (an infill request)
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
-     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size
-     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     *     {@code "prompt"} and neither {@code "messages"} nor the infill fields, a parameter outside its limits, a
+     *     prompt over the context size, several prompts in one request (an array of strings or of token arrays)
+     *     or {@code "n"} greater than 1 -- one prompt and one completion per request, unlike upstream's server;
+     *     send separate requests -- only one of {@code "input_prefix"} and {@code "input_suffix"}, or a non-empty
+     *     {@code "prompt"}, the infill fields or a chat field this path cannot apply ({@code "response_format"},
+     *     {@code "tools"}, {@code "tool_choice"}, {@code "parallel_tool_calls"}, {@code "top_logprobs"},
+     *     {@code "thinking_budget_tokens"}) next to {@code "messages"}
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails, or the request carries the infill
+     *     fields and the model has no fill-in-the-middle tokens
      */
     public native String handleCompletions(String paramsJson);
 
@@ -852,7 +857,9 @@ public class LlamaModel implements AutoCloseable {
      * @param paramsJson JSON string with OAI-compatible completion parameters
      * @return JSON response in OAI format
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
-     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size
+     *     {@code "prompt"}, a parameter outside its limits, a prompt over the context size, several prompts in
+     *     one request (an array of strings or of token arrays) or {@code "n"} greater than 1 -- one prompt and
+     *     one completion per request, unlike upstream's server; send separate requests
      * @throws net.ladenthin.llama.exception.LlamaException if inference fails
      */
     public native String handleCompletionsOai(String paramsJson);
@@ -864,7 +871,8 @@ public class LlamaModel implements AutoCloseable {
      * @param paramsJson JSON string with infill parameters
      * @return JSON response from the server
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, a missing
-     *     {@code "input_prefix"} or {@code "input_suffix"}, a parameter outside its limits
+     *     {@code "input_prefix"} or {@code "input_suffix"}, a parameter outside its limits, {@code "n"} greater
+     *     than 1 (one completion per request)
      * @throws net.ladenthin.llama.exception.LlamaException if the model has no fill-in-the-middle tokens or inference fails
      */
     public native String handleInfill(String paramsJson);
@@ -1059,7 +1067,16 @@ public class LlamaModel implements AutoCloseable {
     }
 
     /**
-     * Save a slot's KV cache state to a file.
+     * Save a slot's KV cache state to a file in the slot directory.
+     *
+     * <p>As llama.cpp's {@code POST /slots/:id?action=save}, {@code filename} is a file name inside the
+     * directory the model was loaded with
+     * ({@link net.ladenthin.llama.parameters.ModelParameters#setSlotSavePath(String)},
+     * {@code --slot-save-path}), not a path: a name with a directory part ({@code /} or {@code \}),
+     * with {@code ..} or an empty one throws an
+     * {@link net.ladenthin.llama.exception.InvalidRequestException}, and a model loaded without the
+     * directory refuses with a {@link net.ladenthin.llama.exception.LlamaException} naming the option.
+     * Up to 5.x the argument was used as the path itself and the directory had no effect.</p>
      *
      * <p><strong>The file format is versioned by the linked llama.cpp build, not by this library.</strong>
      * llama.cpp stamps every state file with {@code LLAMA_STATE_SEQ_VERSION} and rejects one written
@@ -1073,26 +1090,35 @@ public class LlamaModel implements AutoCloseable {
      * save file"} — it does not name the version mismatch as the cause.</p>
      *
      * @param slotId the slot ID to save
-     * @param filepath the file path to save to
+     * @param filename the name of the file inside the slot directory
      * @return JSON with save result
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if {@code filename} is not a plain
+     *     file name
+     * @throws net.ladenthin.llama.exception.LlamaException if the model has no slot directory or the
+     *     save fails
      */
-    public String saveSlot(int slotId, String filepath) {
-        return handleSlotAction(1, slotId, filepath);
+    public String saveSlot(int slotId, String filename) {
+        return handleSlotAction(1, slotId, filename);
     }
 
     /**
-     * Restore a slot's KV cache state from a file.
+     * Restore a slot's KV cache state from a file in the slot directory; {@code filename} is a file
+     * name inside the directory, as for {@link #saveSlot(int, String)}.
      *
      * <p>Only a file written by a build pinned to the same llama.cpp {@code LLAMA_STATE_SEQ_VERSION}
      * loads — see {@link #saveSlot(int, String)} for what that means in practice and how a mismatch
      * surfaces.</p>
      *
      * @param slotId the slot ID to restore
-     * @param filepath the file path to restore from
+     * @param filename the name of the file inside the slot directory
      * @return JSON with restore result
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if {@code filename} is not a plain
+     *     file name
+     * @throws net.ladenthin.llama.exception.LlamaException if the model has no slot directory or the
+     *     restore fails
      */
-    public String restoreSlot(int slotId, String filepath) {
-        return handleSlotAction(2, slotId, filepath);
+    public String restoreSlot(int slotId, String filename) {
+        return handleSlotAction(2, slotId, filename);
     }
 
     // ------------------------------------------------------------------
@@ -1120,8 +1146,15 @@ public class LlamaModel implements AutoCloseable {
      * Set the scales of the loaded LoRA adapters at runtime, without reloading the model.
      * Mirrors the upstream {@code POST /lora-adapters} contract: adapters present in
      * {@code scales} get the given scale, <b>all other adapters are set to {@code 0}
-     * (disabled)</b>. Ids not corresponding to a loaded adapter are ignored. The native side
-     * clears affected KV caches when the effective adapter set changes.
+     * (disabled)</b>. Ids not corresponding to a loaded adapter are ignored.
+     *
+     * <p>A slot whose cache was computed under other scales clears it at its next request, so no
+     * answer mixes the old and the new adapters (the rule upstream applies to adapters named per
+     * request; upstream's {@code POST /lora-adapters} path itself does not, which
+     * {@code patches/0021} fixes). One cache does not record the adapters: the host-memory prompt
+     * cache ({@code --cache-ram}, on by default) can load a state saved under other scales into a
+     * slot; disable it with {@link ModelParameters#setCacheRamMib(int) setCacheRamMib(0)} where
+     * adapters change while that matters.
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter
@@ -1187,7 +1220,8 @@ public class LlamaModel implements AutoCloseable {
      * @return JSON response in OAI chat-completion format
      * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected: not valid JSON, no
      *     {@code "messages"}, a message the chat template cannot take, a parameter outside its limits, a
-     *     prompt over the context size
+     *     prompt over the context size, {@code "n"} greater than 1 (one completion per request, unlike
+     *     upstream's server; send separate requests)
      * @throws net.ladenthin.llama.exception.LlamaException if the model was loaded in embedding mode or inference fails
      */
     public native String handleChatCompletions(String params);
@@ -1195,6 +1229,8 @@ public class LlamaModel implements AutoCloseable {
     native int requestChatCompletion(String params);
 
     native int requestChatCompletionStream(String params);
+
+    native int requestCompletionOaiStream(String requestJson);
 
     native String receiveChatCompletionChunk(int taskId);
 }

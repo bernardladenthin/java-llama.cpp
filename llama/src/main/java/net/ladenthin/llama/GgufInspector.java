@@ -176,6 +176,12 @@ public final class GgufInspector {
 
     private static Object readArray(Reader reader) throws IOException {
         int elementType = (int) reader.u32();
+        // ggml's gguf reader rejects arrays of arrays ("invalid GGUF type"), so llama.cpp cannot load such
+        // a file; accepting them here also let a crafted nesting recurse into a StackOverflowError.
+        if (elementType == TYPE_ARRAY) {
+            throw new IOException(
+                    "Nested GGUF arrays are not supported (llama.cpp rejects them): element type id " + elementType);
+        }
         long count = reader.u64();
         if (count < 0 || count > MAX_ARRAY_ELEMENTS) {
             throw new IOException("Implausible GGUF array element count: " + count);

@@ -125,8 +125,10 @@ public final class AgentOptions {
      *
      * @param args the raw arguments
      * @return the parsed options
-     * @throws IllegalArgumentException on an unknown flag, a missing value, or when neither/both of
-     *     {@code --base-url} and {@code --model} are given
+     * @throws IllegalArgumentException on an unknown flag, a missing value, when neither/both of
+     *     {@code --base-url} and {@code --model} are given, or when {@code --model} is given with a
+     *     {@code --model-id} that llama.cpp's {@code --alias} would split or strip (a comma, empty,
+     *     leading or trailing whitespace)
      */
     public static AgentOptions parse(String[] args) {
         Builder b = new Builder();
@@ -173,6 +175,9 @@ public final class AgentOptions {
             if (frontEnds > 1) {
                 throw new IllegalArgumentException("--web, --acp and --prompt exclude each other");
             }
+            if (b.modelPath != null) {
+                requireAliasSafeModelId(b.modelId);
+            }
         }
         return new AgentOptions(b);
     }
@@ -214,6 +219,25 @@ public final class AgentOptions {
         b.acp = acp;
         b.workspace = newWorkspace.toAbsolutePath().normalize();
         return new AgentOptions(b);
+    }
+
+    /**
+     * The in-process model is served under the model id as its {@code --alias}, which llama.cpp splits at
+     * commas and strips; an id it would change would make {@code /v1/models} and the answers name the model
+     * differently. The same rule as {@code OpenAiServerCli}'s {@code --model-id}. Against {@code --base-url}
+     * the id names a model of another server and is sent unchanged.
+     */
+    private static void requireAliasSafeModelId(String modelId) {
+        if (modelId.indexOf(',') >= 0) {
+            throw new IllegalArgumentException(
+                    "--model-id must not contain a comma with --model (llama.cpp reads it as a list of aliases), got: "
+                            + modelId);
+        }
+        if (modelId.isEmpty() || !modelId.equals(modelId.trim())) {
+            throw new IllegalArgumentException(
+                    "--model-id must be non-empty without leading or trailing whitespace with --model, got: '" + modelId
+                            + "'");
+        }
     }
 
     private static String value(String[] args, int index, String flag) {
@@ -284,7 +308,7 @@ public final class AgentOptions {
                 "",
                 "Endpoint (exactly one):",
                 "  --base-url <url>        OpenAI-compatible base URL of a running server,",
-                "                          e.g. http://127.0.0.1:8080/v1 (java-llama.cpp NativeServer",
+                "                          e.g. http://127.0.0.1:9931/v1 (java-llama.cpp NativeServer",
                 "                          started with --jinja, OpenAiCompatServer, or llama-server)",
                 "  --model <file.gguf>     load this GGUF in-process and serve it to the agent",
                 "  --ngl <n>               GPU layers for --model (default 0 = CPU only)",

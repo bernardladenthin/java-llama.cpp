@@ -34,7 +34,8 @@ import org.junit.jupiter.api.io.TempDir;
 @ClaudeGenerated(
         purpose = "Pin RpcServer's Java-side lifecycle without native code: listening, bind failure, "
                 + "a failing serve, the start timeout, close/idempotence, the single-instance slot being "
-                + "released on every failure, the cache directory and the served-device list.")
+                + "released on every failure and kept while a server thread survives the stop, the cache "
+                + "directory and the served-device list.")
 public class RpcServerLifecycleTest {
 
     private static final RpcEndpoint ENDPOINT = RpcEndpoint.of("127.0.0.1", 50052);
@@ -183,6 +184,142 @@ public class RpcServerLifecycleTest {
             Thread.interrupted();
         }
         assertThat(hanging.stops.get(), is(1));
+        assertSlotIsFree();
+    }
+
+    @Test
+    public void aStopThatArrivesBeforeTheBindDoesNotLeaveTheServerRunning() throws Exception {
+        // like the native server: binding the socket clears the stop flag, so an early stop is lost
+        CountDownLatch bind = new CountDownLatch(1);
+        CountDownLatch ended = new CountDownLatch(1);
+        WorkingBackend slowBind = new WorkingBackend() {
+            volatile boolean stop;
+
+            @Override
+            public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
+                try {
+                    bind.await();
+                    stop = false;
+                    listening = true;
+                    while (!stop) {
+                        Thread.sleep(5);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    listening = false;
+                    ended.countDown();
+                }
+            }
+
+            @Override
+            public void stop() {
+                super.stop();
+                stop = true;
+            }
+        };
+        Thread binder = new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            bind.countDown();
+        });
+        binder.start();
+        assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, slowBind, 100));
+        binder.join();
+        assertThat("the server thread ended", ended.await(1, TimeUnit.SECONDS), is(true));
+        assertSlotIsFree();
+    }
+
+    /**
+     * serve() ignores stop() until {@link #end} is released: a server thread the stop cannot reach,
+     * e.g. one stuck in a device initialization before the bind.
+     */
+    static class StopIgnoringBackend extends WorkingBackend {
+        final CountDownLatch end = new CountDownLatch(1);
+        final CountDownLatch entered = new CountDownLatch(1);
+        volatile @Nullable Thread serving;
+        private final boolean listens;
+
+        StopIgnoringBackend(boolean listens) {
+            this.listens = listens;
+        }
+
+        @Override
+        public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
+            serving = Thread.currentThread();
+            listening = listens;
+            entered.countDown();
+            try {
+                end.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            listening = false;
+        }
+
+        /** Lets serve() return and waits until the server thread has ended. */
+        void endAndJoin() throws InterruptedException {
+            end.countDown();
+            assertThat("serve() was entered", entered.await(10, TimeUnit.SECONDS), is(true));
+            Thread thread = serving;
+            assertThat(thread != null, is(true));
+            thread.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat("the server thread ended", thread.isAlive(), is(false));
+        }
+    }
+
+    @Test
+    public void aServerThatIgnoresTheStopIsReportedAndKeepsTheSlot() throws Exception {
+        // The failed start used to report "could not listen ... (is the port already in use?)" and
+        // free the single-instance slot while the native server thread, which owns process-global
+        // ggml-rpc state, was still alive and could still bind.
+        StopIgnoringBackend stuck = new StopIgnoringBackend(false);
+        LlamaException e = assertThrows(
+                LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, stuck, 100, 200));
+        assertThat(e.getMessage(), containsString("its thread did not end within 200 ms after the stop"));
+        assertThat(e.getMessage(), containsString(ENDPOINT.toString()));
+
+        IllegalStateException second = assertThrows(
+                IllegalStateException.class,
+                () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000));
+        assertThat(second.getMessage(), containsString("already running"));
+
+        stuck.endAndJoin();
+        assertSlotIsFree();
+    }
+
+    @Test
+    public void aCloseThatTheServerThreadOutlivesKeepsTheSlot() throws Exception {
+        StopIgnoringBackend stuck = new StopIgnoringBackend(true);
+        RpcServer server = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, stuck, 5_000, 200);
+        server.close();
+        assertThat(server.isRunning(), is(false));
+
+        IllegalStateException second = assertThrows(
+                IllegalStateException.class,
+                () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000));
+        assertThat(second.getMessage(), containsString("already running"));
+
+        stuck.endAndJoin();
+        assertSlotIsFree();
+    }
+
+    @Test
+    public void aServerThreadThatEndsOnItsOwnKeepsTheSlotUntilClose() throws Exception {
+        // the open RpcServer's close() stops the process-global native server, so a newer server
+        // must not start before it has run, even when the old thread is already gone
+        StopIgnoringBackend ending = new StopIgnoringBackend(true);
+        RpcServer server = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, ending, 5_000, 200);
+        ending.endAndJoin();
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000));
+
+        server.close();
         assertSlotIsFree();
     }
 

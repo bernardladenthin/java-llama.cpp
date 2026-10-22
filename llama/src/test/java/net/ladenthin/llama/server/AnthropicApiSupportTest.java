@@ -5,7 +5,9 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +25,383 @@ public class AnthropicApiSupportTest {
 
     private static JsonNode read(String json) throws IOException {
         return MAPPER.readTree(json);
+    }
+
+    @Test
+    public void requestTurnsImageBlocksIntoImageUrlParts() throws IOException {
+        // Anthropic clients send images as {type:image, source:{type:base64, media_type, data}}. The
+        // OpenAI parser reads images only from image_url parts, so dropping the block left a vision
+        // model answering as if no image had been sent.
+        String anthropic = "{\"messages\":[{\"role\":\"user\",\"content\":["
+                + "{\"type\":\"text\",\"text\":\"what is this?\"},"
+                + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\","
+                + "\"data\":\"iVBORw0K\"}}]}]}";
+        JsonNode content = AnthropicApiSupport.toOpenAiChatRequest(read(anthropic))
+                .path("messages")
+                .get(0)
+                .path("content");
+        assertThat(content.isArray(), is(true));
+        assertThat(content.get(0).path("type").asText(), is("text"));
+        assertThat(content.get(0).path("text").asText(), is("what is this?"));
+        assertThat(content.get(1).path("type").asText(), is("image_url"));
+        assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64,iVBORw0K"));
+    }
+
+    @Test
+    public void responseCarriesTheReasoningAsAThinkingBlockFirstLikeUpstream() throws IOException {
+        // Upstream's to_json_anthropic puts the reasoning first, as {"type":"thinking","thinking":...,
+        // "signature":""}; a client that enabled thinking (F76) otherwise never sees it.
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"42\",\"reasoning_content\":\"6 times 7\"},"
+                        + "\"finish_reason\":\"stop\"}]}",
+                "m"));
+        JsonNode content = response.path("content");
+        assertThat(content.size(), is(2));
+        assertThat(content.get(0).path("type").asText(), is("thinking"));
+        assertThat(content.get(0).path("thinking").asText(), is("6 times 7"));
+        assertThat(content.get(0).path("signature").isTextual(), is(true));
+        assertThat(content.get(1).path("type").asText(), is("text"));
+        assertThat(content.get(1).path("text").asText(), is("42"));
+    }
+
+    @Test
+    public void requestKeepsThinkingBlocksOfTheHistoryAsReasoningContentLikeUpstream() throws IOException {
+        // Upstream's convert_anthropic_to_oai collects an assistant turn's thinking blocks into
+        // reasoning_content, which the chat parser hands to templates that render earlier reasoning.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"6 times 7\","
+                        + "\"signature\":\"\"},{\"type\":\"text\",\"text\":\"42\"}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"only\"}]}]}"))
+                .path("messages");
+        assertThat(messages.get(1).path("reasoning_content").asText(), is("6 times 7"));
+        assertThat(messages.get(1).path("content").asText(), is("42"));
+        assertThat(messages.get(2).path("reasoning_content").asText(), is("only"));
+        assertThat(messages.get(2).path("content").asText(), is(""));
+    }
+
+    @Test
+    public void toolResultImagesReachTheToolMessageLikeUpstream() throws IOException {
+        // A tool that returns an image (a screenshot, an image file read by an agent) sends it as an
+        // image block inside tool_result; upstream's convert_anthropic_to_oai keeps text and image as
+        // content parts of the tool message.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(
+                        read(
+                                "{\"messages\":["
+                                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                                        + "{\"type\":\"text\",\"text\":\"cat.png\"},"
+                                        + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AA==\"}}]}]}]}"))
+                .path("messages");
+        JsonNode tool = messages.path(1);
+        assertThat(tool.path("role").asText(), is("tool"));
+        assertThat(tool.path("content").path(0).path("text").asText(), is("cat.png"));
+        assertThat(tool.path("content").path(1).path("type").asText(), is("image_url"));
+        assertThat(
+                tool.path("content").path(1).path("image_url").path("url").asText(), is("data:image/png;base64,AA=="));
+    }
+
+    @Test
+    public void billingHeaderStampIsNormalizedSoThePrefixCacheHitsLikeUpstream() throws IOException {
+        // Claude Code starts its system prompt with a billing header whose cch stamp changes on every
+        // request; upstream (normalize_anthropic_billing_header, llama.cpp #21793) overwrites the stamp
+        // so the prompt prefix, and with it the KV cache, stays identical across requests.
+        String first = AnthropicApiSupport.toOpenAiChatRequest(read("{\"system\":[{\"type\":\"text\",\"text\":"
+                        + "\"x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=a5145;You are Claude Code.\"}],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"))
+                .path("messages")
+                .path(0)
+                .path("content")
+                .asText();
+        String second = AnthropicApiSupport.toOpenAiChatRequest(read("{\"system\":"
+                        + "\"x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=0b9c2;You are Claude Code.\","
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"))
+                .path("messages")
+                .path(0)
+                .path("content")
+                .asText();
+        assertThat(
+                first,
+                is(
+                        "x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=fffff;You are Claude Code."));
+        assertThat(second, is(first));
+    }
+
+    @Test
+    public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
+        // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
+        // which the chat parser hands to the sampler as the reasoning budget.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("thinking_budget_tokens").asInt(), is(1024));
+    }
+
+    @Test
+    public void enabledThinkingWithoutBudgetUsesUpstreamsDefault() throws IOException {
+        // upstream's convert_anthropic_to_oai: json_value(thinking, "budget_tokens", 10000)
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"enabled\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("thinking_budget_tokens").asInt(), is(10000));
+    }
+
+    @Test
+    public void disabledThinkingSetsNoBudget() throws IOException {
+        // Only type "enabled" sets a budget, as upstream; a disabled block must not limit the reasoning.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"disabled\",\"budget_tokens\":1024},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.has("thinking_budget_tokens"), is(false));
+    }
+
+    private static String imageUrlOf(String source) throws IOException {
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                        + "\"content\":[{\"type\":\"image\",\"source\":" + source + "}]}]}"))
+                .path("messages");
+        return messages.path(0)
+                .path("content")
+                .path(0)
+                .path("image_url")
+                .path("url")
+                .asText();
+    }
+
+    @Test
+    public void aBase64ImageWithoutMediaTypeIsNamedByItsBytes() throws IOException {
+        // Without media_type the data URL named every image image/png. The type is read from the
+        // encoded magic bytes as on the Ollama route (PNG, JPEG, GIF, WebP).
+        String[][] images = {
+            {"iVBORw0KGgoAAAANSUhEUg", "image/png"},
+            {"/9j/4AAQSkZJRgABAQ", "image/jpeg"},
+            {"R0lGODlhAQABAIAAAP", "image/gif"},
+            {"UklGRh4AAABXRUJQVlA4", "image/webp"}
+        };
+        for (String[] image : images) {
+            assertThat(
+                    image[1],
+                    imageUrlOf("{\"type\":\"base64\",\"data\":\"" + image[0] + "\"}"),
+                    is("data:" + image[1] + ";base64," + image[0]));
+        }
+    }
+
+    @Test
+    public void aBase64ImageOfUnknownBytesWithoutMediaTypeIsJpegLikeUpstream() throws IOException {
+        // upstream's server_chat_convert_anthropic_to_oai defaults media_type to image/jpeg
+        // (tools/server/server-chat.cpp:423, b11639)
+        assertThat(imageUrlOf("{\"type\":\"base64\",\"data\":\"AAAAAAAA\"}"), is("data:image/jpeg;base64,AAAAAAAA"));
+    }
+
+    @Test
+    public void anExplicitMediaTypeWinsOverTheBytes() throws IOException {
+        assertThat(
+                imageUrlOf("{\"type\":\"base64\",\"media_type\":\"image/webp\",\"data\":\"iVBORw0KGgo\"}"),
+                is("data:image/webp;base64,iVBORw0KGgo"));
+    }
+
+    @Test
+    public void requestTurnsUrlImageSourcesIntoImageUrlParts() throws IOException {
+        // A url source is passed on as the image_url itself, as upstream's convert_anthropic_to_oai does,
+        // in a user message and inside a tool_result.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://x/a.png\"}}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                        + "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://x/b.png\"}}]}]}]}"))
+                .path("messages");
+        JsonNode content = messages.path(0).path("content");
+        assertThat(content.path(1).path("type").asText(), is("image_url"));
+        assertThat(content.path(1).path("image_url").path("url").asText(), is("https://x/a.png"));
+        JsonNode tool = messages.path(2);
+        assertThat(tool.path("role").asText(), is("tool"));
+        assertThat(tool.path("content").path(0).path("image_url").path("url").asText(), is("https://x/b.png"));
+    }
+
+    @Test
+    public void aFileImageSourceIsRefused() throws IOException {
+        // A Files-API source ({type:file, file_id}) has nothing a local server could fetch. Upstream's
+        // server_chat_convert_anthropic_to_oai (tools/server/server-chat.cpp:417-441 for a message,
+        // :478-494 inside a tool_result, b11639) drops it without an error, and the model answered as if
+        // no image had been sent; it is refused instead, in a message and inside a tool_result.
+        String[] requests = {
+            "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"what is this?\"},"
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011a\"}}]}]}",
+            "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\","
+                    + "\"name\":\"read\",\"input\":{}}]},"
+                    + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                    + "{\"type\":\"text\",\"text\":\"done\"},"
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"file\",\"file_id\":\"file_011b\"}}]}]}]}"
+        };
+        for (String json : requests) {
+            JsonNode request = read(json);
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), json);
+            assertThat(e.getMessage(), is("image source type 'file' is not supported; send base64 or url"));
+        }
+    }
+
+    @Test
+    public void anImageSourceOfAnUnknownTypeIsRefused() throws IOException {
+        // Neither base64 nor url gave no image part, and the message went on as text without a word.
+        for (String type : new String[] {"ftp", ""}) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":["
+                    + "{\"type\":\"image\",\"source\":{\"type\":\"" + type + "\",\"url\":\"ftp://x/a.png\"}}]}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), type);
+            assertThat(e.getMessage(), is("image source type '" + type + "' is not supported; send base64 or url"));
+        }
+    }
+
+    @Test
+    public void anImageSourceWithoutItsDataOrUrlIsRefused() throws IOException {
+        String[][] cases = {
+            {
+                "{\"type\":\"base64\",\"media_type\":\"image/png\"}",
+                "image source of type 'base64' needs a string 'data' (got missing)"
+            },
+            {"{\"type\":\"base64\",\"data\":7}", "image source of type 'base64' needs a string 'data' (got number)"},
+            {"{\"type\":\"url\"}", "image source of type 'url' needs a string 'url' (got missing)"}
+        };
+        for (String[] c : cases) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":["
+                    + "{\"type\":\"image\",\"source\":" + c[0] + "}]}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), c[0]);
+            assertThat(e.getMessage(), is(c[1]));
+        }
+    }
+
+    @Test
+    public void aSystemTextThatIsNoWellFormedBillingHeaderIsLeftAlone() {
+        // normalizeBillingHeader rewrites only "cch=" followed by five characters and a ';', as upstream's
+        // normalize_anthropic_billing_header; each of its guards must return the text untouched.
+        String[] untouched = {
+            "You are Claude Code.",
+            "x-anthropic-billing-header: nothing",
+            "x-anthropic-billing-header: cc_entrypoint=cli; cch=a5145",
+            "x-anthropic-billing-header: cch=a5145 You are Claude Code."
+        };
+        for (String text : untouched) {
+            assertThat(text, AnthropicApiSupport.normalizeBillingHeader(text), is(text));
+        }
+    }
+
+    /**
+     * Separate text blocks of one message must stay separate words. Anthropic clients split a turn into
+     * several blocks (a reminder block, then the user's own text); llama.cpp's own {@code /v1/messages}
+     * keeps them as content parts and joins them with a newline ({@code concat_content_parts} in
+     * {@code common/chat.cpp}). Concatenated without a separator, {@code "first"} and {@code "second"}
+     * reached the model as {@code "firstsecond"}.
+     */
+    @Test
+    public void requestJoinsTheTextBlocksOfOneMessageWithANewline() throws IOException {
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                + "\"content\":[{\"type\":\"text\",\"text\":\"first\"},{\"type\":\"text\",\"text\":\"second\"}]}]}"));
+
+        assertThat(openAi.path("messages").path(0).path("content").asText(), is("first\nsecond"));
+    }
+
+    @Test
+    public void requestWithoutMaxTokensIsCappedLikeUpstream() throws IOException {
+        // upstream's convert_anthropic_to_oai caps a request without max_tokens at 4096 instead of
+        // generating until the context is full.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("max_tokens").asInt(), is(4096));
+    }
+
+    @Test
+    public void aMaxTokensThatIsNotANumberIsRefused() throws IOException {
+        // The protocol types max_tokens as an integer, and upstream's schema refuses a string or a
+        // boolean (Field 'max_tokens': type must be number). The default for an absent value answered
+        // such a request silently with a 4096 cap (F223).
+        for (String value : new String[] {"\"100\"", "true"}) {
+            JsonNode request =
+                    read("{\"max_tokens\":" + value + ",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), value);
+            assertThat(e.getMessage(), containsString("max_tokens"));
+        }
+    }
+
+    @Test
+    public void aSamplingFieldThatIsNotANumberIsRefused() throws IOException {
+        // upstream's converter passes temperature, top_p and top_k through and its schema refuses a
+        // string (Field 'temperature': type must be number); the translation dropped it without a word,
+        // so the request sampled with the server's defaults.
+        for (String field : new String[] {"temperature", "top_p", "top_k"}) {
+            JsonNode request = read("{\"max_tokens\":8,\"" + field
+                    + "\":\"0.3\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), field);
+            assertThat(e.getMessage(), is("Field '" + field + "': type must be number, but is string"));
+        }
+    }
+
+    @Test
+    public void requestWithNullMaxTokensIsCappedLikeAbsent() throws IOException {
+        // upstream's schema treats null as absent ("clients can send null to request the server default")
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":null,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("max_tokens").asInt(), is(4096));
+    }
+
+    @Test
+    public void requestPassesChatTemplateKwargsLikeUpstream() throws IOException {
+        // upstream passes chat_template_kwargs through (e.g. Qwen3's enable_thinking); the shared chat
+        // mapper reads them.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,\"messages\":"
+                + "[{\"role\":\"user\",\"content\":\"hi\"}],\"chat_template_kwargs\":{\"enable_thinking\":false}}"));
+        assertThat(openAi.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(openAi.path("chat_template_kwargs").path("enable_thinking").asBoolean(true), is(false));
+    }
+
+    @Test
+    public void requestPassesIdSlotLikeUpstream() throws IOException {
+        // upstream's converter passes id_slot through since llama.cpp b11756 (#28554), so a client can pin
+        // the slot of a conversation on this route as on /v1/chat/completions
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":8,\"id_slot\":2,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("id_slot").isIntegralNumber(), is(true));
+        assertThat(openAi.path("id_slot").asInt(-1), is(2));
+        JsonNode without = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(without.has("id_slot"), is(false));
+    }
+
+    @Test
+    public void requestMergesExtraParamsLastLikeUpstream() throws IOException {
+        // upstream since llama.cpp b11795 (#30856): llama.cpp's own sampling params travel in extra_params
+        // and are merged into the converted body after the translation, so they win over a translated key
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,\"temperature\":0.7,"
+                + "\"extra_params\":{\"seed\":42,\"min_p\":0.05,\"temperature\":0.1},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("seed").asInt(-1), is(42));
+        assertThat(openAi.path("min_p").asDouble(-1), is(0.05));
+        assertThat(openAi.path("temperature").asDouble(-1), is(0.1));
+        assertThat(openAi.has("extra_params"), is(false));
+    }
+
+    @Test
+    public void extraParamsCannotTakeTheKeysTheTranslationReservesForItsAnswer() throws IOException {
+        // the stop word of the Anthropic answer comes out of the verbose object through response_fields; an
+        // extra_params entry of either name would silently lose it
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,"
+                + "\"extra_params\":{\"verbose\":false,\"response_fields\":[\"content\"],\"top_k\":3},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("verbose").asBoolean(false), is(true));
+        assertThat(openAi.path("response_fields").size(), is(1));
+        assertThat(openAi.path("response_fields").get(0).asText(), is("stopping_word"));
+        assertThat(openAi.path("top_k").asInt(-1), is(3));
+    }
+
+    @Test
+    public void extraParamsThatIsNotAnObjectIsIgnoredLikeUpstream() throws IOException {
+        // upstream merges only an object (`is_object()`); anything else is left alone, not refused
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read(
+                "{\"max_tokens\":8,\"extra_params\":7," + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.has("extra_params"), is(false));
+        assertThat(openAi.path("max_tokens").asInt(-1), is(8));
     }
 
     @Test
@@ -82,6 +461,26 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toolUseWithoutInputBecomesAnEmptyArgumentsObject() throws IOException {
+        // Upstream parses every function.arguments of the history with json::parse, so an empty string
+        // fails the whole request with 400; a tool call without arguments is "{}" (F166).
+        for (String block : new String[] {
+            "{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"now\"}",
+            "{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"now\",\"input\":null}"
+        }) {
+            JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                    read("{\"messages\":[{\"role\":\"assistant\",\"content\":[" + block + "]}]}"));
+            JsonNode arguments = openAi.path("messages")
+                    .get(0)
+                    .path("tool_calls")
+                    .get(0)
+                    .path("function")
+                    .path("arguments");
+            assertThat(block, arguments.asText(), is("{}"));
+        }
+    }
+
+    @Test
     public void requestConcatenatesSystemBlocksAndMapsStopSequences() throws IOException {
         JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
                 read("{\"system\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}],"
@@ -95,6 +494,78 @@ public class AnthropicApiSupportTest {
         assertThat(openAi.path("stop").get(0).asText(), is("X"));
     }
 
+    // The matched stop word is the stop_sequence, and stop_reason is "stop_sequence" as the Messages API
+    // specifies (upstream reports end_turn, F221). The OpenAI answer the route translates from does not
+    // carry the word, so the translation asks for upstream's "verbose" answer, whose
+    // __verbose.stopping_word does (F183).
+
+    @Test
+    public void theTranslatedRequestAsksForTheStopWord() throws IOException {
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop_sequences\":[\"X\"]}"));
+        assertThat(openAi.path("verbose").asBoolean(false), is(true));
+        // ... and only for it: the whole debug object echoes the rendered prompt and the generation
+        // settings through JNI with every answer, to be dropped here
+        assertThat(openAi.path("response_fields").size(), is(1));
+        assertThat(openAi.path("response_fields").path(0).asText(), is("stopping_word"));
+    }
+
+    @Test
+    public void theMatchedStopWordIsTheStopSequence() throws IOException {
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"a\"},"
+                        + "\"finish_reason\":\"stop\"}],\"__verbose\":{\"stopping_word\":\"X\",\"prompt\":\"p\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("stop_sequence"));
+        assertThat(response.path("stop_sequence").asText(), is("X"));
+        assertThat("the debug object stays inside", response.has("__verbose"), is(false));
+    }
+
+    @Test
+    public void aMatchedStopWordIsReportedAsStopReasonStopSequence() throws IOException {
+        // The Messages API: "If the model encounters one of the custom sequences, the response
+        // stop_reason value will be "stop_sequence"". end_turn made a stop-word stop look like a natural
+        // end to a client that branches on stop_reason.
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"X\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("stop_sequence"));
+        assertThat(response.path("stop_sequence").asText(), is("X"));
+    }
+
+    @Test
+    public void withoutAStopWordAStopIsStillEndTurn() throws IOException {
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("end_turn"));
+    }
+
+    @Test
+    public void noMatchedStopWordIsANullStopSequence() throws IOException {
+        JsonNode eos = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"\"}}",
+                "m"));
+        assertThat(eos.path("stop_sequence").isNull(), is(true));
+        JsonNode plain = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}]}", "m"));
+        assertThat(plain.path("stop_sequence").isNull(), is(true));
+    }
+
+    @Test
+    public void toolChoiceNoneForbidsToolCalls() throws IOException {
+        // Anthropic's {"type":"none"} forbids tool use; left out, the request ran as "auto" and the model
+        // could still call the tools it was given. OpenAI's equivalent is tool_choice "none".
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":16,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"none\"}}"));
+        assertThat(openAi.path("tool_choice").asText(), is("none"));
+    }
+
     @Test
     public void toolChoiceAnyMapsToRequired() throws IOException {
         JsonNode openAi =
@@ -102,6 +573,61 @@ public class AnthropicApiSupportTest {
                         + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
                         + "\"tool_choice\":{\"type\":\"any\"}}"));
         assertThat(openAi.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAToolForcesThatTool() throws IOException {
+        // {"type":"tool","name":...} asks for that tool; "required" over every tool let the model call
+        // another one. The translation names the function as OpenAI does, and the chat mapper forwards
+        // that tool alone with "required" (as for F227).
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":16,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}},"
+                + "{\"name\":\"g\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"tool\",\"name\":\"g\",\"disable_parallel_tool_use\":true}}"));
+        assertThat(openAi.path("tool_choice").path("type").asText(), is("function"));
+        assertThat(openAi.path("tool_choice").path("function").path("name").asText(), is("g"));
+        assertThat(openAi.path("parallel_tool_calls").asBoolean(true), is(false));
+        JsonNode mapped = MAPPER.readTree(
+                new OpenAiRequestMapper().toInferenceParameters(openAi).toJson());
+        assertThat(mapped.path("tools").size(), is(1));
+        assertThat(mapped.path("tools").path(0).path("function").path("name").asText(), is("g"));
+        assertThat(mapped.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceToolWithoutANameIsRefused() throws IOException {
+        JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"tool\"}}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request));
+        assertThat(e.getMessage(), containsString("tool_choice of type 'tool' needs the tool's 'name'"));
+    }
+
+    @Test
+    public void toolChoiceOfAnotherTypeIsRefused() throws IOException {
+        // Anything but auto, any, tool and none fell back to "auto" without a word.
+        for (String type : new String[] {"allowed_tools", "mcp", ""}) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                    + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                    + "\"tool_choice\":{\"type\":\"" + type + "\"}}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), type);
+            assertThat(
+                    e.getMessage(),
+                    is("tool_choice type '" + type + "' is not supported; use auto, any, tool or none"));
+        }
+    }
+
+    @Test
+    public void toolChoiceThatIsNoObjectIsRefused() throws IOException {
+        JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":\"any\"}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request));
+        assertThat(e.getMessage(), is("'tool_choice' must be an object (got \"any\")"));
     }
 
     @Test
@@ -144,10 +670,30 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toAnthropicResponseTurnsEmptyToolCallArgumentsIntoAnEmptyInputObject() throws IOException {
+        // a parameterless call can come back with "arguments": "" -- tool_use.input must be an object
+        String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+                + "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"get_time\","
+                + "\"arguments\":\"\"}}]},\"finish_reason\":\"tool_calls\"}]}";
+        JsonNode out = read(AnthropicApiSupport.toAnthropicResponse(openAi, "m"));
+        JsonNode input = out.path("content").get(0).path("input");
+        assertThat(input.isObject(), is(true));
+        assertThat(input.size(), is(0));
+    }
+
+    @Test
     public void stopReasonMapping() {
         assertThat(AnthropicApiSupport.anthropicStopReason("stop"), is("end_turn"));
         assertThat(AnthropicApiSupport.anthropicStopReason("length"), is("max_tokens"));
         assertThat(AnthropicApiSupport.anthropicStopReason("tool_calls"), is("tool_use"));
+    }
+
+    @Test
+    public void onlyAStopThatAStopWordEndedIsStopSequence() {
+        assertThat(AnthropicApiSupport.anthropicStopReason("stop", "X"), is("stop_sequence"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("stop", null), is("end_turn"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("tool_calls", "X"), is("tool_use"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("length", "X"), is("max_tokens"));
     }
 
     @Test

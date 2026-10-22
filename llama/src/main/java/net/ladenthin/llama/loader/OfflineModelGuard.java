@@ -4,11 +4,18 @@
 
 package net.ladenthin.llama.loader;
 
+import java.io.File;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.function.Function;
 import net.ladenthin.llama.args.ModelFlag;
 import net.ladenthin.llama.exception.ModelUnavailableException;
 import net.ladenthin.llama.parameters.ModelParameters;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Pure-Java guard that fails fast with a typed
@@ -48,7 +55,9 @@ public final class OfflineModelGuard {
     /**
      * Throws {@link net.ladenthin.llama.exception.ModelUnavailableException} when {@code parameters}
      * has {@link net.ladenthin.llama.args.ModelFlag#OFFLINE} set and its configured local
-     * {@code --model} path points at a file that does not exist; otherwise returns normally.
+     * {@code --model} path points at a file that does not exist; otherwise returns normally. A path
+     * the JVM's file-name encoding cannot represent (a non-ASCII name in a JVM started with the POSIX
+     * locale) is not judged here but left to the native loader, which opens it with its UTF-8 bytes.
      *
      * @param parameters the parameters about to be passed to the native loader
      * @throws net.ladenthin.llama.exception.ModelUnavailableException when offline and the
@@ -59,10 +68,88 @@ public final class OfflineModelGuard {
             return;
         }
         String model = parameters.getModel();
-        if (model != null && !model.isEmpty() && !Files.exists(Paths.get(model))) {
+        if (model != null && !model.isEmpty() && !localFileExists(model)) {
             throw new ModelUnavailableException(
                     "Model unavailable: --offline is set but the configured model file does not "
                             + "exist (no download attempted): " + model);
+        }
+    }
+
+    /**
+     * Whether {@code model} names an existing file, as far as the JVM can tell.
+     *
+     * @param model the configured local model path
+     * @return {@code true} if the file exists or the JVM cannot decide (see {@link #countsAsMissing})
+     */
+    private static boolean localFileExists(String model) {
+        return !countsAsMissing(
+                model,
+                fileNameEncoding(File.separatorChar == '\\', System.getProperty("sun.jnu.encoding")),
+                Paths::get);
+    }
+
+    /**
+     * The charset {@code Paths.get} encodes a file name with. On Windows none: {@code WindowsPath}
+     * parses the UTF-16 string and never consults {@code sun.jnu.encoding}, so every rejection there
+     * is the file system's, which UTF-8 (able to encode any well-formed string) expresses. Elsewhere
+     * {@code UnixPath} encodes with {@code sun.jnu.encoding}.
+     *
+     * @param windows whether this is Windows
+     * @param jnu     the value of {@code sun.jnu.encoding}, or {@code null}
+     * @return the charset to test a rejected name against
+     */
+    static Charset fileNameEncoding(boolean windows, @Nullable String jnu) {
+        return windows ? StandardCharsets.UTF_8 : jnuEncoding(jnu);
+    }
+
+    /**
+     * The charset the JVM encodes file names with, resolved like the JDK does: the
+     * {@code sun.jnu.encoding} property (set from the locale at startup, on Java 8 as well), and the
+     * default charset when it is absent or names no supported charset.
+     *
+     * @param name the value of {@code sun.jnu.encoding}, or {@code null}
+     * @return the file-name charset
+     */
+    static Charset jnuEncoding(@Nullable String name) {
+        if (name != null) {
+            try {
+                return Charset.forName(name);
+            } catch (IllegalArgumentException e) {
+                // IllegalCharsetNameException and UnsupportedCharsetException: the JDK's fallback below
+            }
+        }
+        return Charset.defaultCharset();
+    }
+
+    /**
+     * Whether the guard reports {@code model} as missing.
+     *
+     * <ol>
+     *   <li>A NUL character: missing. No file name can contain one, and native code would cut the path
+     *       at it, so it is never handed on.</li>
+     *   <li>Otherwise the file system decides through {@code parse} ({@code Paths.get}).</li>
+     *   <li>When {@code parse} rejects the name with an {@link InvalidPathException}, it is missing only
+     *       if {@code jnuEncoding} can encode it: then the JVM could spell the name and the file system
+     *       refused it (a character Windows forbids). If the JVM's file-name encoding cannot represent
+     *       it, the rejection says nothing about the file: on Linux {@code Paths.get} throws for every
+     *       non-ASCII name in a JVM started with the POSIX locale (no {@code LANG}), while the native
+     *       loader receives the UTF-8 bytes and opens the file. Such a path is left to the native
+     *       loader, which reports a missing file itself.</li>
+     * </ol>
+     *
+     * @param model       the configured local model path
+     * @param jnuEncoding the charset the JVM encodes file names with
+     * @param parse       turns the name into a path, {@code Paths::get} outside tests
+     * @return {@code true} if the offline guard should report the model as missing
+     */
+    static boolean countsAsMissing(String model, Charset jnuEncoding, Function<String, Path> parse) {
+        if (model.indexOf('\0') >= 0) {
+            return true;
+        }
+        try {
+            return !Files.exists(parse.apply(model));
+        } catch (InvalidPathException e) {
+            return jnuEncoding.newEncoder().canEncode(model);
         }
     }
 }

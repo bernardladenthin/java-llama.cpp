@@ -133,7 +133,11 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the infilling prefix replaced (default: empty).
+     * Returns a new request with the infilling prefix replaced (default: absent). Infilling needs
+     * both the prefix and the suffix: {@code complete}/{@code generate} format the prompt around the
+     * model's fill-in-the-middle tokens as {@code handleInfill} does, refuse a request without
+     * {@link #withInputSuffix(String)} with an {@code InvalidRequestException} and a model without
+     * FIM tokens with a {@code LlamaException}.
      *
      * @param inputPrefix the prefix for infilling; {@code null} clears
      * @return a new instance; this instance is unchanged
@@ -143,7 +147,11 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the infilling suffix replaced (default: empty).
+     * Returns a new request with the infilling suffix replaced (default: absent). Infilling needs
+     * both the prefix and the suffix: {@code complete}/{@code generate} format the prompt around the
+     * model's fill-in-the-middle tokens as {@code handleInfill} does, refuse a request without
+     * {@link #withInputPrefix(String)} with an {@code InvalidRequestException} and a model without
+     * FIM tokens with a {@code LlamaException}.
      *
      * @param inputSuffix the suffix for infilling; {@code null} clears
      * @return a new instance; this instance is unchanged
@@ -194,7 +202,11 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the number of tokens to predict replaced
-     * (default: -1, -1 = infinity, -2 = until context filled).
+     * (default: -1 = the model's {@code --predict} setting, which itself defaults to unlimited). The
+     * server accepts {@code -1} and above; {@code -2} is rejected as an invalid request.
+     *
+     * <p>{@code 0} behaves like {@code 1}: one token is generated (measured at b11639). Upstream's
+     * description of {@code 0} as "only evaluate the prompt" does not hold for the server.
      *
      * @param nPredict tokens to predict
      * @return a new instance; this instance is unchanged
@@ -436,7 +448,10 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the OpenAI {@code response_format} object replaced. The native server
      * turns {@code {"type":"json_object"}} or {@code {"type":"json_schema","json_schema":{...}}} into a
      * GBNF grammar constraint internally, so the model is forced to emit conforming JSON — the OpenAI
-     * "structured outputs" feature that strict agent clients use.
+     * "structured outputs" feature that strict agent clients use. A chat field: beside messages on the
+     * raw completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped; that path takes {@code json_schema} or a
+     * grammar instead.
      *
      * @param responseFormatJson the {@code response_format} object as a JSON-encoded string
      * @return a new instance; this instance is unchanged
@@ -456,11 +471,27 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request with the logit bias replaced by a pre-built JSON value, as the request
+     * schema reads it: an array of {@code [token, bias]} pairs or an object mapping a token to its bias
+     * (OpenAI's form, token ids as keys); a token may be an id or a string, a bias of {@code false} bans
+     * it. Overrides prior logit-bias setters.
+     *
+     * @param logitBiasJson exactly one JSON array or object
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code logitBiasJson} is not exactly one JSON value
+     */
+    public InferenceParameters withLogitBiasJson(String logitBiasJson) {
+        return withRaw(RequestField.LOGIT_BIAS, logitBiasJson);
+    }
+
+    /**
      * Returns a new request with the logit bias (token-id form) replaced. Empty input is a
-     * no-op (returns {@code this}). This entry overrides any prior logit-bias setter.
+     * no-op (returns {@code this}). This entry overrides any prior logit-bias setter. A bias of
+     * {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param logitBias token-id to bias-value
      * @return a new instance with the bias set, or {@code this} if {@code logitBias} is empty
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public InferenceParameters withTokenIdBias(Map<Integer, Float> logitBias) {
         if (logitBias.isEmpty()) {
@@ -490,10 +521,12 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the logit bias (token-string form) replaced. Empty input
-     * is a no-op (returns {@code this}). Overrides prior logit-bias setters.
+     * is a no-op (returns {@code this}). Overrides prior logit-bias setters. A bias of
+     * {@link Float#NEGATIVE_INFINITY} is sent as llama.cpp's ban form {@code false}.
      *
      * @param logitBias token string to bias value
      * @return a new instance with the bias set, or {@code this} if {@code logitBias} is empty
+     * @throws IllegalArgumentException if a bias is NaN or positive infinity
      */
     public InferenceParameters withTokenBias(Map<String, Float> logitBias) {
         if (logitBias.isEmpty()) {
@@ -565,6 +598,16 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with chat messages replaced. Allows one optional system
      * message and one-or-more user/assistant message pairs.
      *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
+     *
      * @param systemMessage optional system message ({@code null} or empty allowed)
      * @param messages user/assistant message pairs (role -&gt; content)
      * @return a new instance; this instance is unchanged
@@ -578,7 +621,20 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with chat messages replaced (multimodal-capable variant).
      * Messages with non-null {@link net.ladenthin.llama.value.ChatMessage#getParts()} are serialized as OAI
-     * array-form content (text + image_url parts).
+     * array-form content (text + image_url parts). Tool calls and tool results keep their
+     * {@code tool_calls} / {@code tool_call_id}; empty or blank tool-call arguments are written as
+     * {@code {}}, because chat templates that take object arguments parse the history's arguments
+     * as JSON and an empty string would fail the whole request.
+     *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
      *
      * @param messages ordered messages, including any {@code "system"} prelude
      * @return a new instance; this instance is unchanged
@@ -591,6 +647,16 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the {@code messages} array set from a pre-built JSON
      * string (e.g. {@link ChatRequest#buildMessagesJson()}).
      *
+     * <p>On the raw completion path ({@code complete}/{@code completeWithStats}/{@code generate})
+     * the messages are rendered through the model's chat template into the prompt, as
+     * {@code applyTemplate} renders them, and the other fields stay completion fields; the stop strings
+     * the template adds of its own are appended to {@code stop}, and a template with thinking tags gives
+     * {@link #withReasoningBudgetTokens(int)} its tags, as on the chat paths. A non-empty
+     * prompt, the infill fields or the chat fields the raw path cannot apply ({@code response_format},
+     * {@code tools}, {@code tool_choice}, {@code parallel_tool_calls}) beside them are refused with an
+     * {@code InvalidRequestException}; send those requests through {@code chatComplete} or
+     * {@code generateChat}.</p>
+     *
      * @param messagesJson the JSON array string
      * @return a new instance; this instance is unchanged
      */
@@ -600,7 +666,9 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the OAI-style {@code tools} array set from a pre-built
-     * JSON string (e.g. {@link ChatRequest#buildToolsJson()}).
+     * JSON string (e.g. {@link ChatRequest#buildToolsJson()}). A chat field: beside messages on the raw
+     * completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped.
      *
      * @param toolsJson the JSON array string
      * @return a new instance; this instance is unchanged
@@ -610,7 +678,9 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the OAI-style {@code tool_choice} hint replaced.
+     * Returns a new request with the OAI-style {@code tool_choice} hint replaced. A chat field: beside
+     * messages on the raw completion path ({@code complete}/{@code generate}) it is refused with an
+     * {@code InvalidRequestException} rather than dropped.
      *
      * @param toolChoice the hint string ({@code "auto"} / {@code "none"} / {@code "required"}); {@code null} clears
      * @return a new instance; this instance is unchanged
@@ -620,7 +690,9 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the OpenAI-compatible {@code parallel_tool_calls} flag replaced.
+     * Returns a new request with the OpenAI-compatible {@code parallel_tool_calls} flag replaced. A chat
+     * field: beside messages on the raw completion path ({@code complete}/{@code generate}) it is refused
+     * with an {@code InvalidRequestException} rather than dropped.
      *
      * @param parallelToolCalls whether the model may emit more than one tool call in a turn
      * @return a new instance; this instance is unchanged
@@ -734,11 +806,91 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the reasoning-token budget replaced. A value of {@code -1}
      * disables the budget.
      *
+     * <p>The budget counts the tokens between a start tag and an end tag and forces the first end tag
+     * once it is spent. On the chat paths and on {@code complete}/{@code generate} with messages
+     * ({@link #withMessages(java.util.List)}) the tags are the thinking tags of the model's chat template,
+     * as the chat paths take them; a template without thinking tags gives it nothing to act on there,
+     * and the request runs unchanged, unless the request names tags itself. On
+     * {@code complete}/{@code generate} without messages the request names them:
+     * {@link #withReasoningBudgetStartTag(String)} and {@link #withReasoningBudgetEndTags(String...)},
+     * optionally {@link #withReasoningBudgetMessage(String)}.</p>
+     *
      * @param budgetTokens maximum reasoning tokens (-1 = unlimited)
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withReasoningBudgetTokens(int budgetTokens) {
         return withScalar(RequestField.REASONING_BUDGET_TOKENS, budgetTokens);
+    }
+
+    /**
+     * Returns a new request with the start tag of the reasoning budget replaced: the text that opens
+     * the section {@link #withReasoningBudgetTokens(int)} counts, e.g. {@code "<think>"}.
+     *
+     * <p>For {@code complete}/{@code generate} without messages, where nothing else names the tags.
+     * With messages, and on the chat paths, the thinking tags of the chat template win over the
+     * request's when the template declares any. The budget starts counting when the model
+     * <em>generates</em> the tag: a tag already at the end of the prompt is not seen (the prompt of a
+     * request with messages is, through the template's generation prompt), so for a model whose
+     * template opens the thinking block in the prompt send the request with messages. The tag is
+     * tokenized with special tokens parsed, so a tag the vocabulary holds as one token matches that
+     * token; such a tag is rendered as empty text unless it is a preserved token of the request
+     * (upstream's {@code preserved_tokens}). Example:</p>
+     * <pre>{@code
+     * new InferenceParameters(prompt)
+     *         .withReasoningBudgetTokens(256)
+     *         .withReasoningBudgetStartTag("<think>")
+     *         .withReasoningBudgetEndTags("</think>");
+     * }</pre>
+     *
+     * @param startTag the non-empty start tag
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code startTag} is empty
+     */
+    public InferenceParameters withReasoningBudgetStartTag(String startTag) {
+        if (startTag.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "reasoning_budget_start_tag must not be empty but was \"" + startTag + "\"");
+        }
+        return withRaw(RequestField.REASONING_BUDGET_START_TAG, toJsonString(startTag));
+    }
+
+    /**
+     * Returns a new request with the end tags of the reasoning budget replaced: any of them closes the
+     * counted section, and the first is the one forced when the budget is spent (preceded by the
+     * {@link #withReasoningBudgetMessage(String) message}). Same scope as
+     * {@link #withReasoningBudgetStartTag(String)}: for requests without messages, where a template with
+     * thinking tags does not supply them.
+     *
+     * @param endTags the end tags, at least one, none of them empty
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if no tag is given or one is empty
+     */
+    public InferenceParameters withReasoningBudgetEndTags(String... endTags) {
+        if (endTags.length == 0) {
+            throw new IllegalArgumentException(
+                    "reasoning_budget_end_tags needs at least one tag but got " + endTags.length);
+        }
+        for (int i = 0; i < endTags.length; i++) {
+            if (endTags[i].isEmpty()) {
+                throw new IllegalArgumentException("reasoning_budget_end_tags[" + i + "] must not be empty");
+            }
+        }
+        return withRaw(
+                RequestField.REASONING_BUDGET_END_TAGS,
+                serializer.buildStopStrings(endTags).toString());
+    }
+
+    /**
+     * Returns a new request with the message forced before the end tag when the reasoning budget is
+     * spent, e.g. {@code "Time is up, answering now."}; an empty message forces the bare end tag.
+     * Without this call the server's default applies ({@code --reasoning-budget-message}, empty unless
+     * set), on every path. It takes effect wherever the budget has tags, with or without messages.
+     *
+     * @param message the text forced before the end tag
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withReasoningBudgetMessage(String message) {
+        return withRaw(RequestField.REASONING_BUDGET_MESSAGE, toJsonString(message));
     }
 
     /**
@@ -869,6 +1021,54 @@ public final class InferenceParameters extends JsonParameters {
      */
     public InferenceParameters withTimingsPerToken(boolean timingsPerToken) {
         return withScalar(RequestField.TIMINGS_PER_TOKEN, timingsPerToken);
+    }
+
+    /**
+     * Returns a new request asking for llama.cpp's debug object ({@code verbose}, default false). When
+     * true, an OpenAI-shaped answer carries a {@code __verbose} object with the native result: the
+     * formatted prompt, the generation settings, the stop type and the matched stop word
+     * ({@code stopping_word}), among others. Where it sits depends on the answer:
+     *
+     * <ul>
+     *   <li>blocking: on the answer object;
+     *   <li>streamed chat completion: on the first chunk of the final result -- a remaining tool-call
+     *       delta if there is one, else the chunk carrying {@code finish_reason} -- and never on a
+     *       trailing {@code stream_options.include_usage} chunk, so a consumer scans every chunk
+     *       rather than the last;
+     *   <li>streamed text completion ({@code /v1/completions}): on every chunk.
+     * </ul>
+     *
+     * <p>It has no effect on the raw (non-OpenAI) answer, which is the native object itself. See
+     * {@link #withResponseFields(String...)} to narrow it.
+     *
+     * @param verbose whether to include the {@code __verbose} object
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withVerbose(boolean verbose) {
+        return withScalar(RequestField.VERBOSE, verbose);
+    }
+
+    /**
+     * Returns a new request projecting llama.cpp's native result onto the given fields
+     * ({@code response_fields}). A nested field is named by its slash-separated path, such as
+     * {@code timings/predicted_n}, as upstream's {@code json_get_nested_values} splits it; the
+     * projected key is that whole path, so {@code "timings/predicted_n"} yields
+     * {@code {"timings/predicted_n": 12}}, not a nested {@code timings} object. A path the result does
+     * not contain -- a dotted {@code timings.predicted_n} is one such key -- is dropped without an
+     * error, as upstream does. It applies to the native answer, and with {@link #withVerbose(boolean)}
+     * to the {@code __verbose} object of an OpenAI answer, which then carries only these fields instead
+     * of the prompt and the generation settings. Empty input is a no-op.
+     *
+     * @param fields the fields to keep
+     * @return a new instance with the projection set, or {@code this} if {@code fields} is empty
+     */
+    public InferenceParameters withResponseFields(String... fields) {
+        if (fields.length == 0) {
+            return this;
+        }
+        return withRaw(
+                RequestField.RESPONSE_FIELDS,
+                serializer.buildStringArray(fields).toString());
     }
 
     /**

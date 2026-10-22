@@ -11,8 +11,14 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.ladenthin.llama.exception.LlamaException;
@@ -31,6 +37,70 @@ class JllamaNativeTest {
     @BeforeAll
     static void nativesLoadable() {
         FfmTestSupport.assumeNativesLoadable();
+    }
+
+    /**
+     * {@code jllama_rpc_server_devices} allocates an array for zero entries too; returning early for
+     * {@code count == 0} never freed it (measured: a deliberately invalid pointer that glibc's
+     * {@code free()} aborts on passed through without a call).
+     */
+    @Test
+    void takeStringsFreesANonNullArrayEvenWhenItIsEmpty() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment array = arena.allocate(ADDRESS);
+            MemorySegment out = JllamaNative.pointerSlot(arena);
+            out.set(ADDRESS, 0, array);
+            MemorySegment length = arena.allocate(JAVA_LONG);
+            length.set(JAVA_LONG, 0, 0L);
+            List<String> freed = new ArrayList<>();
+
+            List<String> strings = JllamaNative.takeStrings(
+                    out, length, (pointer, count) -> freed.add(pointer.address() + "/" + count));
+
+            assertThat(strings, is(List.of()));
+            assertThat(freed, is(List.of(array.address() + "/0")));
+        }
+    }
+
+    /**
+     * A populated array is read entry by entry in order and freed with its element count: a wrong
+     * count only leaks the element strings inside {@code jllama_strings_free}, which the JVM cannot
+     * see, and the one native caller with a test returns a single entry, which hides the order.
+     */
+    @Test
+    void takeStringsReadsEveryEntryInOrderAndFreesTheArrayWithItsCount() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment array = arena.allocate(ADDRESS, 2);
+            array.setAtIndex(ADDRESS, 0, arena.allocateFrom("alpha", StandardCharsets.UTF_8));
+            array.setAtIndex(ADDRESS, 1, arena.allocateFrom("beta", StandardCharsets.UTF_8));
+            MemorySegment out = JllamaNative.pointerSlot(arena);
+            out.set(ADDRESS, 0, array);
+            MemorySegment length = arena.allocate(JAVA_LONG);
+            length.set(JAVA_LONG, 0, 2L);
+            List<String> freed = new ArrayList<>();
+
+            List<String> strings = JllamaNative.takeStrings(
+                    out, length, (pointer, count) -> freed.add(pointer.address() + "/" + count));
+
+            assertThat(strings, is(List.of("alpha", "beta")));
+            assertThat(freed, is(List.of(array.address() + "/2")));
+        }
+    }
+
+    @Test
+    void takeStringsDoesNotFreeANullArray() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = JllamaNative.pointerSlot(arena);
+            out.set(ADDRESS, 0, MemorySegment.NULL);
+            MemorySegment length = arena.allocate(JAVA_LONG);
+            length.set(JAVA_LONG, 0, 0L);
+            List<String> freed = new ArrayList<>();
+
+            List<String> strings = JllamaNative.takeStrings(out, length, (pointer, count) -> freed.add("freed"));
+
+            assertThat(strings, is(List.of()));
+            assertThat(freed, is(List.of()));
+        }
     }
 
     @Test

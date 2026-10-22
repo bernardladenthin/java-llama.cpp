@@ -8,6 +8,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,16 @@ public class OpenAiServerConfigTest {
         assertThat(config.getModelFtype(), is(""));
         assertThat(config.getApiKey(), is((String) null));
         assertThat(config.isAuthenticationEnabled(), is(false));
+    }
+
+    /**
+     * Both servers listen on llama.cpp's default port: {@code NativeServer} has since b11521 (upstream
+     * #30159), and this one said 8080, so the two transports of one library defaulted differently.
+     */
+    @Test
+    public void theDefaultPortIsLlamaCppsDefaultPort() {
+        assertThat(OpenAiServerConfig.DEFAULT_PORT, is(9931));
+        assertThat(OpenAiServerConfig.builder().build().getPort(), is(9931));
     }
 
     @Test
@@ -81,5 +92,30 @@ public class OpenAiServerConfigTest {
         assertThat(config.getModelId(), is("local-qwen"));
         assertThat(config.getMaxInputTokens(), is(6144));
         assertThat(config.getMaxOutputTokens(), is(2048));
+    }
+
+    /**
+     * The interval is a {@code scheduleAtFixedRate} period, which must be positive. Accepted, a zero
+     * made every streaming request fail with an {@code invalid_request_error} naming
+     * {@code IllegalArgumentException} and no {@code [DONE]}, which blames the client for a server setting.
+     */
+    @Test
+    public void heartbeatIntervalOfZeroIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerConfig.builder().heartbeatMillis(0L));
+    }
+
+    @Test
+    public void totalSlotsDefaultsToOneAndKeepsTheConfiguredCount() {
+        assertThat(OpenAiServerConfig.builder().build().getTotalSlots(), is(1));
+        assertThat(OpenAiServerConfig.builder().totalSlots(4).build().getTotalSlots(), is(4));
+    }
+
+    @Test
+    public void totalSlotsBelowOneIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerConfig.builder().totalSlots(0));
     }
 }

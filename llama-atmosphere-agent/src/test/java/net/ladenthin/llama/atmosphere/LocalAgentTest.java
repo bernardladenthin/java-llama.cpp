@@ -416,6 +416,23 @@ class LocalAgentTest {
     }
 
     @Test
+    void inProcessModelAnswersUnderTheModelIdItIsListedWith() {
+        // Without an alias llama.cpp names every answer and stream chunk after the model's path, while
+        // /v1/models lists the model id; the alias makes the two agree.
+        List<String> byDefault =
+                List.of(ModelEndpoint.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
+                        .toArray());
+        List<String> explicit = List.of(
+                ModelEndpoint.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf", "--model-id", "x"}))
+                        .toArray());
+
+        assertThat(byDefault, hasItem("--alias"));
+        assertThat(byDefault.get(byDefault.indexOf("--alias") + 1), is(AgentOptions.DEFAULT_MODEL_ID));
+        assertThat(explicit, hasItem("--alias"));
+        assertThat(explicit.get(explicit.indexOf("--alias") + 1), is("x"));
+    }
+
+    @Test
     void verboseReplacesTheThresholdWithLlamaCppsOwnVerboseFlag() {
         List<String> args = List.of(ModelEndpoint.modelParameters(
                         AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "1", "--verbose"}))

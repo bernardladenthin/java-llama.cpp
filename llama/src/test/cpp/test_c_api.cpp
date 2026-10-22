@@ -13,6 +13,8 @@
 // pinned here is the behaviour LlamaModel has.
 
 #include "jllama_api.h"
+#include "rpc_support.hpp"
+#include "tiny_llama_gguf.hpp"
 
 #include "build-info.h"
 #include "ggml.h"
@@ -26,13 +28,16 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <random>
 #include <regex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -41,137 +46,7 @@ namespace {
 
 using nlohmann::json;
 
-constexpr int N_VOCAB = 256; // one GPT-2 byte token per byte
-constexpr int N_EMBD = 32;
-constexpr int N_HEAD = 4;
-constexpr int N_HEAD_KV = 4;
-constexpr int HEAD_DIM = 8;
-constexpr int N_FF = 64;
-constexpr int N_LAYER = 2;
-constexpr int N_CTX_TRAIN = 128;
-
-// The 256 printable code points GPT-2's byte-level BPE maps the bytes to, as UTF-8.
-std::vector<std::string> byte_tokens() {
-    std::vector<int> bs;
-    for (int b = '!'; b <= '~'; ++b)
-        bs.push_back(b);
-    for (int b = 0xA1; b <= 0xAC; ++b)
-        bs.push_back(b);
-    for (int b = 0xAE; b <= 0xFF; ++b)
-        bs.push_back(b);
-    std::vector<int> cs = bs;
-    int extra = 0;
-    for (int b = 0; b < 256; ++b) {
-        if (std::find(bs.begin(), bs.end(), b) == bs.end()) {
-            bs.push_back(b);
-            cs.push_back(256 + extra++);
-        }
-    }
-    std::vector<std::string> tokens(256);
-    for (size_t i = 0; i < bs.size(); ++i) {
-        const int cp = cs[i];
-        std::string s;
-        if (cp < 0x80) {
-            s += (char)cp;
-        } else {
-            s += (char)(0xC0 | (cp >> 6));
-            s += (char)(0x80 | (cp & 0x3F));
-        }
-        tokens[bs[i]] = s;
-    }
-    return tokens;
-}
-
-ggml_tensor *add_random_tensor(gguf_context *g, ggml_context *ctx, std::mt19937 &rng, const std::string &name,
-                               std::initializer_list<int64_t> ne, float scale) {
-    const std::vector<int64_t> d(ne);
-    ggml_tensor *t = d.size() == 1 ? ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d[0])
-                                   : ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d[0], d[1]);
-    std::normal_distribution<float> dist(0.0f, scale);
-    auto *data = (float *)t->data;
-    for (int64_t i = 0; i < ggml_nelements(t); ++i) {
-        data[i] = d.size() == 1 ? 1.0f : dist(rng); // norms are ones, weights small noise
-    }
-    ggml_set_name(t, name.c_str());
-    gguf_add_tensor(g, t);
-    return t;
-}
-
-// Keep the generated tokens printable ASCII (never BOS/EOS): the output rows of every other
-// byte are scaled to almost nothing, so greedy sampling over random logits lands on an ASCII
-// byte with overwhelming probability. That matters for the streaming test -- a byte >= 0x80 is
-// an incomplete UTF-8 sequence, which the server holds back instead of sending as a partial
-// result, and a random model that happens to emit only those streams no partial chunk at all.
-void confine_output_to_ascii(ggml_tensor *output) {
-    auto *data = (float *)output->data;
-    for (int64_t tok = 0; tok < output->ne[1]; ++tok) {
-        const bool printable = tok >= ' ' && tok < 0x7F && tok != '<' && tok != '>';
-        if (!printable) {
-            for (int64_t i = 0; i < output->ne[0]; ++i) {
-                data[tok * output->ne[0] + i] *= 1e-3f;
-            }
-        }
-    }
-}
-
-// A two-layer llama with random weights and the GPT-2 byte tokenizer: enough for the server to
-// load it, apply its fallback chat template and generate tokens.
-std::string write_tiny_llama_gguf() {
-    static std::atomic<int> counter{0};
-    static const unsigned run_id = std::random_device{}();
-    const std::string path = (std::filesystem::temp_directory_path() /
-                              ("jllama-c-api-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
-                                 .string();
-    std::mt19937 rng(42);
-    gguf_context *g = gguf_init_empty();
-    const std::string a = "llama";
-    gguf_set_val_str(g, "general.architecture", a.c_str());
-    gguf_set_val_u32(g, (a + ".context_length").c_str(), N_CTX_TRAIN);
-    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), N_EMBD);
-    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER);
-    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), N_FF);
-    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
-    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV);
-    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
-    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD_DIM);
-
-    const std::vector<std::string> tokens = byte_tokens();
-    std::vector<const char *> token_ptrs;
-    for (const std::string &s : tokens) {
-        token_ptrs.push_back(s.c_str());
-    }
-    std::vector<int32_t> token_types(N_VOCAB, 1); // LLAMA_TOKEN_TYPE_NORMAL
-    const char *no_merges[] = {"Ġ Ġ"};
-    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
-    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
-    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
-    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
-    gguf_set_arr_str(g, "tokenizer.ggml.merges", no_merges, 1);
-    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
-    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", '>');
-
-    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
-    ggml_context *ctx = ggml_init(ip);
-    add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, N_VOCAB}, 0.1f);
-    add_random_tensor(g, ctx, rng, "output_norm.weight", {N_EMBD}, 1.0f);
-    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, N_VOCAB}, 0.1f));
-    for (int il = 0; il < N_LAYER; ++il) {
-        const std::string p = "blk." + std::to_string(il) + ".";
-        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "attn_q.weight", {N_EMBD, N_HEAD * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_k.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_v.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD_DIM, N_EMBD}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {N_FF, N_EMBD}, 0.1f);
-    }
-    const bool ok = gguf_write_to_file(g, path.c_str(), false);
-    gguf_free(g);
-    ggml_free(ctx);
-    return ok ? path : std::string();
-}
+using namespace jllama_test;
 
 struct Owned {
     char *s = nullptr;
@@ -208,6 +83,9 @@ std::string CApi::path_;
 jllama_model *CApi::model_ = nullptr;
 
 const char *CHAT_REQUEST = R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":4,"temperature":0})";
+
+const char *SLOT_SAVE_PATH_MISSING = "Saving or restoring a slot needs a slot directory: load the model with "
+                                     "--slot-save-path <dir> (ModelParameters.setSlotSavePath)";
 
 } // namespace
 
@@ -388,6 +266,154 @@ TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
     EXPECT_EQ(jllama_completions_oai(model_, R"({"max_tokens":2})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
 }
 
+// Upstream gives every completion an id (gen_chatcmplid) and names the model it ran on
+// (model_name: the alias, else the file name); the engine set neither, so every OpenAI answer and
+// chunk carried "id":"" and "model":"" (F185).
+TEST_F(CApi, OpenAiAnswersCarryAnIdAndTheModelName) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string name = json::parse(meta.str()).at("name").get<std::string>();
+    ASSERT_FALSE(name.empty());
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":2})", &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json c = json::parse(completion.str());
+    EXPECT_EQ(c.at("id").get<std::string>().rfind("chatcmpl-", 0), 0u) << c.dump();
+    EXPECT_EQ(c.at("model").get<std::string>(), name);
+
+    Owned chat;
+    ASSERT_EQ(
+        jllama_chat_completions(model_, R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":2})", &chat.s),
+        JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json m = json::parse(chat.str());
+    EXPECT_EQ(m.at("id").get<std::string>().rfind("chatcmpl-", 0), 0u) << m.dump();
+    EXPECT_EQ(m.at("model").get<std::string>(), name);
+    EXPECT_NE(m.at("id"), c.at("id"));
+
+    // every chunk of one stream carries the same id
+    int task = 0;
+    ASSERT_EQ(jllama_chat_completions_stream_request(
+                  model_, R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":3,"stream":true})", &task),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::set<std::string> ids;
+    bool stop = false;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned envelope;
+        ASSERT_EQ(jllama_chat_completions_stream_receive(model_, task, &envelope.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json data = json::parse(envelope.str()).at("data");
+        for (const json &chunk : data.is_array() ? data : json::array({data})) {
+            ids.insert(chunk.at("id").get<std::string>());
+            EXPECT_EQ(chunk.at("model").get<std::string>(), name);
+        }
+    }
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_EQ(ids.begin()->rfind("chatcmpl-", 0), 0u);
+}
+
+// Upstream answers several prompts in one request with one choice each; a task here carries one
+// prompt, and every prompt after the first was dropped without a word -- two prompts, one answer
+// (F184). They are refused instead; a token array is one prompt and stays accepted.
+TEST_F(CApi, SeveralPromptsInOneRequestAreRefusedNotDropped) {
+    Owned response;
+    EXPECT_EQ(jllama_completions_oai(model_, R"({"prompt":["Hi","Ho"],"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("2 prompts"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(model_, R"({"prompt":["Hi","Ho"],"n_predict":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"prompt":["Hi","Ho"],"n_predict":2,"stream":true})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":[72,105],"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(response.str()).at("choices").size(), 1u);
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":["Hi"],"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
+// The same for several completions of one prompt: upstream's schema accepts "n" (n_cmpl) up to the
+// slot count and answers each in a child task the server creates; the engine posts one task and
+// creates none, so "n": 2 came back as one choice without a word. Needs two slots: with one, the
+// schema itself refuses "n": 2. Covers the blocking, the streamed and the chat path, which all go
+// through populate_completion_task.
+TEST_F(CApi, SeveralCompletionsInOneRequestAreRefusedNotDropped) {
+    const std::vector<std::string> args = {"jllama", "-m",   path_, "-c",          "128", "-np",
+                                           "2",      "-ngl", "0",   "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *two_slots = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &two_slots),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned response;
+    EXPECT_EQ(jllama_completions_oai(two_slots, R"({"prompt":"Hi","n":2,"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("'n'"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(two_slots, R"({"prompt":"Hi","n_cmpl":2,"n_predict":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_oai_stream_request(two_slots, R"({"prompt":"Hi","n":2,"max_tokens":2})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_chat_completions(
+                  two_slots, R"({"messages":[{"role":"user","content":"Hi"}],"n":2,"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+
+    ASSERT_EQ(jllama_completions_oai(two_slots, R"({"prompt":"Hi","n":1,"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(response.str()).at("choices").size(), 1u);
+    jllama_model_free(two_slots);
+}
+
+// The streamed /v1/completions: the body parsed as the blocking one, upstream's text_completion
+// chunks, one id, the last with usage (F186).
+TEST_F(CApi, OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage) {
+    int task = -1;
+    ASSERT_EQ(
+        jllama_completions_oai_stream_request(model_, R"({"prompt":[72,105],"max_tokens":3,"logprobs":1})", &task),
+        JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::vector<json> chunks;
+    bool stop = false;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned envelope;
+        ASSERT_EQ(jllama_chat_completions_stream_receive(model_, task, &envelope.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json data = json::parse(envelope.str()).at("data");
+        for (const json &chunk : data.is_array() ? data : json::array({data})) {
+            chunks.push_back(chunk);
+        }
+    }
+    EXPECT_TRUE(stop);
+    ASSERT_GE(chunks.size(), 2u);
+    std::set<std::string> ids;
+    for (const json &chunk : chunks) {
+        EXPECT_EQ(chunk.at("object").get<std::string>(), "text_completion") << chunk.dump();
+        ids.insert(chunk.at("id").get<std::string>());
+    }
+    EXPECT_EQ(ids.size(), 1u);
+    EXPECT_TRUE(chunks.front().at("choices")[0].at("logprobs").at("content").is_array()) << chunks.front().dump();
+    const json &last = chunks.back();
+    EXPECT_EQ(last.at("usage").at("prompt_tokens").get<int>(), 2) << last.dump();
+    EXPECT_TRUE(last.at("choices")[0].at("finish_reason").is_string());
+
+    // refused before anything runs, as the blocking request is
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, R"({"max_tokens":2})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, R"({"prompt":["Hi","Ho"]})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, nullptr, &task), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
 TEST_F(CApi, RawStreamingDeliversResultsWithAStopKeyAndReleasesTheTask) {
     int task = -1;
     ASSERT_EQ(jllama_completions_stream_request(
@@ -478,14 +504,282 @@ TEST_F(CApi, MetricsCarryTheCountersAndTheSlots) {
     EXPECT_EQ(j.at("slots").size(), 1u);
 }
 
+namespace {
+
+// The same random model loaded with --vocab-only: the tokenizer and nothing else, no server context,
+// no inference loop. Every operation that needs the server is refused with one message (F266); before,
+// they reached the never-loaded server_context and crashed the process (SIGSEGV in
+// llama_vocab::token_bos()) or waited forever for a result no loop would produce (metrics).
+class CApiVocabOnly : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-vocab-only");
+        ASSERT_FALSE(path_.empty());
+        const std::vector<std::string> args = {"jllama", "-m", path_, "--vocab-only"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+    static jllama_model *model_;
+};
+std::string CApiVocabOnly::path_;
+jllama_model *CApiVocabOnly::model_ = nullptr;
+
+// One operation that needs the server, called on a vocab-only model; returns its status.
+struct vocab_only_call {
+    const char *name;
+    jllama_status (*call)(jllama_model *model);
+};
+
+std::ostream &operator<<(std::ostream &os, const vocab_only_call &c) { return os << c.name; }
+
+jllama_status call_returning_string(jllama_status status, char *s) {
+    jllama_string_free(s);
+    return status;
+}
+
+const vocab_only_call VOCAB_ONLY_REFUSED[] = {
+    {"apply_template",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_apply_template(m, CHAT_REQUEST, &s), s);
+     }},
+    {"chat_completions",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_chat_completions(m, CHAT_REQUEST, &s), s);
+     }},
+    {"chat_completions_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_chat_completions_stream_request(m, CHAT_REQUEST, &task);
+     }},
+    {"chat_completions_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_chat_completions_request(m, CHAT_REQUEST, &task);
+     }},
+    {"chat_completions_stream_receive",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         bool stop = false;
+         return call_returning_string(jllama_chat_completions_stream_receive(m, 0, &s, &stop), s);
+     }},
+    {"completions",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_completions(m, R"({"prompt":"Hi","n_predict":2})", &s), s);
+     }},
+    {"completions_oai",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_completions_oai(m, R"({"prompt":"Hi","max_tokens":2})", &s), s);
+     }},
+    {"completions_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_completions_stream_request(m, R"({"prompt":"Hi","n_predict":2})", &task);
+     }},
+    {"completions_oai_stream_request",
+     [](jllama_model *m) {
+         int task = -1;
+         return jllama_completions_oai_stream_request(m, R"({"prompt":"Hi","max_tokens":2})", &task);
+     }},
+    {"completions_stream_receive",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         bool stop = false;
+         return call_returning_string(jllama_completions_stream_receive(m, 0, &s, &stop), s);
+     }},
+    {"task_release", [](jllama_model *m) { return jllama_task_release(m, 0); }},
+    {"infill",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_infill(m, R"({"input_prefix":"a","input_suffix":"b"})", &s), s);
+     }},
+    {"embed",
+     [](jllama_model *m) {
+         float *values = nullptr;
+         size_t count = 0;
+         const jllama_status status = jllama_embed(m, "Hi", &values, &count);
+         jllama_floats_free(values);
+         return status;
+     }},
+    {"embeddings",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_embeddings(m, R"({"content":"Hi"})", false, &s), s);
+     }},
+    {"rerank",
+     [](jllama_model *m) {
+         const char *docs[] = {"a", "b"};
+         char *s = nullptr;
+         return call_returning_string(jllama_rerank(m, "q", 2, docs, &s), s);
+     }},
+    {"metrics",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_metrics(m, &s), s);
+     }},
+    {"slot_action",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_slot_action(m, JLLAMA_SLOT_ERASE, 0, nullptr, &s), s);
+     }},
+    {"lora_adapters",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_lora_adapters(m, &s), s);
+     }},
+    {"set_lora_adapters",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_set_lora_adapters(m, "[]", &s), s);
+     }},
+    {"configure", [](jllama_model *m) { return jllama_configure(m, R"({"n_threads":2})"); }},
+    {"systemone",
+     [](jllama_model *m) {
+         char *s = nullptr;
+         return call_returning_string(jllama_systemone(m, R"({"state":"x","questions":[]})", &s), s);
+     }},
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+    {"server_start_attached",
+     [](jllama_model *m) {
+         const char *argv[] = {"jllama", "--port", "0"};
+         jllama_server *server = nullptr;
+         const jllama_status status = jllama_server_start_attached(m, 3, argv, &server);
+         if (server != nullptr) {
+             jllama_server_stop(server);
+         }
+         return status;
+     }},
+#endif
+};
+
+class CApiVocabOnlyRefuses : public CApiVocabOnly, public ::testing::WithParamInterface<vocab_only_call> {};
+
+} // namespace
+
+TEST_F(CApiVocabOnly, TheTokenizerOperationsAnswer) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("n_vocab").get<int>(), N_VOCAB);
+    int *tokens = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tokenize(model_, "Hello", false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(count, 5u);
+    Owned text;
+    size_t length = 0;
+    ASSERT_EQ(jllama_detokenize(model_, tokens, count, &text.s, &length), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(std::string(text.s, length), "Hello");
+    jllama_tokens_free(tokens);
+    Owned with_pieces;
+    ASSERT_EQ(jllama_tokenize_json(model_, "Hi", false, true, &with_pieces.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(with_pieces.str()).at("tokens")[1].at("piece").get<std::string>(), "i");
+    const int ids[] = {'H', 'i'};
+    Owned detok;
+    ASSERT_EQ(jllama_detokenize_json(model_, ids, 2, &detok.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(detok.str()).at("content").get<std::string>(), "Hi");
+}
+
+TEST_P(CApiVocabOnlyRefuses, AnOperationThatNeedsTheServerIsRefusedWithTheVocabOnlyMessage) {
+    const vocab_only_call &c = GetParam();
+    EXPECT_EQ(c.call(model_), JLLAMA_STATUS_ERROR) << c.name;
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find(std::string("jllama_") + c.name + " is not available in vocab-only mode"), std::string::npos)
+        << error;
+    EXPECT_NE(error.find("--vocab-only"), std::string::npos) << error;
+}
+
+INSTANTIATE_TEST_SUITE_P(EveryServerOperation, CApiVocabOnlyRefuses, ::testing::ValuesIn(VOCAB_ONLY_REFUSED),
+                         [](const ::testing::TestParamInfo<vocab_only_call> &info) {
+                             return std::string(info.param.name);
+                         });
+
+TEST(CApiSlotFiles, ASlotFileIsNamedInsideTheSlotSaveDirectory) {
+    // Upstream's slots route takes a file name, validates it (fs_validate_filename: no directory, no
+    // "..") and resolves it under --slot-save-path. The C API used the name as the path, so the file
+    // landed relative to the working directory and the slot directory had no effect.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-files");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-slots-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const std::vector<std::string> args = {
+        "jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2", "--slot-save-path", dir.string()};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"Hello","n_predict":2,"temperature":0})", &completion.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "slot0.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_TRUE(std::filesystem::exists(dir / "slot0.bin")) << saved.str();
+    EXPECT_FALSE(std::filesystem::exists("slot0.bin"));
+    EXPECT_EQ(json::parse(saved.str()).at("filename").get<std::string>(), "slot0.bin") << saved.str();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "slot0.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(restored.str()).at("id_slot").get<int>(), 0) << restored.str();
+
+    // A name with a directory, a parent reference or nothing at all is the caller's error, as upstream's
+    // 400 "Invalid filename"; nothing is written outside the slot directory.
+    const std::string absolute = (dir / "absolute.bin").string();
+    for (const std::string &name : {std::string("../escaped.bin"), std::string("sub/slot.bin"), absolute,
+                                    std::string("..\\escaped.bin"), std::string()}) {
+        Owned refused;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &refused.s),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << name;
+        EXPECT_EQ(std::string(jllama_last_error()), "Invalid slot file name '" + name +
+                                                        "': name a file inside the --slot-save-path directory, "
+                                                        "without a directory part")
+            << name;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &refused.s),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << name;
+    }
+    EXPECT_FALSE(std::filesystem::exists(dir.parent_path() / "escaped.bin"));
+    EXPECT_FALSE(std::filesystem::exists(absolute));
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+    std::filesystem::remove("slot0.bin", ignored); // only written by the defect this test pins
+}
+
 TEST_F(CApi, SlotActionsAndLoraAdapters) {
     Owned response;
     ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_ERASE, 0, nullptr, &response.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
     EXPECT_TRUE(json::parse(response.str()).is_object());
+    // The model was loaded without --slot-save-path: saving and restoring are refused as upstream's
+    // slots route refuses them (501), before the file name is looked at; erasing needs no file.
     Owned refused;
-    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "", &refused.s), JLLAMA_STATUS_ERROR);
-    EXPECT_STREQ(jllama_last_error(), "Filename is required for slot save");
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "slot0.bin", &refused.s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), SLOT_SAVE_PATH_MISSING);
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_RESTORE, 0, "", &refused.s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), SLOT_SAVE_PATH_MISSING);
+    EXPECT_FALSE(std::filesystem::exists("slot0.bin"));
     EXPECT_EQ(jllama_slot_action(model_, static_cast<jllama_slot_op>(7), 0, nullptr, &refused.s),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "Invalid slot action");
@@ -523,9 +817,649 @@ TEST_F(CApi, OperationsTheModelWasNotLoadedForAreServerErrors) {
     EXPECT_NE(std::string(jllama_last_error()).find("reranking"), std::string::npos);
     EXPECT_EQ(jllama_infill(model_, R"({"input_prefix":"a","input_suffix":"b"})", &response.s), JLLAMA_STATUS_ERROR);
     EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
+    // The infill fields on the completion paths are refused the same way instead of being dropped.
+    EXPECT_EQ(jllama_completions(model_, R"({"input_prefix":"a","input_suffix":"b"})", &response.s),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"input_prefix":"a","input_suffix":"b"})", &task),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
     EXPECT_NE(jllama_systemone(model_, R"({"state":"x","questions":[]})", &response.s), JLLAMA_STATUS_OK);
     EXPECT_EQ(response.s, nullptr);
     EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+}
+
+namespace {
+
+// Receives a raw streaming task until its stop and returns the last result, the one with the totals.
+json receive_to_stop(jllama_model *model, int task) {
+    bool stop = false;
+    json last;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned payload;
+        if (jllama_completions_stream_receive(model, task, &payload.s, &stop) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return json();
+        }
+        last = json::parse(payload.str());
+    }
+    EXPECT_TRUE(stop);
+    return last;
+}
+
+// The same random model with fill-in-the-middle tokens.
+class CApiFim : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-fim", true);
+        ASSERT_FALSE(path_.empty());
+        const std::vector<std::string> args = {"jllama", "-m", path_,         "-c", "128",
+                                               "-ngl",   "0",  "--no-warmup", "-t", "2"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+    static jllama_model *model_;
+};
+std::string CApiFim::path_;
+jllama_model *CApiFim::model_ = nullptr;
+
+const char *INFILL_REQUEST = R"({"input_prefix":"abcdefghij","input_suffix":"klmnopqrst","n_predict":1,)"
+                             R"("temperature":0})";
+
+} // namespace
+
+TEST_F(CApiFim, ARawCompletionWithInfillFieldsEvaluatesTheInfillPrompt) {
+    // The raw completion paths (LlamaModel.complete/generate stream, handleCompletions blocks) take
+    // input_prefix/input_suffix as an infill request; they used to post the empty prompt instead and
+    // drop both fields without a word (tokens_evaluated 0).
+    Owned infill;
+    ASSERT_EQ(jllama_infill(model_, INFILL_REQUEST, &infill.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const int expected = json::parse(infill.str()).at("tokens_evaluated").get<int>();
+    EXPECT_GE(expected, 23); // ten prefix and ten suffix bytes around the three FIM tokens
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, INFILL_REQUEST, &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, INFILL_REQUEST, &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), expected);
+}
+
+TEST_F(CApiFim, ARawCompletionWithOnlyOneInfillFieldIsRefused) {
+    Owned response;
+    int task = -1;
+    EXPECT_EQ(jllama_completions(model_, R"({"input_prefix":"abc","n_predict":1})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_suffix"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"input_suffix":"abc","n_predict":1})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
+}
+
+namespace {
+
+// The same random model with a random vision projector (--mmproj): a multimodal server.
+class CApiVision : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-vision");
+        mmproj_ = write_tiny_mmproj_gguf();
+        ASSERT_FALSE(path_.empty());
+        ASSERT_FALSE(mmproj_.empty());
+        const std::vector<std::string> args = {"jllama", "-m",   path_, "--mmproj",    mmproj_, "-c",
+                                               "128",    "-ngl", "0",   "--no-warmup", "-t",    "2"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(mmproj_, ignored);
+    }
+    // The server's media marker, which a raw multimodal prompt places where each image goes.
+    static std::string media_marker() {
+        Owned meta;
+        if (jllama_model_meta(model_, &meta.s) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return std::string();
+        }
+        return json::parse(meta.str()).value("media_marker", std::string());
+    }
+    static std::string path_;
+    static std::string mmproj_;
+    static jllama_model *model_;
+};
+std::string CApiVision::path_;
+std::string CApiVision::mmproj_;
+jllama_model *CApiVision::model_ = nullptr;
+
+// A raw request whose prompt is upstream's multimodal prompt object.
+std::string multimodal_prompt_request(const std::string &prompt_string, int n_images, const char *length_field) {
+    json images = json::array();
+    for (int i = 0; i < n_images; ++i) {
+        images.push_back(TINY_PNG_BASE64);
+    }
+    return json{{"prompt", {{"prompt_string", prompt_string}, {"multimodal_data", images}}},
+                {length_field, 2},
+                {"temperature", 0}}
+        .dump();
+}
+
+} // namespace
+
+TEST_F(CApiVision, ModelMetaNamesTheMediaMarker) {
+    // The marker is random per process (upstream's get_media_marker); a raw multimodal prompt cannot
+    // be written without it, and upstream publishes it in /props.
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(meta.str());
+    EXPECT_TRUE(j.at("modalities").at("vision").get<bool>());
+    ASSERT_TRUE(j.contains("media_marker")) << meta.str();
+    EXPECT_FALSE(j.at("media_marker").get<std::string>().empty());
+}
+
+TEST_F(CApiVision, ARawCompletionTakesUpstreamsMultimodalPromptObject) {
+    // upstream's raw schema: "prompt": {"prompt_string": "...<marker>...", "multimodal_data": ["<base64>"]}.
+    // The raw paths tokenized it without the projector and refused it as if the model had none.
+    const std::string marker = media_marker();
+    ASSERT_FALSE(marker.empty());
+    Owned text_only;
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"look  now","n_predict":1,"temperature":0})", &text_only.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(text_only.str()).at("tokens_evaluated").get<int>();
+
+    const std::string request = multimodal_prompt_request("look " + marker + " now", 1, "n_predict");
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    // four 16x16 patches of the 32x32 image, one embedding each, between the text tokens
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), text_tokens + 4) << completion.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, request.c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), text_tokens + 4);
+
+    Owned oai;
+    ASSERT_EQ(jllama_completions_oai(
+                  model_, multimodal_prompt_request("look " + marker + " now", 1, "max_tokens").c_str(), &oai.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(oai.str()).at("usage").at("prompt_tokens").get<int>(), text_tokens + 4) << oai.str();
+}
+
+TEST_F(CApiVision, AMultimodalPromptWhoseMarkersDoNotMatchItsImagesIsRefused) {
+    const std::string marker = media_marker();
+    ASSERT_FALSE(marker.empty());
+    Owned response;
+    const json bad_media = {{"prompt", {{"prompt_string", marker}, {"multimodal_data", json::array({"not base64!"})}}}};
+    const json no_media = {{"prompt", {{"prompt_string", marker}, {"multimodal_data", json::array()}}}};
+    for (const std::string &request :
+         {multimodal_prompt_request("no marker", 1, "n_predict"),
+          multimodal_prompt_request(marker + " and " + marker, 1, "n_predict"), bad_media.dump(), no_media.dump(),
+          // the image last leaves no text token for the logits: the server aborted the process on it
+          multimodal_prompt_request("look " + marker, 1, "n_predict")}) {
+        EXPECT_EQ(jllama_completions(model_, request.c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST) << request;
+    }
+}
+
+TEST_F(CApi, AMultimodalPromptObjectOnAModelWithoutAProjectorIsTheCallersFault) {
+    Owned response;
+    const std::string request = multimodal_prompt_request("look <__media__> now", 1, "n_predict");
+    EXPECT_EQ(jllama_completions(model_, request.c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("does not support multimodal"), std::string::npos)
+        << jllama_last_error();
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesCompletesThePromptTheChatTemplateRenders) {
+    // The raw completion paths render "messages" through the chat template into the prompt, as
+    // jllama_apply_template does; they used to ignore the field and complete the prompt next to it.
+    const char *messages = R"([{"role":"user","content":"Hi there"}])";
+    Owned prompt;
+    ASSERT_EQ(jllama_apply_template(model_, (std::string(R"({"messages":)") + messages + "}").c_str(), &prompt.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned reference;
+    ASSERT_EQ(jllama_completions(model_,
+                                 json{{"prompt", prompt.str()}, {"n_predict", 1}, {"temperature", 0}}.dump().c_str(),
+                                 &reference.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int expected = json::parse(reference.str()).at("tokens_evaluated").get<int>();
+    EXPECT_GT(expected, 8); // "Hi there" and the template around it
+
+    const std::string request = std::string(R"({"messages":)") + messages + R"(,"n_predict":1,"temperature":0})";
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model_, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, request.c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), expected);
+    // An empty prompt beside the messages is no prompt (InferenceParameters("") writes one).
+    const std::string with_empty_prompt =
+        std::string(R"({"prompt":"","messages":)") + messages + R"(,"n_predict":1,"temperature":0})";
+    ASSERT_EQ(jllama_completions(model_, with_empty_prompt.c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(completion.str()).at("tokens_evaluated").get<int>(), expected);
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesAndAPromptOrInfillFieldsIsRefused) {
+    Owned response;
+    int task = -1;
+    EXPECT_EQ(jllama_completions(model_, R"({"messages":[{"role":"user","content":"Hi"}],"prompt":"x"})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("'prompt'"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(
+        jllama_completions_stream_request(
+            model_, R"({"messages":[{"role":"user","content":"Hi"}],"input_prefix":"a","input_suffix":"b"})", &task),
+        JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("input_prefix"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(model_, R"({"messages":"no"})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesRefusesTheChatOnlyFields) {
+    // The raw completion paths keep only the prompt the chat template renders from "messages". The
+    // grammar the chat parser derives from response_format, the tool-call grammar of tools,
+    // tool_choice and parallel_tool_calls, top_logprobs and the thinking_budget_tokens alias used to
+    // be dropped without a word; they are refused, each by name.
+    const std::vector<std::pair<std::string, json>> fields = {
+        {"response_format", json{{"type", "json_object"}}},
+        {"tools",
+         json::array({json{{"type", "function"},
+                           {"function", json{{"name", "get_weather"}, {"parameters", json{{"type", "object"}}}}}}})},
+        {"tool_choice", "required"},
+        {"parallel_tool_calls", true},
+        {"top_logprobs", 2},
+        {"thinking_budget_tokens", 8},
+    };
+    for (const auto &field : fields) {
+        json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                        {"n_predict", 1},
+                        {"temperature", 0}};
+        request[field.first] = field.second;
+        if (field.first == "top_logprobs") {
+            request["logprobs"] = true; // without it the chat parser refuses top_logprobs itself
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST)
+            << field.first;
+        EXPECT_NE(std::string(jllama_last_error()).find("'" + field.first + "'"), std::string::npos)
+            << jllama_last_error();
+        int task = -1;
+        EXPECT_EQ(jllama_completions_stream_request(model_, request.dump().c_str(), &task),
+                  JLLAMA_STATUS_INVALID_REQUEST)
+            << field.first;
+        EXPECT_NE(std::string(jllama_last_error()).find("'" + field.first + "'"), std::string::npos)
+            << jllama_last_error();
+        if (task >= 0) {
+            jllama_task_release(model_, task);
+        }
+    }
+    // A null value is no field, and the fields the raw path reads or the template renders stay allowed.
+    const json allowed = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"response_format", nullptr},
+                          {"chat_template_kwargs", json::object()},
+                          {"grammar", "root ::= \"a\""},
+                          {"n_predict", 1},
+                          {"temperature", 0}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model_, allowed.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
+    // A chat template can add stop strings of its own (upstream's Laguna workaround adds
+    // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
+    // completion paths rendered the template and dropped them, so a raw completion with "messages"
+    // ran past the end of the answer. The grammar forces the stop string; the end-of-generation token
+    // is a byte that never occurs in it.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-stops", false, 4);
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- laguna_glm_thinking -#}"
+                             "{%- for message in messages -%}"
+                             "<|im_start|>{{ message.role }}\n{{ message.content }}<|im_end|>\n"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}<|im_start|>assistant\n{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"grammar", "root ::= \"</assistant>\""},
+                          {"n_predict", 20},
+                          {"temperature", 0}};
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json blocking = json::parse(completion.str());
+    EXPECT_EQ(blocking.at("stop_type").get<std::string>(), "word") << blocking.dump();
+    EXPECT_EQ(blocking.at("stopping_word").get<std::string>(), "</assistant>") << blocking.dump();
+    EXPECT_EQ(blocking.at("content").get<std::string>(), "") << blocking.dump();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json streamed = receive_to_stop(model, task);
+    EXPECT_EQ(streamed.at("stop_type").get<std::string>(), "word") << streamed.dump();
+    EXPECT_EQ(streamed.at("stopping_word").get<std::string>(), "</assistant>") << streamed.dump();
+
+    // The stops of the request do not replace the template's: both are in force.
+    json with_stop = request;
+    with_stop["stop"] = json::array({"zzz"});
+    Owned other_stop;
+    ASSERT_EQ(jllama_completions(model, with_stop.dump().c_str(), &other_stop.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(other_stop.str()).at("stopping_word").get<std::string>(), "</assistant>") << other_stop.str();
+    with_stop["stop"] = "</assist";
+    Owned own_stop;
+    ASSERT_EQ(jllama_completions(model, with_stop.dump().c_str(), &own_stop.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(own_stop.str()).at("stopping_word").get<std::string>(), "</assist") << own_stop.str();
+
+    // The chat path stops there too: the template's stop string is what both paths share.
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json choice = json::parse(chat.str()).at("choices").at(0);
+    EXPECT_EQ(choice.at("finish_reason").get<std::string>(), "stop") << chat.str();
+    EXPECT_EQ(choice.at("message").value("content", std::string()), "") << chat.str();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+namespace {
+
+// A ChatML template with a thinking block: it renders an assistant's reasoning_content between
+// "<think>" and "</think>" and opens the block in the generation prompt, the shape of the reasoning
+// templates that think by default. llama.cpp's template analysis derives the thinking tags
+// "<think>"/"</think>" from it, which the chat parser turns into the reasoning budget's tags.
+const char *THINKING_TEMPLATE =
+    "{%- for message in messages -%}"
+    "{{- '<|im_start|>' + message.role + '\\n' -}}"
+    "{%- if message.reasoning_content -%}"
+    "{{- '<think>\\n' + message.reasoning_content + '\\n</think>\\n\\n' -}}"
+    "{%- endif -%}"
+    "{{- message.content + '<|im_end|>\\n' -}}"
+    "{%- endfor -%}"
+    "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n<think>\\n' -}}{%- endif -%}";
+
+jllama_model *load_with_chat_template(const std::string &path, const std::string &tmpl) {
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    return model;
+}
+
+json budget_request(int budget) {
+    json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                    {"ignore_eos", true},
+                    {"n_predict", 12},
+                    {"temperature", 0}};
+    if (budget >= 0) {
+        request["reasoning_budget_tokens"] = budget;
+    }
+    return request;
+}
+
+// The request with the prompt cache off, so it evaluates its whole prompt in one batch. With the cache
+// a request after one with the same prompt takes every prompt token but the last from the slot and
+// re-evaluates that one in a batch of its own (upstream [TAG_PROMPT_LOGITS]), whose logits are not
+// bit-identical to the batched ones, so a greedy near tie can flip between the two answers (F272).
+json without_prompt_cache(json request) {
+    request["cache_prompt"] = false;
+    return request;
+}
+
+// The result took nothing from the prompt cache and evaluated all prompt_tokens of its prompt.
+void expect_whole_prompt_evaluated(const json &result, int prompt_tokens) {
+    EXPECT_EQ(result.at("timings").at("cache_n").get<int>(), 0) << result.dump();
+    EXPECT_EQ(result.at("timings").at("prompt_n").get<int>(), prompt_tokens) << result.dump();
+}
+
+} // namespace
+
+TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate) {
+    // The chat paths turn reasoning_budget_tokens into a budget over the thinking tags the template
+    // declares, and the sampler forces the end tag once the budget is spent. The raw completion paths
+    // rendered the messages and dropped the tags, so the same budget did nothing there. The random
+    // model gets an end-of-generation byte of its own, so the '>' of the end tag can be generated.
+    // Every request below that is compared with another runs without the prompt cache and evaluates
+    // its whole prompt in one batch, which its timings prove: with the cache the raw request after the
+    // chat request re-evaluated only the last prompt token, which does not reproduce the chat path's
+    // batched logits bit for bit (F272).
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-budget", false, 4);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_with_chat_template(path, THINKING_TEMPLATE);
+    ASSERT_NE(model, nullptr);
+    const json request = without_prompt_cache(budget_request(1));
+
+    // The reference: on the chat path the budget closes the thinking block the generation prompt
+    // opened (its "\n" after "<think>" spends the one token), and the chat parser takes the end tag
+    // off the answer. The raw paths complete the same tokens without the parser: the forced end tag,
+    // then the chat path's answer.
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json chat_result = json::parse(chat.str());
+    expect_whole_prompt_evaluated(chat_result, chat_result.at("usage").at("prompt_tokens").get<int>());
+    const std::string answer = chat_result.at("choices").at(0).at("message").value("content", std::string());
+    EXPECT_EQ(answer.find("</think>"), std::string::npos) << chat.str();
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json raw_result = json::parse(completion.str());
+    expect_whole_prompt_evaluated(raw_result, raw_result.at("tokens_evaluated").get<int>());
+    const std::string blocking = raw_result.at("content").get<std::string>();
+    EXPECT_EQ(blocking.rfind("</think>", 0), 0u) << completion.str();
+    EXPECT_GE(blocking.size(), answer.size()) << completion.str();
+    EXPECT_EQ(blocking.substr(blocking.size() - std::min(blocking.size(), answer.size())), answer)
+        << completion.str() << "\n"
+        << chat.str();
+
+    // The stream runs without the prompt cache too, so it is computed like the blocking request.
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::string streamed;
+    json last_chunk;
+    bool stop = false;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned chunk;
+        ASSERT_EQ(jllama_completions_stream_receive(model, task, &chunk.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        last_chunk = json::parse(chunk.str());
+        streamed += last_chunk.value("content", std::string());
+    }
+    EXPECT_TRUE(stop);
+    expect_whole_prompt_evaluated(last_chunk, last_chunk.at("tokens_evaluated").get<int>());
+    EXPECT_EQ(streamed, blocking);
+
+    // An output-format grammar beside the budget cannot take the generation prompt the budget is
+    // primed with: the request runs under the grammar, and the budget waits for a start tag.
+    json with_schema = request;
+    with_schema["json_schema"] = json{{"type", "string"}};
+    with_schema["n_predict"] = 4;
+    Owned constrained;
+    ASSERT_EQ(jllama_completions(model, with_schema.dump().c_str(), &constrained.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(constrained.str()).at("content").get<std::string>().rfind("\"", 0), 0u) << constrained.str();
+
+    // Without a budget the random model does not close the block on its own: the end tag above is
+    // the budget's doing.
+    Owned unbounded;
+    ASSERT_EQ(jllama_completions(model, budget_request(-1).dump().c_str(), &unbounded.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(unbounded.str()).at("content").get<std::string>().find("</think>"), std::string::npos)
+        << unbounded.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiReasoningBudget, ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText) {
+    // A vocabulary that holds the thinking tags as control tokens, as reasoning models' vocabularies
+    // do: a control token is rendered as an empty piece unless the request preserves it. The chat
+    // parser's session preserves the template's tags (the chat path renders them and the parser
+    // takes them out of the answer); the raw paths took the budget from the parser but not the
+    // preserved tokens, so the forced end tag was an invisible empty piece in the raw content.
+    const std::string path =
+        write_tiny_llama_gguf("jllama-c-api-budget-special", false, 4, {"<think>", "</think>", "<tool>"});
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_with_chat_template(path, THINKING_TEMPLATE);
+    ASSERT_NE(model, nullptr);
+    const json request = budget_request(1);
+
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(
+        json::parse(chat.str()).at("choices").at(0).at("message").value("content", std::string()).find("</think>"),
+        std::string::npos)
+        << chat.str();
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const std::string blocking = json::parse(completion.str()).at("content").get<std::string>();
+    EXPECT_EQ(blocking.rfind("</think>", 0), 0u) << completion.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::string streamed;
+    bool stop = false;
+    for (int i = 0; i < 50 && !stop; ++i) {
+        Owned chunk;
+        ASSERT_EQ(jllama_completions_stream_receive(model, task, &chunk.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        streamed += json::parse(chunk.str()).value("content", std::string());
+    }
+    EXPECT_TRUE(stop);
+    EXPECT_EQ(streamed, blocking);
+
+    // The request's own preserved tokens stay in force beside the template's: a third control token
+    // the template does not name, made the greedy choice after the forced end tag by a logit bias, is
+    // rendered as text when the request preserves it, and the template's end tag still is.
+    json with_own = request;
+    with_own["logit_bias"] = json::array({json::array({N_VOCAB + 2, 100})});
+    Owned unpreserved;
+    ASSERT_EQ(jllama_completions(model, with_own.dump().c_str(), &unpreserved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(unpreserved.str()).at("content").get<std::string>(), "</think>") << unpreserved.str();
+    with_own["preserved_tokens"] = json::array({"<tool>"});
+    Owned own;
+    ASSERT_EQ(jllama_completions(model, with_own.dump().c_str(), &own.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::string expected = "</think>";
+    for (int i = 1; i < 12; ++i) {
+        expected += "<tool>";
+    }
+    EXPECT_EQ(json::parse(own.str()).at("content").get<std::string>(), expected) << own.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiReasoningBudget, ARawCompletionWithoutMessagesForcesTheEndTagOfItsOwnTags) {
+    // A raw completion names the budget's tags itself. Upstream's completion schema sets the sequence
+    // the budget forces only in the handler of reasoning_budget_message, so tags without a message
+    // armed a budget that forced nothing; the chat paths always set the message (the server's
+    // default, empty unless --reasoning-budget-message names one). A logit bias makes the model write
+    // the start tag (a control token, preserved so it reads as text); a budget of zero then forces
+    // the end tag after each one.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-budget-raw", false, 4, {"<think>", "</think>"});
+    ASSERT_FALSE(path.empty());
+    const std::vector<std::string> args = {"jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    json request = {{"prompt", "Hi"},
+                    {"n_predict", 6},
+                    {"temperature", 0},
+                    {"ignore_eos", true},
+                    {"logit_bias", json::array({json::array({N_VOCAB, 100})})},
+                    {"preserved_tokens", json::array({"<think>", "</think>"})},
+                    {"reasoning_budget_tokens", 0},
+                    {"reasoning_budget_start_tag", "<think>"},
+                    {"reasoning_budget_end_tags", json::array({"</think>"})}};
+    Owned without_message;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &without_message.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(without_message.str()).at("content").get<std::string>(),
+              "<think></think><think></think><think></think>")
+        << without_message.str();
+
+    // A message is forced before the end tag, as on the chat paths.
+    request["reasoning_budget_message"] = "!";
+    request["n_predict"] = 3;
+    Owned with_message;
+    ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &with_message.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(with_message.str()).at("content").get<std::string>(), "<think>!</think>")
+        << with_message.str();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST_F(CApi, ARawCompletionWithMessagesAndATemplateWithoutThinkingTagsIgnoresTheBudget) {
+    // A template that declares no thinking tags gives the budget nothing to act on, on the chat path
+    // and on the raw paths alike: the request runs unchanged, without an error. Both requests run
+    // without the prompt cache and evaluate their whole prompt in one batch, which their timings
+    // prove; with the cache the second took all but the last prompt token from the slot, and the
+    // first did so too whenever the test before it left the same prompt there, so the two answers
+    // agreed only by the order the tests run in (F272).
+    Owned without;
+    ASSERT_EQ(jllama_completions(model_, without_prompt_cache(budget_request(-1)).dump().c_str(), &without.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned with;
+    ASSERT_EQ(jllama_completions(model_, without_prompt_cache(budget_request(1)).dump().c_str(), &with.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json without_result = json::parse(without.str());
+    const json with_result = json::parse(with.str());
+    expect_whole_prompt_evaluated(without_result, without_result.at("tokens_evaluated").get<int>());
+    expect_whole_prompt_evaluated(with_result, with_result.at("tokens_evaluated").get<int>());
+    EXPECT_EQ(with_result.at("tokens_evaluated").get<int>(), without_result.at("tokens_evaluated").get<int>())
+        << with.str();
+    EXPECT_EQ(with_result.at("content"), without_result.at("content")) << with.str();
+    EXPECT_EQ(with_result.at("content").get<std::string>().find("</think>"), std::string::npos) << with.str();
 }
 
 TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
@@ -655,6 +1589,230 @@ TEST(CApiRpc, TheRpcServerServesTheCpuOverLoopbackAndStops) {
     EXPECT_TRUE(served);
     EXPECT_FALSE(jllama_rpc_server_listening());
     EXPECT_EQ(jllama_rpc_server_serve("127.0.0.1", 1, 2, nullptr, "no-such-device"), JLLAMA_STATUS_ERROR);
+}
+
+namespace {
+
+// A port of the range the serve test above uses (a fixed port would collide with parallel jobs).
+int rpc_test_port(int attempt) {
+    return 42000 + static_cast<int>(
+                       (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+}
+
+// jllama_rpc_server_serve() on a thread of its own, with a way to wait for it to return.
+class rpc_serve_run {
+  public:
+    explicit rpc_serve_run(int port)
+        : thread_([this, port]() {
+              const jllama_status status = jllama_rpc_server_serve("127.0.0.1", port, 2, nullptr, "CPU");
+              std::lock_guard<std::mutex> lock(mutex_);
+              status_ = status;
+              done_ = true;
+              ended_.notify_all();
+          }) {}
+    rpc_serve_run(const rpc_serve_run &) = delete;
+    rpc_serve_run &operator=(const rpc_serve_run &) = delete;
+    // A serve that is still running (the test failed) is stopped once it listens, so the thread ends.
+    ~rpc_serve_run() {
+        while (!returned_within(std::chrono::milliseconds(100))) {
+            jllama_rpc_server_stop();
+        }
+        thread_.join();
+    }
+
+    bool returned_within(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return ended_.wait_for(lock, timeout, [this]() { return done_; });
+    }
+    jllama_status status() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return status_;
+    }
+
+  private:
+    std::mutex mutex_;
+    std::condition_variable ended_;
+    bool done_ = false;
+    jllama_status status_ = JLLAMA_STATUS_ERROR;
+    std::thread thread_; // last: it reads the members above
+};
+
+std::atomic<jllama_status> g_hook_stop_status{JLLAMA_STATUS_ERROR};
+
+// Holds the serving thread in the seam until released, so a stop from another thread lands while
+// serve runs and before ggml binds.
+struct held_serve {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool released = false;
+};
+held_serve g_held;
+
+// Resets the seam when a test ends, whatever its outcome.
+struct serve_hook_scope {
+    explicit serve_hook_scope(void (*hook)()) { jllama::rpc::set_serve_hook_for_testing(hook); }
+    ~serve_hook_scope() { jllama::rpc::set_serve_hook_for_testing(nullptr); }
+    serve_hook_scope(const serve_hook_scope &) = delete;
+    serve_hook_scope &operator=(const serve_hook_scope &) = delete;
+};
+
+} // namespace
+
+// ggml clears its stop flag when it binds the socket (patches/0015), so a stop issued before the
+// bind used to be lost and the server went on listening. A stop from the serving thread itself
+// (the seam stands for anything that runs there before the bind) must end the serve.
+TEST(CApiRpc, AStopBeforeTheBindFromTheServingThreadEndsTheServe) {
+    serve_hook_scope hook([]() { g_hook_stop_status.store(jllama_rpc_server_stop()); });
+    rpc_serve_run run(rpc_test_port(0));
+
+    EXPECT_TRUE(run.returned_within(std::chrono::seconds(10))) << "serve went on after a stop issued before the bind";
+    EXPECT_EQ(g_hook_stop_status.load(), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(run.status(), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
+// The same from another thread: the stop returns only once serve has returned, also when it was
+// issued before the bind.
+TEST(CApiRpc, AStopBeforeTheBindFromAnotherThreadReturnsOnlyOnceTheServeHasEnded) {
+    g_held.entered = false;
+    g_held.released = false;
+    serve_hook_scope hook([]() {
+        std::unique_lock<std::mutex> lock(g_held.mutex);
+        g_held.entered = true;
+        g_held.changed.notify_all();
+        g_held.changed.wait(lock, []() { return g_held.released; });
+    });
+    rpc_serve_run run(rpc_test_port(1));
+    {
+        std::unique_lock<std::mutex> lock(g_held.mutex);
+        ASSERT_TRUE(g_held.changed.wait_for(lock, std::chrono::seconds(10), []() { return g_held.entered; }));
+    }
+
+    std::mutex stop_mutex;
+    std::condition_variable stop_changed;
+    bool stop_returned = false;
+    jllama_status stop_status = JLLAMA_STATUS_ERROR;
+    std::thread stopper([&]() {
+        const jllama_status status = jllama_rpc_server_stop();
+        std::lock_guard<std::mutex> lock(stop_mutex);
+        stop_status = status;
+        stop_returned = true;
+        stop_changed.notify_all();
+    });
+    {
+        std::unique_lock<std::mutex> lock(stop_mutex);
+        EXPECT_FALSE(stop_changed.wait_for(lock, std::chrono::milliseconds(300), [&]() { return stop_returned; }))
+            << "the stop returned while serve had not even started the server";
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_held.mutex);
+        g_held.released = true;
+        g_held.changed.notify_all();
+    }
+
+    EXPECT_TRUE(run.returned_within(std::chrono::seconds(10))) << "serve went on after a stop issued before the bind";
+    stopper.join();
+    EXPECT_EQ(stop_status, JLLAMA_STATUS_OK);
+    EXPECT_EQ(run.status(), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
+namespace {
+
+// The second serve of the test below, started from the stop seam and held in the serve seam.
+held_serve g_held_next;
+std::unique_ptr<rpc_serve_run> g_next_run;
+std::atomic<int> g_serve_hook_calls{0};
+
+void hold_in(held_serve &held) {
+    std::unique_lock<std::mutex> lock(held.mutex);
+    held.entered = true;
+    held.changed.notify_all();
+    held.changed.wait(lock, [&held]() { return held.released; });
+}
+
+bool wait_entered(held_serve &held) {
+    std::unique_lock<std::mutex> lock(held.mutex);
+    return held.changed.wait_for(lock, std::chrono::seconds(10), [&held]() { return held.entered; });
+}
+
+void release(held_serve &held) {
+    std::lock_guard<std::mutex> lock(held.mutex);
+    held.released = true;
+    held.changed.notify_all();
+}
+
+struct stop_hook_scope {
+    explicit stop_hook_scope(void (*hook)()) { jllama::rpc::set_stop_hook_for_testing(hook); }
+    ~stop_hook_scope() { jllama::rpc::set_stop_hook_for_testing(nullptr); }
+    stop_hook_scope(const stop_hook_scope &) = delete;
+    stop_hook_scope &operator=(const stop_hook_scope &) = delete;
+};
+
+} // namespace
+
+// A stop is for the serve in progress when it is called, not for one started afterwards. Here the
+// next serve starts while the stop still waits for the first (the stop seam runs once the request
+// is recorded): the stop must return as soon as the first serve has ended, and the second must come
+// up and listen. Before, the stop repeated ggml's stop until no serve ran at all, so a serve that
+// took over right after the first had ended was ended too -- it returned without binding (the
+// request was still set, it is reset only when no serve runs), or lost its listener once bound.
+TEST(CApiRpc, AStopDoesNotReachTheServeStartedAfterIt) {
+    g_held.entered = g_held.released = false;
+    g_held_next.entered = g_held_next.released = false;
+    g_serve_hook_calls.store(0);
+    g_next_run.reset();
+    serve_hook_scope serve_hook([]() { hold_in(g_serve_hook_calls.fetch_add(1) == 0 ? g_held : g_held_next); });
+    stop_hook_scope stop_hook([]() {
+        // Once: the stop of the second serve below must not start a third.
+        jllama::rpc::set_stop_hook_for_testing(nullptr);
+        // The stop is recorded: start the next serve, let it enter its seam, then end the first.
+        g_next_run = std::make_unique<rpc_serve_run>(rpc_test_port(11));
+        EXPECT_TRUE(wait_entered(g_held_next)) << "the second serve did not start";
+        release(g_held);
+    });
+    rpc_serve_run first(rpc_test_port(10));
+    ASSERT_TRUE(wait_entered(g_held)) << "the first serve did not start";
+
+    const jllama_status stop_status = jllama_rpc_server_stop();
+    EXPECT_EQ(stop_status, JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(first.returned_within(std::chrono::seconds(10))) << "the first serve went on after the stop";
+    EXPECT_EQ(first.status(), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(g_next_run, nullptr);
+
+    // The second serve was not meant: released, it binds and listens.
+    release(g_held_next);
+    for (int i = 0;
+         i < 500 && !jllama_rpc_server_listening() && !g_next_run->returned_within(std::chrono::milliseconds(10));
+         ++i) {
+    }
+    EXPECT_TRUE(jllama_rpc_server_listening()) << "the stop of the first serve ended the second one";
+    EXPECT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(g_next_run->returned_within(std::chrono::seconds(10)));
+    EXPECT_EQ(g_next_run->status(), JLLAMA_STATUS_OK) << jllama_last_error();
+    g_next_run.reset();
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
+// A stop while nothing serves stays a no-op: it must not end the next serve as well.
+TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
+    ASSERT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);
+    bool served = false;
+    for (int attempt = 0; attempt < 50 && !served; ++attempt) {
+        rpc_serve_run run(rpc_test_port(attempt + 2));
+        for (int i = 0;
+             i < 500 && !jllama_rpc_server_listening() && !run.returned_within(std::chrono::milliseconds(10)); ++i) {
+        }
+        if (jllama_rpc_server_listening()) {
+            served = true;
+            EXPECT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);
+            EXPECT_TRUE(run.returned_within(std::chrono::seconds(10)));
+            EXPECT_EQ(run.status(), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+    }
+    EXPECT_TRUE(served);
+    EXPECT_FALSE(jllama_rpc_server_listening());
 }
 
 TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {

@@ -9,20 +9,25 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import net.ladenthin.llama.args.PoolingType;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.json.ChatResponseParser;
 import net.ladenthin.llama.json.CompletionResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ChatResponse;
 import net.ladenthin.llama.value.LlamaOutput;
 import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Complex chat scenario tests exercising code paths not covered by LlamaModelTest:
@@ -56,6 +61,9 @@ public class ChatScenarioTest {
 
     private static LlamaModel model;
 
+    @TempDir
+    static Path slotDir;
+
     @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(
@@ -66,6 +74,7 @@ public class ChatScenarioTest {
                 .setModel(TestConstants.MODEL_PATH)
                 .setGpuLayers(gpuLayers)
                 .setFit(false)
+                .setSlotSavePath(slotDir.toString())
                 .enableEmbedding()
                 // MEAN pooling is required for OAI-compatible embedding format;
                 // the default 'none' pooling is not OAI-compatible.
@@ -134,8 +143,14 @@ public class ChatScenarioTest {
     }
 
     /**
-     * chatCompleteText() must return the same content as extracting choices[0].message.content
-     * from the raw chatComplete() JSON.
+     * {@code chatCompleteText} must return exactly {@code choices[0].message.content} of the response
+     * {@code chatComplete} gives for the same request. The two calls are two generations, so they agree
+     * only when both compute the same thing: {@code cache_prompt=false} makes each of them evaluate the
+     * whole prompt in one batch. With the cache the second request reuses the slot's prefix and
+     * re-evaluates one token in a batch of its own (upstream {@code [TAG_PROMPT_LOGITS]}), whose logits
+     * are not bit-identical to the batched ones, and a greedy near tie then flips -- the MSVC Windows
+     * job of run 39702748614 answered "2 plus 2 is 4.<|im" once and "4.<|im_end|>" once. The raw
+     * response of the second call proves the precondition: nothing was taken from the cache.
      */
     @Test
     public void testChatCompleteTextMatchesChatCompleteContent() {
@@ -146,11 +161,13 @@ public class ChatScenarioTest {
                 .withMessages("You are a helpful assistant.", messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
-                .withTemperature(0.0f);
+                .withTemperature(0.0f)
+                .withCachePrompt(false);
 
-        String rawJson = model.chatComplete(params);
         String text = model.chatCompleteText(params);
+        String rawJson = model.chatComplete(params);
 
+        assertWholePromptEvaluated(rawJson);
         String expected = chatParser.extractChoiceContent(rawJson);
         assertEquals(expected, text, "chatCompleteText must match choices[0].message.content");
     }
@@ -263,8 +280,17 @@ public class ChatScenarioTest {
     // ------------------------------------------------------------------
 
     /**
-     * A stop string set in the parameters must terminate generation in chat mode.
-     * The response content must be shorter than the unconstrained generation.
+     * A stop string set in the parameters must terminate generation in chat mode: the stopped
+     * content is the beginning of the unconstrained one, cut before the stop string.
+     *
+     * <p>That holds only when both generations compute the same tokens, so both requests run with
+     * {@code cache_prompt=false} and evaluate the whole prompt in one batch, which their timings prove.
+     * With the cache the second request would take every prompt token but the last from the slot and
+     * re-evaluate that one in a batch of its own (upstream {@code [TAG_PROMPT_LOGITS]}), whose logits
+     * are not bit-identical to the batched ones, so a greedy near tie could flip between the two (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). Over the same tokens the server cuts
+     * the stopped text at the first occurrence of the stop string, and the test model's chat format
+     * takes the content from the text as it is, so the stopped content is a prefix of the other.
      */
     @Test
     public void testChatCompleteWithStopString() {
@@ -276,27 +302,48 @@ public class ChatScenarioTest {
                 .withMessages(null, messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
-                .withTemperature(0.0f);
+                .withTemperature(0.0f)
+                .withCachePrompt(false);
         String unJson = model.chatComplete(unconstrained);
+        assertWholePromptEvaluated(unJson);
         String unContent = chatParser.extractChoiceContent(unJson);
 
-        // Stopped at "3"
+        // Stopped at "4"
         InferenceParameters stopped = new InferenceParameters("")
                 .withMessages(null, messages)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
                 .withTemperature(0.0f)
+                .withCachePrompt(false)
                 .withStopStrings("4");
         String stJson = model.chatComplete(stopped);
+        assertNotNull(stJson, "Stop-string response must not be null");
+        assertWholePromptEvaluated(stJson);
         String stContent = chatParser.extractChoiceContent(stJson);
 
-        assertNotNull(stJson, "Stop-string response must not be null");
-        // Content with stop should be shorter (or at most equal)
+        // The same generation, cut before the stop string
         assertTrue(
-                stContent.length() <= unContent.length(),
-                "Content with stop string must not exceed unconstrained content length");
+                unContent.startsWith(stContent),
+                "Content with stop string must be the beginning of the unconstrained content: '" + stContent + "' / '"
+                        + unContent + "'");
         // The stopped content must not contain "4" (the stop string itself is excluded)
         assertFalse(stContent.contains("4"), "Content stopped at '4' must not contain '4'");
+    }
+
+    /**
+     * The chat response {@code rawJson} took nothing from the prompt cache and evaluated its whole
+     * prompt in one batch -- the precondition for comparing its text with another generation's.
+     */
+    private void assertWholePromptEvaluated(String rawJson) {
+        ChatResponse response = chatParser.parseResponse(rawJson);
+        assertEquals(
+                0,
+                response.getTimings().getCacheN(),
+                "the generation must take nothing from the prompt cache: " + rawJson);
+        assertEquals(
+                response.getUsage().getPromptTokens(),
+                response.getTimings().getPromptN(),
+                "the generation must evaluate the whole prompt: " + rawJson);
     }
 
     // ------------------------------------------------------------------
@@ -348,6 +395,14 @@ public class ChatScenarioTest {
      */
     @Test
     public void testChatCompleteMultiTurnThreeTurns() {
+        List<Pair<String, String>> conversation = new ArrayList<>();
+        conversation.add(new Pair<>("user", "A?"));
+        conversation.add(new Pair<>("assistant", ""));
+        conversation.add(new Pair<>("user", "B?"));
+        conversation.add(new Pair<>("assistant", ""));
+        conversation.add(new Pair<>("user", "B?"));
+        ModelAssumptions.assumeConversationFits(model, null, conversation, 3 * N_PREDICT);
+
         List<Pair<String, String>> messages = new ArrayList<>();
         messages.add(new Pair<>("user", "A?"));
 
@@ -465,6 +520,7 @@ public class ChatScenarioTest {
      */
     @Test
     public void testHandleInfillDirect() {
+        FimAssumptions.assumeFimTokens(model);
         String prefix = "def greet(name):\n    \"\"\" ";
         String suffix = "\n    return greeting\n";
 
@@ -579,35 +635,40 @@ public class ChatScenarioTest {
     // ------------------------------------------------------------------
 
     /**
-     * saveSlot writes the KV cache to a file; restoreSlot reads it back.
-     * Both must succeed (return a JSON response with expected fields).
-     * The saved file is removed after the test.
+     * saveSlot writes the KV cache to a file inside the {@code --slot-save-path} directory, named by
+     * a file name as upstream's slots route takes it; restoreSlot reads it back. A name with a
+     * directory part or {@code ..} is the caller's error. The native side used to take the name as a
+     * path, so the file landed relative to the working directory and the slot directory had no effect.
      */
     @Test
     public void testSaveAndRestoreSlot() throws IOException {
         // Prime the slot with a short generation so there is state to save
         model.complete(new InferenceParameters("Hello").withNPredict(5).withSeed(42));
+        // Names unique to the run: a file another run left in the working directory or next to the
+        // slot directory cannot decide the test, and the clean-up below never removes one.
+        String name = "chat-scenario-slot-" + UUID.randomUUID() + ".bin";
+        String escapedName = "escaped-" + UUID.randomUUID() + ".bin";
+        File stray = new File(name);
 
-        File tempFile = File.createTempFile("llama_slot_", ".bin");
-        tempFile.deleteOnExit();
-        String filepath = tempFile.getAbsolutePath();
-        // Delete so the native layer can write it fresh
-        Files.delete(tempFile.toPath());
+        try {
+            String saveResult = model.saveSlot(0, name);
+            assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
+            assertTrue(Files.exists(slotDir.resolve(name)), saveResult);
+            assertFalse(stray.exists(), "the slot file must not land in the working directory");
 
-        String saveResult = model.saveSlot(0, filepath);
-        assertNotNull(saveResult, "saveSlot must return non-null");
-        assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
-
-        // File must now exist
-        File saved = new File(filepath);
-        if (saved.exists()) {
-            // Only attempt restore if file was actually written
-            String restoreResult = model.restoreSlot(0, filepath);
-            assertNotNull(restoreResult, "restoreSlot must return non-null");
+            String restoreResult = model.restoreSlot(0, name);
             assertTrue(restoreResult.contains("\"id_slot\""), "restoreSlot result must contain id_slot");
-            saved.delete();
+
+            InvalidRequestException escaped =
+                    assertThrows(InvalidRequestException.class, () -> model.saveSlot(0, "../" + escapedName));
+            assertTrue(escaped.getMessage().contains("--slot-save-path"), escaped.getMessage());
+            assertThrows(
+                    InvalidRequestException.class,
+                    () -> model.restoreSlot(0, slotDir.resolve(name).toString()));
+            assertFalse(Files.exists(slotDir.getParent().resolve(escapedName)));
+        } finally {
+            Files.deleteIfExists(stray.toPath()); // only written by the defect this test pins
         }
-        // If the file wasn't written we still pass: the save attempt exercised the code path.
     }
 
     // ------------------------------------------------------------------

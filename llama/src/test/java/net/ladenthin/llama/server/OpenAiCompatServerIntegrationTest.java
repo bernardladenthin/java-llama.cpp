@@ -72,6 +72,47 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * The token-count routes count the prompt a generation of the same request evaluates: the chat
+     * template rendered over the request, tokenized as the generation tokenizes it. upstream serves all
+     * three; they answered 404 here.
+     */
+    @Test
+    public void theTokenCountRoutesCountThePromptAGenerationEvaluates() throws IOException {
+        String messages = "[{\"role\":\"user\",\"content\":\"Count the tokens of this sentence, please.\"}]";
+        String chat =
+                "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":1,\"temperature\":0,\"messages\":" + messages + "}";
+        int promptTokens = MAPPER.readTree(post(port, "/v1/chat/completions", chat, "").body)
+                .path("usage")
+                .path("prompt_tokens")
+                .asInt(-1);
+        assertThat(promptTokens, greaterThan(0));
+
+        Response chatCount = post(port, "/v1/chat/completions/input_tokens", chat, "");
+        assertThat(chatCount.body, chatCount.code, is(200));
+        assertThat(MAPPER.readTree(chatCount.body).path("input_tokens").asInt(-1), is(promptTokens));
+
+        String anthropic =
+                "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":1,\"temperature\":0,\"messages\":" + messages + "}";
+        JsonNode usage =
+                MAPPER.readTree(post(port, "/v1/messages", anthropic, "").body).path("usage");
+        int anthropicPrompt = usage.path("input_tokens").asInt(-1)
+                + usage.path("cache_read_input_tokens").asInt(0);
+        Response anthropicCount = post(port, "/v1/messages/count_tokens", anthropic, "");
+        assertThat(anthropicCount.body, anthropicCount.code, is(200));
+        assertThat(MAPPER.readTree(anthropicCount.body).path("input_tokens").asInt(-1), is(anthropicPrompt));
+
+        String responses = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":1,\"temperature\":0,"
+                + "\"input\":\"Count the tokens of this sentence, please.\"}";
+        int responsesPrompt = MAPPER.readTree(post(port, "/v1/responses", responses, "").body)
+                .path("usage")
+                .path("input_tokens")
+                .asInt(-1);
+        Response responsesCount = post(port, "/v1/responses/input_tokens", responses, "");
+        assertThat(responsesCount.body, responsesCount.code, is(200));
+        assertThat(MAPPER.readTree(responsesCount.body).path("input_tokens").asInt(-1), is(responsesPrompt));
+    }
+
     @Test
     public void nonStreamingChatReturnsValidCompletion() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":16,"
@@ -164,6 +205,50 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(json.path("role").asText(), is("assistant"));
     }
 
+    /**
+     * The Anthropic route asks for upstream's debug object only for the matched stop word; with the
+     * projection it carries just that word, not the rendered prompt and the generation settings it
+     * used to bring through JNI with every answer.
+     */
+    @Test
+    public void theDebugObjectTheAnthropicRouteAsksForCarriesOnlyTheStopWord() throws IOException {
+        JsonNode answer = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                + "\"response_fields\":[\"stopping_word\"],"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"));
+        JsonNode debug = answer.path("__verbose");
+        assertThat(answer.toString(), debug.isObject(), is(true));
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        debug.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys, is(java.util.Collections.singletonList("stopping_word")));
+    }
+
+    /**
+     * {@code response_fields} names nested values with a slash, as upstream's
+     * {@code json_get_nested_values} splits them ({@code server-common.cpp}, b11639), and the projected
+     * key is the whole path. A dotted path is one key the result does not have, which upstream drops
+     * without an error.
+     */
+    @Test
+    public void aNestedResponseFieldIsNamedWithASlashAndKeepsThePathAsItsKey() throws IOException {
+        JsonNode debug = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                        + "\"response_fields\":[\"timings/predicted_n\"],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"))
+                .path("__verbose");
+        assertThat(debug.toString(), debug.isObject(), is(true));
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        debug.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys, is(java.util.Collections.singletonList("timings/predicted_n")));
+        assertThat(debug.toString(), debug.path("timings/predicted_n").isIntegralNumber(), is(true));
+        assertThat(debug.path("timings/predicted_n").asInt(), greaterThan(0));
+
+        JsonNode dotted = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                        + "\"response_fields\":[\"timings.predicted_n\"],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"))
+                .path("__verbose");
+        assertThat(dotted.toString(), dotted.isObject(), is(true));
+        assertThat(dotted.toString(), dotted.size(), is(0));
+    }
+
     @Test
     public void anthropicMessagesStreamingRoundTrip() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":16,"
@@ -174,24 +259,32 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(response.body, containsString("event: message_stop"));
     }
 
+    /**
+     * An answer that cannot fit into {@code max_output_tokens} ends with finish_reason "length", which the
+     * Responses API reports as {@code incomplete} with reason {@code max_output_tokens} (F229); it was
+     * reported as {@code completed}.
+     */
     @Test
     public void responsesNonStreamingRoundTrip() throws IOException {
-        String body = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":16,\"input\":\"Say hello in one word.\"}";
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":4,"
+                + "\"input\":\"Count from 1 to 100, one number per line.\"}";
         Response response = post(port, "/v1/responses", body, "");
         assertThat(response.code, is(200));
         JsonNode json = MAPPER.readTree(response.body);
         assertThat(json.path("object").asText(), is("response"));
-        assertThat(json.path("status").asText(), is("completed"));
+        assertThat(json.path("status").asText(), is("incomplete"));
+        assertThat(json.path("incomplete_details").path("reason").asText(), is("max_output_tokens"));
     }
 
     @Test
     public void responsesStreamingRoundTrip() throws IOException {
-        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_output_tokens\":16,"
-                + "\"input\":\"Say hello in one word.\"}";
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_output_tokens\":4,"
+                + "\"input\":\"Count from 1 to 100, one number per line.\"}";
         Response response = post(port, "/v1/responses", body, "");
         assertThat(response.code, is(200));
         assertThat(response.body, containsString("event: response.created"));
-        assertThat(response.body, containsString("event: response.completed"));
+        assertThat(response.body, containsString("event: response.incomplete"));
+        assertThat(response.body, containsString("\"reason\":\"max_output_tokens\""));
     }
 
     @Test

@@ -31,6 +31,7 @@
 // the C API (jllama_api.cpp) and the engine (jllama_engine.cpp); only what reads a Java object
 // stays here.
 #include "jllama_engine.hpp"
+#include "jni_utf8.hpp"
 
 #include <string>
 #include <type_traits>
@@ -164,7 +165,7 @@ inline void report_cxx_exception_impl(JNIEnv *env, jclass exception_class, const
     if (exception_class == nullptr) {
         return;
     }
-    env->ThrowNew(exception_class, what);
+    throw_utf8_impl(env, exception_class, what);
 }
 
 template <typename Fn> auto jni_guard_impl(JNIEnv *env, jclass exception_class, Fn &&fn) -> decltype(fn()) {

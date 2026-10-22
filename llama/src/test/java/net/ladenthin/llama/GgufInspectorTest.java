@@ -225,6 +225,36 @@ public class GgufInspectorTest {
         assertThrows(IOException.class, () -> GgufInspector.read(new ByteArrayInputStream(truncated)));
     }
 
+    /** A file with one key whose value is {@code depth} arrays nested in each other (one element each). */
+    private static byte[] nestedArrayGguf(int depth) {
+        GgufWriter writer = new GgufWriter(ByteOrder.LITTLE_ENDIAN);
+        writer.magic().u32(3).u64(0).u64(1);
+        writer.str("nested").u32(9); // the value is an array ...
+        for (int level = 1; level < depth; level++) {
+            writer.u32(9).u64(1); // ... of one array ...
+        }
+        writer.u32(5).u64(1).u32(42); // ... of one int32
+        return writer.bytes();
+    }
+
+    @Test
+    public void nestedArrayIsRejectedLikeUpstream() {
+        // ggml's gguf reader rejects an array whose element type is an array ("invalid GGUF type"),
+        // so llama.cpp cannot load such a file; the inspector must not report it as valid metadata.
+        byte[] nested = nestedArrayGguf(2);
+
+        assertThrows(IOException.class, () -> GgufInspector.read(new ByteArrayInputStream(nested)));
+    }
+
+    @Test
+    public void deeplyNestedArraysFailWithIOExceptionNotStackOverflow() {
+        // Each nesting level costs 12 bytes but one recursion frame; a crafted file ended the read in a
+        // StackOverflowError instead of the IOException the method declares for an invalid file.
+        byte[] nested = nestedArrayGguf(100_000);
+
+        assertThrows(IOException.class, () -> GgufInspector.read(new ByteArrayInputStream(nested)));
+    }
+
     @Test
     public void readsRealModelFileWhenPresent() throws IOException {
         // Real-file sanity (CI: the shared GGUF cache; locally self-skips without models/).

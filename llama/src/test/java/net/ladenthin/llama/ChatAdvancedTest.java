@@ -6,6 +6,8 @@ package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,9 +15,11 @@ import java.util.Collections;
 import java.util.List;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.Sampler;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.json.CompletionResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.CompletionResult;
 import net.ladenthin.llama.value.LlamaOutput;
 import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.AfterAll;
@@ -27,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * Advanced inference parameter scenarios covering code paths untested by
  * {@link LlamaModelTest} and {@link ChatScenarioTest}:
  * <ul>
- *   <li>setCachePrompt — repeated call produces consistent output</li>
+ *   <li>setCachePrompt — the second and third call reuse the cached prefix and agree</li>
  *   <li>nPredict=-1 with stop string — unbounded generation terminates</li>
  *   <li>setNProbs — streaming JSON contains probability data</li>
  *   <li>setChatTemplate — custom Jinja template applied by applyTemplate</li>
@@ -74,13 +78,21 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 1. setCachePrompt — repeated call with same prompt is consistent
+    // 1. setCachePrompt — repeated calls over the cached prefix are consistent
     // ------------------------------------------------------------------
 
     /**
-     * Two identical calls with {@code setCachePrompt(true)} and a fixed seed
-     * must produce the same output. This verifies that prompt caching does not
-     * corrupt the KV cache or alter sampling state between requests.
+     * Three identical greedy calls with {@code cache_prompt=true}: the second and the third reuse the
+     * slot's prefix (every prompt token but the last, which upstream re-evaluates so that the request
+     * has logits) and must produce the same output, because they compute the same thing over the same
+     * cache -- which verifies that prompt caching does not corrupt the KV cache or alter the sampling
+     * state between requests. The first call is deliberately not compared with them: it evaluated the
+     * prompt in one batch, and the one-token re-evaluation does not reproduce its logits bit for bit
+     * (measured on the random test model over 4000 prompts: the first token's logprob differs in 3999
+     * first-vs-second pairs and the greedy text in 4 of them, against 0 of 4000 between the second and
+     * the third call and 0 of 150 without the cache), so a greedy near tie can flip between a batched
+     * and a cached generation -- what the MSVC Windows job of run 39702748614 saw in
+     * {@code ChatScenarioTest}.
      */
     @Test
     public void testCachePromptConsistentOutput() {
@@ -90,11 +102,28 @@ public class ChatAdvancedTest {
                 .withTemperature(0.0f)
                 .withCachePrompt(true);
 
-        String first = model.complete(params);
-        String second = model.complete(params);
+        CompletionResult first = model.completeWithStats(params);
+        CompletionResult second = model.completeWithStats(params);
+        CompletionResult third = model.completeWithStats(params);
 
-        assertFalse(first.isEmpty(), "First cached call must produce output");
-        assertEquals(first, second, "Same prompt with cache_prompt must produce identical output");
+        assertFalse(first.getText().isEmpty(), "First cached call must produce output");
+        assertCachedPrefixReused(second);
+        assertCachedPrefixReused(third);
+        assertEquals(
+                second.getText(),
+                third.getText(),
+                "Two generations over the same cached prefix must produce identical output");
+    }
+
+    private static void assertCachedPrefixReused(CompletionResult result) {
+        assertEquals(
+                result.getUsage().getPromptTokens() - 1,
+                result.getTimings().getCacheN(),
+                "every prompt token but the last must come from the cache: " + result.getRawJson());
+        assertEquals(
+                1,
+                result.getTimings().getPromptN(),
+                "only the last prompt token must be evaluated: " + result.getRawJson());
     }
 
     // ------------------------------------------------------------------
@@ -199,6 +228,210 @@ public class ChatAdvancedTest {
         }
 
         assertFalse(output.toString().isEmpty(), "generate() with messages must produce output");
+    }
+
+    /**
+     * On the raw completion path the messages become the prompt the chat template renders from them
+     * ({@link LlamaModel#applyTemplate(InferenceParameters)}), not an ignored field next to an empty
+     * prompt: the request evaluates exactly the tokens a completion of that rendered prompt does. The
+     * prompt token count is the full prompt whether or not the slot's cache served it.
+     */
+    @Test
+    public void testMessagesInCompleteWithStatsEvaluateTheTemplatedPrompt() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        InferenceParameters chat = InferenceParameters.empty().withMessages(null, messages);
+        String rendered = model.applyTemplate(chat);
+        assertTrue(rendered.contains("Write one word."), rendered);
+        long expected = model.completeWithStats(new InferenceParameters(rendered).withNPredict(1))
+                .getUsage()
+                .getPromptTokens();
+
+        CompletionResult result = model.completeWithStats(chat.withNPredict(1));
+
+        assertEquals(expected, result.getUsage().getPromptTokens(), result.getRawJson());
+    }
+
+    /** A prompt beside the messages is refused: one of the two would have to be dropped. */
+    @Test
+    public void testMessagesAndAPromptInCompleteAreAnInvalidRequest() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        InferenceParameters request = new InferenceParameters("def hello():")
+                .withMessages(null, messages)
+                .withNPredict(1);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> model.complete(request));
+
+        assertTrue(e.getMessage().contains("'prompt'"), "Error should name the prompt but was: " + e.getMessage());
+    }
+
+    /**
+     * The chat fields the raw completion paths cannot apply are refused beside the messages, by name:
+     * the grammar of a response format and the tool-call grammar of the tool fields belong to the chat
+     * paths, and {@code complete()}/{@code generate()} used to drop them without a word.
+     */
+    @Test
+    public void testChatOnlyFieldsBesideMessagesInCompleteAndGenerateAreAnInvalidRequest() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Write one word."));
+        String tools = "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\","
+                + "\"parameters\":{\"type\":\"object\"}}}]";
+        List<Pair<String, InferenceParameters>> requests = Arrays.asList(
+                new Pair<>("response_format", chatRequest(messages).withResponseFormat("{\"type\":\"json_object\"}")),
+                new Pair<>("tools", chatRequest(messages).withToolsJson(tools)),
+                new Pair<>("tool_choice", chatRequest(messages).withToolChoice("required")),
+                new Pair<>("parallel_tool_calls", chatRequest(messages).withParallelToolCalls(true)));
+
+        for (Pair<String, InferenceParameters> request : requests) {
+            String field = "'" + request.getKey() + "'";
+            InvalidRequestException completed =
+                    assertThrows(InvalidRequestException.class, () -> model.complete(request.getValue()), field);
+            assertTrue(
+                    completed.getMessage().contains(field),
+                    "complete() names " + field + ": " + completed.getMessage());
+            InvalidRequestException generated = assertThrows(
+                    InvalidRequestException.class,
+                    () -> {
+                        for (LlamaOutput ignored : model.generate(request.getValue())) {
+                            // drained: the request must not run
+                        }
+                    },
+                    field);
+            assertTrue(
+                    generated.getMessage().contains(field),
+                    "generate() names " + field + ": " + generated.getMessage());
+        }
+    }
+
+    private static InferenceParameters chatRequest(List<Pair<String, String>> messages) {
+        return InferenceParameters.empty().withMessages(null, messages).withNPredict(1);
+    }
+
+    /**
+     * A ChatML template with a thinking block that it opens in the generation prompt: llama.cpp derives
+     * the thinking tags {@code <think>}/{@code </think>} from it, which the reasoning budget acts on.
+     */
+    private static final String THINKING_TEMPLATE = "{%- for message in messages -%}"
+            + "{{- '<|im_start|>' + message.role + '\\n' -}}"
+            + "{%- if message.reasoning_content -%}"
+            + "{{- '<think>\\n' + message.reasoning_content + '\\n</think>\\n\\n' -}}"
+            + "{%- endif -%}"
+            + "{{- message.content + '<|im_end|>\\n' -}}"
+            + "{%- endfor -%}"
+            + "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n<think>\\n' -}}{%- endif -%}";
+
+    /**
+     * Beside the messages, {@code complete()} and {@code generate()} keep the reasoning budget of a
+     * template with thinking tags, as the chat paths do: with a budget of one token, which the
+     * {@code "\n"} after the {@code <think>} of the generation prompt spends, the end tag is forced from
+     * the first generated token on. Both paths used to render the messages and drop the tags, so the
+     * budget did nothing there.
+     *
+     * <p>The reasoning model is used because its tokenizer gives a tag the same tokens inside the
+     * prompt and on its own, which is what the budget sampler matches; a SentencePiece tokenizer puts a
+     * space before a tag tokenized on its own, and the budget then never starts, on the chat paths too.
+     * The tokens are compared first, then the text: the template's tags are preserved tokens of its chat
+     * session, so the end tag reads as text in the content even where the vocabulary holds it as one
+     * special token (Qwen3, CI's reasoning model). Before the raw paths took the session's preserved
+     * tokens over, such an end tag was rendered as an empty piece there; with the local random model,
+     * whose byte tokenizer has no special tags, the text check passes either way, and the C++ case
+     * {@code CApiReasoningBudget.ARawCompletionWithMessagesRendersTheTemplatesSpecialTagsAsText} pins
+     * it on a vocabulary with special tags.
+     *
+     * <p>The prompt cache is off for the request. With it, the second generation reuses the first one's
+     * prompt and re-evaluates only its last token: a batch of one token against the first generation's
+     * batch of the whole prompt, and the matrix multiplications of the two batch shapes round
+     * differently enough to flip a near-tie under greedy sampling. The Windows x86-64 job of PR #554
+     * answered {@code "2 + 2 = 4."} blocking and {@code "The question ..."} streamed from the same
+     * request; with the prompt evaluated the same way twice, the two texts are the same computation.
+     */
+    @Test
+    public void testReasoningBudgetBesideMessagesInCompleteAndGenerateForcesTheEndTag() throws Exception {
+        Assumptions.assumeTrue(
+                new File(TestConstants.REASONING_MODEL_PATH).exists(),
+                "Reasoning model not found, skipping the reasoning-budget case");
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel thinking = new LlamaModel(new ModelParameters()
+                .setCtxSize(256)
+                .setModel(TestConstants.REASONING_MODEL_PATH)
+                .setGpuLayers(gpuLayers)
+                .setFit(false)
+                .setChatTemplate(THINKING_TEMPLATE))) {
+            InferenceParameters request = InferenceParameters.empty()
+                    .withMessages(null, Collections.singletonList(new Pair<>("user", "What is 2+2?")))
+                    .withReasoningBudgetTokens(1)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f)
+                    .withCachePrompt(false)
+                    .withReturnTokens(true);
+            int[] endTag = thinking.encode("</think>");
+
+            CompletionResult completed = thinking.completeWithStats(request);
+
+            JsonNode tokens =
+                    new ObjectMapper().readTree(completed.getRawJson()).path("tokens");
+            assertTrue(tokens.size() > 0, completed.getRawJson());
+            assertEquals(endTag[0], tokens.get(0).asInt(), completed.getRawJson());
+            assertTrue(completed.getText().startsWith("</think>"), completed.getRawJson());
+            StringBuilder generated = new StringBuilder();
+            for (LlamaOutput output : thinking.generate(request)) {
+                generated.append(output.text);
+            }
+            assertEquals(completed.getText(), generated.toString());
+        }
+    }
+
+    /**
+     * Without messages, {@code complete()} and {@code generate()} take the budget's tags from the
+     * request: once the model writes the start tag, a budget of zero forces the first end tag. The
+     * test is independent of the model: a logit bias makes the model write one token over and over,
+     * and that token's text is the start tag, so the end tag follows it each time.
+     *
+     * <p>No {@code reasoning_budget_message} is set on purpose: upstream's completion schema sets the
+     * sequence it forces only in the handler of that field, so a request naming the tags without it
+     * armed a budget that forced nothing. The chat paths always set it (to the server's default);
+     * the engine now does the same for a raw request.</p>
+     */
+    @Test
+    public void testReasoningBudgetTagsWithoutMessagesForceTheEndTag() {
+        Assumptions.assumeTrue(
+                new File(TestConstants.REASONING_MODEL_PATH).exists(),
+                "Reasoning model not found, skipping the reasoning-budget case");
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel thinking = new LlamaModel(new ModelParameters()
+                .setCtxSize(256)
+                .setModel(TestConstants.REASONING_MODEL_PATH)
+                .setGpuLayers(gpuLayers)
+                .setFit(false))) {
+            int startToken = thinking.encode("Hello")[0];
+            String startTag = thinking.decode(startToken);
+            assertArrayEquals(new int[] {startToken}, thinking.encode(startTag), startTag);
+            InferenceParameters request = new InferenceParameters("Say something.")
+                    .withTokenIdBias(Collections.singletonMap(startToken, 100.0f))
+                    .withReasoningBudgetTokens(0)
+                    .withReasoningBudgetStartTag(startTag)
+                    .withReasoningBudgetEndTags("END")
+                    .withIgnoreEos(true)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f);
+
+            String completed = thinking.complete(request);
+
+            assertTrue(completed.startsWith(startTag + "END"), completed);
+            StringBuilder generated = new StringBuilder();
+            for (LlamaOutput output : thinking.generate(request)) {
+                generated.append(output.text);
+            }
+            assertEquals(completed, generated.toString());
+            // Without the tags the bias alone repeats the start tag, so the end tag above is the budget's.
+            String unbounded = thinking.complete(new InferenceParameters("Say something.")
+                    .withTokenIdBias(Collections.singletonMap(startToken, 100.0f))
+                    .withIgnoreEos(true)
+                    .withNPredict(N_PREDICT)
+                    .withTemperature(0.0f));
+            assertFalse(unbounded.contains("END"), unbounded);
+        }
     }
 
     // ------------------------------------------------------------------

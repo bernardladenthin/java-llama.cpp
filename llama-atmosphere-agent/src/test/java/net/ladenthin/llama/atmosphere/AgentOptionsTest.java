@@ -37,9 +37,9 @@ class AgentOptionsTest {
 
     @Test
     void baseUrlModeWithDefaults() {
-        AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://127.0.0.1:8080/v1/"});
+        AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://127.0.0.1:9931/v1/"});
 
-        assertThat(options.getBaseUrl(), is("http://127.0.0.1:8080/v1"));
+        assertThat(options.getBaseUrl(), is("http://127.0.0.1:9931/v1"));
         assertThat(options.getModelPath(), is(nullValue()));
         assertThat(options.getApiKey(), is(AgentOptions.DEFAULT_API_KEY));
         assertThat(options.getModelId(), is(AgentOptions.DEFAULT_MODEL_ID));
@@ -261,5 +261,81 @@ class AgentOptionsTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-port", "70000"}));
+    }
+
+    @Test
+    void modelIdThatLlamaCppsAliasWouldSplitOrTrimIsRejectedForAnInProcessModel() {
+        // The in-process model is served under the id as its --alias, which llama.cpp splits at commas
+        // and strips; /v1/models and the answers would name it differently again.
+        for (String id : new String[] {"a,b", " x", "x ", ""}) {
+            assertThat(
+                    id,
+                    assertThrows(
+                                    IllegalArgumentException.class,
+                                    () -> AgentOptions.parse(new String[] {"--model-id", id, "--model", "m.gguf"}))
+                            .getMessage(),
+                    containsString("--model-id"));
+        }
+    }
+
+    @Test
+    void modelIdForARemoteEndpointIsSentUnchanged() {
+        // Against --base-url the id names a model of someone else's server; nothing here splits it.
+        assertThat(
+                AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--model-id", "a,b"})
+                        .getModelId(),
+                is("a,b"));
+    }
+    /**
+     * {@code withWorkspace} copies every option and replaces only the workspace -- an editor session
+     * ({@code --acp}) runs with all of the command line's settings in the project the editor names. The
+     * copy is written out field by field, so the check is reflective: every field is set to a value no
+     * parse produces, and a field added later that the copy forgets fails here.
+     */
+    @Test
+    void withWorkspaceKeepsEveryOtherOption() throws ReflectiveOperationException {
+        AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://localhost:1/v1"});
+        java.util.List<java.lang.reflect.Field> fields = new java.util.ArrayList<>();
+        int n = 0;
+        for (java.lang.reflect.Field field : AgentOptions.class.getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            field.setAccessible(true);
+            field.set(options, unusualValue(field, n++));
+            fields.add(field);
+        }
+        Path elsewhere = Paths.get("elsewhere").toAbsolutePath().normalize();
+
+        AgentOptions copy = options.withWorkspace(elsewhere);
+
+        assertThat(copy.getWorkspace(), is(elsewhere));
+        for (java.lang.reflect.Field field : fields) {
+            if (!field.getName().equals("workspace")) {
+                assertThat(field.getName(), field.get(copy), is(field.get(options)));
+            }
+        }
+    }
+
+    /** A value of the field's type that no parse produces, distinct per field. */
+    private static Object unusualValue(java.lang.reflect.Field field, int n) {
+        Class<?> type = field.getType();
+        if (type == String.class) {
+            return "unusual-" + field.getName();
+        }
+        if (type == Path.class) {
+            return Paths.get("/unusual-" + field.getName());
+        }
+        if (type == int.class) {
+            return 7001 + n;
+        }
+        if (type == double.class) {
+            return 0.5 + n;
+        }
+        if (type == boolean.class) {
+            // every boolean option defaults to false except autoCompact; flip whatever it is
+            return !field.getName().equals("autoCompact");
+        }
+        throw new AssertionError("no unusual value for " + field + "; add one for its type");
     }
 }

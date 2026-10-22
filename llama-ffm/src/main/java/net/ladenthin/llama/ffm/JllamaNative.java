@@ -18,6 +18,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.BiConsumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
@@ -97,6 +98,8 @@ final class JllamaNative {
             downcall("jllama_chat_completions_request", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS = downcall("jllama_completions", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS_OAI = downcall("jllama_completions_oai", json(ADDRESS, ADDRESS, ADDRESS));
+    static final MethodHandle COMPLETIONS_OAI_STREAM_REQUEST =
+            downcall("jllama_completions_oai_stream_request", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle INFILL = downcall("jllama_infill", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS_STREAM_REQUEST =
             downcall("jllama_completions_stream_request", json(ADDRESS, ADDRESS, ADDRESS));
@@ -284,9 +287,26 @@ final class JllamaNative {
 
     /** A {@code char ***} plus {@code size_t *} out-pair, released with {@code jllama_strings_free}. */
     static List<String> takeStrings(MemorySegment out, MemorySegment length) {
+        return takeStrings(out, length, (pointer, count) -> invoke(STRINGS_FREE, pointer, count));
+    }
+
+    /**
+     * {@link #takeStrings(MemorySegment, MemorySegment)} with the free function passed in, for tests.
+     *
+     * <p>A non-NULL array is freed even when it is empty: {@code jllama_rpc_server_devices} allocates
+     * one for zero entries too, and returning early for {@code count == 0} leaked it (measured: the
+     * free function was never called).
+     *
+     * @param out the out-parameter holding the array pointer
+     * @param length the out-parameter holding the element count
+     * @param free frees the array with its element count
+     * @return the strings, in order
+     */
+    static List<String> takeStrings(
+            MemorySegment out, MemorySegment length, BiConsumer<MemorySegment, Long> free) {
         MemorySegment pointer = out.get(ADDRESS, 0);
         long count = length.get(JAVA_LONG, 0);
-        if (pointer.equals(MemorySegment.NULL) || count == 0) {
+        if (pointer.equals(MemorySegment.NULL)) {
             return List.of();
         }
         try {
@@ -297,7 +317,7 @@ final class JllamaNative {
             }
             return List.of(strings);
         } finally {
-            invoke(STRINGS_FREE, pointer, count);
+            free.accept(pointer, count);
         }
     }
 

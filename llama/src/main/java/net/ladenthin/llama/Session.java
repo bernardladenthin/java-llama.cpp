@@ -161,23 +161,23 @@ public final class Session implements AutoCloseable {
     }
 
     /**
-     * Save this session's slot KV cache to {@code filepath}.
+     * Save this session's slot KV cache to the file {@code filename} in the model's slot directory.
      *
-     * @param filepath destination file path passed to {@link LlamaModel#saveSlot(int, String)}
+     * @param filename file name inside the slot directory, passed to {@link LlamaModel#saveSlot(int, String)}
      * @return the JSON response from the native save action
      */
-    public String save(String filepath) {
-        return state.runWhenNotStreaming("save", () -> model.saveSlot(slotId, filepath));
+    public String save(String filename) {
+        return state.runWhenNotStreaming("save", () -> model.saveSlot(slotId, filename));
     }
 
     /**
-     * Restore this session's slot KV cache from {@code filepath}.
+     * Restore this session's slot KV cache from the file {@code filename} in the model's slot directory.
      *
-     * @param filepath source file path passed to {@link LlamaModel#restoreSlot(int, String)}
+     * @param filename file name inside the slot directory, passed to {@link LlamaModel#restoreSlot(int, String)}
      * @return the JSON response from the native restore action
      */
-    public String restore(String filepath) {
-        return state.runWhenNotStreaming("restore", () -> model.restoreSlot(slotId, filepath));
+    public String restore(String filename) {
+        return state.runWhenNotStreaming("restore", () -> model.restoreSlot(slotId, filename));
     }
 
     /**
@@ -190,7 +190,8 @@ public final class Session implements AutoCloseable {
 
     /**
      * Capture a point-in-time snapshot of this conversation: the slot's KV-cache state is
-     * saved to {@code filepath} (native slot-save) and paired with the transcript turns
+     * saved to the file {@code filename} in the model's slot directory (native slot-save, see
+     * {@link LlamaModel#saveSlot(int, String)}) and paired with the transcript turns
      * committed so far. The returned checkpoint can later be passed to
      * {@link #rewind(SessionCheckpoint)} — undoing every turn after this point — or used as
      * the branch point for {@link #fork(int, String)}.
@@ -199,14 +200,14 @@ public final class Session implements AutoCloseable {
      * KV dumps grow with context usage. Rejected while a stream is in progress.
      * </p>
      *
-     * @param filepath destination file for the slot KV state
+     * @param filename destination file name inside the slot directory for the slot KV state
      * @return the checkpoint pairing that file with the transcript snapshot
      * @throws IllegalStateException if a stream is in progress
      */
-    public SessionCheckpoint checkpoint(String filepath) {
+    public SessionCheckpoint checkpoint(String filename) {
         return state.runWhenNotStreaming("checkpoint", () -> {
-            model.saveSlot(slotId, filepath);
-            return new SessionCheckpoint(filepath, state.turnsSnapshot());
+            model.saveSlot(slotId, filename);
+            return new SessionCheckpoint(filename, state.turnsSnapshot());
         });
     }
 
@@ -223,7 +224,7 @@ public final class Session implements AutoCloseable {
      */
     public void rewind(SessionCheckpoint checkpoint) {
         state.runWhenNotStreaming("rewind", () -> {
-            model.restoreSlot(slotId, checkpoint.getFilepath());
+            model.restoreSlot(slotId, checkpoint.getFilename());
             state.restoreTurns(checkpoint.getTurns());
             return null;
         });
@@ -231,7 +232,7 @@ public final class Session implements AutoCloseable {
 
     /**
      * Fork this conversation into a new {@link Session} on another slot: the current slot
-     * state is checkpointed to {@code filepath} and restored into {@code newSlotId}, and the
+     * state is checkpointed to the file {@code filename} in the slot directory and restored into {@code newSlotId}, and the
      * new session starts with a copy of this session's transcript (and the same system
      * message and parameter customizer). Both sessions then continue independently —
      * A/B-answering the same conversation, speculative side-branches, etc.
@@ -242,19 +243,24 @@ public final class Session implements AutoCloseable {
      * </p>
      *
      * @param newSlotId the slot the forked session is bound to (must differ from this session's)
-     * @param filepath scratch file used to transfer the slot KV state
+     * @param filename scratch file name inside the slot directory used to transfer the slot KV state
      * @return the forked session, positioned at this session's current state
-     * @throws IllegalArgumentException if {@code newSlotId} equals this session's slot id
+     * @throws IllegalArgumentException if {@code newSlotId} is negative or equals this session's slot id
      * @throws IllegalStateException if a stream is in progress
      */
-    public Session fork(int newSlotId, String filepath) {
+    public Session fork(int newSlotId, String filename) {
+        // Before any model call: the constructor below would reject it too, but only after the slot
+        // was saved to filename and restored into the invalid id.
+        if (newSlotId < 0) {
+            throw new IllegalArgumentException("slotId must be non-negative, was " + newSlotId);
+        }
         if (newSlotId == slotId) {
             throw new IllegalArgumentException(
                     "fork target slot must differ from the session's own slot " + slotId + ", was " + newSlotId);
         }
         return state.runWhenNotStreaming("fork", () -> {
-            model.saveSlot(slotId, filepath);
-            model.restoreSlot(newSlotId, filepath);
+            model.saveSlot(slotId, filename);
+            model.restoreSlot(newSlotId, filename);
             Session forked = new Session(model, newSlotId, state.getSystemMessage(), paramsCustomizer);
             forked.state.restoreTurns(state.turnsSnapshot());
             return forked;

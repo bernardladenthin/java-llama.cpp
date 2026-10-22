@@ -126,7 +126,7 @@ natives table lists every backend.
    ```bash
    jbang --main net.ladenthin.llama.server.ServerLauncher \
        --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 \
-       -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
+       -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 9931
    ```
 
    The classes jar `net.ladenthin:llama` plus the CPU natives jar of the platform (`cpu-<os>-<arch>`,
@@ -142,7 +142,7 @@ natives table lists every backend.
 
    ```bash
    mvn -q compile exec:java \
-       -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
+       -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace /path/to/project --allow-shell"
    ```
 
 A `you>` prompt appears, with a status line pinned to the bottom of the window. The answer streams as it is generated, and every
@@ -153,7 +153,7 @@ A single turn without the REPL:
 
 ```bash
 mvn -q compile exec:java \
-    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
+    -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
 ```
 
 If the server was started with `--api-key <key>`, add `--api-key <key>` to the agent's arguments.
@@ -235,7 +235,7 @@ pinned block and no spinner, and nothing on screen is ever rewritten. That makes
 when it is piped, logged, recorded, or carried by anything that forwards lines rather than a screen:
 
 ```bash
-mvn -q compile exec:java -Dexec.args="--base-url http://127.0.0.1:8080/v1 --plain" | tee session.log
+mvn -q compile exec:java -Dexec.args="--base-url http://127.0.0.1:9931/v1 --plain" | tee session.log
 ```
 
 The same console is what the agent falls back to on its own when there is no usable terminal — a pipe,
@@ -838,7 +838,7 @@ into its answer instead of calling the tool.
 | `GET /v1/models` | yes | optional (best-effort enumeration) | wire | none |
 | API key | `--api-key` → `401` on mismatch | sends `Authorization: Bearer`; a dummy key is fine | wire | none |
 | custom base URL | — | `LLM_BASE_URL` / `AiConfig.configure(...)` | wire + model | none |
-| error before the stream starts (401, 413, 500) | HTTP status + JSON error | surfaced as `session.error` (5xx retried) | wire | none |
+| error before the stream starts (401, 413, 500, and an engine error before the first chunk) | HTTP status + JSON error | surfaced as `session.error` (5xx retried) | wire | none |
 | **engine error after the stream started** | HTTP 200 already sent → `data: {"error":…}`, no `[DONE]` | **ignored**: the SSE parser reads only `choices[0]`, the turn completes with the text so far | wire (pinned as a known gap) | SHOULD, in Atmosphere's `OpenAiCompatibleClient` |
 
 *wire* = `AtmosphereWireContractTest` / `LocalAgentTest`: the **real** `OpenAiCompatServer` (routing,

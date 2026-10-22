@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import net.ladenthin.llama.server.ChunkSink;
 import net.ladenthin.llama.server.OpenAiBackend;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A model-free {@link OpenAiBackend} that answers each streaming chat request with a scripted sequence
@@ -28,10 +29,17 @@ final class ScriptedBackend implements OpenAiBackend {
     }
 
     private final Script script;
+    private final @Nullable RuntimeException afterTheChunks;
     private final List<JsonNode> requests = Collections.synchronizedList(new ArrayList<>());
 
     ScriptedBackend(Script script) {
+        this(script, null);
+    }
+
+    /** A backend that sends the scripted chunks and then fails with {@code afterTheChunks}. */
+    ScriptedBackend(Script script, @Nullable RuntimeException afterTheChunks) {
         this.script = script;
+        this.afterTheChunks = afterTheChunks;
     }
 
     /** Every {@code /v1/chat/completions} body received, in order. */
@@ -44,6 +52,9 @@ final class ScriptedBackend implements OpenAiBackend {
         requests.add(request.deepCopy());
         for (String chunk : script.chunksFor(requests.size(), request)) {
             sink.accept(chunk);
+        }
+        if (afterTheChunks != null) {
+            throw afterTheChunks;
         }
     }
 
@@ -121,6 +132,22 @@ final class ScriptedBackend implements OpenAiBackend {
         return chunks;
     }
 
+    /**
+     * A JSON string literal for {@code s}.
+     *
+     * <p><b>Every control character has to be escaped, not just the newline.</b> RFC 8259 forbids
+     * U+0000..U+001F unescaped inside a string, and a chunk that carries one is not JSON: the client
+     * drops the stream and the turn produces nothing, so what fails is an assertion about the answer,
+     * several layers from the cause. It escaped only the quote, the backslash and {@code \n}, which
+     * left <b>31 of the 32</b> control characters producing invalid JSON (measured) -- and that made
+     * every test feeding it {@link System#lineSeparator()} fail on Windows and nowhere else:
+     * {@code AgentSessionTest.aLoopRunsItsStepsThroughTheFrontEndUntilTheMarker} deterministically,
+     * with a raw CR inside the chunk, {@code Illegal unquoted character ((CTRL-CHAR, code 13))} behind
+     * the client's {@code HTTP/1.1 header parser received no bytes}, and a loop that stalled instead of
+     * reaching its sentinel. The three agent jobs run on Linux, where the separator is a bare LF, so CI
+     * never saw it. The default branch below is the load-bearing part: a control character nobody
+     * listed cannot reintroduce the gap. {@link ScriptedBackendTest} is the guard.
+     */
     private static String quote(String s) {
         StringBuilder sb = new StringBuilder("\"");
         for (char c : s.toCharArray()) {
@@ -128,7 +155,17 @@ final class ScriptedBackend implements OpenAiBackend {
                 case '"' -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");
                 case '\n' -> sb.append("\\n");
-                default -> sb.append(c);
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
             }
         }
         return sb.append('"').toString();

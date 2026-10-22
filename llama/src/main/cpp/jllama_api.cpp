@@ -23,9 +23,15 @@
 #endif
 
 #include <algorithm>
+#include <cstdint>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef JLLAMA_VERSION_STRING
@@ -41,14 +47,22 @@ jllama_status fail(jllama_status status, const char *what) {
     return status;
 }
 
-// Runs `fn` inside the user-reference guard and maps what it throws to a status.
-template <typename Fn> jllama_status guarded(jllama_model *model, Fn &&fn) {
+// Runs `fn` inside the user-reference guard and maps what it throws to a status. `operation` is the
+// C entry point (__func__); a model loaded with --vocab-only has no server context, so an operation
+// that needs one is refused here, before `fn` reaches the never-loaded server_context (a SIGSEGV in
+// llama_vocab::token_bos(), or a wait for a result no inference loop produces, before F266). The
+// refusal is the default: only the operations guarded_tokenizer() runs answer a vocab-only model.
+template <typename Fn>
+jllama_status run_guarded(jllama_model *model, const char *operation, bool needs_server, Fn &&fn) {
     auto *jctx = reinterpret_cast<jllama_context *>(model);
     if (jctx == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model is null");
     }
     jllama_context_guard guard{acquire_jllama_context(jctx)};
     try {
+        if (needs_server) {
+            jllama::engine::require_server(jctx, operation);
+        }
         fn(jctx);
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
@@ -61,6 +75,16 @@ template <typename Fn> jllama_status guarded(jllama_model *model, Fn &&fn) {
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
     }
+}
+
+// An operation that needs the server context (and therefore a model loaded without --vocab-only).
+template <typename Fn> jllama_status guarded(jllama_model *model, const char *operation, Fn &&fn) {
+    return run_guarded(model, operation, true, std::forward<Fn>(fn));
+}
+
+// An operation the tokenizer alone answers: the model meta, tokenize and detokenize.
+template <typename Fn> jllama_status guarded_tokenizer(jllama_model *model, Fn &&fn) {
+    return run_guarded(model, nullptr, false, std::forward<Fn>(fn));
 }
 
 // A C argv as strings (a null element is "").
@@ -97,7 +121,82 @@ void log_adapter(enum ggml_log_level level, const char *text, void * /*user_data
     }
 }
 
+// jllama::rpc::set_serve_hook_for_testing().
+std::atomic<void (*)()> g_rpc_serve_hook{nullptr};
+// jllama::rpc::set_stop_hook_for_testing().
+std::atomic<void (*)()> g_rpc_stop_hook{nullptr};
+
+// The serves in progress, for jllama_rpc_server_stop(). ggml clears its stop flag when it binds the
+// socket (patches/0015), so a stop of ggml's alone is lost when it lands before the bind (device
+// initialization, transport start) and the server goes on listening. A stop while a serve is in
+// progress is therefore kept here: serve does not start ggml's server once it is set, and the
+// stopping thread repeats ggml's stop until serve has returned. A stop while none is in progress
+// stays a no-op, and a stop is for the serves in progress when it is called: every serve call gets
+// an id, the stop records the newest one as its target and waits for the serves up to it, so a
+// serve that starts while the stop still waits (a restart from another thread) is neither told to
+// stop nor reached by the repeated ggml stop -- that one is issued under the mutex the new serve's
+// registration takes first, and ggml clears its flag when the new serve binds. Before, the stop
+// waited for the count of serves to reach zero and the request was reset only then, so a serve
+// that took over right after the targeted one had ended was ended too.
+struct rpc_serve_state {
+    std::mutex mutex;
+    std::condition_variable ended;
+    std::uint64_t next_id = 1;
+    std::vector<std::uint64_t> active; // the ids of the serves in progress, oldest first
+    std::uint64_t stop_up_to = 0;      // the serves with an id up to this one were asked to stop
+};
+
+// Whether a serve with an id up to `target` is still in progress.
+bool serving_up_to(const rpc_serve_state &state, std::uint64_t target) {
+    return !state.active.empty() && state.active.front() <= target;
+}
+
+rpc_serve_state &rpc_serve() {
+    static rpc_serve_state state;
+    return state;
+}
+
+// Whether this thread is inside jllama_rpc_server_serve(): a stop from there cannot wait for it.
+thread_local bool t_in_rpc_serve = false;
+
+constexpr auto RPC_STOP_RETRY = std::chrono::milliseconds(50);
+constexpr auto RPC_STOP_TIMEOUT = std::chrono::seconds(30);
+
+// Marks one jllama_rpc_server_serve() call in progress, for its whole duration, under an id of its own.
+class rpc_serving_scope {
+  public:
+    rpc_serving_scope() {
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        id_ = state.next_id++;
+        state.active.push_back(id_);
+        t_in_rpc_serve = true;
+    }
+    ~rpc_serving_scope() {
+        t_in_rpc_serve = false;
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.active.erase(std::remove(state.active.begin(), state.active.end(), id_), state.active.end());
+        state.ended.notify_all();
+    }
+    rpc_serving_scope(const rpc_serving_scope &) = delete;
+    rpc_serving_scope &operator=(const rpc_serving_scope &) = delete;
+
+    // Whether a stop was issued for this serve (not for one that started after the stop).
+    bool stop_requested() const {
+        rpc_serve_state &state = rpc_serve();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        return id_ <= state.stop_up_to;
+    }
+
+  private:
+    std::uint64_t id_ = 0;
+};
+
 } // namespace
+
+void jllama::rpc::set_serve_hook_for_testing(void (*hook)()) { g_rpc_serve_hook.store(hook); }
+void jllama::rpc::set_stop_hook_for_testing(void (*hook)()) { g_rpc_stop_hook.store(hook); }
 
 extern "C" {
 
@@ -140,7 +239,7 @@ jllama_status jllama_chat_completions(jllama_model *model, const char *request_j
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::chat_completions(jctx, request_json));
     });
 }
@@ -150,7 +249,7 @@ jllama_status jllama_chat_completions_stream_request(jllama_model *model, const 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::chat_completions_stream_request(jctx, request_json, true);
     });
 }
@@ -162,7 +261,7 @@ jllama_status jllama_chat_completions_stream_receive(jllama_model *model, int ta
     }
     *envelope_json = nullptr;
     *stop = false;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         bool s = false;
         std::string envelope = jllama::engine::chat_completions_stream_receive(jctx, task_id, s);
         *envelope_json = copy_out(envelope);
@@ -171,7 +270,7 @@ jllama_status jllama_chat_completions_stream_receive(jllama_model *model, int ta
 }
 
 jllama_status jllama_task_release(jllama_model *model, int task_id) {
-    return guarded(model, [&](jllama_context *jctx) { jllama::engine::task_release(jctx, task_id); });
+    return guarded(model, __func__, [&](jllama_context *jctx) { jllama::engine::task_release(jctx, task_id); });
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -187,7 +286,8 @@ jllama_status jllama_model_meta(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::model_meta(jctx)); });
+    return guarded_tokenizer(
+        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::model_meta(jctx)); });
 }
 
 jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json) {
@@ -195,7 +295,7 @@ jllama_status jllama_completions(jllama_model *model, const char *request_json, 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::completions(jctx, request_json));
     });
 }
@@ -205,7 +305,7 @@ jllama_status jllama_completions_oai(jllama_model *model, const char *request_js
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::completions_oai(jctx, request_json));
     });
 }
@@ -215,8 +315,9 @@ jllama_status jllama_infill(jllama_model *model, const char *request_json, char 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::infill(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::infill(jctx, request_json));
+    });
 }
 
 jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id) {
@@ -224,8 +325,18 @@ jllama_status jllama_completions_stream_request(jllama_model *model, const char 
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::completions_stream_request(jctx, request_json);
+    });
+}
+
+jllama_status jllama_completions_oai_stream_request(jllama_model *model, const char *request_json, int *task_id) {
+    if (request_json == nullptr || task_id == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
+    }
+    *task_id = 0;
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *task_id = jllama::engine::completions_oai_stream_request(jctx, request_json);
     });
 }
 
@@ -234,7 +345,7 @@ jllama_status jllama_chat_completions_request(jllama_model *model, const char *r
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
     }
     *task_id = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *task_id = jllama::engine::chat_completions_stream_request(jctx, request_json, false);
     });
 }
@@ -245,7 +356,7 @@ jllama_status jllama_completions_stream_receive(jllama_model *model, int task_id
     }
     *response_json = nullptr;
     *stop = false;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         bool s = false;
         std::string response = jllama::engine::completions_stream_receive(jctx, task_id, s);
         *response_json = copy_out(response);
@@ -258,8 +369,9 @@ jllama_status jllama_apply_template(jllama_model *model, const char *request_jso
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and prompt must not be null");
     }
     *prompt = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *prompt = copy_out(jllama::engine::apply_template(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *prompt = copy_out(jllama::engine::apply_template(jctx, request_json));
+    });
 }
 
 jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count) {
@@ -268,7 +380,7 @@ jllama_status jllama_embed(jllama_model *model, const char *prompt, float **valu
     }
     *values = nullptr;
     *count = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         const std::vector<float> embedding = jllama::engine::embed(jctx, prompt);
         auto *out = static_cast<float *>(std::malloc(std::max<size_t>(embedding.size(), 1) * sizeof(float)));
         if (out == nullptr) {
@@ -285,7 +397,7 @@ jllama_status jllama_embeddings(jllama_model *model, const char *request_json, b
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::embeddings(jctx, request_json, oai_compat));
     });
 }
@@ -296,7 +408,7 @@ jllama_status jllama_rerank(jllama_model *model, const char *query, int n_docume
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "query, documents and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         std::vector<std::string> docs;
         docs.reserve(static_cast<size_t>(n_documents));
         for (int i = 0; i < n_documents; ++i) {
@@ -312,7 +424,7 @@ jllama_status jllama_tokenize(jllama_model *model, const char *text, bool add_sp
     }
     *tokens = nullptr;
     *count = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids = jllama::engine::tokenize(jctx, text, add_special);
         auto *out = static_cast<int *>(std::malloc(std::max<size_t>(ids.size(), 1) * sizeof(int)));
         if (out == nullptr) {
@@ -330,7 +442,7 @@ jllama_status jllama_tokenize_json(jllama_model *model, const char *text, bool a
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::tokenize_json(jctx, text, add_special, with_pieces));
     });
 }
@@ -341,7 +453,7 @@ jllama_status jllama_detokenize(jllama_model *model, const int *tokens, size_t c
     }
     *text = nullptr;
     *length = 0;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids(tokens, tokens + count);
         const std::string bytes = jllama::engine::detokenize(jctx, ids);
         *text = copy_out(bytes);
@@ -354,7 +466,7 @@ jllama_status jllama_detokenize_json(jllama_model *model, const int *tokens, siz
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "tokens and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded_tokenizer(model, [&](jllama_context *jctx) {
         const std::vector<llama_token> ids(tokens, tokens + count);
         *response_json = copy_out(jllama::engine::detokenize_json(jctx, ids));
     });
@@ -365,7 +477,8 @@ jllama_status jllama_metrics(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::metrics(jctx)); });
+    return guarded(model, __func__,
+                   [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::metrics(jctx)); });
 }
 
 jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id, const char *filename,
@@ -388,7 +501,7 @@ jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int
     default:
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "Invalid slot action");
     }
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::slot_action(jctx, op, slot_id, filename != nullptr ? filename : ""));
     });
 }
@@ -398,7 +511,7 @@ jllama_status jllama_lora_adapters(jllama_model *model, char **response_json) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model,
+    return guarded(model, __func__,
                    [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::lora_adapters(jctx)); });
 }
 
@@ -407,7 +520,7 @@ jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "adapters_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *response_json = copy_out(jllama::engine::set_lora_adapters(jctx, adapters_json));
     });
 }
@@ -416,7 +529,7 @@ jllama_status jllama_configure(jllama_model *model, const char *config_json) {
     if (config_json == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
     }
-    return guarded(model, [&](jllama_context *jctx) { jllama::engine::configure(jctx, config_json); });
+    return guarded(model, __func__, [&](jllama_context *jctx) { jllama::engine::configure(jctx, config_json); });
 }
 
 jllama_status jllama_systemone(jllama_model *model, const char *request_json, char **response_json) {
@@ -424,8 +537,9 @@ jllama_status jllama_systemone(jllama_model *model, const char *request_json, ch
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
     }
     *response_json = nullptr;
-    return guarded(
-        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::systemone(jctx, request_json)); });
+    return guarded(model, __func__, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::systemone(jctx, request_json));
+    });
 }
 
 jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar) {
@@ -494,7 +608,7 @@ jllama_status jllama_server_start_attached(jllama_model *model, int argc, const 
     if (argc < 1 || argv == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
     }
-    return guarded(model, [&](jllama_context *jctx) {
+    return guarded(model, __func__, [&](jllama_context *jctx) {
         *out = reinterpret_cast<jllama_server *>(jllama::server_engine::start_attached(jctx, to_strings(argc, argv)));
     });
 }
@@ -543,11 +657,19 @@ jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, c
     if (host == nullptr || devices == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "host and devices must not be null");
     }
+    rpc_serving_scope serving;
     try {
         const std::string endpoint = std::string(host) + ":" + std::to_string(port);
         auto selected = jllama::rpc::server_devices(jllama::rpc::split_endpoints(devices));
         if (selected.empty()) {
             throw std::runtime_error("no device to serve over RPC");
+        }
+        if (auto *hook = g_rpc_serve_hook.load()) {
+            hook();
+        }
+        if (serving.stop_requested()) {
+            t_last_error.clear();
+            return JLLAMA_STATUS_OK; // stopped before the server started
         }
         // Blocks until jllama_rpc_server_stop(), or returns at once when the socket cannot be bound.
         jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_start_server)>("ggml_backend_rpc_start_server")(
@@ -564,9 +686,46 @@ jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, c
 
 jllama_status jllama_rpc_server_stop(void) {
     try {
-        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server")();
-        t_last_error.clear();
-        return JLLAMA_STATUS_OK;
+        auto *stop_server =
+            jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server");
+        rpc_serve_state &state = rpc_serve();
+        std::unique_lock<std::mutex> lock(state.mutex);
+        // The serves in progress now; one that starts later gets a greater id and is not meant.
+        const std::uint64_t target = state.next_id - 1;
+        if (!state.active.empty()) {
+            state.stop_up_to = std::max(state.stop_up_to, target);
+        }
+        if (state.active.empty() || t_in_rpc_serve) {
+            // Nothing to wait for: none runs, or this is the serving thread itself, before ggml's
+            // server started (serve sees the request and does not start it).
+            stop_server();
+            t_last_error.clear();
+            return JLLAMA_STATUS_OK;
+        }
+        if (auto *hook = g_rpc_stop_hook.load()) {
+            lock.unlock();
+            hook();
+            lock.lock();
+        }
+        const auto deadline = std::chrono::steady_clock::now() + RPC_STOP_TIMEOUT;
+        for (;;) {
+            if (!serving_up_to(state, target)) {
+                t_last_error.clear();
+                return JLLAMA_STATUS_OK;
+            }
+            // Under the mutex, so a serve that starts now registers only afterwards and then binds,
+            // which clears ggml's flag: the stop reaches the serves it is for. Repeated, because it is
+            // lost while their socket is not bound yet.
+            stop_server();
+            const auto next = std::min(std::chrono::steady_clock::now() + RPC_STOP_RETRY, deadline);
+            if (state.ended.wait_until(lock, next, [&state, target]() { return !serving_up_to(state, target); })) {
+                t_last_error.clear();
+                return JLLAMA_STATUS_OK;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return fail(JLLAMA_STATUS_ERROR, "the RPC server did not stop within 30 s of the stop request");
+            }
+        }
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
     }

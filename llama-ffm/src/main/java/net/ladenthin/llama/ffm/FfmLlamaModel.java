@@ -146,6 +146,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the OpenAI chat body ({@code {"messages": [...], ...}})
      * @return the {@code chat.completion} object
+     * @throws InvalidRequestException if the server refuses the body, including {@code "n"} greater than 1
+     *     (one completion per request; send separate requests)
      */
     public String chatCompletions(String requestJson) {
         return stringOut(JllamaNative.CHAT_COMPLETIONS, requireNonNull(requestJson, "requestJson"));
@@ -157,6 +159,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the OpenAI chat body
      * @return the stream; close it to release the task early
+     * @throws InvalidRequestException if the server refuses the body, including {@code "n"} greater than 1
+     *     (one completion per request; send separate requests)
      */
     public FfmTaskStream chatCompletionsStream(String requestJson) {
         int task = taskOut(JllamaNative.CHAT_COMPLETIONS_STREAM_REQUEST, requireNonNull(requestJson, "requestJson"));
@@ -169,6 +173,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the OpenAI chat body
      * @return the stream of raw result objects
+     * @throws InvalidRequestException if the server refuses the body, including {@code "n"} greater than 1
+     *     (one completion per request; send separate requests)
      */
     public FfmTaskStream chatCompletionsRaw(String requestJson) {
         int task = taskOut(JllamaNative.CHAT_COMPLETIONS_REQUEST, requireNonNull(requestJson, "requestJson"));
@@ -180,6 +186,9 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the request object ({@code {"prompt": ..., ...}})
      * @return the result object
+     * @throws InvalidRequestException if the server refuses the body, including several prompts in one
+     *     request or {@code "n"} greater than 1 (one prompt and one completion per request; send separate
+     *     requests)
      */
     public String completions(String requestJson) {
         return stringOut(JllamaNative.COMPLETIONS, requireNonNull(requestJson, "requestJson"));
@@ -190,9 +199,28 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the request object
      * @return the {@code text_completion} object
+     * @throws InvalidRequestException if the server refuses the body, including several prompts in one
+     *     request or {@code "n"} greater than 1 (one prompt and one completion per request; send separate
+     *     requests)
      */
     public String completionsOai(String requestJson) {
         return stringOut(JllamaNative.COMPLETIONS_OAI, requireNonNull(requestJson, "requestJson"));
+    }
+
+    /**
+     * A streamed OpenAI {@code /v1/completions} request: each {@link FfmTaskStream#next()} is one
+     * {@code {"data": <text_completion chunk>, "stop": <bool>}} envelope, the last chunk with
+     * {@code usage} (as {@code LlamaModel.streamCompletionsOai}).
+     *
+     * @param requestJson the request object, parsed as {@link #completionsOai(String)} parses it
+     * @return the stream; close it to release the task early
+     * @throws InvalidRequestException if the server refuses the body, including several prompts in one
+     *     request or {@code "n"} greater than 1 (one prompt and one completion per request; send separate
+     *     requests)
+     */
+    public FfmTaskStream completionsOaiStream(String requestJson) {
+        int task = taskOut(JllamaNative.COMPLETIONS_OAI_STREAM_REQUEST, requireNonNull(requestJson, "requestJson"));
+        return new FfmTaskStream(this, task, JllamaNative.CHAT_COMPLETIONS_STREAM_RECEIVE);
     }
 
     /**
@@ -200,6 +228,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the request object ({@code input_prefix}, {@code input_suffix}, ...)
      * @return the result object
+     * @throws InvalidRequestException if the server refuses the body, including {@code "n"} greater than 1
+     *     (one completion per request)
      */
     public String infill(String requestJson) {
         return stringOut(JllamaNative.INFILL, requireNonNull(requestJson, "requestJson"));
@@ -210,6 +240,9 @@ public final class FfmLlamaModel implements AutoCloseable {
      *
      * @param requestJson the request object
      * @return the stream
+     * @throws InvalidRequestException if the server refuses the body, including several prompts in one
+     *     request or {@code "n"} greater than 1 (one prompt and one completion per request; send separate
+     *     requests)
      */
     public FfmTaskStream completionsStream(String requestJson) {
         int task = taskOut(JllamaNative.COMPLETIONS_STREAM_REQUEST, requireNonNull(requestJson, "requestJson"));
@@ -343,12 +376,17 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * A slot save, restore or erase.
+     * A slot save, restore or erase. As {@code LlamaModel.saveSlot}, the file of a save or restore is a
+     * file name inside the directory the model was loaded with ({@code --slot-save-path}), not a path.
      *
      * @param op the operation
      * @param slotId the slot
-     * @param filename the file for {@link SlotOp#SAVE} and {@link SlotOp#RESTORE}; ignored for erase
+     * @param filename the name of the file inside the slot directory for {@link SlotOp#SAVE} and
+     *     {@link SlotOp#RESTORE}; ignored for erase
      * @return the server's result object
+     * @throws InvalidRequestException if {@code filename} has a directory part, contains {@code ..} or
+     *     is empty
+     * @throws LlamaException if the model was loaded without {@code --slot-save-path}, or the action fails
      */
     public String slotAction(SlotOp op, int slotId, String filename) {
         requireNonNull(op, "op");

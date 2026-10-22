@@ -4,13 +4,15 @@ Thank you for your interest in contributing! This document explains how to build
 
 ## How to build and run
 
-Prerequisites: Java 11+, Maven 3.x, CMake 3.22+, and a C++17-capable compiler.
+Prerequisites: a JDK 21 to build (Temurin; the library itself runs on Java 8+), a JDK 22+ registered in
+`~/.m2/toolchains.xml` for the `llama-ffm` module, Maven 3.x, CMake 3.22+, and a C++17-capable compiler.
 
 ```bash
-mvn compile                          # generate JNI headers
-cmake -B build && cmake --build build --config Release
-mvn test
-mvn package
+mvn -f llama/pom.xml compile                        # Java classes (src/main/cpp/jllama.h is kept by hand)
+cd llama && cmake -B build && cmake --build build --config Release && cd ..
+                                                    # native library into llama/src/main/natives/
+mvn -f llama/pom.xml test                           # model-backed tests skip without their GGUF
+mvn package                                         # the whole reactor
 ```
 
 See [README.md](README.md) for installation, Android, GPU (CUDA/Metal/Vulkan), and runtime usage. See [CLAUDE.md](CLAUDE.md) for the full maintainer guide (upstream-llama.cpp upgrade procedure, native helper architecture, per-version breaking-change table).
@@ -33,14 +35,14 @@ When reporting a bug, include: OS and architecture, `java -version` output, the 
 
 ## Coding standards
 
-Follow the conventions documented in [CLAUDE.md](CLAUDE.md): native helper file split (`json_helpers.hpp` vs `jni_helpers.hpp`), include-order rule for upstream server headers, Javadoc HTML-entity table, and the upstream-llama.cpp upgrade procedure. Java targets 11+. C++ must be C++17-clean. Format C++ with `clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp` before committing.
+Follow the conventions documented in [CLAUDE.md](CLAUDE.md): native helper file split (`json_helpers.hpp` vs `jni_helpers.hpp`), include-order rule for upstream server headers, Javadoc HTML-entity table, and the upstream-llama.cpp upgrade procedure. The core targets Java 8 bytecode (`llama-langchain4j` Java 17, `llama-ffm` Java 22). C++ must be C++17-clean. Format Java with `mvn spotless:apply` and C++ with clang-format 23.1.3 (`clang-format -i llama/src/main/cpp/*.cpp llama/src/main/cpp/*.hpp llama/src/test/cpp/*.cpp`) before committing.
 
 ## Test policy
 
 Every new feature or behaviour change MUST include automated tests; bug fixes SHOULD include a regression test.
 
-- Java tests: JUnit 4, under `src/test/java/net/ladenthin/llama/` and `src/test/java/examples/`. Require a model file (see CI configs for the HuggingFace download).
-- C++ unit tests: GoogleTest, under `src/test/cpp/` (`test_json_helpers.cpp`, `test_jni_helpers.cpp`, `test_server.cpp`, `test_utils.cpp`). No JVM or model file required.
+- Java tests: JUnit Jupiter, under `llama/src/test/java/net/ladenthin/llama/` and `llama/src/test/java/examples/`. Model-backed tests read their GGUF from `models/` (the list is `.github/models.csv`, which CI downloads) and skip themselves without it.
+- C++ unit tests: GoogleTest, under `llama/src/test/cpp/` (one file per helper header and per carried llama.cpp patch; CLAUDE.md lists them), built with `cmake -B build -DBUILD_TESTING=ON` and run with `ctest`. No JVM and no downloaded model required: the tests that need a model write a tiny random GGUF themselves.
 - Coverage is reported via JaCoCo and pushed to Coveralls and Codecov on every CI run; new code must not regress coverage on critical paths.
 
 ## Commit message convention

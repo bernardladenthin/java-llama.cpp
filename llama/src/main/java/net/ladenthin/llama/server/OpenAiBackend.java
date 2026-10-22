@@ -90,6 +90,36 @@ public interface OpenAiBackend {
     }
 
     /**
+     * Count the prompt tokens of a chat request without generating -- the prompt the chat template
+     * renders from it, tokenized as a generation tokenizes it ({@code POST /v1/messages/count_tokens},
+     * {@code /v1/responses/input_tokens} and {@code /v1/chat/completions/input_tokens}, each translated
+     * to an OpenAI chat request first). The default throws {@link UnsupportedOperationException}, which
+     * the server answers {@code 501}; backends that can count override it.
+     *
+     * @param request the OpenAI {@code /v1/chat/completions} request
+     * @return the number of prompt tokens
+     * @throws IOException if the count fails in a way the caller should surface as a server error
+     */
+    default int countTokens(JsonNode request) throws IOException {
+        throw new UnsupportedOperationException("token counting is not supported by this backend");
+    }
+
+    /**
+     * The placeholder a raw multimodal prompt puts where each image goes (llama.cpp's
+     * {@code {"prompt_string": ..., "multimodal_data": [...]}} prompt object), which the server draws at
+     * random per process. Asked only for a raw request that carries images. The default throws
+     * {@link UnsupportedOperationException}, which the server answers {@code 501} with the exception's
+     * message (upstream's answer for a capability the server lacks, in the route's error shape);
+     * backends that take images override it.
+     *
+     * @return the media marker
+     * @throws IOException if the marker cannot be read
+     */
+    default String mediaMarker() throws IOException {
+        throw new UnsupportedOperationException("raw prompts with images are not supported by this backend");
+    }
+
+    /**
      * Generate embeddings ({@code POST /v1/embeddings}). Requires the model to have been loaded in
      * embedding mode; otherwise the native call fails and the caller surfaces a server error.
      *
@@ -104,9 +134,10 @@ public interface OpenAiBackend {
      * in reranking mode; otherwise the native call fails and the caller surfaces a server error.
      *
      * @param request the parsed rerank request ({@code query} string + {@code documents} array, optional
-     *                {@code top_n})
+     *                {@code top_n}; or TEI's {@code texts} array, optional {@code return_text})
      * @return the rerank response serialized as JSON ({@code results}/{@code data} of
-     *         {@code {index, relevance_score}})
+     *         {@code {index, relevance_score}} plus {@code usage}; for a request with {@code texts} TEI's
+     *         bare array of {@code {index, score}}, with {@code text} on {@code return_text})
      * @throws IOException if reranking fails in a way the caller should surface as a server error
      */
     String rerank(JsonNode request) throws IOException;

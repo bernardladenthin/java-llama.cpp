@@ -19,6 +19,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,8 +28,12 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.value.SlotMetrics;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,10 +49,14 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code POST /v1/chat/completions} — streaming (Server-Sent Events) and non-streaming chat
  *       completions, forwarded faithfully (messages/tools verbatim; streamed {@code delta.tool_calls}
  *       preserved).</li>
- *   <li>{@code POST /v1/completions} — text completion, streaming (Server-Sent Events, token by token
- *       via {@code generate(...)}) when {@code stream:true} and non-streaming otherwise.</li>
+ *   <li>{@code POST /v1/completions} — text completion, the body forwarded to llama.cpp verbatim:
+ *       streaming (Server-Sent Events, upstream's own {@code text_completion} chunks with {@code usage}
+ *       on the last) when {@code stream:true} and non-streaming otherwise.</li>
  *   <li>{@code POST /v1/embeddings} — embeddings (requires the model to be loaded in embedding
  *       mode).</li>
+ *   <li>{@code POST /v1/messages/count_tokens}, {@code POST /v1/responses/input_tokens} and
+ *       {@code POST /v1/chat/completions/input_tokens} — the prompt tokens of the request of the route
+ *       before them, counted without generating ({@link OpenAiBackend#countTokens}).</li>
  *   <li>{@code GET /v1/models} — advertises the single configured model.</li>
  *   <li>{@code GET /metrics} — server and per-slot token/cache counters as JSON.</li>
  *   <li>{@code GET /slots} — the per-slot metrics array as JSON.</li>
@@ -63,7 +72,7 @@ import org.slf4j.LoggerFactory;
  * <pre>{@code
  * try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("models/model.gguf"));
  *      OpenAiCompatServer server = new OpenAiCompatServer(
- *              model, OpenAiServerConfig.builder().port(8080).modelId("local").build()).start()) {
+ *              model, OpenAiServerConfig.builder().port(9931).modelId("local").build()).start()) {
  *     Thread.currentThread().join();
  * }
  * }</pre>
@@ -96,6 +105,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * {@code /v1}) so ghost-text clients such as llama.vscode and Tabby reach it unchanged.
      */
     public static final String PATH_INFILL = "/infill";
+
+    /** Anthropic's token count of a {@code /v1/messages} request, without generating. */
+    public static final String PATH_MESSAGES_COUNT_TOKENS = "/v1/messages/count_tokens";
+
+    /** The token count of a {@code /v1/responses} request, without generating (upstream's route). */
+    public static final String PATH_RESPONSES_INPUT_TOKENS = "/v1/responses/input_tokens";
+
+    /** The token count of a {@code /v1/chat/completions} request, without generating (upstream's route). */
+    public static final String PATH_CHAT_COMPLETIONS_INPUT_TOKENS = "/v1/chat/completions/input_tokens";
 
     /** The model-list route. */
     public static final String PATH_MODELS = "/v1/models";
@@ -135,13 +153,29 @@ public final class OpenAiCompatServer implements AutoCloseable {
     private static final int HTTP_NOT_FOUND = 404;
     private static final int HTTP_METHOD_NOT_ALLOWED = 405;
     private static final int HTTP_SERVER_ERROR = 500;
+    private static final int HTTP_NOT_IMPLEMENTED = 501;
     private static final int HTTP_PAYLOAD_TOO_LARGE = 413;
 
     private static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final String CONTENT_TYPE_SSE = "text/event-stream; charset=utf-8";
     private static final String BEARER_PREFIX = "Bearer ";
+
+    /** Header the Anthropic Messages API authenticates with. */
+    private static final String API_KEY_HEADER = "x-api-key";
+
+    /** Headers a preflight allows when the browser names none: the ones the routes read. */
+    private static final String DEFAULT_CORS_ALLOW_HEADERS =
+            "Content-Type, Authorization, x-api-key, anthropic-version";
+
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
+    /** upstream's error type for a capability the server lacks (HTTP 501). */
+    private static final String ERROR_TYPE_NOT_SUPPORTED = "not_supported_error";
+    /** Anthropic's error type for a request that is the client's fault (HTTP 400). */
+    private static final String ANTHROPIC_ERROR_REQUEST = "invalid_request_error";
+    /** Anthropic's error type for an unexpected server-side failure (HTTP 500). */
+    private static final String ANTHROPIC_ERROR_SERVER = "api_error";
+
     private static final String HEALTH_BODY = "{\"status\":\"ok\"}";
 
     private final OpenAiServerConfig config;
@@ -200,12 +234,20 @@ public final class OpenAiCompatServer implements AutoCloseable {
         register(PATH_RERANK, this::handleRerank);
         register("/rerank", this::handleRerank);
         register("/reranking", this::handleRerank);
+        register("/v1/reranking", this::handleRerank);
         register(PATH_INFILL, this::handleInfill);
         register("/v1/infill", this::handleInfill);
         register(PATH_MESSAGES, this::handleAnthropicMessages);
         register("/messages", this::handleAnthropicMessages);
         register(PATH_RESPONSES, this::handleResponses);
         register("/responses", this::handleResponses);
+        // upstream's token counts: the request of the route above, counted without generating
+        register(PATH_MESSAGES_COUNT_TOKENS, this::handleAnthropicCountTokens);
+        register("/messages/count_tokens", this::handleAnthropicCountTokens);
+        register(PATH_RESPONSES_INPUT_TOKENS, this::handleResponsesInputTokens);
+        register("/responses/input_tokens", this::handleResponsesInputTokens);
+        register(PATH_CHAT_COMPLETIONS_INPUT_TOKENS, this::handleChatInputTokens);
+        register("/chat/completions/input_tokens", this::handleChatInputTokens);
         // Ollama-native surface (Copilot's built-in Ollama provider + Ollama-hardcoded tools).
         register(PATH_OLLAMA_VERSION, this::handleOllamaVersion);
         register(PATH_OLLAMA_TAGS, this::handleOllamaTags);
@@ -248,13 +290,32 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * cross-cutting CORS/preflight wiring applies uniformly to every route (including the catch-all).
      */
     private void register(String path, HttpHandler handler) {
-        http.createContext(path, handler).getFilters().add(corsFilter);
+        http.createContext(path, "/".equals(path) ? handler : exactPath(path, handler))
+                .getFilters()
+                .add(corsFilter);
+    }
+
+    /**
+     * Let {@code handler} answer only {@code path} itself (and {@code path} with one trailing slash). The
+     * JDK server matches a context by prefix, so without this {@code /v1/messages/count_tokens} ran a whole
+     * generation through the {@code /v1/messages} handler; upstream routes match exactly.
+     */
+    private HttpHandler exactPath(String path, HttpHandler handler) {
+        return exchange -> {
+            String requested = exchange.getRequestURI().getPath();
+            if (path.equals(requested) || (path + "/").equals(requested)) {
+                handler.handle(exchange);
+            } else {
+                handleNotFound(exchange);
+            }
+        };
     }
 
     /**
      * Build a CORS filter that stamps {@code Access-Control-Allow-Origin} on every response and answers
      * {@code OPTIONS} preflights with {@code 204} + the allowed methods/headers — so browser- and
-     * webview-based clients (which preflight an {@code Authorization} header) are not blocked.
+     * webview-based clients (which preflight {@code Authorization}, {@code x-api-key} and their SDK's own
+     * headers) are not blocked.
      */
     private static Filter buildCorsFilter(String allowOrigin) {
         return new Filter() {
@@ -263,7 +324,16 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowOrigin);
                 if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                     exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                    exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+                    // Allow what the browser asks for: browser SDKs send their own headers (Anthropic's
+                    // x-api-key and anthropic-version, the x-stainless-* family), and a preflight that
+                    // lists fewer makes the browser drop the request. The origin still gates access.
+                    String requested = exchange.getRequestHeaders().getFirst("Access-Control-Request-Headers");
+                    exchange.getResponseHeaders()
+                            .set(
+                                    "Access-Control-Allow-Headers",
+                                    requested != null && !requested.trim().isEmpty()
+                                            ? requested
+                                            : DEFAULT_CORS_ALLOW_HEADERS);
                     exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
                     exchange.sendResponseHeaders(204, -1);
                     exchange.close();
@@ -318,10 +388,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     private void streamCompletions(HttpExchange exchange, JsonNode request) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_SSE);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-        exchange.sendResponseHeaders(HTTP_OK, 0);
-        try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
+        try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
@@ -332,14 +399,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 backend.streamCompletions(request, chunkJson -> out.writeStrict(OpenAiSseFormatter.sseData(chunkJson)));
                 out.writeStrict(OpenAiSseFormatter.sseDone());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly(
-                        OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
-            } catch (IOException e) {
-                LOG.debug("client disconnected during stream", e);
-            } catch (RuntimeException e) {
-                LOG.warn("streaming completion failed", e);
-                out.writeQuietly(
-                        OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null)));
+                if (!out.answerIfNotStarted(
+                        HTTP_BAD_REQUEST, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null))) {
+                    out.writeQuietly(OpenAiSseFormatter.sseData(
+                            OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
+                }
+            } catch (IOException | RuntimeException e) {
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
+                failStream(out, e, "streaming completion", error, () -> OpenAiSseFormatter.sseData(error));
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -385,8 +452,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * Run a non-streaming request through {@code producer} and write its JSON body, translating an
      * {@link IllegalArgumentException} (a request this layer rejected) or an
      * {@link InvalidRequestException} (one the native layer rejected, where upstream's server answers
-     * {@code 400}) to {@code 400} and any other failure to {@code 500}. The streaming routes make the
-     * same distinction for the error event they write once the headers are out.
+     * {@code 400}) to {@code 400} and any other failure to {@code 500}. The streaming routes answer the
+     * same way while their stream has not started, and make the same distinction for the error event
+     * they write once it has.
      */
     private void completeNonStreaming(HttpExchange exchange, JsonNode request, BodyProducer producer)
             throws IOException {
@@ -405,10 +473,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     private void streamChat(HttpExchange exchange, JsonNode request) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_SSE);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-        exchange.sendResponseHeaders(HTTP_OK, 0);
-        try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
+        try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
@@ -422,14 +487,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
                                 OpenAiSseFormatter.sseData(OpenAiSseFormatter.ensureUsageCachedTokens(chunkJson))));
                 out.writeStrict(OpenAiSseFormatter.sseDone());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly(
-                        OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
-            } catch (IOException e) {
-                LOG.debug("client disconnected during stream", e);
-            } catch (RuntimeException e) {
-                LOG.warn("streaming chat completion failed", e);
-                out.writeQuietly(
-                        OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null)));
+                if (!out.answerIfNotStarted(
+                        HTTP_BAD_REQUEST, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null))) {
+                    out.writeQuietly(OpenAiSseFormatter.sseData(
+                            OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
+                }
+            } catch (IOException | RuntimeException e) {
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
+                failStream(out, e, "streaming chat completion", error, () -> OpenAiSseFormatter.sseData(error));
             } finally {
                 // try-with-resources closes the stream (under its lock) after the heartbeat is cancelled,
                 // so the close never races a still-in-flight heartbeat write.
@@ -489,7 +554,23 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = OllamaApiSupport.toOpenAiChatRequest(request);
+            if (OllamaApiSupport.isChatLoadOnly(request)) {
+                // Ollama's preload through the chat route: no messages means "load the model"
+                sendJson(
+                        exchange,
+                        HTTP_OK,
+                        OllamaApiSupport.toOllamaChatLoadResponse(
+                                request.path("model").asText(config.getModelId())));
+                return;
+            }
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = OllamaApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation rejects (a message that is no object), answered like upstream.
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             if (OllamaApiSupport.isStreaming(request)) {
                 streamOllamaChat(exchange, openAiRequest, model);
@@ -514,27 +595,37 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     /** Stream an Ollama {@code /api/chat} response as newline-delimited JSON, ending with a done line. */
     private void streamOllamaChat(HttpExchange exchange, JsonNode openAiRequest, String model) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_NDJSON);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-        exchange.sendResponseHeaders(HTTP_OK, 0);
         final ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
-        try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
+        // The done line reports the token counts, as the blocking answer does; they arrive in the
+        // stream's usage chunk.
+        final AtomicReference<JsonNode> usage = new AtomicReference<>();
+        // and the done_reason, which the chunk ending the answer carries
+        final AtomicReference<String> finishReason = new AtomicReference<>();
+        try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_NDJSON)) {
             try {
-                backend.stream(openAiRequest, chunkJson -> {
+                backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     accumulator.accept(chunkJson);
+                    JsonNode chunkUsage = OllamaApiSupport.usageOf(chunkJson);
+                    if (chunkUsage != null) {
+                        usage.set(chunkUsage);
+                    }
+                    String chunkFinishReason = OllamaApiSupport.finishReasonOf(chunkJson);
+                    if (chunkFinishReason != null) {
+                        finishReason.set(chunkFinishReason);
+                    }
                     String line = OllamaApiSupport.toOllamaContentLine(chunkJson, model);
                     if (line != null) {
                         out.writeStrict(line);
                     }
                 });
-                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator));
+                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator, usage.get(), finishReason.get()));
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly(ollamaError(message(e)) + "\n");
-            } catch (IOException e) {
-                LOG.debug("ollama client disconnected during stream", e);
-            } catch (RuntimeException e) {
-                LOG.warn("ollama streaming chat failed", e);
-                out.writeQuietly(ollamaError(message(e)) + "\n");
+                if (!out.answerIfNotStarted(HTTP_BAD_REQUEST, ollamaError(message(e)))) {
+                    out.writeQuietly(ollamaError(message(e)) + "\n");
+                }
+            } catch (IOException | RuntimeException e) {
+                String error = ollamaError(message(e));
+                failStream(out, e, "ollama streaming chat", error, () -> error + "\n");
             }
         }
     }
@@ -545,17 +636,54 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            String model = request.path("model").asText(config.getModelId());
-            // Generation runs to completion first (there is no streaming raw-completion path), then the
-            // text is wrapped — as a single NDJSON content line + done line when stream is requested.
-            final String text;
             try {
+                // Ollama refuses a non-string prompt when it binds the body, before anything else
+                OllamaApiSupport.requireTextualPrompt(request);
+            } catch (IllegalArgumentException e) {
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
+                return;
+            }
+            if (OllamaApiSupport.hasRawConflict(request)) {
+                // refused before the load answer and fill-in-the-middle, in Ollama's order
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(OllamaApiSupport.RAW_CONFLICT_MESSAGE));
+                return;
+            }
+            String model = request.path("model").asText(config.getModelId());
+            if (OllamaApiSupport.isLoadOnly(request)) {
+                // Ollama's preload: no prompt means "load the model", answered at once
+                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaLoadResponse(model));
+                return;
+            }
+            // Generation runs to completion first, then the text is wrapped -- as a single NDJSON content
+            // line + done line when stream is requested. A suffix is fill-in-the-middle, raw the bare
+            // prompt, anything else goes through the chat template as Ollama does.
+            final OllamaApiSupport.Generated generated;
+            try {
+                if (!OllamaApiSupport.isRaw(request)) {
+                    // a raw request refused both above, in Ollama's order; without raw neither can be kept
+                    OllamaApiSupport.refuseTemplateAndContext(request);
+                }
                 if (OllamaApiSupport.hasSuffix(request)) {
-                    text = OllamaApiSupport.extractInfillContent(
+                    generated = OllamaApiSupport.Generated.fromInfill(
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
+                } else if (OllamaApiSupport.isRaw(request)) {
+                    // the marker the raw prompt's images go to is the server's, asked only when there are any
+                    String marker = null;
+                    if (OllamaApiSupport.hasImages(request)) {
+                        try {
+                            marker = backend.mediaMarker();
+                        } catch (UnsupportedOperationException e) {
+                            // a backend that takes no images lacks a capability: upstream's 501, not a 500
+                            sendJson(exchange, HTTP_NOT_IMPLEMENTED, ollamaError(message(e)));
+                            return;
+                        }
+                    }
+                    generated = OllamaApiSupport.Generated.fromCompletion(
+                            backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request, marker)));
                 } else {
-                    text = OllamaApiSupport.extractCompletionText(
-                            backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request)));
+                    // Ollama applies the chat template unless raw is true
+                    generated = OllamaApiSupport.Generated.fromChat(
+                            backend.complete(OllamaApiSupport.toOpenAiChatRequestFromGenerate(request)));
                 }
             } catch (IllegalArgumentException | InvalidRequestException e) {
                 sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
@@ -566,15 +694,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 return;
             }
             if (OllamaApiSupport.isStreaming(request)) {
-                byte[] bytes =
-                        OllamaApiSupport.toOllamaGenerateStream(text, model).getBytes(StandardCharsets.UTF_8);
+                byte[] bytes = OllamaApiSupport.toOllamaGenerateStream(generated, model)
+                        .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_NDJSON);
                 exchange.sendResponseHeaders(HTTP_OK, bytes.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
                 }
             } else {
-                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaGenerateResponse(text, model));
+                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaGenerateResponse(generated, model));
             }
         } finally {
             exchange.close();
@@ -593,7 +721,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = AnthropicApiSupport.toOpenAiChatRequest(request);
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = AnthropicApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation refuses (a max_tokens that is not a number), answered before
+                // any stream starts, like upstream.
+                sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e), ANTHROPIC_ERROR_REQUEST));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             if (AnthropicApiSupport.isStreaming(request)) {
                 streamAnthropic(exchange, openAiRequest, model);
@@ -602,11 +738,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 try {
                     body = backend.complete(openAiRequest);
                 } catch (IllegalArgumentException | InvalidRequestException e) {
-                    sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e)));
+                    sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e), ANTHROPIC_ERROR_REQUEST));
                     return;
                 } catch (IOException | RuntimeException e) {
                     LOG.warn("anthropic messages failed", e);
-                    sendJson(exchange, HTTP_SERVER_ERROR, anthropicError(message(e)));
+                    sendJson(exchange, HTTP_SERVER_ERROR, anthropicError(message(e), ANTHROPIC_ERROR_SERVER));
                     return;
                 }
                 sendJson(exchange, HTTP_OK, AnthropicApiSupport.toAnthropicResponse(body, model));
@@ -618,20 +754,19 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     /** Stream an Anthropic {@code /v1/messages} response as the Anthropic SSE event sequence. */
     private void streamAnthropic(HttpExchange exchange, JsonNode openAiRequest, String model) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_SSE);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-        exchange.sendResponseHeaders(HTTP_OK, 0);
         final AnthropicStreamTranslator translator =
                 new AnthropicStreamTranslator("msg_" + Long.toHexString(System.nanoTime()), model);
-        try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
+        try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
+                // the opening first: a heartbeat starts the stream, and the opening event must precede
+                // every other event
+                out.startWith(translator.begin());
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
                         () -> out.writeQuietly(OpenAiSseFormatter.heartbeat()),
                         config.getHeartbeatMillis(),
                         config.getHeartbeatMillis(),
                         TimeUnit.MILLISECONDS);
-                out.writeStrict(translator.begin());
                 backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     String events = translator.onChunk(chunkJson);
                     if (!events.isEmpty()) {
@@ -640,12 +775,13 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 });
                 out.writeStrict(translator.end());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly(AnthropicApiSupport.sseEvent("error", anthropicError(message(e))));
-            } catch (IOException e) {
-                LOG.debug("anthropic client disconnected during stream", e);
-            } catch (RuntimeException e) {
-                LOG.warn("anthropic streaming failed", e);
-                out.writeQuietly(AnthropicApiSupport.sseEvent("error", anthropicError(message(e))));
+                String error = anthropicError(message(e), ANTHROPIC_ERROR_REQUEST);
+                if (!out.answerIfNotStarted(HTTP_BAD_REQUEST, error)) {
+                    out.writeQuietly(AnthropicApiSupport.sseEvent("error", error));
+                }
+            } catch (IOException | RuntimeException e) {
+                String error = anthropicError(message(e), ANTHROPIC_ERROR_SERVER);
+                failStream(out, e, "anthropic streaming", error, () -> AnthropicApiSupport.sseEvent("error", error));
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -663,11 +799,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
         return copy;
     }
 
-    private static String anthropicError(String message) {
+    private static String anthropicError(String message, String type) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("type", "error");
         ObjectNode error = root.putObject("error");
-        error.put("type", "invalid_request_error");
+        error.put("type", type);
         error.put("message", message);
         return root.toString();
     }
@@ -680,7 +816,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = ResponsesApiSupport.toOpenAiChatRequest(request);
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = ResponsesApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation rejects (e.g. an input_file part), answered like upstream.
+                sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             String responseId = "resp_" + Long.toHexString(System.nanoTime());
             if (ResponsesApiSupport.isStreaming(request)) {
@@ -704,22 +847,92 @@ public final class OpenAiCompatServer implements AutoCloseable {
         }
     }
 
+    // ----- token counts (upstream's handle_count_tokens) -----
+
+    private void handleAnthropicCountTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, true, AnthropicApiSupport::toOpenAiChatRequest);
+    }
+
+    private void handleResponsesInputTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, false, ResponsesApiSupport::toOpenAiChatRequest);
+    }
+
+    private void handleChatInputTokens(HttpExchange exchange) throws IOException {
+        handleCountTokens(exchange, false, UnaryOperator.identity());
+    }
+
+    /**
+     * Count the prompt tokens of a request without generating, as upstream's {@code handle_count_tokens}:
+     * the body is translated as its generating route translates it, and the answer is
+     * {@code {"input_tokens": N}}, with {@code "object": "response.input_tokens"} on the OpenAI routes.
+     * A request the translation or the count refuses is {@code 400}, a backend that cannot count
+     * {@code 501}, both in the route's error shape.
+     */
+    private void handleCountTokens(HttpExchange exchange, boolean anthropic, UnaryOperator<JsonNode> toChatRequest)
+            throws IOException {
+        try {
+            JsonNode request = requirePostJson(exchange);
+            if (request == null) {
+                return;
+            }
+            final int count;
+            try {
+                count = backend.countTokens(toChatRequest.apply(request));
+            } catch (IllegalArgumentException | InvalidRequestException e) {
+                sendCountError(exchange, anthropic, HTTP_BAD_REQUEST, message(e));
+                return;
+            } catch (UnsupportedOperationException e) {
+                sendCountError(exchange, anthropic, HTTP_NOT_IMPLEMENTED, message(e));
+                return;
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("token count failed", e);
+                sendCountError(exchange, anthropic, HTTP_SERVER_ERROR, message(e));
+                return;
+            }
+            ObjectNode body = OBJECT_MAPPER.createObjectNode().put("input_tokens", count);
+            if (!anthropic) {
+                body.put("object", "response.input_tokens");
+            }
+            sendJson(exchange, HTTP_OK, body.toString());
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void sendCountError(HttpExchange exchange, boolean anthropic, int status, String message)
+            throws IOException {
+        if (anthropic) {
+            sendJson(
+                    exchange,
+                    status,
+                    anthropicError(
+                            message, status == HTTP_BAD_REQUEST ? ANTHROPIC_ERROR_REQUEST : ANTHROPIC_ERROR_SERVER));
+        } else if (status == HTTP_BAD_REQUEST) {
+            sendError(exchange, status, ERROR_TYPE_REQUEST, message);
+        } else {
+            sendError(
+                    exchange,
+                    status,
+                    status == HTTP_NOT_IMPLEMENTED ? ERROR_TYPE_NOT_SUPPORTED : ERROR_TYPE_SERVER,
+                    message);
+        }
+    }
+
     /** Stream a Responses {@code /v1/responses} reply as the Responses SSE event sequence. */
     private void streamResponses(HttpExchange exchange, JsonNode openAiRequest, String model, String responseId)
             throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_SSE);
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-        exchange.sendResponseHeaders(HTTP_OK, 0);
         final ResponsesStreamTranslator translator = new ResponsesStreamTranslator(model, responseId);
-        try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
+        try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
+                // the opening first: a heartbeat starts the stream, and the opening event must precede
+                // every other event
+                out.startWith(translator.begin());
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
                         () -> out.writeQuietly(OpenAiSseFormatter.heartbeat()),
                         config.getHeartbeatMillis(),
                         config.getHeartbeatMillis(),
                         TimeUnit.MILLISECONDS);
-                out.writeStrict(translator.begin());
                 backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     String events = translator.onChunk(chunkJson);
                     if (!events.isEmpty()) {
@@ -728,14 +941,20 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 });
                 out.writeStrict(translator.end());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly("event: error\ndata: "
-                        + OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null) + "\n\n");
-            } catch (IOException e) {
-                LOG.debug("responses client disconnected during stream", e);
-            } catch (RuntimeException e) {
-                LOG.warn("responses streaming failed", e);
-                out.writeQuietly("event: error\ndata: "
-                        + OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null) + "\n\n");
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null);
+                if (!out.answerIfNotStarted(HTTP_BAD_REQUEST, error)) {
+                    out.writeQuietly(translator.failed(message(e), ERROR_TYPE_REQUEST) + "event: error\ndata: " + error
+                            + "\n\n");
+                }
+            } catch (IOException | RuntimeException e) {
+                String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
+                failStream(
+                        out,
+                        e,
+                        "responses streaming",
+                        error,
+                        () -> translator.failed(message(e), ERROR_TYPE_SERVER) + "event: error\ndata: " + error
+                                + "\n\n");
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -822,7 +1041,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
             sendJson(
                     exchange,
                     HTTP_OK,
-                    OpenAiSseFormatter.propsJson(config.getModelId(), contextLength, config.isSupportsVision()));
+                    OpenAiSseFormatter.propsJson(
+                            config.getModelId(), contextLength, config.isSupportsVision(), config.getTotalSlots()));
         } finally {
             exchange.close();
         }
@@ -884,13 +1104,20 @@ public final class OpenAiCompatServer implements AutoCloseable {
         if (expected == null) {
             return true;
         }
+        byte[] expectedBytes = expected.getBytes(StandardCharsets.UTF_8);
+        // Anthropic clients (the /v1/messages surface) authenticate with x-api-key, not a bearer token.
+        String apiKeyHeader = exchange.getRequestHeaders().getFirst(API_KEY_HEADER);
+        if (apiKeyHeader != null
+                && MessageDigest.isEqual(expectedBytes, apiKeyHeader.getBytes(StandardCharsets.UTF_8))) {
+            return true;
+        }
         String header = exchange.getRequestHeaders().getFirst("Authorization");
-        if (header == null || !header.startsWith(BEARER_PREFIX)) {
+        // The scheme name is case-insensitive (RFC 7235), so "bearer <key>" is the same credential.
+        if (header == null || !header.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {
             return false;
         }
         // Constant-time comparison so response timing does not leak how many leading bytes
         // of the bearer token matched.
-        byte[] expectedBytes = expected.getBytes(StandardCharsets.UTF_8);
         byte[] presentedBytes = header.substring(BEARER_PREFIX.length()).getBytes(StandardCharsets.UTF_8);
         return MessageDigest.isEqual(expectedBytes, presentedBytes);
     }
@@ -959,27 +1186,126 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     /**
-     * Per-request, thread-safe wrapper over a streaming HTTP response body. Every write and the close are
+     * Per-request, thread-safe wrapper over a streaming HTTP response. Every write and the close are
      * serialized on a {@code private final} lock, so the generation thread and the heartbeat-timer task
      * never write to (or close) the same stream concurrently. The lock is owned by this per-request
      * instance rather than shared, so independent concurrent streams never serialize against each other.
      * It is {@link AutoCloseable} so callers drive it with try-with-resources, which closes the stream
      * (under the lock) on every exit path.
+     *
+     * <p>The response starts with the first write: only then are {@code 200} and the stream's headers
+     * sent, followed by the text set with {@link #startWith(String)}. Until then
+     * {@link #answerIfNotStarted(int, String)} can still answer the request with an error status and a
+     * JSON body, which is what upstream's server does with a request it refuses before the first result.
      */
-    private static final class ResponseStream implements AutoCloseable {
+    // package-private for ResponseStreamTest
+    static final class ResponseStream implements AutoCloseable {
 
-        private final OutputStream os;
+        /** How many causes {@link #isOwnWriteFailure(Throwable)} follows. */
+        private static final int MAX_CAUSE_DEPTH = 16;
+
+        private final HttpExchange exchange;
+        private final String contentType;
         private final Object lock = new Object();
+        private String prelude = "";
+        private @Nullable OutputStream os;
+        /**
+         * Set before the headers are written: once a start was attempted the request cannot be answered
+         * any more, even when the header write failed (a client that went away is often noticed there).
+         */
+        private boolean started;
 
-        ResponseStream(OutputStream os) {
-            this.os = os;
+        private boolean answered;
+
+        /** The last exception a strict write threw: the stream's own failure, i.e. a client that went away. */
+        private @Nullable IOException writeFailure;
+
+        ResponseStream(HttpExchange exchange, String contentType) {
+            this.exchange = exchange;
+            this.contentType = contentType;
+        }
+
+        /**
+         * Text the stream opens with once it starts (a protocol's opening events). Set after the stream
+         * already started (a heartbeat came first), it is written at once, so it is never lost.
+         */
+        void startWith(String text) {
+            synchronized (lock) {
+                prelude = text;
+                OutputStream out = os;
+                if (out != null && !answered && !text.isEmpty()) {
+                    try {
+                        out.write(text.getBytes(StandardCharsets.UTF_8));
+                        out.flush();
+                    } catch (IOException e) {
+                        LOG.trace("stream write failed (client likely disconnected)", e);
+                    }
+                }
+            }
+        }
+
+        /** The started stream, starting it if needed; null once the request was answered without one. */
+        private @Nullable OutputStream body() throws IOException {
+            if (answered) {
+                return null;
+            }
+            OutputStream out = os;
+            if (out == null) {
+                if (started) {
+                    throw new IOException("the " + contentType + " stream failed to start");
+                }
+                started = true;
+                exchange.getResponseHeaders().set("Content-Type", contentType);
+                exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+                exchange.sendResponseHeaders(HTTP_OK, 0);
+                out = exchange.getResponseBody();
+                os = out;
+                if (!prelude.isEmpty()) {
+                    out.write(prelude.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            return out;
         }
 
         /** Write under the lock, propagating failures so a streaming generation can be cancelled. */
         void writeStrict(String text) throws IOException {
             synchronized (lock) {
-                os.write(text.getBytes(StandardCharsets.UTF_8));
-                os.flush();
+                try {
+                    OutputStream out = body();
+                    if (out == null) {
+                        throw new IOException("the request was already answered without a stream; " + text.length()
+                                + " characters dropped");
+                    }
+                    out.write(text.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } catch (IOException e) {
+                    writeFailure = e;
+                    throw e;
+                }
+            }
+        }
+
+        /**
+         * Whether {@code failure} is, or was caused by, the exception a strict write of this stream threw
+         * -- the client going away rather than the backend failing.
+         *
+         * @param failure the exception a route caught
+         * @return {@code true} if a strict write threw it, also when it arrives wrapped
+         */
+        // identity is the point: the very exception a write threw, not an equal one
+        @SuppressWarnings("ReferenceEquality")
+        boolean isOwnWriteFailure(Throwable failure) {
+            synchronized (lock) {
+                IOException own = writeFailure;
+                Throwable t = failure;
+                // bounded, so a cause chain with a cycle cannot loop
+                for (int depth = 0; own != null && t != null && depth < MAX_CAUSE_DEPTH; depth++) {
+                    if (t == own) {
+                        return true;
+                    }
+                    t = t.getCause();
+                }
+                return false;
             }
         }
 
@@ -987,23 +1313,86 @@ public final class OpenAiCompatServer implements AutoCloseable {
         void writeQuietly(String text) {
             synchronized (lock) {
                 try {
-                    os.write(text.getBytes(StandardCharsets.UTF_8));
-                    os.flush();
+                    OutputStream out = body();
+                    if (out != null) {
+                        out.write(text.getBytes(StandardCharsets.UTF_8));
+                        out.flush();
+                    }
                 } catch (IOException e) {
                     LOG.trace("stream write failed (client likely disconnected)", e);
                 }
             }
         }
 
+        /**
+         * Answer the request with {@code status} and a JSON body instead of a stream, if the stream has
+         * not started yet.
+         *
+         * @return {@code false} when the stream had already started (or failed to start), or the request
+         *     was already answered; the caller then reports the error as an event of the stream, which is
+         *     dropped once the request was answered
+         */
+        boolean answerIfNotStarted(int status, String json) {
+            synchronized (lock) {
+                if (started || answered) {
+                    return false;
+                }
+                answered = true;
+                byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+                try {
+                    exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+                    exchange.sendResponseHeaders(status, bytes.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(bytes);
+                    }
+                } catch (IOException e) {
+                    LOG.trace("error response failed (client likely disconnected)", e);
+                }
+                return true;
+            }
+        }
+
         @Override
         public void close() {
             synchronized (lock) {
+                OutputStream out = os;
+                if (out == null) {
+                    return;
+                }
                 try {
-                    os.close();
+                    out.close();
                 } catch (IOException e) {
                     LOG.trace("stream close failed", e);
                 }
             }
+        }
+    }
+
+    /**
+     * Report a failure of a streaming route that is not the request's fault. A failed write of the
+     * stream itself is the client going away: nothing can reach it any more, so it is a DEBUG line. Any
+     * other failure -- a {@link RuntimeException}, or an {@link IOException} of the backend's own, which
+     * {@link OpenAiBackend} allows -- is a WARN naming the exception, answered with {@code 500} and
+     * {@code errorBody} while the stream has not started, and with {@code errorEvent} on the stream once
+     * it has. A backend {@link IOException} after the start used to be taken for a disconnect too, so a
+     * client that was still connected saw its stream end as if the answer were complete.
+     *
+     * @param out the route's response stream
+     * @param e the failure
+     * @param what the route, for the log line
+     * @param errorBody the route's error body for a {@code 500}
+     * @param errorEvent the route's error event, written best-effort into the started stream
+     */
+    private static void failStream(
+            ResponseStream out, Exception e, String what, String errorBody, Supplier<String> errorEvent) {
+        if (out.isOwnWriteFailure(e)) {
+            // the same line for every route, which operators and the integration tests look for
+            LOG.debug("client disconnected during stream", e);
+            return;
+        }
+        LOG.warn("{} failed: {}: {}", what, e.getClass().getSimpleName(), message(e), e);
+        if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, errorBody)) {
+            out.writeQuietly(errorEvent.get());
         }
     }
 
@@ -1074,7 +1463,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                         "jllama-openai-shutdown"));
 
         try (LlamaModel model = new LlamaModel(options.toModelParameters())) {
-            OpenAiServerConfig config = options.toServerConfig(model.supportsVision(), model.getModelFtype());
+            final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
+            OpenAiServerConfig config = options.toServerConfig(
+                    model.supportsVision(), model.getModelFtype(), slotContextSize(slots), slots.size());
             try (OpenAiCompatServer server = new OpenAiCompatServer(model, config)) {
                 server.start();
                 printReady(config, server.getPort());
@@ -1087,6 +1478,16 @@ public final class OpenAiCompatServer implements AutoCloseable {
         } finally {
             cleanedUp.countDown();
         }
+    }
+
+    /**
+     * The context window one slot of the loaded model has, for the advertised token budgets.
+     *
+     * @param slots the slot metrics of the loaded model
+     * @return {@code n_ctx} of the first slot, or {@code 0} if the model reports none
+     */
+    private static int slotContextSize(List<SlotMetrics> slots) {
+        return slots.isEmpty() ? 0 : slots.get(0).getContextSize();
     }
 
     private static void printReady(OpenAiServerConfig config, int port) {

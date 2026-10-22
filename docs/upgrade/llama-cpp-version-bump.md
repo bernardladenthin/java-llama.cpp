@@ -139,6 +139,10 @@ for each:
   both CUDA builds pass the same value, see CLAUDE.md, "Upgrading CUDA Version".
 - **ROCm** -- the TheRock wheel version of upstream's `ubuntu-rocm` / `windows-rocm` release jobs (see
   CLAUDE.md, "Additional GPU-backend natives").
+- **SYCL (oneAPI)** -- the installer URLs of upstream's `ubuntu-24-sycl` / `windows-sycl` release jobs (Deep
+  Learning Essentials, oneDNN, the Level Zero release) and their component lists; both SYCL jobs here carry
+  them as `ONEAPI_DLE_URL` / `ONEAPI_ONEDNN_URL` / `LEVEL_ZERO_*` under `KEEP IN SYNC WITH UPSTREAM`. Intel
+  publishes no checksum next to the files, so the URL is the pin.
 
 ---
 

@@ -213,8 +213,11 @@ set(LLAMA_BUILD_COMMON ON)
 # cpp-httplib built with ONE setting. Off where BoringSSL is not built here: Android (the dockcross
 # cross-clang, and the AAR has no download use case), s390x (big-endian is outside BoringSSL's
 # supported set) and the Linux SYCL builds (icx/icpx, compiler id IntelLLVM, which BoringSSL's CMake
-# treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job passes LLAMA_OPENSSL=OFF too,
-# while its windows-sycl job builds BoringSSL -- as this file did before). LLAMA_OPENSSL=OFF there
+# treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job builds against the system
+# OpenSSL instead since b11676/#30456 -- libssl-dev, a dynamic libssl, which verify-native-deps.py
+# would reject in a shipped library -- while its windows-sycl job builds BoringSSL, as this file does.
+# The SYCL jars themselves are module-only builds, ggml alone and no cpp-httplib, so no SSL code
+# reaches them either way; the setting matters only for a full Linux SYCL build). LLAMA_OPENSSL=OFF there
 # Linux: no libgomp dependency, because the jar has to load in the images Java is actually deployed
 # in. `libggml-base.so` -- the first file LlamaLoader loads -- declares `libgomp.so.1` whenever ggml
 # builds with OpenMP, and GCC's -fopenmp links it DYNAMICALLY, so it is a runtime requirement of the
@@ -344,8 +347,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11639)
-set(JLLAMA_GIT_COMMIT "a0e6dc7384edb8f5d927155e1d26c10b4a310e6d")   # the commit b11639 names; kept after the tag exists
+set(JLLAMA_GIT_TAG    b11815)
+set(JLLAMA_GIT_COMMIT "7170cad4d02f7907517613931840cbb2367399a3")   # the commit b11815 names; kept after the tag exists
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -948,6 +951,12 @@ if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
         ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+        # server-connect.cpp (b11744, #28277): server.cpp spawns the llama-connect helper binary through
+        # it when --connect is given and references the class unconditionally, so the unit is a link
+        # requirement of server.cpp, never of the JNI routes. Without the binary --connect fails with
+        # a message; a build without subprocess support (Android, where server.cpp is not compiled
+        # anyway) answers "subprocess support disabled".
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-connect.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server.cpp
     )
@@ -1350,6 +1359,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_wire_contracts.cpp
         src/test/cpp/test_rpc.cpp
         src/test/cpp/test_gallocr_leafs.cpp
+        src/test/cpp/test_lora_cache.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
@@ -1391,6 +1401,7 @@ if(BUILD_TESTING)
             src/test/cpp/test_native_server_shutdown.cpp
             src/main/cpp/native_server_engine.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server-connect.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp

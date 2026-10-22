@@ -74,6 +74,20 @@ public class LlamaModelOfflineTest {
     }
 
     @Test
+    @DisplayName("check: offline + a path the file system cannot represent -> ModelUnavailableException")
+    public void check_offlineAndUnrepresentablePath_throwsModelUnavailable() {
+        // A NUL character is invalid in a path on every platform, so Paths.get rejects it with an
+        // InvalidPathException. Such a file cannot exist, which is exactly the case the guard
+        // promises to report as the typed exception.
+        ModelParameters p = new ModelParameters().setOffline(true).setModel("models/bad\u0000name.gguf");
+
+        ModelUnavailableException ex = assertThrows(ModelUnavailableException.class, () -> OfflineModelGuard.check(p));
+        assertTrue(
+                ex.getMessage() != null && ex.getMessage().contains("--offline"),
+                "message should mention the --offline flag for caller diagnosis");
+    }
+
+    @Test
     @DisplayName("check: offline + present local model -> no exception")
     public void check_offlineAndPresentModel_doesNotThrow(@TempDir Path tempDir) throws IOException {
         Path model = Files.createFile(tempDir.resolve("model.gguf"));

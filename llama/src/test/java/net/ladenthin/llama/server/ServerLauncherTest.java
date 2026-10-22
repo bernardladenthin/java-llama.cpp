@@ -25,13 +25,13 @@ public class ServerLauncherTest {
 
     @Test
     public void resultIsShorterWhenFlagPresent() {
-        String[] in = {FLAG, "-m", "m.gguf", "--port", "8080"};
+        String[] in = {FLAG, "-m", "m.gguf", "--port", "9931"};
         assertThat(ServerLauncher.withoutFlag(in, FLAG).length < in.length, is(true));
     }
 
     @Test
     public void resultKeepsLengthWhenFlagAbsent() {
-        String[] in = {"-m", "m.gguf", "--port", "8080"};
+        String[] in = {"-m", "m.gguf", "--port", "9931"};
         assertThat(ServerLauncher.withoutFlag(in, FLAG).length == in.length, is(true));
     }
 
@@ -45,8 +45,8 @@ public class ServerLauncherTest {
 
     @Test
     public void stripsTheSelectorAndPreservesTheRest() {
-        String[] out = ServerLauncher.withoutFlag(new String[] {FLAG, "-m", "m.gguf", "--port", "8080"}, FLAG);
-        assertThat(out, arrayContaining("-m", "m.gguf", "--port", "8080"));
+        String[] out = ServerLauncher.withoutFlag(new String[] {FLAG, "-m", "m.gguf", "--port", "9931"}, FLAG);
+        assertThat(out, arrayContaining("-m", "m.gguf", "--port", "9931"));
     }
 
     @Test

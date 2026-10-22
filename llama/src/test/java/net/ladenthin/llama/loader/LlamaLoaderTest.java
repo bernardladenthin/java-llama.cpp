@@ -52,13 +52,22 @@ public class LlamaLoaderTest {
 
     private String previousTmpDir;
 
+    /**
+     * What {@link LlamaLoader#getBuildInfo()} reported before the current test. The loadFromDirectory
+     * tests report a load through a fake loader, which publishes the fixture's build file (or none);
+     * putting the record back keeps a real library loaded earlier in the same fork described as itself.
+     */
+    private java.util.Map<String, String> previousBuildInfo;
+
     @BeforeEach
     public void saveTmpDirProp() {
         previousTmpDir = System.getProperty(TMPDIR_PROP);
+        previousBuildInfo = LlamaLoader.getBuildInfo();
     }
 
     @AfterEach
     public void restoreTmpDirProp() {
+        LlamaLoader.restoreBuildInfo(previousBuildInfo);
         if (previousTmpDir == null) {
             System.clearProperty(TMPDIR_PROP);
         } else {
@@ -121,7 +130,8 @@ public class LlamaLoaderTest {
 
     @Test
     public void testShouldCleanPathGgmlPrefix() {
-        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/ggml.tmp")));
+        // the prefix predicate only; what cleanup() removes is isStaleExtraction's decision
+        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/ggml-metal.metal.4711.tmp")));
     }
 
     // -------------------------------------------------------------------------
@@ -263,8 +273,8 @@ public class LlamaLoaderTest {
         java.util.Map<String, String> build = LlamaLoader.getBuildInfo();
         assertNotNull(build);
         // Unmodifiable either way: a consumer must not be able to edit the loader's record. (Which
-        // build it names depends on what this JVM loaded last -- a real library or a fake directory
-        // of the loadFromDirectory tests; NativeLibraryLoadSmokeTest pins the real keys.)
+        // build it names depends on what this JVM loaded before; the fake loads of the
+        // loadFromDirectory tests put it back afterwards. NativeLibraryLoadSmokeTest pins the real keys.)
         assertThrows(UnsupportedOperationException.class, () -> build.put("x", "y"));
     }
 
@@ -689,6 +699,90 @@ public class LlamaLoaderTest {
         assertTrue(LlamaLoader.isStaleExtraction(flat, Collections.<String>emptySet(), now));
         assertTrue(LlamaLoader.isStaleExtraction(metal, Collections.<String>emptySet(), now));
         assertFalse(LlamaLoader.isStaleExtraction(unrelated, Collections.<String>emptySet(), now));
+    }
+
+    @Test
+    public void staleExtractionRemovesAnInterruptedCopyOfTheOldLayoutOnceItIsOld(@TempDir Path dir) throws IOException {
+        // Up to 5.1.0 every extraction went through Files.createTempFile(tmp, name + ".", ".tmp"), so a
+        // copy cut short left <name>.<digits>.tmp at the temp root. The old prefix filter removed it;
+        // the library-suffix rule of F09 kept it for good. A young one may belong to a pre-6.0.0 JVM
+        // that is copying right now (6.x never writes at the temp root), so it gets the same age as a
+        // directory of another build.
+        Instant now = Instant.now();
+        FileTime old = FileTime.from(now.minus(LlamaLoader.STALE_EXTRACTION_AGE).minusSeconds(1));
+        Path dll = Files.write(dir.resolve("jllama.dll.4711.tmp"), new byte[] {1});
+        Path metal = Files.write(dir.resolve("ggml-metal.metal.8133917650000000000.tmp"), new byte[] {1});
+        Path young = Files.write(dir.resolve("jllama.dll.4712.tmp"), new byte[] {1});
+        Path foreign = Files.write(dir.resolve("somefile.so.4711.tmp"), new byte[] {1});
+        Path model = Files.write(dir.resolve("jllama.gguf.4711.tmp"), new byte[] {1});
+        Path noDigits = Files.write(dir.resolve("jllama.dll.tmp"), new byte[] {1});
+        Path directory = Files.createDirectory(dir.resolve("jllama.dll.4713.tmp"));
+        for (Path path : new Path[] {dll, metal, foreign, model, noDigits, directory}) {
+            Files.setLastModifiedTime(path, old);
+        }
+        Set<String> keep = Collections.<String>emptySet();
+
+        assertTrue(LlamaLoader.isStaleExtraction(dll, keep, now));
+        assertTrue(LlamaLoader.isStaleExtraction(metal, keep, now));
+        assertFalse(LlamaLoader.isStaleExtraction(young, keep, now), "may still be copying");
+        assertFalse(LlamaLoader.isStaleExtraction(foreign, keep, now), "no cleanup prefix");
+        assertFalse(LlamaLoader.isStaleExtraction(model, keep, now), "not a library name");
+        assertFalse(LlamaLoader.isStaleExtraction(noDigits, keep, now), "not the createTempFile shape");
+        assertFalse(LlamaLoader.isStaleExtraction(directory, keep, now), "not a regular file");
+    }
+
+    @Test
+    public void staleExtractionLeavesForeignEntriesWithAMatchingPrefixAlone(@TempDir Path dir) throws IOException {
+        // The temp directory is shared with everything else on the machine. A llama.cpp checkout or a
+        // model downloaded there carries the same prefixes as the old flat layout, but is neither a
+        // library nor ours: cleanup() deleted both, the checkout recursively, on every start.
+        Path checkout = Files.createDirectory(dir.resolve("llama.cpp"));
+        Files.write(checkout.resolve("README.md"), new byte[] {1});
+        Path models = Files.createDirectory(dir.resolve("ggml-models"));
+        Path model = Files.write(dir.resolve("llama-2-7b.Q4_K_M.gguf"), new byte[] {1});
+        Instant now = Instant.now();
+        assertFalse(LlamaLoader.isStaleExtraction(checkout, Collections.<String>emptySet(), now));
+        assertFalse(LlamaLoader.isStaleExtraction(models, Collections.<String>emptySet(), now));
+        assertFalse(LlamaLoader.isStaleExtraction(model, Collections.<String>emptySet(), now));
+    }
+
+    @Test
+    public void flatLayoutLibraryNamesAreTheLibrarySuffixes() {
+        for (String name :
+                new String[] {"jllama.dll", "libjllama.dylib", "libjllama.jnilib", "libjllama.so", "ggml-metal.metal"
+                }) {
+            assertTrue(LlamaLoader.isFlatLayoutLibraryName(name), name);
+        }
+        for (String name : new String[] {"llama-2-7b.gguf", "llama-server.log", "ggml.tmp", "llama.cpp"}) {
+            assertFalse(LlamaLoader.isFlatLayoutLibraryName(name), name);
+        }
+    }
+
+    @Test
+    public void staleExtractionKeepsADirectoryNamedLikeALibrary(@TempDir Path dir) throws IOException {
+        // A build output directory such as /tmp/jllama.dll passes the prefix and the suffix check;
+        // only the regular-file guard keeps cleanPath from deleting it recursively.
+        Path directory = Files.createDirectory(dir.resolve("jllama.dll"));
+        Files.write(directory.resolve("README.md"), new byte[] {1});
+        assertFalse(LlamaLoader.isStaleExtraction(directory, Collections.<String>emptySet(), Instant.now()));
+    }
+
+    @Test
+    public void staleExtractionKeepsASymlinkNamedLikeALibrary(@TempDir Path dir) throws IOException {
+        // The guard does not follow links: a link named like a library points at something that is
+        // not ours, wherever it lives, and a link-following check would hand it to cleanPath.
+        Path target = Files.write(dir.resolve("target.bin"), new byte[] {1});
+        Path link = dir.resolve("ggml.dll");
+        boolean created;
+        try {
+            Files.createSymbolicLink(link, target);
+            created = true;
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            // Windows refuses symbolic links without the privilege to create them.
+            created = false;
+        }
+        assumeTrue(created, "symbolic links cannot be created here");
+        assertFalse(LlamaLoader.isStaleExtraction(link, Collections.<String>emptySet(), Instant.now()));
     }
 
     @Test

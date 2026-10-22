@@ -5,6 +5,7 @@
 package net.ladenthin.llama.parameters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -137,6 +138,15 @@ public class JsonParametersTest {
     }
 
     @Test
+    public void withOptionalJson_nullRemovesAnEarlierValue() {
+        TestBuilder original = new TestBuilder().withOptionalJsonPublic(RequestField.GRAMMAR, "abc");
+        TestBuilder derived = original.withOptionalJsonPublic(RequestField.GRAMMAR, null);
+        assertNotSame(original, derived);
+        assertFalse(derived.parameters.containsKey("grammar"), "null must remove the earlier value");
+        assertEquals("\"abc\"", original.parameters.get("grammar"), "the original must stay unchanged");
+    }
+
+    @Test
     public void withOptionalJson_nonNullEncodesAndAllocates() {
         TestBuilder original = new TestBuilder();
         TestBuilder derived = original.withOptionalJsonPublic(RequestField.GRAMMAR, "abc");
@@ -205,6 +215,19 @@ public class JsonParametersTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, "1, \"x\": 2"));
+    }
+
+    /**
+     * An empty or blank value is no JSON value at all. Jackson's readTree returns a MissingNode for
+     * it rather than throwing, which used to slip past the check and render as {@code "key":null},
+     * so withJsonSchema("") silently sent no schema.
+     */
+    @Test
+    public void withRaw_rejectsEmptyAndBlankValues() {
+        assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, ""));
+        assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, "  "));
     }
 
     @Test

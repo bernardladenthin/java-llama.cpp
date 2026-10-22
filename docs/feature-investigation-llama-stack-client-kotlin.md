@@ -189,9 +189,13 @@ RxJava, Kotlin coroutines from Java consumers.
 
 **Status: SHIPPED** (PR #188, commit `de457b2`).
 `LlamaModel.completeBatch(List<InferenceParameters>)`,
-`completeBatchWithStats(...)`, and `chatBatch(List<ChatRequest>)` dispatch
-all requests at once via the existing async wrappers; results returned in
-input order. Throughput scales with `ModelParameters.setParallel(N)`
+`completeBatchWithStats(...)`, and `chatBatch(List<ChatRequest>)` return the
+results in input order. `completeBatch` and `completeBatchWithStats` submit
+every request on the calling thread, then receive the results in that order;
+`chatBatch` runs each request on a per-call daemon pool of at most 64 threads
+(`BatchDispatch.MAX_CHAT_THREADS`), the rest starting as threads free up.
+(Both replaced the original dispatch through the async wrappers, ledger
+F167/F200.) Throughput scales with `ModelParameters.setParallel(N)`
 (default `N=1` runs sequentially across the single slot).
 
 **Gap.** llama.cpp natively serves parallel slots; the compiled-in server

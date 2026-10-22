@@ -274,13 +274,19 @@ public class WireNameRegistryTest {
      */
     @Test
     public void everyTrainingFieldIsWrittenByAFullyPopulatedConfiguration() {
+        // exactly one corpus per configuration, so the two corpus keys come from two of them
         String json = TrainingParameters.builder()
-                .modelPath(java.nio.file.Paths.get("base.gguf"))
-                .trainingText("corpus")
-                .trainingFile(java.nio.file.Paths.get("corpus.txt"))
-                .outputPath(java.nio.file.Paths.get("out.gguf"))
-                .build()
-                .toJson();
+                        .modelPath(java.nio.file.Paths.get("base.gguf"))
+                        .trainingText("corpus")
+                        .outputPath(java.nio.file.Paths.get("out.gguf"))
+                        .build()
+                        .toJson()
+                + TrainingParameters.builder()
+                        .modelPath(java.nio.file.Paths.get("base.gguf"))
+                        .trainingFile(java.nio.file.Paths.get("corpus.txt"))
+                        .outputPath(java.nio.file.Paths.get("out.gguf"))
+                        .build()
+                        .toJson();
 
         Set<String> missing = new TreeSet<>();
         for (TrainingField field : TrainingField.values()) {
@@ -353,8 +359,10 @@ public class WireNameRegistryTest {
             } else if (type == String.class) {
                 args[i] = sampleString(shape);
             } else if (type.isEnum() && CliArg.class.isAssignableFrom(type)) {
+                // The last constant first; each further shape steps one back, so a setter that
+                // rejects a constant llama.cpp does not accept (setRopeScaling) is still reached.
                 Object[] values = type.getEnumConstants();
-                args[i] = values[values.length - 1];
+                args[i] = values[values.length - 1 - (shape % values.length)];
             } else if (java.util.Map.class.isAssignableFrom(type)) {
                 args[i] = sampleMap(shape);
             } else if (java.util.Collection.class.isAssignableFrom(type)) {

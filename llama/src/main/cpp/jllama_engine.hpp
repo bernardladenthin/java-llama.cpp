@@ -25,6 +25,7 @@
 #include "jllama_context.hpp"
 #include "log.h"
 
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -60,6 +61,15 @@ namespace jllama::engine {
  */
 void free(jllama_context *jctx);
 
+/**
+ * Refuses an operation on a model loaded with --vocab-only, which has the tokenizer but no server
+ * context and no inference loop: throws std::runtime_error naming `operation` ("<operation> is not
+ * available in vocab-only mode ..."). Such a model answers the model meta, tokenize and detokenize
+ * only. The C API runs this before every other operation on a model (jllama_api.cpp), so the JNI,
+ * FFM and C callers get the same refusal.
+ */
+void require_server(const jllama_context *jctx, const char *operation);
+
 /** Leaves the idle-sleep state (if any) and re-reads what a sleep/resume cycle replaces. */
 void wake_server(jllama_context *jctx);
 
@@ -85,21 +95,36 @@ void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
                    const common_chat_session &session = {});
 
 /**
+ * What a raw completion with "messages" takes over from the chat session for its sampler, which
+ * apply_chat_session gives a chat task: the template's generation prompt, which primes the reasoning
+ * budget (set when the template has thinking tags), and the tokens the template preserves -- control
+ * tokens such as its thinking tags, rendered as text rather than as empty pieces.
+ */
+struct raw_chat_sampling {
+    std::string generation_prompt;
+    std::set<llama_token> preserved_tokens;
+};
+
+/**
  * One completion task, posted and waited for; every result of it. Throws jllama_invalid_request
  * when the request does not parse, jllama_interrupted when free() cut the wait, std::runtime_error
- * for a failed result (jllama_invalid_request when the server reports it as 400).
+ * for a failed result (jllama_invalid_request when the server reports it as 400). raw_chat applies
+ * to a task without a session what apply_chat_session applies to one with (a raw completion with
+ * "messages"); the preserved tokens join the request's own.
  */
 [[nodiscard]] std::vector<server_task_result_ptr>
 blocking_completion(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
-                    std::vector<raw_buffer> files = {}, const common_chat_session &session = {});
+                    std::vector<raw_buffer> files = {}, const common_chat_session &session = {},
+                    const raw_chat_sampling &raw_chat = {});
 
 /**
  * One streaming completion task, posted; its id, under which stream_next() yields the results and
  * task_release() drops it. Throws jllama_invalid_request when the request does not parse.
+ * raw_chat as for blocking_completion.
  */
 [[nodiscard]] int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type,
                                     task_response_type res_type, std::vector<raw_buffer> files = {},
-                                    const common_chat_session &session = {});
+                                    const common_chat_session &session = {}, const raw_chat_sampling &raw_chat = {});
 
 /**
  * The next result of a streaming task as JSON (header-only sentinels skipped), with `stop` set on
@@ -154,6 +179,12 @@ void set_log_sink(common_log_callback callback, void *user_data);
  * received with completions_stream_receive(): each result as JSON with a "stop" key added.
  */
 [[nodiscard]] int completions_stream_request(jllama_context *jctx, const std::string &body);
+
+/**
+ * A streaming OpenAI /v1/completions request, parsed as the blocking one is; its task id, received
+ * with chat_completions_stream_receive(): text_completion chunks, the last with usage.
+ */
+[[nodiscard]] int completions_oai_stream_request(jllama_context *jctx, const std::string &body);
 [[nodiscard]] std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop);
 
 /** The chat template applied to an OpenAI chat body: the prompt text the model would see. */
@@ -182,7 +213,11 @@ void set_log_sink(common_log_callback callback, void *user_data);
 [[nodiscard]] std::string metrics(jllama_context *jctx);
 
 enum class slot_op { save, restore, erase };
-/** Saves, restores or erases a slot's KV cache (filename for save/restore); the result object. */
+/**
+ * Saves, restores or erases a slot's KV cache; the result object. For save/restore, filename names a
+ * file inside the --slot-save-path directory (jllama_invalid_request for a name with a directory part
+ * or "..", std::runtime_error when the model was loaded without the directory), as upstream's route.
+ */
 [[nodiscard]] std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename);
 
 /** The LoRA adapter list, and setting the scales from a JSON array of {id, scale}. */

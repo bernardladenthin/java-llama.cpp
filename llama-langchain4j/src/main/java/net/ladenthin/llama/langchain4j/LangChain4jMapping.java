@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.StringJoiner;
 import net.ladenthin.llama.json.RerankResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.value.ContentPart;
@@ -55,6 +56,13 @@ final class LangChain4jMapping {
 
     /** OAI {@code response_format} payload selecting plain JSON-object mode (no schema). */
     static final String JSON_OBJECT_RESPONSE_FORMAT = "{\"type\":\"json_object\"}";
+
+    /** OAI {@code stream_options} payload asking the native stream for its trailing usage chunk. */
+    static final String INCLUDE_USAGE_STREAM_OPTIONS = "{\"include_usage\":true}";
+
+    /** Reads the reasoning of a blocking answer from its raw JSON. */
+    private static final net.ladenthin.llama.json.ChatResponseParser CHAT_RESPONSE_PARSER =
+            new net.ladenthin.llama.json.ChatResponseParser();
 
     private LangChain4jMapping() {}
 
@@ -92,8 +100,11 @@ final class LangChain4jMapping {
      */
     static InferenceParameters toStreamingParameters(ChatRequest request) {
         net.ladenthin.llama.parameters.ChatRequest jllama = toJllamaRequest(request);
-        InferenceParameters params =
-                InferenceParameters.empty().withMessagesJson(jllama.buildMessagesJson());
+        // The native stream carries a usage chunk only when asked for; without it the streamed
+        // final response would lack the token usage the blocking one has.
+        InferenceParameters params = InferenceParameters.empty()
+                .withMessagesJson(jllama.buildMessagesJson())
+                .withStreamOptions(INCLUDE_USAGE_STREAM_OPTIONS);
         java.util.Optional<String> toolsJson = jllama.buildToolsJson();
         if (toolsJson.isPresent()) {
             params = params.withToolsJson(toolsJson.get());
@@ -202,8 +213,17 @@ final class LangChain4jMapping {
     private static AiMessage toAiMessage(net.ladenthin.llama.value.ChatResponse response) {
         net.ladenthin.llama.value.ChatMessage first =
                 response.getFirstMessage().orElse(null);
+        // The reasoning is not part of the typed message; read it from the native answer, as the
+        // streamed path does from the reasoning_content deltas.
+        String thinking = CHAT_RESPONSE_PARSER.extractChoiceReasoningContent(response.getRawJson());
         if (first == null || first.getToolCalls().isEmpty()) {
-            return AiMessage.from(response.getFirstContent());
+            if (thinking.isEmpty()) {
+                return AiMessage.from(response.getFirstContent());
+            }
+            return AiMessage.builder()
+                    .text(response.getFirstContent())
+                    .thinking(thinking)
+                    .build();
         }
         List<ToolExecutionRequest> requests = new ArrayList<>(first.getToolCalls().size());
         for (ToolCall call : first.getToolCalls()) {
@@ -217,6 +237,9 @@ final class LangChain4jMapping {
         String text = first.getContent();
         if (text != null && !text.isEmpty()) {
             builder.text(text);
+        }
+        if (!thinking.isEmpty()) {
+            builder.thinking(thinking);
         }
         return builder.build();
     }
@@ -259,10 +282,11 @@ final class LangChain4jMapping {
             return new net.ladenthin.llama.value.ChatMessage("user", message.singleText());
         }
         if (!hasNonTextContent(message)) {
-            // Multiple text parts, no media: keep the flat-string form (no array-content needed).
-            StringBuilder text = new StringBuilder();
+            // Multiple text parts, no media: keep the flat-string form (no array-content needed),
+            // joined with a newline as upstream's concat_content_parts does.
+            StringJoiner text = new StringJoiner("\n");
             for (Content content : message.contents()) {
-                text.append(((TextContent) content).text());
+                text.add(((TextContent) content).text());
             }
             return new net.ladenthin.llama.value.ChatMessage("user", text.toString());
         }

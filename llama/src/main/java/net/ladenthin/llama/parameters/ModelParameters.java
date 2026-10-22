@@ -199,12 +199,24 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of tokens to predict (default: -1 = infinity, -2 = until context filled).
+     * Set the number of tokens to predict per request when the request does not set its own
+     * (default: -1 = infinity).
      *
-     * @param nPredict the maximum number of tokens to predict (-1 = infinity, -2 = until context filled)
+     * <p>{@code -2} ("until context filled") is a setting of llama.cpp's completion tool, not of the
+     * server this library runs. There a slot counts only {@code -1} as unlimited, so with {@code -2}
+     * every request stopped after its first token without an error (measured at b11639); it is
+     * rejected here instead. {@code 0} behaves like {@code 1}.
+     *
+     * @param nPredict the maximum number of tokens to predict (-1 = infinity)
      * @return this builder
+     * @throws IllegalArgumentException if {@code nPredict} is below {@code -1}
      */
     public ModelParameters setPredict(int nPredict) {
+        if (nPredict < -1) {
+            throw new IllegalArgumentException("Invalid predict value: " + nPredict
+                    + " (must be -1 = unlimited or >= 0; -2 is a setting of llama.cpp's completion tool,"
+                    + " the server would stop every request after one token)");
+        }
         return putScalar(ModelOption.PREDICT, nPredict);
     }
 
@@ -239,12 +251,29 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Disable context shift on infinite text generation (default: enabled).
+     * Disable context shift on infinite text generation ({@code --no-context-shift}, upstream's
+     * default): a slot stops when its context is full. Replaces an earlier {@link
+     * #enableContextShift()}.
      *
      * @return this builder
      */
     public ModelParameters disableContextShift() {
-        return setFlag(ModelFlag.NO_CONTEXT_SHIFT);
+        setFlag(ModelFlag.NO_CONTEXT_SHIFT);
+        return clearFlag(ModelFlag.CONTEXT_SHIFT);
+    }
+
+    /**
+     * Enable context shift on infinite text generation ({@code --context-shift}, default: disabled):
+     * when a slot's context is full, the oldest generated tokens after the kept prompt ({@link
+     * #setKeep(int)}) are dropped and generation continues, so a request without a token limit runs
+     * until it is stopped or cancelled. Upstream disables it again for a multimodal model and for a
+     * context whose memory cannot shift. Replaces an earlier {@link #disableContextShift()}.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableContextShift() {
+        setFlag(ModelFlag.CONTEXT_SHIFT);
+        return clearFlag(ModelFlag.NO_CONTEXT_SHIFT);
     }
 
     /**
@@ -644,26 +673,42 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set pooling type for embeddings (default: model default if unspecified).
      * When {@link net.ladenthin.llama.args.PoolingType#UNSPECIFIED} is passed, the parameter is not forwarded
-     * to the native layer, leaving the model to use its built-in default pooling strategy.
+     * to the native layer (a pooling type set before is removed), leaving the model to use its built-in default
+     * pooling strategy.
      *
      * @param type the pooling type for embeddings
      * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
-        if (type != PoolingType.UNSPECIFIED) {
-            // Don't set if unspecified, as it will use the model's default pooling type
-            putString(ModelOption.POOLING, type.getArgValue());
+        if (type == PoolingType.UNSPECIFIED) {
+            // unspecified has no CLI string: the model's default pooling type applies
+            removeOption(ModelOption.POOLING);
+            return this;
         }
+        putString(ModelOption.POOLING, type.getArgValue());
         return this;
     }
 
     /**
      * Set RoPE frequency scaling method (default: linear unless specified by the model).
+     * {@link RopeScalingType#UNSPECIFIED} removes the option, leaving the model's own choice.
+     * llama.cpp's {@code --rope-scaling} accepts only {@code none}, {@code linear} and {@code yarn};
+     * {@link RopeScalingType#LONGROPE} and {@link RopeScalingType#MAX_VALUE} exist in its C API but not
+     * on its command line, and passed through they would make the model fail to load.
      *
      * @param type the RoPE frequency scaling method
      * @return this builder
+     * @throws IllegalArgumentException for {@link RopeScalingType#LONGROPE} or {@link RopeScalingType#MAX_VALUE}
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
+        if (type == RopeScalingType.UNSPECIFIED) {
+            removeOption(ModelOption.ROPE_SCALING);
+            return this;
+        }
+        if (type == RopeScalingType.LONGROPE || type == RopeScalingType.MAX_VALUE) {
+            throw new IllegalArgumentException("--rope-scaling accepts none, linear or yarn; " + type + " (\""
+                    + type.getArgValue() + "\") is rejected by llama.cpp's argument parser");
+        }
         return putEnum(ModelOption.ROPE_SCALING, type);
     }
 
@@ -1017,22 +1062,30 @@ public final class ModelParameters extends CliParameters {
      *
      * @param fname the file path of the LoRA adapter
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addLoraAdapter(String fname) {
-        putString(ModelOption.LORA, fname);
-        return this;
+        return appendCsvValue(ModelOption.LORA, fname);
     }
 
     /**
      * Add a LoRA adapter with user-defined scaling (can be repeated to use multiple adapters).
      *
-     * @param fname the file path of the LoRA adapter
+     * <p><b>The file path may not contain a colon, which on Windows means it may not be absolute.</b>
+     * llama.cpp reads this option as {@code FNAME:SCALE,...} and splits each item on <em>every</em>
+     * colon, demanding exactly two parts, so {@code X:\models\a.gguf:1.0} yields three and is
+     * refused. That is upstream's limitation, not a choice here; pass a path relative to the working
+     * directory, or load the adapter with {@link #addLoraAdapter(String)} (scale 1.0) and set the
+     * scale after the load with {@link net.ladenthin.llama.LlamaModel#setLoraAdapter(int, float)},
+     * which takes any path.
+     *
+     * @param fname the file path of the LoRA adapter, without a colon
      * @param scale the user-defined scaling factor
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} contains a colon
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
-        putString(ModelOption.LORA_SCALED, fname + "," + scale);
-        return this;
+        return appendCsvValue(ModelOption.LORA_SCALED, scaledField(ModelOption.LORA_SCALED, fname, scale));
     }
 
     /**
@@ -1040,22 +1093,50 @@ public final class ModelParameters extends CliParameters {
      *
      * @param fname the file path of the control vector
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addControlVector(String fname) {
-        putString(ModelOption.CONTROL_VECTOR, fname);
-        return this;
+        return appendCsvValue(ModelOption.CONTROL_VECTOR, fname);
     }
 
     /**
      * Add a control vector with user-defined scaling (can be repeated to add multiple scaled control vectors).
      *
-     * @param fname the file path of the control vector
+     * <p>The file path may not contain a colon — same upstream constraint as
+     * {@link #addLoraScaledAdapter(String, float)}, which explains it.
+     *
+     * @param fname the file path of the control vector, without a colon
      * @param scale the user-defined scaling factor
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} contains a colon
      */
     public ModelParameters addControlVectorScaled(String fname, float scale) {
-        putString(ModelOption.CONTROL_VECTOR_SCALED, fname + "," + scale);
-        return this;
+        return appendCsvValue(
+                ModelOption.CONTROL_VECTOR_SCALED, scaledField(ModelOption.CONTROL_VECTOR_SCALED, fname, scale));
+    }
+
+    /**
+     * Render one {@code FNAME:SCALE} item, refusing a path the upstream parser cannot split.
+     *
+     * <p>It used to be rendered {@code FNAME,SCALE}. The comma has been the <em>list</em> separator
+     * since llama.cpp #18056 (b7448) while the field separator is a colon, so every value this emitted
+     * was rejected: {@code --lora-scaled <path>,1.0} fails the argv parse with {@code invalid stof
+     * argument} and the model does not load at all. Measured against the real parser at b11639.
+     *
+     * @param option the option the item is for, named in the error message
+     * @param fname  the file path
+     * @param scale  the scaling factor
+     * @return the rendered {@code FNAME:SCALE} item
+     * @throws IllegalArgumentException if {@code fname} contains a colon
+     */
+    private static String scaledField(ModelOption option, String fname, float scale) {
+        if (fname.indexOf(':') >= 0) {
+            throw new IllegalArgumentException(option.getCliOption()
+                    + " reads its value as FNAME:SCALE and splits on every colon, so a path containing one"
+                    + " cannot be expressed: " + fname
+                    + " -- pass a relative path, or load it unscaled and set the scale after the load");
+        }
+        return fname + ":" + scale;
     }
 
     /**
@@ -1490,6 +1571,21 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Set the name the model answers to ({@code --alias}): the {@code model} field of every OpenAI
+     * answer and chunk, and the id the embedded server lists under {@code /v1/models}. Unset, llama.cpp
+     * answers with the Hugging Face or Docker repository the model was loaded from, and for a local file
+     * with the model path as given to {@code --model} (not just the file name). Upstream accepts several
+     * aliases separated by commas, strips each, and answers with the first.
+     *
+     * @param alias the model name, or several separated by commas
+     * @return this builder
+     */
+    public ModelParameters setAlias(String alias) {
+        putString(ModelOption.ALIAS, alias);
+        return this;
+    }
+
+    /**
      * Select the device the multimodal projector runs on ({@code --mmproj-device}, upstream
      * llama.cpp b10541). Independent of {@link #setDevices(String)}, which covers the main model:
      * on a multi-GPU host the projector can be pinned to a different device than the weights.
@@ -1697,8 +1793,15 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Only load the vocabulary for tokenization, no weights (default: false).
-     * A model loaded with this option can only be used for {@link net.ladenthin.llama.LlamaModel#encode(String)}
-     * and {@link net.ladenthin.llama.LlamaModel#decode(int[])}. Inference, embedding, and reranking will not work.
+     * <p>
+     * A model loaded with this option answers {@link net.ladenthin.llama.LlamaModel#encode(String)},
+     * {@link net.ladenthin.llama.LlamaModel#decode(int[])}, the tokenize/detokenize handlers and
+     * {@link net.ladenthin.llama.LlamaModel#getModelMeta()} (vocabulary type, size and special tokens).
+     * Everything that needs the inference server -- completions, chat, the chat template, embeddings,
+     * reranking, infilling, metrics, slots, LoRA adapters, {@code configureParallelInference} and the
+     * attached {@code NativeServer} -- throws a {@link net.ladenthin.llama.exception.LlamaException}
+     * saying it "is not available in vocab-only mode".
+     * </p>
      *
      * @return this builder
      */

@@ -15,6 +15,7 @@ import net.ladenthin.llama.args.QuantizationType;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ModelMeta;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -39,9 +40,42 @@ public class QuantizerIntegrationTest {
                 "Draft model not found, skipping QuantizerIntegrationTest");
     }
 
+    /**
+     * Below this the Q4_0 output can be under the 10 MB the round trip asserts: Q4_0 stores 4.5 bits a
+     * weight, so 100 M parameters are about 56 MB. CI's draft model, AMD-Llama-135m, has about 134 M.
+     */
+    private static final long MIN_PARAMETERS_FOR_SIZE_CHECK = 100_000_000L;
+
+    /** The file types llama.cpp does not count as quantized ({@code llama_ftype_name}); the rest are. */
+    private static final java.util.List<String> UNQUANTIZED_FTYPES = java.util.Arrays.asList("all F32", "F16", "BF16");
+
+    /**
+     * The metadata of the draft model as llama.cpp loads it: parameter count and file type, which a
+     * GGUF need not declare in its key/value table (llama.cpp guesses the file type from the tensors).
+     */
+    private static ModelMeta draftModelMeta() {
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel model = new LlamaModel(new ModelParameters()
+                .setModel(TestConstants.DRAFT_MODEL_PATH)
+                .setCtxSize(128)
+                .setGpuLayers(gpuLayers)
+                .setFit(false))) {
+            return model.getModelMeta();
+        }
+    }
+
+    private static boolean isQuantized(String ftype) {
+        return !UNQUANTIZED_FTYPES.contains(ftype.replace("(guessed) ", ""));
+    }
+
     @Test
     public void quantize_producesLoadableModel() throws Exception {
         assumeDraftModel();
+        long parameters = draftModelMeta().getNParams();
+        Assumptions.assumeTrue(
+                parameters >= MIN_PARAMETERS_FOR_SIZE_CHECK,
+                "needs CI's AMD-Llama-135m: the test asserts a Q4_0 output above 10 MB, this model has " + parameters
+                        + " parameters");
         Path output = tempDir.resolve("draft-q4_0.gguf");
 
         LlamaQuantizer.quantize(TestConstants.DRAFT_MODEL_PATH, output.toString(), QuantizationType.Q4_0, 0, true);
@@ -65,6 +99,11 @@ public class QuantizerIntegrationTest {
     @Test
     public void quantize_requantizeWithoutOptIn_throws() {
         assumeDraftModel();
+        String ftype = draftModelMeta().getFtype();
+        Assumptions.assumeTrue(
+                isQuantized(ftype),
+                "needs CI's quantized draft model (Q2_K): the test asserts the refusal to requantize, and this "
+                        + "model's file type is " + ftype);
         Path output = tempDir.resolve("draft-requant-refused.gguf");
         assertThrows(
                 LlamaException.class,

@@ -15,6 +15,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -28,6 +29,8 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Extended tests for {@link ModelParameters} covering CLI argument serialization
@@ -82,9 +85,22 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
-    public void testSetPredictFillContext() {
-        ModelParameters p = new ModelParameters().setPredict(-2);
-        assertThat(p.parameters.get("--predict"), is("-2"));
+    public void testSetPredictZero() {
+        ModelParameters p = new ModelParameters().setPredict(0);
+        assertThat(p.parameters.get("--predict"), is("0"));
+    }
+
+    /**
+     * {@code -2} ("until context filled") is a setting of llama.cpp's completion tool. The server
+     * counts only {@code -1} as unlimited, so a model loaded with {@code -2} answered every request
+     * with exactly one token and stop reason "limit", without an error (measured at b11639).
+     */
+    @ParameterizedTest
+    @ValueSource(ints = {-2, -3, Integer.MIN_VALUE})
+    public void testSetPredictBelowMinusOneIsRejected(int nPredict) {
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPredict(nPredict));
+        assertThat(e.getMessage(), containsString(String.valueOf(nPredict)));
     }
 
     @Test
@@ -636,6 +652,26 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
+    public void testEnableContextShift() {
+        ModelParameters p = new ModelParameters().enableContextShift();
+        assertThat(p.parameters, hasKey("--context-shift"));
+        assertThat(p.parameters.get("--context-shift"), is(nullValue()));
+        assertThat(p.parameters, not(hasKey("--no-context-shift")));
+    }
+
+    @Test
+    public void testTheLaterContextShiftCallReplacesTheEarlierOne() {
+        // both flags in one argv would leave the parse order to decide; the later call wins instead
+        ModelParameters disabled = new ModelParameters().enableContextShift().disableContextShift();
+        assertThat(disabled.parameters, hasKey("--no-context-shift"));
+        assertThat(disabled.parameters, not(hasKey("--context-shift")));
+
+        ModelParameters enabled = new ModelParameters().disableContextShift().enableContextShift();
+        assertThat(enabled.parameters, hasKey("--context-shift"));
+        assertThat(enabled.parameters, not(hasKey("--no-context-shift")));
+    }
+
+    @Test
     public void testSetFlashAttnRendersEveryMode() {
         // Every mode the enum declares must reach argv as its own CLI string; a mode added later is
         // then covered without touching this test.
@@ -1070,10 +1106,28 @@ public class ModelParametersExtendedTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void testSetRopeScalingAllValues() {
-        for (RopeScalingType type : RopeScalingType.values()) {
+    public void testSetRopeScalingAllValuesTheParserAccepts() {
+        // llama.cpp's --rope-scaling accepts exactly none, linear and yarn (common/arg.cpp) and throws
+        // "invalid value" for anything else, which makes the model fail to load.
+        for (RopeScalingType type :
+                new RopeScalingType[] {RopeScalingType.NONE, RopeScalingType.LINEAR, RopeScalingType.YARN2}) {
             ModelParameters p = new ModelParameters().setRopeScaling(type);
             assertThat(p.parameters.get("--rope-scaling"), is(type.getArgValue()));
+        }
+    }
+
+    @Test
+    public void testSetRopeScalingUnspecifiedLeavesTheModelDefault() {
+        ModelParameters p = new ModelParameters()
+                .setRopeScaling(RopeScalingType.LINEAR)
+                .setRopeScaling(RopeScalingType.UNSPECIFIED);
+        assertThat(p.parameters.containsKey("--rope-scaling"), is(false));
+    }
+
+    @Test
+    public void testSetRopeScalingRejectsValuesTheParserDoesNotAccept() {
+        for (RopeScalingType type : new RopeScalingType[] {RopeScalingType.LONGROPE, RopeScalingType.MAX_VALUE}) {
+            assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setRopeScaling(type));
         }
     }
 
@@ -1108,6 +1162,7 @@ public class ModelParametersExtendedTest {
         assertThat(p.setGpuLayers(32), is(sameInstance(p)));
         assertThat(p.setFlashAttn(FlashAttn.AUTO), is(sameInstance(p)));
         assertThat(p.disableContextShift(), is(sameInstance(p)));
+        assertThat(p.enableContextShift(), is(sameInstance(p)));
         assertThat(p.setModelDraft("/draft.gguf"), is(sameInstance(p)));
         assertThat(p.disableLog(), is(sameInstance(p)));
     }

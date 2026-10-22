@@ -138,6 +138,34 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        ChatRequest.parseSchemaOrThrow is the same check for a tool's parameter schema, run by
+        appendTool: a schema that is not exactly one well-formed JSON value is a programming error at
+        the call site, reported as IllegalArgumentException naming the tool, instead of being sent on
+        and refused by llama.cpp at request time with a message naming neither the tool nor the
+        cause. Jackson's readTree declares the checked IOException, so the conversion is unavoidable;
+        the cause is chained through. Same tradeoff as JsonParameters.parseOrThrow above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.parameters.ChatRequest"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="parseSchemaOrThrow"/>
+    </Match>
+
+    <!--
+        ChatStreamChunkParser.feed: an envelope of the native streaming layer that is not one well-formed
+        JSON value is reported as ChatStreamChunkParser.MalformedEnvelopeException (an
+        IllegalArgumentException quoting the envelope) instead of being taken for the end of the stream
+        (F263); LlamaModel turns it into a LlamaException. Jackson's readTree declares the checked
+        IOException, so the conversion is unavoidable; the cause is chained through. Same tradeoff as
+        ChatRequest.parseSchemaOrThrow above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.json.ChatStreamChunkParser"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="feed"/>
+    </Match>
+
+    <!--
         InferenceParameters and ModelParameters are fluent builders whose
         parameters field is a Map<String, String> serving as the CLI / JSON
         wire-format passed across JNI to nlohmann/json. Every setter
@@ -397,20 +425,47 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        LlamaModel.completeBatch / completeBatchWithStats / chatBatch dispatch N async requests, then
-        deliberately join EVERY future before re-throwing the first captured failure (a
-        CompletionException) — so a partial failure never abandons sibling requests running unobserved.
-        Re-throwing the captured RuntimeException is the intended behaviour; fb-contrib flags any
-        `throw <RuntimeException>` as THROWS_METHOD_THROWS_RUNTIMEEXCEPTION.
+        BatchDispatch (behind LlamaModel.completeBatch / completeBatchWithStats / chatBatch) receives or
+        joins EVERY request before re-throwing the first captured failure, and a failed submission
+        re-throws after releasing the tasks already submitted (a failure, an Error included, in both
+        cases) — so a partial failure never abandons
+        sibling requests running unobserved. Re-throwing the captured RuntimeException is the intended
+        behaviour; fb-contrib flags any `throw <RuntimeException>` as THROWS_METHOD_THROWS_RUNTIMEEXCEPTION.
     -->
     <Match>
-        <Class name="net.ladenthin.llama.LlamaModel"/>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
         <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
         <Or>
-            <Method name="completeBatch"/>
-            <Method name="completeBatchWithStats"/>
-            <Method name="chatBatch"/>
+            <Method name="submitAllThenReceive"/>
+            <Method name="runEachOnItsOwnThread"/>
+            <Method name="asRuntimeException"/>
         </Or>
+    </Match>
+
+    <!--
+        BatchDispatch.runEachOnItsOwnThread creates its executor per call on purpose. The pool is sized
+        min(batch size, maxThreads), and chatBatch passes MAX_CHAT_THREADS = 64, so up to that many
+        requests reach the native scheduler at once and the rest start as threads free up (the common
+        ForkJoinPool used to cap this at availableProcessors() - 1). It is shut down in finally when
+        the call returns. A shared field-held executor would either cap every batch at a fixed size or
+        keep idle threads between calls.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
+        <Bug pattern="HES_LOCAL_EXECUTOR_SERVICE"/>
+        <Method name="runEachOnItsOwnThread"/>
+    </Match>
+
+    <!--
+        BatchDispatch.asRuntimeException unwraps an ExecutionException of a java.util.function.Function,
+        whose cause can only be a RuntimeException or an Error, and re-throws the first failure of
+        submitAllThenReceive's receive loop, which is one of the two as well: the two instanceof checks
+        are that unwrapping, not type-based dispatch that polymorphism could replace.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
+        <Bug pattern="ITC_INHERITANCE_TYPE_CHECKING"/>
+        <Method name="asRuntimeException"/>
     </Match>
 
     <!--
@@ -506,9 +561,10 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        LlamaModelBackend.stream bridges the model's Consumer-based streaming API (which cannot throw a
-        checked exception) back to the IOException-throwing ChunkSink. A sink IOException is relayed out
-        of the consumer as an UncheckedIOException, caught here, and the ORIGINAL IOException is rethrown
+        LlamaModelBackend.relay (shared by stream and streamCompletions) bridges the model's Consumer-based
+        streaming API (which cannot throw a checked exception) back to the IOException-throwing ChunkSink.
+        A sink IOException is relayed out of the consumer as an UncheckedIOException, caught here, and the
+        ORIGINAL IOException is rethrown
         (it was stashed before wrapping). fb-contrib LEST flags the catch block because the thrown object
         differs from the caught one, but the rethrown IOException is exactly the underlying cause with
         its stack trace intact, so no history is lost. This is the standard UncheckedIOException unwrap
@@ -517,7 +573,7 @@ SPDX-License-Identifier: MIT
     <Match>
         <Class name="net.ladenthin.llama.server.LlamaModelBackend"/>
         <Bug pattern="LEST_LOST_EXCEPTION_STACK_TRACE"/>
-        <Method name="stream"/>
+        <Method name="relay"/>
     </Match>
 
     <!--
@@ -526,7 +582,11 @@ SPDX-License-Identifier: MIT
         ("'query' must be a string", "'messages' must be a non-empty array", ...). There is no
         additional state-dependent context worth adding at these guards: the value is malformed or
         absent by definition at the throw point. Same rationale as the ChatMessage.requireNonNull WEM
-        suppression above.
+        suppression above. OpenAiRequestMapper.applyLogprobs additionally keeps upstream's message
+        verbatim ("top_logprobs requires logprobs to be set to true", "logprobs is not supported with
+        tools + stream", oaicompat_chat_params_parse), so
+        a client sees the same 400 text from both server modes. OllamaApiSupport.requireTextualPrompt
+        ("'prompt' must be a string", F244) is the same guard for Ollama's /api/generate.
     -->
     <Match>
         <Class name="net.ladenthin.llama.server.OaiRerankSupport"/>
@@ -542,7 +602,13 @@ SPDX-License-Identifier: MIT
         <Or>
             <Method name="toInferenceParameters"/>
             <Method name="toCompletionParameters"/>
+            <Method name="applyLogprobs"/>
         </Or>
+    </Match>
+    <Match>
+        <Class name="net.ladenthin.llama.server.OllamaApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Method name="requireTextualPrompt"/>
     </Match>
 
     <!--

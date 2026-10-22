@@ -34,7 +34,7 @@ public final class ServerProps {
     /**
      * Look the context size up.
      *
-     * @param baseUrl the OpenAI-compatible base URL, e.g. {@code http://127.0.0.1:8080/v1}
+     * @param baseUrl the OpenAI-compatible base URL, e.g. {@code http://127.0.0.1:9931/v1}
      * @param apiKey the bearer token to send
      * @return the context size in tokens, or {@link StatusLine#UNKNOWN_CONTEXT} when it cannot be read
      */

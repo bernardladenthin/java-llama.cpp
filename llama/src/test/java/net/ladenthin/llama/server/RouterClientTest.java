@@ -7,6 +7,7 @@ package net.ladenthin.llama.server;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -16,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -127,6 +129,19 @@ public class RouterClientTest {
     }
 
     @Test
+    public void findModel_matchesByAlias() throws Exception {
+        // The router serves a model under its preset's --alias names too (server_models::get_meta);
+        // awaitModelLoaded("<alias>") reported "not listed" although the router loaded it under that name.
+        modelsBody.set("{\"data\":[{\"id\":\"qwen\",\"aliases\":[\"coder\",\"chat\"],"
+                + "\"status\":{\"value\":\"loaded\"}}]}");
+
+        assertThat(client.findModel("coder").get().getId(), is("qwen"));
+        assertThat(client.findModel("chat").isPresent(), is(true));
+        assertThat(client.findModel("absent").isPresent(), is(false));
+        assertThat(client.awaitModelLoaded("coder", 2_000L).getId(), is("qwen"));
+    }
+
+    @Test
     public void loadModel_postsModelFieldToLoadEndpoint() throws IOException {
         client.loadModel("qwen");
 
@@ -186,6 +201,54 @@ public class RouterClientTest {
     }
 
     @Test
+    public void awaitModelLoaded_longMaxValueTimeoutStillPolls() throws Exception {
+        // "wait as long as it takes": currentTimeMillis() + Long.MAX_VALUE must not overflow into a
+        // deadline in the past, which would skip polling and report a timeout for a loaded model.
+        modelsBody.set("{\"data\":[" + entry("qwen", "loaded") + "]}");
+
+        RouterModel loaded = client.awaitModelLoaded("qwen", Long.MAX_VALUE);
+
+        assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
+    }
+
+    @Test
+    public void awaitModelLoaded_zeroTimeoutStillPollsOnce() throws Exception {
+        // A timeout of 0 asks "is it loaded now?"; the deadline is already reached before the first
+        // poll, which skipped polling and reported a timeout ("last status: null") for a loaded model.
+        modelsBody.set("{\"data\":[" + entry("qwen", "loaded") + "]}");
+
+        RouterModel loaded = assertDoesNotThrow(() -> client.awaitModelLoaded("qwen", 0L));
+
+        assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
+    }
+
+    @Test
+    public void ipv6LiteralHostIsBracketedInTheRequestUrl() {
+        // A router started with --host ::1 is reached as http://[::1]:port. An unbracketed literal is
+        // not a valid authority: "http://::1:1/models" fails as a MalformedURLException before any
+        // connection is attempted. Port 1 has nothing listening, so the bracketed URL fails to connect
+        // instead (or, on a host without IPv6, to create the socket) -- an IOException of another kind.
+        RouterClient ipv6 = new RouterClient("::1", 1);
+
+        IOException e = assertThrows(IOException.class, ipv6::listModels);
+
+        assertThat(e instanceof MalformedURLException, is(false));
+    }
+
+    @Test
+    public void alreadyBracketedIpv6HostIsNotBracketedAgain() {
+        // "[::1]" (the pre-F07 workaround) must reach the socket as http://[::1]:1. Bracketing it again
+        // yields "[[::1]]", which java.net.URI rejects as a malformed IPv6 literal; URI.create turns
+        // that into an IllegalArgumentException, not the IOException request() declares, so it escapes
+        // assertThrows(IOException.class). The last line only mirrors the unbracketed case above.
+        RouterClient bracketed = new RouterClient("[::1]", 1);
+
+        IOException e = assertThrows(IOException.class, bracketed::listModels);
+
+        assertThat(e instanceof MalformedURLException, is(false));
+    }
+
+    @Test
     public void awaitModelLoaded_failsFastOnFailedWorker() {
         modelsBody.set("{\"data\":[{\"id\":\"qwen\","
                 + "\"status\":{\"value\":\"unloaded\",\"failed\":true,\"exit_code\":137}}]}");
@@ -204,6 +267,18 @@ public class RouterClientTest {
                 assertThrows(IllegalStateException.class, () -> client.awaitModelLoaded("qwen", 30_000L));
 
         assertThat(thrown.getMessage(), containsString("does not list model 'qwen'"));
+    }
+
+    @Test
+    public void awaitModelLoaded_sleepingModelIsReady() throws Exception {
+        // With --sleep-idle-seconds a loaded worker goes to sleep when idle and wakes on the next
+        // request; upstream's own wait for a model (server_models, b11639) treats "sleeping" like
+        // "loaded" for exactly that reason. Awaiting such a model ran into the timeout instead.
+        modelsBody.set("{\"data\":[" + entry("qwen", "sleeping") + "]}");
+
+        RouterModel model = client.awaitModelLoaded("qwen", 2_000L);
+
+        assertThat(model.getStatus(), is(RouterModel.Status.SLEEPING));
     }
 
     @Test
@@ -273,7 +348,15 @@ public class RouterClientTest {
     @Test
     public void toStringNeverLeaksTheApiKey() {
         assertThat(
-                new RouterClient("127.0.0.1", 8080, "super-secret").toString(),
-                is("RouterClient(http://127.0.0.1:8080)"));
+                new RouterClient("127.0.0.1", 9931, "super-secret").toString(),
+                is("RouterClient(http://127.0.0.1:9931)"));
+    }
+
+    @Test
+    public void toStringBracketsAnIpv6HostAsTheRequestUrlDoes() {
+        // The rendered target URL used the raw host, so "::1" printed the invalid authority
+        // "http://::1:9931" while the request went to http://[::1]:9931.
+        assertThat(new RouterClient("::1", 9931).toString(), is("RouterClient(http://[::1]:9931)"));
+        assertThat(new RouterClient("[::1]", 9931).toString(), is("RouterClient(http://[::1]:9931)"));
     }
 }

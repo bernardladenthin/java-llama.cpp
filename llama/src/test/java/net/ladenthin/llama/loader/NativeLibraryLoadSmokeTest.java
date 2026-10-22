@@ -292,4 +292,22 @@ class NativeLibraryLoadSmokeTest {
                 () -> LlamaModel.jsonSchemaToGrammar("{ this is not valid json"),
                 "a malformed schema must surface as LlamaException, not abort the JVM");
     }
+
+    /**
+     * An error message that quotes the caller's text keeps a four-byte character. Upstream's schema
+     * converter names the {@code $ref} it cannot resolve, and the message reaches Java through the
+     * same {@code throw_api_status} as every failed {@code LlamaModel} call; {@code ThrowNew} would
+     * read its standard UTF-8 as Modified UTF-8 and mangle the character.
+     */
+    @Test
+    void anErrorMessageKeepsAFourByteCharacterOfTheRequest() {
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping grammar check");
+        String emoji = "\uD83D\uDE00"; // U+1F600
+
+        LlamaException e = assertThrows(
+                LlamaException.class, () -> LlamaModel.jsonSchemaToGrammar("{\"$ref\":\"#/$defs/" + emoji + "\"}"));
+
+        String message = String.valueOf(e.getMessage());
+        assertTrue(message.contains("#/$defs/" + emoji), "the $ref must come back intact; got: " + message);
+    }
 }

@@ -194,16 +194,20 @@ public final class ServerMetrics {
     }
 
     /**
-     * Cumulative server-wide compute counters since startup. The prompt value is
-     * the number actually evaluated by the model, excluding cache hits; upstream
-     * does not currently expose a cumulative logical or cached prompt total.
+     * Cumulative server-wide token counters since startup, read like the {@code usage} of a
+     * response: {@link Usage#getPromptTokens()} counts every prompt token, evaluated or served
+     * from the KV cache, {@link Usage#getCachedTokens()} the cached ones and
+     * {@link Usage#getProcessedPromptTokens()} the ones the model evaluated. Upstream counts the
+     * evaluated and the cached prompt tokens separately ({@code n_prompt_tokens_processed_total},
+     * {@code n_prompt_tokens_cached_total}); the prompt total is their sum.
      *
      * @return cumulative {@link Usage} across all completions since server start
      */
     public Usage getCumulativeUsage() {
+        final long processed = node.path("n_prompt_tokens_processed_total").asLong(0L);
+        final long cached = getCumulativeCachedPromptTokens();
         return new Usage(
-                node.path("n_prompt_tokens_processed_total").asLong(0L),
-                node.path("n_tokens_predicted_total").asLong(0L));
+                processed + cached, node.path("n_tokens_predicted_total").asLong(0L), cached);
     }
 
     /**
@@ -226,7 +230,9 @@ public final class ServerMetrics {
 
     /**
      * Usage counters from the most recent measurement window (current bucket) &mdash;
-     * {@code n_prompt_tokens_processed} and {@code n_tokens_predicted}.
+     * {@code n_prompt_tokens_processed} and {@code n_tokens_predicted}. Upstream keeps no cache
+     * count for the window, so the prompt value is the evaluated tokens only and
+     * {@link Usage#getCachedTokens()} is {@code 0}, unlike {@link #getCumulativeUsage()}.
      *
      * @return per-window {@link Usage} since the previous metrics emission
      */

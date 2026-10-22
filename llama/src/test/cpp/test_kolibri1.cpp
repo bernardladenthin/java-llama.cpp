@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 //
-// Runnable guard for patches/0016 (Aleph Alpha Kolibri-1, architecture "kolibri1").
+// Guard for llama.cpp's Kolibri-1 support (Aleph Alpha, architecture "kolibri1"): upstream since
+// b11709 (#30673), carried before that as patches/0016 (dropped at the b11760 bump, see
+// docs/history/dropped-llama-patches.md).
 //
 // Writes tiny random Kolibri-1 GGUFs, runs them through the real library on the CPU and compares
 // every logit with an independent reference written from Aleph Alpha's own vLLM implementation
-// (aleph_alpha_inference/kolibri1.py at 049a6a7) -- not from the patch. The model is too small to
-// mean anything, but it exercises each architectural decision the patch had to get right:
+// (aleph_alpha_inference/kolibri1.py at 049a6a7) -- not from llama.cpp. The model is too small to
+// mean anything, but it exercises each architectural decision the implementation has to get right:
 //
 //  - RoPE on sliding-window layers only (the layer pattern puts a full-attention layer in the
 //    middle, so a "rope every layer" or "no rope at all" graph is off immediately);
@@ -16,12 +18,17 @@
 //  - the router: top-k on logits + expert_bias, weights = unbiased sigmoid(logits). The biases are
 //    large enough that DeepSeek-V3's router (top-k on sigmoid(logits) + bias) picks other experts;
 //    one test asserts exactly that, so the comparison cannot pass vacuously;
-//  - sandwich norms, the ungated shared expert, optional renormalization (norm_topk_prob);
-//  - both published GGUF dialects (gating_func 2 + pre "qwen2" + output.weight, and gating_func 5
-//    + pre "kolibri1" + tied output), and the rejection of a gating function that is neither.
+//  - sandwich norms, the ungated shared expert, optional renormalization (norm_topk_prob).
 //
-// A llama.cpp bump that drops the patch fails these at load time ("unknown model architecture").
-// When upstream adds kolibri1 itself and 0016 is dropped, these tests are what must keep passing.
+// The GGUF format is the one upstream's converter writes (conversion/kolibri1.py over AfmoeModel):
+// expert_gating_func 2, pre-tokenizer "qwen2" (registered by vocabulary hash), expert_weights_norm
+// from norm_topk_prob, an explicit output.weight, expert_shared_count 1 and the per-layer
+// attention.sliding_window_pattern. Upstream reads every one of those keys as required; the two
+// community dialects the dropped patch also loaded (pre "kolibri1", gating_func 5, a tied output, the
+// norm key absent) are not loaded by upstream and have to be reconverted.
+//
+// A red comparison means upstream computes something else than Aleph Alpha's reference (router,
+// window boundary, positional encoding) -- a finding, not a test to adjust.
 
 #include "llama.h"
 #include "gguf.h"
@@ -590,22 +597,14 @@ void expect_matches_reference(const Dialect &d, uint32_t seed) {
 
 } // namespace
 
-// When upstream supports Kolibri-1 and patch 0016 is dropped: the reference comparison must stay
-// green (red = upstream computes something else than Aleph Alpha's reference). The Dialect rows
-// below are GGUF format, which upstream's converter decides; a red row means GGUFs of that dialect
-// no longer load without the patch -- decide that deliberately, then move the row to upstream's
-// format and leave the reference alone.
-
-// The AFMoE-based converter's dialect: gating_func 2, pre "qwen2", an explicit output.weight.
-TEST(Kolibri1, AfmoeDialectMatchesTheReference) { expect_matches_reference({2, "qwen2", true, false, false}, 1); }
-
-// The Qwen3-MoE-based converter's dialect: gating_func 5, pre "kolibri1", tied output, no norm key.
-TEST(Kolibri1, Qwen3MoeDialectWithTiedOutputMatchesTheReference) {
-    expect_matches_reference({5, "kolibri1", false, false, true}, 2);
+// Upstream's converter format (conversion/kolibri1.py): gating_func 2, pre "qwen2", an explicit
+// output.weight, expert_weights_norm written (false: Kolibri-1 ships norm_topk_prob off).
+TEST(Kolibri1, UpstreamConverterFormatMatchesTheReference) {
+    expect_matches_reference({2, "qwen2", true, false, false}, 1);
 }
 
 // norm_topk_prob = true renormalizes the selected sigmoid weights (Kolibri-1 itself ships it off).
-TEST(Kolibri1, RenormalizedRoutingMatchesTheReference) { expect_matches_reference({0, "qwen2", true, true, false}, 3); }
+TEST(Kolibri1, RenormalizedRoutingMatchesTheReference) { expect_matches_reference({2, "qwen2", true, true, false}, 3); }
 
 // Keeps the comparisons above honest: with these biases DeepSeek-V3's router (top-k on
 // sigmoid(logits) + bias) gives a different model, so a graph that used it would fail them.
@@ -620,16 +619,4 @@ TEST(Kolibri1, TheDeepSeekRouterWouldGiveDifferentLogits) {
         }
     }
     EXPECT_GT(d, 1e-1 * std::max(1.0, max_abs(kolibri)));
-}
-
-// Only the router Kolibri-1 has is accepted; a GGUF claiming another gating function is refused.
-TEST(Kolibri1, AnotherGatingFunctionIsRejected) {
-    const Weights w = make_weights(4, false);
-    const std::string path = write_gguf(w, {1, "qwen2", true, false, false}); // 1 = softmax
-    ASSERT_FALSE(path.empty());
-    {
-        Loaded m;
-        EXPECT_FALSE(load(path, m));
-    }
-    std::remove(path.c_str());
 }

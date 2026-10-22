@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.CompletionResult;
+import net.ladenthin.llama.value.Usage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -22,12 +24,13 @@ import org.junit.jupiter.api.Test;
  * Exercises complex C++ memory-management logic inside {@code server.hpp} that is not reached
  * by any other test in the suite.
  *
- * <h2>Context shifting (server.hpp ~line 2951)</h2>
- * When {@code n_past + 1 >= n_ctx} the server discards the oldest {@code n_discard} KV-cache
- * positions by calling {@code llama_memory_seq_rm} / {@code llama_memory_seq_add} and rebuilds
- * {@code cache_tokens} in-place.  A small context window (32 tokens) and
- * {@code setIgnoreEos(true)} guarantee the limit is crossed during a single {@code complete()}
- * call.
+ * <h2>Context shifting ({@code pre_decode()} in server-context.cpp)</h2>
+ * With {@code --context-shift} ({@link ModelParameters#enableContextShift()}; upstream's default is
+ * off), when a slot's tokens reach its context the server discards the oldest {@code n_discard} KV-cache
+ * positions by calling {@code seq_rm} / {@code seq_add} and rebuilds the slot's tokens in-place. The
+ * smallest context window (256 tokens), a 300-token answer and {@code setIgnoreEos(true)} guarantee
+ * the limit is crossed during a single call; the shift tests assert that every requested token was
+ * generated, which without the shift ends at the full context ({@code truncated}).
  *
  * <h2>Prompt-cache prefix reuse (server.hpp ~line 3162)</h2>
  * With {@code cache_prompt=true} successive calls compute a common prefix via
@@ -41,11 +44,21 @@ import org.junit.jupiter.api.Test;
 public class MemoryManagementTest {
 
     /**
-     * A short prompt whose token length we can reason about (~10 tokens for CodeLlama BPE).
-     * Kept intentionally brief so that, together with nPredict=25 and ctxSize=32, the context
-     * window is reliably exceeded and the shift path is triggered.
+     * A short prompt whose token length we can reason about (~10 tokens for CodeLlama BPE); with
+     * {@link #SHIFT_N_PREDICT} generated tokens it exceeds {@link #SMALL_CTX_SIZE}.
      */
     private static final String SHORT_PROMPT = "def add(a, b): return";
+
+    /**
+     * The context size of {@link #smallCtxModel}, and the smallest there is: llama.cpp pads
+     * {@code n_ctx} (and a slot's share of it) to a multiple of 256 ({@code llama-context.cpp:377},
+     * b11639), so the 32 this test used to ask for was a context of 256, which its 25 tokens never
+     * filled.
+     */
+    private static final int SMALL_CTX_SIZE = 256;
+
+    /** The tokens the shift tests request; with the prompt they exceed {@link #SMALL_CTX_SIZE}. */
+    private static final int SHIFT_N_PREDICT = 300;
 
     /**
      * A longer prompt (~25 tokens) used as the stable cached prefix for cache-reuse tests.
@@ -64,9 +77,10 @@ public class MemoryManagementTest {
     private static LlamaModel model;
 
     /**
-     * Separate model instance with a deliberately tiny context window (32 tokens).
-     * SHORT_PROMPT (~10 tokens) + nPredict=25 totals ~35 tokens, which exceeds the window
-     * and forces the context-shift path in server.hpp.
+     * Separate model instance with the smallest context window ({@link #SMALL_CTX_SIZE}) and one slot.
+     * SHORT_PROMPT + {@link #SHIFT_N_PREDICT} exceeds the window, which forces the context-shift path
+     * ({@code pre_decode()} in server-context.cpp). It is the small draft model, because the shift tests
+     * generate a few hundred tokens each.
      */
     private static LlamaModel smallCtxModel;
 
@@ -83,11 +97,17 @@ public class MemoryManagementTest {
                 .setGpuLayers(gpuLayers)
                 .setFit(false));
 
-        // ctxSize=32 makes a context shift unavoidable: ~10-token prompt + 25 predicted tokens
-        // totals ~35 positions, guaranteed to exceed the 32-token window.
+        Assumptions.assumeTrue(
+                new File(TestConstants.DRAFT_MODEL_PATH).exists(),
+                "Draft model file not found, skipping MemoryManagementTest");
+        // The prompt and SHIFT_N_PREDICT tokens exceed the one slot's context, so a context shift is
+        // unavoidable -- once it is enabled: upstream's default is off (common.h, ctx_shift = false at
+        // b11639), and without it the slot stops when its context is full.
         smallCtxModel = new LlamaModel(new ModelParameters()
-                .setModel(TestConstants.MODEL_PATH)
-                .setCtxSize(32)
+                .setModel(TestConstants.DRAFT_MODEL_PATH)
+                .setCtxSize(SMALL_CTX_SIZE)
+                .setParallel(1)
+                .enableContextShift()
                 .setGpuLayers(gpuLayers)
                 .setFit(false));
     }
@@ -109,7 +129,8 @@ public class MemoryManagementTest {
     /**
      * Forces the KV-cache context shift by generating more tokens than {@code ctxSize} allows.
      *
-     * <p>C++ path exercised (server.hpp ~2951–2993):
+     * <p>C++ path exercised (the shift in {@code pre_decode()}, server-context.cpp; shown in the
+     * names of the former server.hpp):
      * <pre>
      *   llama_memory_seq_rm(ctx_mem, slot.id, n_keep, n_keep + n_discard)
      *   llama_memory_seq_add(ctx_mem, slot.id, n_keep + n_discard, slot.n_past, -n_discard)
@@ -122,14 +143,14 @@ public class MemoryManagementTest {
     @Test
     public void testContextShiftingAllowsContinuedGeneration() {
         InferenceParameters params = new InferenceParameters(SHORT_PROMPT)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true) // prevent early stop so the shift is reliably triggered
                 .withSeed(42);
 
-        String output = smallCtxModel.complete(params);
+        CompletionResult result = smallCtxModel.completeWithStats(params);
 
-        assertNotNull(output, "Output must not be null after a context shift");
-        assertFalse(output.isEmpty(), "Output must not be empty after a context shift");
+        assertGeneratedPastTheContext(result);
+        assertFalse(result.getText().isEmpty(), "Output must not be empty after a context shift");
     }
 
     /**
@@ -144,10 +165,10 @@ public class MemoryManagementTest {
     public void testContextShiftFollowedByFreshGeneration() {
         // First call: triggers context shift
         InferenceParameters shiftParams = new InferenceParameters(SHORT_PROMPT)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true)
                 .withSeed(1);
-        smallCtxModel.complete(shiftParams);
+        assertGeneratedPastTheContext(smallCtxModel.completeWithStats(shiftParams));
 
         // Second call: independent generation on the same model after the shift
         InferenceParameters freshParams =
@@ -163,13 +184,17 @@ public class MemoryManagementTest {
     // ------------------------------------------------------------------
 
     /**
-     * With {@code cache_prompt=true} and a fixed seed the second identical call must produce
-     * exactly the same output as the first.
+     * With {@code cache_prompt=true} and greedy decoding, repeated identical calls over the cached
+     * prefix must produce the same output.
      *
-     * <p>The first call populates {@code slot.cache_tokens}; the second call computes
-     * {@code get_common_prefix(prompt_tokens)} which returns the full prompt length, skipping
-     * all prompt re-evaluation and jumping straight to sampling.  Any divergence between the
-     * cached and non-cached code paths would produce different tokens.
+     * <p>Each call after the first computes {@code get_common_prefix(prompt_tokens)} over the slot's
+     * tokens, takes every prompt token but the last from the KV cache and re-evaluates that one in a
+     * batch of its own, so that the request has logits (upstream {@code [TAG_PROMPT_LOGITS]}). The
+     * second and the third call therefore compute the same thing over the same cache and are compared;
+     * the first is not: it evaluated the prompt in one batch, whose logits the one-token re-evaluation
+     * does not reproduce bit for bit, so a greedy near tie can flip between the two (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). Any divergence between two reuses of
+     * the cache would produce different tokens.
      */
     @Test
     public void testPromptCacheGivesDeterministicOutput() {
@@ -179,13 +204,18 @@ public class MemoryManagementTest {
                 .withTemperature(0f) // greedy decoding: fully deterministic
                 .withSeed(42);
 
-        String first = model.complete(params);
-        String second = model.complete(params);
+        CompletionResult first = model.completeWithStats(params);
+        CompletionResult second = model.completeWithStats(params);
+        CompletionResult third = model.completeWithStats(params);
 
-        assertFalse(first.isEmpty(), "First cached-prompt call must produce output");
-        assertFalse(second.isEmpty(), "Second cached-prompt call must produce output");
+        assertFalse(first.getText().isEmpty(), "First cached-prompt call must produce output");
+        assertFalse(second.getText().isEmpty(), "Second cached-prompt call must produce output");
+        assertCachedPrefixReused(second);
+        assertCachedPrefixReused(third);
         assertEquals(
-                first, second, "Both calls share the same prompt and seed; cache_prompt=true must not change output");
+                second.getText(),
+                third.getText(),
+                "Both calls share the same prompt, seed and cached prefix; cache_prompt=true must not change output");
     }
 
     /**
@@ -244,9 +274,13 @@ public class MemoryManagementTest {
     }
 
     /**
-     * Three consecutive calls with the same prompt, seed, and {@code cache_prompt=true} must all
-     * produce identical output.  The third call reuses the cache path that was already exercised
-     * by the second call, verifying that the cache state remains stable across multiple reuses.
+     * Three consecutive calls with the same prompt, seed and {@code cache_prompt=true}: the second and
+     * the third both reuse the cached prefix (every prompt token but the last, which upstream
+     * re-evaluates) and must produce identical output, which verifies that the cache state stays
+     * stable across repeated reuses. The first call is not compared with them on purpose: it
+     * evaluated the prompt in one batch, and the one-token re-evaluation does not reproduce those
+     * logits bit for bit, so a greedy near tie can flip between the two paths (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}).
      */
     @Test
     public void testPromptCacheStableAcrossMultipleCalls() {
@@ -256,13 +290,17 @@ public class MemoryManagementTest {
                 .withTemperature(0f)
                 .withSeed(77);
 
-        String first = model.complete(params);
-        String second = model.complete(params);
-        String third = model.complete(params);
+        CompletionResult first = model.completeWithStats(params);
+        CompletionResult second = model.completeWithStats(params);
+        CompletionResult third = model.completeWithStats(params);
 
-        assertFalse(first.isEmpty(), "First call must produce output");
-        assertEquals(first, second, "Second call must match first");
-        assertEquals(first, third, "Third call must match first");
+        assertFalse(first.getText().isEmpty(), "First call must produce output");
+        assertCachedPrefixReused(second);
+        assertCachedPrefixReused(third);
+        assertEquals(
+                second.getText(),
+                third.getText(),
+                "Third call must match the second: both generate over the same cached prefix");
     }
 
     // ------------------------------------------------------------------
@@ -295,18 +333,18 @@ public class MemoryManagementTest {
     @Test
     public void testContextShiftWithNKeepPreservesGeneration() {
         // n_keep=5 asks the shift to freeze the first 5 prompt tokens as a "system prefix".
-        // With ctxSize=32 and nPredict=25 the window is reliably exceeded, so the shift fires
+        // With SMALL_CTX_SIZE and SHIFT_N_PREDICT the window is reliably exceeded, so the shift fires
         // with the non-trivial n_keep_eff = 5 + add_bos_token path.
         InferenceParameters params = new InferenceParameters(SHORT_PROMPT)
                 .withNKeep(5)
-                .withNPredict(25)
+                .withNPredict(SHIFT_N_PREDICT)
                 .withIgnoreEos(true)
                 .withSeed(42);
 
-        String output = smallCtxModel.complete(params);
+        CompletionResult result = smallCtxModel.completeWithStats(params);
 
-        assertNotNull(output, "Output must not be null after a context shift with n_keep > 0");
-        assertFalse(output.isEmpty(), "Output must not be empty after a context shift with n_keep > 0");
+        assertGeneratedPastTheContext(result);
+        assertFalse(result.getText().isEmpty(), "Output must not be empty after a context shift with n_keep > 0");
     }
 
     // ------------------------------------------------------------------
@@ -315,36 +353,42 @@ public class MemoryManagementTest {
 
     /**
      * Exercises the {@code cache_prompt=true} <em>complete-miss</em> path: after populating the
-     * KV cache with prompt A, a second call with a completely unrelated prompt B causes
-     * {@code get_common_prefix()} to return 0 (utils.hpp ~1204).
+     * KV cache with prompt A, a second call with a completely unrelated prompt B makes
+     * {@code get_common_prefix()} return at most the BOS token both prompts start with.
      *
-     * <p>The relevant branch in server.hpp ~3162–3164:
+     * <p>The relevant branch ({@code update_slots()} in server-context.cpp):
      * <pre>
-     *   slot.n_past = slot.cache_tokens.get_common_prefix(prompt_tokens);
-     *   // → 0 because first tokens of A and B differ
+     *   n_past = slot.prompt.tokens.get_common_prefix(input_tokens);
+     *   // → 1 (the BOS token) on a model that adds one, else 0: the first tokens of A and B differ
      * </pre>
-     * At this point {@code slot.cache_tokens} still holds all of prompt A's tokens and the KV
-     * memory still contains the evaluated key/value vectors for A.  With {@code n_past = 0},
-     * the server re-evaluates the entire prompt B, overwriting those positions.  If the stale A
-     * data leaks into B's evaluation (wrong sequence ID, wrong position offset, residual KV
-     * entries beyond the new prompt length), generation produces wrong tokens or aborts.
+     * At this point the slot still holds all of prompt A's tokens and the KV memory still contains
+     * the evaluated key/value vectors for A. The server removes everything after {@code n_past} and
+     * evaluates the rest of prompt B in one batch, overwriting those positions. If the stale A data
+     * leaks into B's evaluation (wrong sequence ID, wrong position offset, residual KV entries beyond
+     * the new prompt length), generation produces wrong tokens or aborts.
      *
-     * <p>The test also cross-checks output correctness: a fresh call (no prior cache) on the
-     * same disjoint prompt must produce the identical result, confirming that the stale-cache
-     * state had no observable effect on the logits.
+     * <p>The test also cross-checks output correctness: a fresh model that answers the same prompt
+     * must produce the identical result, confirming that the stale-cache state had no observable
+     * effect on the logits. The fresh model gets the same warm-up first, so both answers are computed
+     * the same way -- the reused BOS entry and the rest of the prompt in one batch, which the timings
+     * of both prove; a model without the warm-up would evaluate the whole prompt in one batch, and that
+     * does not reproduce the logits bit for bit, so a greedy near tie could flip (see
+     * {@code ChatAdvancedTest#testCachePromptConsistentOutput}). The warm-up takes nothing from the
+     * cache ({@code cache_prompt=false}), so on the shared model, whose slot may still hold an earlier
+     * test's prompt with the same prefix, it too is evaluated from scratch in one batch.
      */
     @Test
     public void testPromptCacheCompleteMissAfterWarmup() {
-        // Step 1: warm the cache with a distinct prompt so cache_tokens is fully populated.
+        // Step 1: warm the cache with a distinct prompt so the slot's tokens are fully populated.
         InferenceParameters warmup = new InferenceParameters(CACHE_PREFIX_PROMPT)
-                .withCachePrompt(true)
+                .withCachePrompt(false)
                 .withNPredict(5)
                 .withSeed(1);
         model.complete(warmup);
 
         // Step 2: call with a completely disjoint prompt.
-        // "x = " shares no leading tokens with CACHE_PREFIX_PROMPT ("def remove_non_ascii…"),
-        // so get_common_prefix() returns 0 and the stale KV data for CACHE_PREFIX_PROMPT must
+        // "x = " shares no token with CACHE_PREFIX_PROMPT ("def remove_non_ascii…") but the BOS, so
+        // get_common_prefix() returns at most 1 and the stale KV data for CACHE_PREFIX_PROMPT must
         // be silently discarded / overwritten.
         final String disjointPrompt = "x = ";
         InferenceParameters missParams = new InferenceParameters(disjointPrompt)
@@ -352,12 +396,13 @@ public class MemoryManagementTest {
                 .withNPredict(8)
                 .withTemperature(0f)
                 .withSeed(99);
-        String afterMiss = model.complete(missParams);
+        CompletionResult afterMiss = model.completeWithStats(missParams);
 
-        assertNotNull(afterMiss);
-        assertFalse(afterMiss.isEmpty(), "Cache-miss call must still produce output");
+        assertNotNull(afterMiss.getText());
+        assertFalse(afterMiss.getText().isEmpty(), "Cache-miss call must still produce output");
+        assertPromptCacheMiss(afterMiss);
 
-        // Step 3: baseline — fresh model (no prior cache) on the same disjoint prompt.
+        // Step 3: baseline — a fresh model with the same warm-up, on the same disjoint prompt.
         // Output must be identical, proving that the stale A cache had no effect on B's logits.
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         try (LlamaModel freshModel = new LlamaModel(new ModelParameters()
@@ -365,17 +410,24 @@ public class MemoryManagementTest {
                 .setCtxSize(128)
                 .setGpuLayers(gpuLayers)
                 .setFit(false))) {
-            InferenceParameters freshParams = new InferenceParameters(disjointPrompt)
-                    .withCachePrompt(true)
-                    .withNPredict(8)
-                    .withTemperature(0f)
-                    .withSeed(99);
-            String fresh = freshModel.complete(freshParams);
+            freshModel.complete(warmup);
+            CompletionResult fresh = freshModel.completeWithStats(missParams);
 
+            assertPromptCacheMiss(fresh);
             assertEquals(
-                    fresh,
-                    afterMiss,
-                    "A cache-miss call must produce the same output as a cold-start call on the same prompt");
+                    fresh.getTimings().getCacheN(),
+                    afterMiss.getTimings().getCacheN(),
+                    "both answers must take the same tokens from the cache: " + fresh.getRawJson() + " / "
+                            + afterMiss.getRawJson());
+            assertEquals(
+                    fresh.getTimings().getPromptN(),
+                    afterMiss.getTimings().getPromptN(),
+                    "both answers must evaluate the same tokens: " + fresh.getRawJson() + " / "
+                            + afterMiss.getRawJson());
+            assertEquals(
+                    fresh.getText(),
+                    afterMiss.getText(),
+                    "A cache-miss call must produce the same output as a fresh model on the same prompt");
         }
     }
 
@@ -450,6 +502,54 @@ public class MemoryManagementTest {
                 // no generation, no embedding — only construct + immediate destruct
             }
         }
+    }
+
+    /**
+     * A request that repeats the slot's prompt reuses it: every prompt token but the last comes from
+     * the cache, and only the last is evaluated, in a batch of its own (upstream
+     * {@code [TAG_PROMPT_LOGITS]}). Two results that pass this computed the same thing over the same
+     * cache, which is what makes comparing their texts sound.
+     */
+    private static void assertCachedPrefixReused(CompletionResult result) {
+        assertEquals(
+                result.getUsage().getPromptTokens() - 1,
+                result.getTimings().getCacheN(),
+                "every prompt token but the last must come from the cache: " + result.getRawJson());
+        assertEquals(
+                1,
+                result.getTimings().getPromptN(),
+                "only the last prompt token must be evaluated: " + result.getRawJson());
+    }
+
+    /**
+     * A prompt disjoint from the slot's reuses at most the BOS token both start with, and evaluates
+     * every other prompt token.
+     */
+    private static void assertPromptCacheMiss(CompletionResult result) {
+        int cacheN = result.getTimings().getCacheN();
+        assertTrue(
+                cacheN <= 1, "a disjoint prompt can share only the BOS token with the cache: " + result.getRawJson());
+        assertEquals(
+                result.getUsage().getPromptTokens() - cacheN,
+                result.getTimings().getPromptN(),
+                "every prompt token not taken from the cache must be evaluated: " + result.getRawJson());
+    }
+
+    /**
+     * The shift tests are only worth something if the shift happened: every requested token was
+     * generated although prompt and answer together do not fit into {@link #SMALL_CTX_SIZE}. Without
+     * {@code --context-shift} the slot stops when its context is full ({@code truncated}, stop type
+     * {@code limit}) and the answer is shorter than {@link #SHIFT_N_PREDICT}.
+     */
+    private static void assertGeneratedPastTheContext(CompletionResult result) {
+        Usage usage = result.getUsage();
+        assertEquals(
+                SHIFT_N_PREDICT,
+                usage.getCompletionTokens(),
+                "every requested token must be generated, which needs a context shift: " + result.getRawJson());
+        assertTrue(
+                usage.getPromptTokens() + usage.getCompletionTokens() > SMALL_CTX_SIZE,
+                "prompt and answer must exceed the context, or no shift was needed: " + usage);
     }
 
     /**

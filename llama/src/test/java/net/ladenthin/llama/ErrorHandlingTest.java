@@ -7,13 +7,18 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests for error handling paths in the JNI layer. Verifies that:
@@ -33,6 +38,10 @@ import org.junit.jupiter.api.Test;
                 + "and configureParallelInference validation.",
         model = "claude-opus-4-6")
 public class ErrorHandlingTest {
+
+    /** The engine's refusal of a slot file without {@code --slot-save-path} (upstream answers 501 there). */
+    private static final String SLOT_DIRECTORY_MISSING = "Saving or restoring a slot needs a slot directory: load the "
+            + "model with --slot-save-path <dir> (ModelParameters.setSlotSavePath)";
 
     private static LlamaModel model;
     private static LlamaModel modelNoEmbed;
@@ -191,6 +200,7 @@ public class ErrorHandlingTest {
 
     @Test
     public void testHandleInfillMissingInputSuffix() {
+        FimAssumptions.assumeFimTokens(model);
         String json = "{\"input_prefix\":\"def hello():\",\"n_predict\":5}";
         try {
             model.handleInfill(json);
@@ -199,6 +209,110 @@ public class ErrorHandlingTest {
             // a missing required field is upstream's `"input_suffix" is required`, a 400
             assertTrue(e.getMessage().contains("input_suffix"), "Error should mention input_suffix");
         }
+    }
+
+    @Test
+    public void testCompleteWithOnlyAnInputSuffixIsAnInvalidRequest() {
+        // complete()/generate() take input_prefix/input_suffix as an infill request, which needs both;
+        // the completion path used to drop a lone field and complete the prompt next to it.
+        FimAssumptions.assumeFimTokens(model);
+        InferenceParameters request =
+                InferenceParameters.empty().withInputSuffix("return result").withNPredict(1);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> model.complete(request));
+
+        assertTrue(
+                e.getMessage().contains("input_prefix"), "Error should name input_prefix but was: " + e.getMessage());
+    }
+
+    @Test
+    public void testCompleteWithInfillFieldsOnAModelWithoutFimTokensIsRefused() {
+        // The draft model (AMD-Llama-135m, a Llama-2 vocabulary) has no FIM tokens; a model that has
+        // them skips this test. The refusal is handleInfill's, not an empty completion.
+        Assumptions.assumeTrue(new File(TestConstants.DRAFT_MODEL_PATH).exists(), "Draft model file not found");
+        try (LlamaModel noFim = new LlamaModel(new ModelParameters()
+                .setCtxSize(128)
+                .setModel(TestConstants.DRAFT_MODEL_PATH)
+                .setGpuLayers(Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL))
+                .setFit(false))) {
+            Assumptions.assumeFalse(FimAssumptions.hasFimTokens(noFim), "the draft model has FIM tokens");
+            InferenceParameters request = InferenceParameters.empty()
+                    .withInputPrefix("def hello():")
+                    .withInputSuffix("return result")
+                    .withNPredict(1);
+
+            LlamaException e = assertThrows(LlamaException.class, () -> noFim.complete(request));
+
+            assertEquals(FimAssumptions.NO_FIM_MESSAGE, e.getMessage());
+            assertFalse(e instanceof InvalidRequestException, "a missing model capability is no invalid request");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // n_predict per request (F69)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testNPredictMinusTwoPerRequestIsAnInvalidRequest() {
+        // -2 ("until context filled") exists only for the completion tool's -n option. The server's
+        // request schema declares n_predict with the hard limits [-1, INT32_MAX] (server-schema.cpp,
+        // b11639), so a request with -2 is refused as the caller's fault, with the field named --
+        // what withNPredict's Javadoc promises.
+        InferenceParameters request =
+                InferenceParameters.empty().withPrompt("def f():").withNPredict(-2);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> modelNoEmbed.complete(request));
+
+        assertTrue(e.getMessage().contains("n_predict"), "Error should name n_predict but was: " + e.getMessage());
+    }
+
+    @Test
+    public void testNPredictMinusTwoInAChatIsAnInvalidRequest() {
+        // The OpenAI chat mapper forwards a token cap below -1 (F219); the chat path runs the same request
+        // schema, so the client gets upstream's 400 naming the field instead of an uncapped answer.
+        InferenceParameters request = InferenceParameters.empty()
+                .withMessagesJson("[{\"role\":\"user\",\"content\":\"hi\"}]")
+                .withNPredict(-2);
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.chatComplete(request));
+
+        assertTrue(e.getMessage().contains("n_predict"), "Error should name n_predict but was: " + e.getMessage());
+    }
+
+    @Test
+    public void testJsonSchemaWithGrammarInAChatIsAnInvalidRequest() {
+        // The OpenAI chat mapper forwards both fields and leaves the verdict to upstream's chat parser,
+        // which refuses the pair (server-common.cpp, b11639) -- the 400 llama-server answers.
+        InferenceParameters request = InferenceParameters.empty()
+                .withMessagesJson("[{\"role\":\"user\",\"content\":\"hi\"}]")
+                .withGrammar("root ::= \"a\"")
+                .withJsonSchema("{\"type\":\"object\"}")
+                .withNPredict(1);
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.chatComplete(request));
+
+        assertTrue(
+                e.getMessage().contains("Cannot use both json_schema and grammar"),
+                "Error should be upstream's refusal but was: " + e.getMessage());
+    }
+
+    @Test
+    public void anInvalidRequestKeepsAFourByteCharacterOfTheRequest() {
+        // upstream quotes the client's response_format type in its refusal (oaicompat_chat_params_parse,
+        // server-common.cpp:1318, b11639); the message crosses JNI through throw_api_status, which has to
+        // hand it over as UTF-8 bytes -- ThrowNew reads Modified UTF-8 and mangles a supplementary character
+        String emoji = "\uD83D\uDE00"; // U+1F600
+        String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]," + "\"response_format\":{\"type\":\""
+                + emoji + "\"},\"n_predict\":1}";
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.handleChatCompletions(request));
+
+        assertTrue(
+                e.getMessage().contains("but got: " + emoji),
+                "Error should quote the type intact but was: " + e.getMessage());
     }
 
     // -------------------------------------------------------------------------
@@ -281,5 +395,33 @@ public class ErrorHandlingTest {
         } catch (LlamaException e) {
             assertNotNull(e.getMessage(), "Exception message must not be null");
         }
+    }
+
+    /**
+     * Without {@code --slot-save-path} a slot cannot be saved or restored, as upstream's slots route
+     * answers {@code 501} there: a {@link LlamaException} naming the option, not an
+     * {@link InvalidRequestException}, and before the file name is looked at -- a bare name, a name
+     * with {@code ..} and an absolute path alike, none of which is written (before F251 the name was
+     * the path). The file name is unique to the run, so a file another run left in the working
+     * directory cannot decide the test. Erasing needs no file.
+     */
+    @Test
+    public void testSaveSlotWithoutSlotSavePathIsRefused(@TempDir Path elsewhere) {
+        String name = "slot-" + UUID.randomUUID() + ".bin";
+        File inWorkingDirectory = new File(name);
+        Path absolute = elsewhere.resolve(name);
+
+        LlamaException save = assertThrows(LlamaException.class, () -> model.saveSlot(0, name));
+        assertFalse(save instanceof InvalidRequestException, save.getMessage());
+        assertEquals(SLOT_DIRECTORY_MISSING, save.getMessage());
+        LlamaException saveAbsolute = assertThrows(LlamaException.class, () -> model.saveSlot(0, absolute.toString()));
+        assertEquals(SLOT_DIRECTORY_MISSING, saveAbsolute.getMessage());
+        LlamaException restore = assertThrows(LlamaException.class, () -> model.restoreSlot(0, "../" + name));
+        assertFalse(restore instanceof InvalidRequestException, restore.getMessage());
+        assertEquals(SLOT_DIRECTORY_MISSING, restore.getMessage());
+
+        assertFalse(inWorkingDirectory.exists(), inWorkingDirectory.getAbsolutePath());
+        assertFalse(Files.exists(absolute), absolute.toString());
+        assertNotNull(model.eraseSlot(0));
     }
 }

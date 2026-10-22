@@ -196,8 +196,8 @@ static const static_object_binding g_static_object_bindings[] = {
  * Throws the Java exception a failed C API call maps to (jllama_last_error() carries the message).
  */
 static void throw_api_status(JNIEnv *env, jllama_status status) {
-    env->ThrowNew(status == JLLAMA_STATUS_INVALID_REQUEST ? c_llama_invalid_request : c_llama_error,
-                  jllama_last_error());
+    throw_utf8_impl(env, status == JLLAMA_STATUS_INVALID_REQUEST ? c_llama_invalid_request : c_llama_error,
+                    jllama_last_error());
 }
 
 /** The handle a Java field holds, as the C API's opaque model. */
@@ -863,7 +863,7 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
     free_string_array(argv, argc);
     if (status != JLLAMA_STATUS_OK) {
         // An unreachable --rpc server and a refused argv are both LlamaException here, as before.
-        env->ThrowNew(c_llama_error, jllama_last_error());
+        throw_utf8_impl(env, c_llama_error, jllama_last_error());
         return;
     }
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(model));
@@ -1063,6 +1063,20 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
             return 0;
         }
         return static_cast<jint>(task_id);
+    });
+}
+
+// Streaming OpenAI /v1/completions: the body parsed as handleCompletionsOai parses it; poll the
+// returned task id with receiveChatCompletionChunk, whose envelopes then carry text_completion
+// chunks, the last with usage.
+JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestCompletionOaiStream(JNIEnv *env, jobject obj,
+                                                                                      jstring jparams) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        REQUIRE_SERVER_CONTEXT(0);
+        const std::string body = parse_jstring(env, jparams);
+        int task_id = 0;
+        const jllama_status status = jllama_completions_oai_stream_request(api(jctx), body.c_str(), &task_id);
+        return api_task(env, status, task_id);
     });
 }
 

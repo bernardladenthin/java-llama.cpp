@@ -43,6 +43,12 @@ public enum ModelFlag {
     /** Stop generating at the end of the context instead of dropping the oldest tokens to make room. */
     NO_CONTEXT_SHIFT("--no-context-shift"),
 
+    /**
+     * Drop the oldest tokens when the context is full and keep generating, instead of stopping
+     * (upstream's default is off).
+     */
+    CONTEXT_SHIFT("--context-shift"),
+
     /** Keep the full-size sliding-window-attention (SWA) KV cache, enabling cross-request
      *  prompt-prefix reuse (pairs with --cache-reuse) at ~2x the SWA-layer KV RAM. Default off.
      *  Env: LLAMA_ARG_SWA_FULL. */

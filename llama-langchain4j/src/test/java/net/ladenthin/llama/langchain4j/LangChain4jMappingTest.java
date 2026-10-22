@@ -77,9 +77,37 @@ class LangChain4jMappingTest {
         ChatMessage mapped = LangChain4jMapping.toJllamaRequest(request).getMessages().get(0);
 
         assertThat(mapped.getRole(), is("user"));
-        assertThat(mapped.getContent(), is("Hello world"));
+        assertThat(mapped.getContent(), is("Hello \nworld"));
         // Text-only content needs no multimodal array form.
         assertThat(mapped.hasParts(), is(false));
+    }
+
+    @Test
+    void joinsTextPartsWithANewlineLikeUpstream() {
+        ChatRequest request =
+                ChatRequest.builder()
+                        .messages(UserMessage.from(TextContent.from("first"), TextContent.from("second")))
+                        .build();
+
+        ChatMessage mapped = LangChain4jMapping.toJllamaRequest(request).getMessages().get(0);
+
+        // Upstream's concat_content_parts joins text parts with a newline; without a separator the
+        // words at the seam merge ("firstsecond").
+        assertThat(mapped.getContent(), is("first\nsecond"));
+    }
+
+    @Test
+    void streamingParametersRequestTheUsageChunk() throws Exception {
+        ChatRequest request =
+                ChatRequest.builder().messages(UserMessage.from("hi")).build();
+
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
+
+        // Upstream emits the trailing usage chunk only for stream_options.include_usage; without it
+        // the streamed response never carries token usage, unlike the blocking one.
+        com.fasterxml.jackson.databind.JsonNode node =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+        assertThat(node.path("stream_options").path("include_usage").asBoolean(false), is(true));
     }
 
     @Test
@@ -261,6 +289,21 @@ class LangChain4jMappingTest {
         ChatMessage result = messages.get(2);
         assertThat(result.getRole(), is("tool"));
         assertThat(result.getToolCallId().orElse(""), is("call_7"));
+    }
+
+    @Test
+    void blockingResponseCarriesTheThinkingLikeTheStreamedOne() {
+        // The streamed final response sets AiMessage.thinking() from reasoning_content; the blocking
+        // one must carry the same reasoning, which the native answer holds in the raw JSON.
+        net.ladenthin.llama.value.ChatResponse response = new net.ladenthin.llama.json.ChatResponseParser()
+                .parseResponse("{\"id\":\"id-1\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\","
+                        + "\"message\":{\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"6 times 7\"}}]}");
+
+        dev.langchain4j.model.chat.response.ChatResponse mapped =
+                LangChain4jMapping.toLangChainResponse(response);
+
+        assertThat(mapped.aiMessage().text(), is("42"));
+        assertThat(mapped.aiMessage().thinking(), is("6 times 7"));
     }
 
     @Test

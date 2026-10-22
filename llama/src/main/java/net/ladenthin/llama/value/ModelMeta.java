@@ -200,6 +200,19 @@ public final class ModelMeta {
     }
 
     /**
+     * The placeholder a raw multimodal prompt puts where each image or audio clip goes: a completion
+     * request whose {@code prompt} is {@code {"prompt_string": "... <marker> ...", "multimodal_data":
+     * ["<base64>", ...]}} (llama.cpp's raw schema) needs one marker per entry, in order. llama.cpp draws
+     * it at random per process unless the environment variable {@code LLAMA_MEDIA_MARKER} pins it, so
+     * it is read here rather than written into a prompt by hand.
+     *
+     * @return the media marker, or {@code ""} if the native layer does not report it
+     */
+    public String getMediaMarker() {
+        return node.path("media_marker").asText("");
+    }
+
+    /**
      * The model's resolved default chat template (Jinja), from GGUF
      * {@code tokenizer.chat_template} metadata.
      *

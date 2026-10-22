@@ -109,7 +109,10 @@ JLLAMA_API void jllama_string_free(char *s);
 /**
  * Loads a model from llama-server's command line: argv[0] is a program name (any), the rest the
  * flags llama-server accepts (`-m <gguf>`, `-c`, `-ngl`, ...; `--vocab-only` loads the tokenizer
- * only). `progress` may be null. On JLLAMA_STATUS_OK, *out holds the handle.
+ * only). `progress` may be null. On JLLAMA_STATUS_OK, *out holds the handle. A vocab-only model
+ * answers jllama_model_meta, jllama_tokenize, jllama_tokenize_json, jllama_detokenize and
+ * jllama_detokenize_json; every other call on it is JLLAMA_STATUS_ERROR with "<function> is not
+ * available in vocab-only mode ..." as jllama_last_error().
  */
 JLLAMA_API jllama_status jllama_model_load(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                            void *progress_user_data, jllama_model **out);
@@ -123,7 +126,8 @@ JLLAMA_API void jllama_model_free(jllama_model *model);
 /**
  * An OpenAI chat completion, blocking: `request_json` is the request body
  * (`{"messages":[...], "max_tokens": ..., ...}`), *response_json the chat.completion object
- * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses.
+ * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses, including
+ * "n" > 1: a request takes one completion (send separate requests).
  */
 JLLAMA_API jllama_status jllama_chat_completions(jllama_model *model, const char *request_json, char **response_json);
 
@@ -131,13 +135,15 @@ JLLAMA_API jllama_status jllama_chat_completions(jllama_model *model, const char
  * Starts a streaming OpenAI chat completion (`"stream": true` in the body makes the server emit
  * chat.completion.chunk deltas) and returns its task id in *task_id. Receive with
  * jllama_chat_completions_stream_receive until it reports stop; a task not received to its end is
- * released with jllama_task_release.
+ * released with jllama_task_release. "n" > 1 is JLLAMA_STATUS_INVALID_REQUEST, as for
+ * jllama_chat_completions.
  */
 JLLAMA_API jllama_status jllama_chat_completions_stream_request(jllama_model *model, const char *request_json,
                                                                 int *task_id);
 
 /**
- * The next event of a streaming task, blocking until one is available: *envelope_json is
+ * The next event of a streaming task (a chat one, or one from jllama_completions_oai_stream_request),
+ * blocking until one is available: *envelope_json is
  * `{"data": <chunk object, or the array of final chunks>, "stop": <bool>}` (jllama_string_free),
  * *stop is the same flag. After stop the task is released. JLLAMA_STATUS_ERROR with "Task not
  * found" for an unknown or already released id.
@@ -176,29 +182,58 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
 
 /**
  * A raw completion (llama.cpp's /completion body: `{"prompt": ..., "n_predict": ..., ...}`),
- * blocking; *response_json is the array of result objects.
+ * blocking; *response_json is the result object. A request takes one prompt and one completion:
+ * several prompts or "n" > 1 are JLLAMA_STATUS_INVALID_REQUEST (send separate requests). A body with
+ * `input_prefix`/`input_suffix` is an infill one, prepared as for jllama_infill (both fields required,
+ * JLLAMA_STATUS_ERROR when the model has no FIM tokens). One with `messages` completes the prompt the
+ * chat template renders from them (as jllama_apply_template), stopping also at the stop strings the
+ * template adds of its own, as the chat paths do; a template with thinking tags gives
+ * `reasoning_budget_tokens` its tags and the generation prompt, as the chat paths do (without tags the
+ * budget has nothing to act on, there as here), and the tokens the template preserves (its thinking
+ * tags, say) are rendered as text even where the vocabulary holds them as special tokens, beside the
+ * request's own `preserved_tokens`. A body without `messages` names the budget's tags itself
+ * (`reasoning_budget_start_tag`, `reasoning_budget_end_tags`); without `reasoning_budget_message`
+ * the server's default message is forced before the end tag, as on the chat paths. A non-empty `prompt`, the infill
+ * fields or a chat field this path cannot apply (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`,
+ * `top_logprobs`, `thinking_budget_tokens`) beside them are JLLAMA_STATUS_INVALID_REQUEST, the
+ * message naming the field: send those as a chat completion.
  */
 JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json);
 
-/** An OpenAI /v1/completions request, blocking; *response_json the text_completion object(s). */
+/**
+ * An OpenAI /v1/completions request, blocking; *response_json the text_completion object. One prompt
+ * and one choice, as for jllama_completions.
+ */
 JLLAMA_API jllama_status jllama_completions_oai(jllama_model *model, const char *request_json, char **response_json);
 
 /**
+ * Starts a streaming OpenAI /v1/completions request (the body as for jllama_completions_oai) and
+ * returns its task id in *task_id. Receive with jllama_chat_completions_stream_receive, whose
+ * envelopes then carry text_completion chunks, the last with usage; release an unfinished task with
+ * jllama_task_release. One prompt and one choice, as for jllama_completions.
+ */
+JLLAMA_API jllama_status jllama_completions_oai_stream_request(jllama_model *model, const char *request_json,
+                                                               int *task_id);
+
+/**
  * A fill-in-the-middle request (`input_prefix`, `input_suffix`, optional `input_extra` and
- * `prompt`), blocking. JLLAMA_STATUS_ERROR when the model has no FIM tokens.
+ * `prompt`), blocking. JLLAMA_STATUS_ERROR when the model has no FIM tokens; "n" > 1 is
+ * JLLAMA_STATUS_INVALID_REQUEST, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_infill(jllama_model *model, const char *request_json, char **response_json);
 
 /**
  * Starts a raw streaming completion (`"stream": true`; an infill one when the body carries
- * `input_prefix`/`input_suffix`) and returns its task id; receive with
- * jllama_completions_stream_receive.
+ * `input_prefix`/`input_suffix`, a templated one when it carries `messages`, both prepared as for
+ * jllama_completions) and returns its task id; receive with
+ * jllama_completions_stream_receive. One prompt and one completion, as for jllama_completions.
  */
 JLLAMA_API jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id);
 
 /**
  * Starts a streaming chat completion whose results are llama.cpp's raw result objects (the chat
  * template applied, no OpenAI chunk formatting); receive with jllama_completions_stream_receive.
+ * "n" > 1 is JLLAMA_STATUS_INVALID_REQUEST, as for jllama_chat_completions.
  */
 JLLAMA_API jllama_status jllama_chat_completions_request(jllama_model *model, const char *request_json, int *task_id);
 
@@ -228,7 +263,9 @@ JLLAMA_API jllama_status jllama_embeddings(jllama_model *model, const char *requ
 
 /**
  * Reranks `n_documents` documents against `query` (a model loaded with `--reranking`); the result
- * array, each entry with its `index` and `score`.
+ * array, one entry per document with `document` (its text), `index` (its position in `documents`),
+ * `score` and `tokens_evaluated` (the tokens the model evaluated for it, 0 if not reported; an
+ * OpenAI-shaped `usage` sums them).
  */
 JLLAMA_API jllama_status jllama_rerank(jllama_model *model, const char *query, int n_documents,
                                        const char *const *documents, char **response_json);
@@ -256,15 +293,20 @@ JLLAMA_API jllama_status jllama_detokenize_json(jllama_model *model, const int *
 JLLAMA_API jllama_status jllama_metrics(jllama_model *model, char **response_json);
 
 typedef enum jllama_slot_op {
-    /** Saves a slot's KV cache to `filename` (under `--slot-save-path`). */
+    /** Saves a slot's KV cache to the file `filename` inside the `--slot-save-path` directory. */
     JLLAMA_SLOT_SAVE = 1,
-    /** Restores a slot's KV cache from `filename`. */
+    /** Restores a slot's KV cache from the file `filename` inside the `--slot-save-path` directory. */
     JLLAMA_SLOT_RESTORE = 2,
-    /** Erases a slot's KV cache (`filename` ignored). */
+    /** Erases a slot's KV cache (`filename` ignored; needs no `--slot-save-path`). */
     JLLAMA_SLOT_ERASE = 3
 } jllama_slot_op;
 
-/** A slot save/restore/erase; *response_json is the server's result object. */
+/**
+ * A slot save/restore/erase; *response_json is the server's result object. As upstream's
+ * `POST /slots/:id?action=save|restore`, `filename` is a file name, not a path: one with a directory
+ * part (`/` or `\`), with `..`, or an empty one is JLLAMA_STATUS_INVALID_REQUEST, and saving or
+ * restoring on a model loaded without `--slot-save-path` is JLLAMA_STATUS_ERROR.
+ */
 JLLAMA_API jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id,
                                             const char *filename, char **response_json);
 
@@ -351,7 +393,19 @@ JLLAMA_API void jllama_strings_free(char **strings, size_t count);
 JLLAMA_API jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
                                                  const char *devices);
 
-/** Stops the running RPC server (no-op when none runs). */
+/**
+ * Stops the RPC server and returns once jllama_rpc_server_serve() has returned -- also for a stop
+ * that arrives before the socket is bound (device initialization), which ggml alone would lose.
+ * JLLAMA_STATUS_ERROR when serve has not returned 30 s after the request. Called on the serving
+ * thread itself (from a callback that runs there before the server starts), it returns at once and
+ * serve returns without starting the server.
+ *
+ * A no-op when no serve call is in progress, and it is for the serve calls in progress when it is
+ * made: one that starts while the stop still waits (a restart from another thread) is not stopped.
+ * A stop issued before the serving thread has entered jllama_rpc_server_serve() is lost, so a
+ * caller that stops a server that may not have come up yet repeats the stop until serve has
+ * returned, the way the Java RpcServer does.
+ */
 JLLAMA_API jllama_status jllama_rpc_server_stop(void);
 
 /** True while the RPC server listens. */

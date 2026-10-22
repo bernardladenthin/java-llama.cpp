@@ -110,7 +110,7 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
         // integration test exercises it end to end against a real router (the wire-shape
         // details are unit-tested model-free in RouterClientTest against a stub server).
         RouterClient client = new RouterClient(port);
-        modelName = discoverModelName(client);
+        modelName = discoverModelName(client, expectedModelId(reasoningModel.getName()));
         client.loadModel(modelName);
         RouterModel loaded = client.awaitModelLoaded(modelName, MODEL_READY_TIMEOUT_MILLIS);
         assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
@@ -180,15 +180,33 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
         fail("router did not answer " + path + " within " + timeoutMillis + "ms" + (last != null ? ": " + last : ""));
     }
 
-    /** Finds the entry for the symlinked GGUF in the typed model list and returns its identifier. */
-    private static String discoverModelName(RouterClient client) throws Exception {
+    /**
+     * The identifier the router gives a single-file model in {@code --models-dir}: the file name
+     * with every {@code ".gguf"} removed, as upstream's {@code common_preset_context::load_from_models_dir}
+     * ({@code common/preset.cpp}) derives it ({@code string_replace_all(name, ".gguf", "")}).
+     *
+     * @param fileName the name of the symlink this test placed in the models dir
+     * @return the model identifier the router is expected to list
+     */
+    static String expectedModelId(String fileName) {
+        return fileName.replace(".gguf", "");
+    }
+
+    /**
+     * Finds the entry for the symlinked GGUF in the typed model list and returns its identifier.
+     *
+     * @param client the router client
+     * @param expectedId the identifier derived from the symlink's file name
+     * @return the identifier of the listed model
+     */
+    private static String discoverModelName(RouterClient client, String expectedId) throws Exception {
         List<RouterModel> models = client.listModels();
         for (RouterModel model : models) {
-            if (model.getId().contains("Qwen3")) {
+            if (model.getId().equals(expectedId)) {
                 return model.getId();
             }
         }
-        fail("GET /models did not list the symlinked model: " + models);
+        fail("GET /models did not list the symlinked model '" + expectedId + "': " + models);
         return ""; // unreachable
     }
 

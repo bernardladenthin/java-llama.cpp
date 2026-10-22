@@ -213,19 +213,115 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // addLoraScaledAdapter / addControlVectorScaled — "fname,scale" format
+    // addLoraScaledAdapter / addControlVectorScaled — "FNAME:SCALE,..." format
+    //
+    // These rendered "FNAME,SCALE" and every value was rejected by the argv parser: the comma has
+    // been the LIST separator since llama.cpp #18056 (b7448) while the field separator is a colon, so
+    // `--lora-scaled <path>,1.0` fails with `invalid stof argument` and the model does not load at
+    // all. Only ModelParametersTest covered it, pinning the broken format -- a string-mapping test
+    // that stays green while the flag is dead. Measured against the real parser at b11639.
     // -------------------------------------------------------------------------
 
     @Test
     public void testAddLoraScaledAdapter() {
         ModelParameters p = new ModelParameters().addLoraScaledAdapter("adapter.bin", 0.5f);
-        assertThat(p.parameters.get("--lora-scaled"), is("adapter.bin,0.5"));
+        assertThat(p.parameters.get("--lora-scaled"), is("adapter.bin:0.5"));
     }
 
     @Test
     public void testAddControlVectorScaled() {
         ModelParameters p = new ModelParameters().addControlVectorScaled("vec.bin", 1.5f);
-        assertThat(p.parameters.get("--control-vector-scaled"), is("vec.bin,1.5"));
+        assertThat(p.parameters.get("--control-vector-scaled"), is("vec.bin:1.5"));
+    }
+
+    /**
+     * All four say "can be repeated" in their javadoc, and all four replaced instead: the parameter
+     * set is a map keyed by the wire string. Upstream reads them as one comma-separated value, so
+     * appending is what accumulates.
+     */
+    @Test
+    public void theRepeatableAdapterOptionsAccumulateInsteadOfReplacing() {
+        ModelParameters p = new ModelParameters()
+                .addLoraAdapter("a.gguf")
+                .addLoraAdapter("b.gguf")
+                .addLoraScaledAdapter("c.gguf", 0.5f)
+                .addLoraScaledAdapter("d.gguf", 1f)
+                .addControlVector("v1.gguf")
+                .addControlVector("v2.gguf")
+                .addControlVectorScaled("v3.gguf", 0.25f)
+                .addControlVectorScaled("v4.gguf", 2f);
+        assertThat(p.parameters.get("--lora"), is("a.gguf,b.gguf"));
+        assertThat(p.parameters.get("--lora-scaled"), is("c.gguf:0.5,d.gguf:1.0"));
+        assertThat(p.parameters.get("--control-vector"), is("v1.gguf,v2.gguf"));
+        assertThat(p.parameters.get("--control-vector-scaled"), is("v3.gguf:0.25,v4.gguf:2.0"));
+    }
+
+    /**
+     * A path carrying the list separator has to be a quoted CSV field, because upstream's
+     * {@code parse_csv_row} recognises an opening quote only at the start of a field.
+     */
+    @Test
+    public void aValueCarryingACommaOrAQuoteIsWrittenAsAQuotedCsvField() {
+        assertThat(new ModelParameters().addLoraAdapter("a,b.gguf").parameters.get("--lora"), is("\"a,b.gguf\""));
+        assertThat(
+                new ModelParameters()
+                        .addLoraAdapter("say\"hi\".gguf")
+                        .parameters
+                        .get("--lora"),
+                is("\"say\"\"hi\"\".gguf\""));
+        assertThat(
+                new ModelParameters()
+                        .addLoraAdapter("plain.gguf")
+                        .addLoraAdapter("a,b.gguf")
+                        .parameters
+                        .get("--lora"),
+                is("plain.gguf,\"a,b.gguf\""));
+    }
+
+    /**
+     * An empty path used to be dropped without a word by the next value of the same option
+     * ({@code addLoraAdapter("").addLoraAdapter("b.gguf")} rendered {@code --lora b.gguf}), while
+     * alone it reached the load and failed there. Refusing it at build time names the option.
+     */
+    @Test
+    public void anEmptyAdapterPathIsRefusedInsteadOfDropped() {
+        IllegalArgumentException lora = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ModelParameters().addLoraAdapter("").addLoraAdapter("b.gguf"));
+        assertThat(lora.getMessage(), is("--lora needs a non-empty file path"));
+        IllegalArgumentException controlVector =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().addControlVector(""));
+        assertThat(controlVector.getMessage(), is("--control-vector needs a non-empty file path"));
+        ModelParameters p = new ModelParameters().addLoraAdapter("a.gguf");
+        assertThrows(IllegalArgumentException.class, () -> p.addLoraAdapter(""));
+        assertThat("a refused value leaves the earlier one in place", p.parameters.get("--lora"), is("a.gguf"));
+    }
+
+    /**
+     * The colon is the field separator and upstream splits on every one of them, demanding exactly
+     * two parts -- so an absolute Windows path cannot be expressed at all. Refusing it here names the
+     * cause instead of letting the load fail with "Failed to parse model parameters".
+     */
+    @Test
+    public void aScaledPathContainingAColonIsRefusedWithTheReason() {
+        IllegalArgumentException lora = assertThrows(
+                IllegalArgumentException.class,
+                () -> new ModelParameters().addLoraScaledAdapter("X:\\models\\a.gguf", 1f));
+        assertThat(lora.getMessage(), containsString("--lora-scaled"));
+        assertThat(lora.getMessage(), containsString("FNAME:SCALE"));
+        assertThat(lora.getMessage(), containsString("X:\\models\\a.gguf"));
+
+        IllegalArgumentException vector = assertThrows(
+                IllegalArgumentException.class, () -> new ModelParameters().addControlVectorScaled("C:/vec.gguf", 1f));
+        assertThat(vector.getMessage(), containsString("--control-vector-scaled"));
+
+        // a relative path is what works, and is what the message points at
+        assertThat(
+                new ModelParameters()
+                        .addLoraScaledAdapter("../models/a.gguf", 1f)
+                        .parameters
+                        .get("--lora-scaled"),
+                is("../models/a.gguf:1.0"));
     }
 
     // -------------------------------------------------------------------------
@@ -317,6 +413,14 @@ public class ModelParametersTest {
         // Calling setPoolingType(UNSPECIFIED) must leave that invariant intact
         fresh.setPoolingType(PoolingType.UNSPECIFIED);
         assertThat(fresh.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
+    }
+
+    @Test
+    public void testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType() {
+        // UNSPECIFIED must leave the model's own pooling, also after another type was set before
+        ModelParameters p =
+                new ModelParameters().setPoolingType(PoolingType.MEAN).setPoolingType(PoolingType.UNSPECIFIED);
+        assertThat(p.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
     }
 
     @Test
@@ -490,6 +594,13 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().enableMmprojAuto().setMmprojAuto(false);
         assertThat(p.parameters, hasKey("--no-mmproj-auto"));
         assertThat(p.parameters, not(hasKey("--mmproj-auto")));
+    }
+
+    @Test
+    public void testSetAlias() {
+        // the name every OpenAI answer and chunk carries in "model" (F185)
+        ModelParameters p = new ModelParameters().setAlias("local-model");
+        assertThat(p.parameters.get("--alias"), is("local-model"));
     }
 
     @Test

@@ -73,7 +73,7 @@ SPDX-License-Identifier: MIT
 "github.copilot.chat.customOAIModels": {
   "my-model": {
     "name": "My Model",
-    "url": "http://127.0.0.1:8080/v1/chat/completions",
+    "url": "http://127.0.0.1:9931/v1/chat/completions",
     "toolCalling": true, "vision": false, "thinking": false,
     "maxInputTokens": 128000, "maxOutputTokens": 16000,
     "requiresAPIKey": false
@@ -84,7 +84,7 @@ SPDX-License-Identifier: MIT
 
 Copilot reads capability flags `toolCalling`, `vision`, `thinking`, `maxInputTokens`/`maxOutputTokens`. It sends standard OpenAI chat bodies with `messages`, `tools`, `tool_choice`, `stream:true`. A documented crash — microsoft/vscode issue #273482 ("OpenAI Compatible models return TypeError: Cannot read properties of undefined (reading 'cached_tokens')"), shows `TypeError: Cannot read properties of undefined (reading 'cached_tokens') at SX.push (…github.copilot-chat-0.33.2025102701…)` reproduced with LM Studio models in agent and ask mode — occurs when the streamed `usage` lacks `prompt_tokens_details.cached_tokens`. [GitHub](https://github.com/microsoft/vscode/issues/273482)
 
-**Continue.dev** (`config.yaml`, schema v1): `provider: openai` + `apiBase: http://127.0.0.1:8080/v1` + `model` + `roles: [chat, edit, apply]`. For OpenAI-compatible non-chat completion: `useLegacyCompletionsEndpoint: true` forces `/v1/completions`. [Continue](https://docs.continue.dev/customize/model-providers/top-level/openai) Continue's native `llama.cpp` provider posts to `/completion` (singular), not `/completions` (issue #4991). `requestOptions.headers` carries auth; `capabilities: [tool_use, image_input]` can be declared.
+**Continue.dev** (`config.yaml`, schema v1): `provider: openai` + `apiBase: http://127.0.0.1:9931/v1` + `model` + `roles: [chat, edit, apply]`. For OpenAI-compatible non-chat completion: `useLegacyCompletionsEndpoint: true` forces `/v1/completions`. [Continue](https://docs.continue.dev/customize/model-providers/top-level/openai) Continue's native `llama.cpp` provider posts to `/completion` (singular), not `/completions` (issue #4991). `requestOptions.headers` carries auth; `capabilities: [tool_use, image_input]` can be declared.
 
 **Cline / Roo Code:** Settings → "OpenAI Compatible" → Base URL (must include `/v1`), API key, model ID. Roo internally uses Anthropic message format then transforms to OpenAI `ChatCompletionTool`; it accumulates streamed fragments by `index`; finalizes on `finish_reason:"tool_calls"`. `parallelToolCalls:true` is the default.
 
@@ -178,12 +178,12 @@ OpenAI shape required: `tools:[{type:"function",function:{name,description,param
 
 ## Exact config snippets
 
-**GitHub Copilot (VS Code ≥1.122) — Custom Endpoint (preferred):** *Chat: Manage Language Models* → Add Models → **Custom Endpoint** → display name, API key (any string if none), Base URL `http://127.0.0.1:8080/v1`, model ID, apiType `chat-completions`. For older stable builds, use the legacy object in `settings.json`:
+**GitHub Copilot (VS Code ≥1.122) — Custom Endpoint (preferred):** *Chat: Manage Language Models* → Add Models → **Custom Endpoint** → display name, API key (any string if none), Base URL `http://127.0.0.1:9931/v1`, model ID, apiType `chat-completions`. For older stable builds, use the legacy object in `settings.json`:
 ```json
 "github.copilot.chat.customOAIModels": {
   "local-qwen": {
     "name": "Local Qwen (llama.cpp)",
-    "url": "http://127.0.0.1:8080/v1/chat/completions",
+    "url": "http://127.0.0.1:9931/v1/chat/completions",
     "toolCalling": true,
     "vision": false,
     "thinking": false,
@@ -204,7 +204,7 @@ models:
   - name: local-fim
     provider: llama.cpp
     model: your-model.gguf
-    apiBase: http://127.0.0.1:8080
+    apiBase: http://127.0.0.1:9931
     roles: [autocomplete]
     autocompleteOptions:
       debounceDelay: 250
@@ -212,21 +212,21 @@ models:
   - name: local-chat
     provider: openai
     model: your-model
-    apiBase: http://127.0.0.1:8080/v1
+    apiBase: http://127.0.0.1:9931/v1
     apiKey: sk-local
     roles: [chat, edit, apply]
 ```
 
 **Cline / Roo Code (VS Code settings UI):**
 - API Provider: **OpenAI Compatible**
-- Base URL: `http://127.0.0.1:8080/v1`
+- Base URL: `http://127.0.0.1:9931/v1`
 - API Key: `sk-local` (any string if no auth)
 - Model ID: `your-model`
 - (Roo Code ≥3.37: model must support native tool calling, or roll back to 3.36.16 for the XML option.)
 
 **Twinny (Providers → Code/FIM provider):**
 - Provider: `llamacpp`
-- Hostname/port: `127.0.0.1` / `8080`
+- Hostname/port: `127.0.0.1` / `9931`
 - FIM endpoint path: `/infill`
 - FIM Template: match the model (e.g. Qwen2.5-Coder / DeepSeek / CodeLlama)
 
@@ -234,12 +234,12 @@ models:
 ```toml
 [model.completion.http]
 kind = "llama.cpp/completion"
-api_endpoint = "http://127.0.0.1:8080"   # no /v1
+api_endpoint = "http://127.0.0.1:9931"   # no /v1
 prompt_template = "<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>"
 
 [model.chat.http]
 kind = "openai/chat"
-api_endpoint = "http://127.0.0.1:8080/v1"
+api_endpoint = "http://127.0.0.1:9931/v1"
 ```
 
 ## Caveats / open risks (2026 moving targets)

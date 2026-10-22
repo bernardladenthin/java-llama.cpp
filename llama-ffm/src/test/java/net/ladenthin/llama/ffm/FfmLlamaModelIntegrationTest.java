@@ -18,7 +18,9 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
@@ -26,6 +28,7 @@ import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * A model through the C API: loaded with the core's {@code ModelParameters}, the contract of each
@@ -123,6 +126,22 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
+    void oaiCompletionStreamEndsWithUsage() throws IOException {
+        JsonNode last = null;
+        try (FfmTaskStream stream =
+                model.completionsOaiStream("{\"prompt\": \"Hello\", \"max_tokens\": 3, \"temperature\": 0}")) {
+            while (stream.hasNext()) {
+                JsonNode data = JSON.readTree(stream.next()).path("data");
+                for (JsonNode chunk : data.isArray() ? data : JSON.createArrayNode().add(data)) {
+                    assertEquals("text_completion", chunk.path("object").asText());
+                    last = chunk;
+                }
+            }
+        }
+        assertTrue(last != null && last.path("usage").path("completion_tokens").asInt() > 0, String.valueOf(last));
+    }
+
+    @Test
     void tokenizeAndDetokenizeRoundTrip() throws IOException {
         int[] tokens = model.tokenize("Hello", false);
         assertThat(tokens.length, greaterThan(0));
@@ -166,10 +185,38 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
-    void slotEraseAnswersAndASaveWithoutAFilenameIsRefused() throws IOException {
+    void slotEraseAnswersAndASaveWithoutASlotDirectoryIsRefused() throws IOException {
         assertTrue(JSON.readTree(model.slotAction(SlotOp.ERASE, 0, null)).isObject());
-        LlamaException e = assertThrows(LlamaException.class, () -> model.slotAction(SlotOp.SAVE, 0, null));
-        assertEquals("Filename is required for slot save", e.getMessage());
+        LlamaException e = assertThrows(LlamaException.class, () -> model.slotAction(SlotOp.SAVE, 0, "slot0.bin"));
+        assertFalse(e instanceof InvalidRequestException, e.getMessage());
+        assertEquals(
+                "Saving or restoring a slot needs a slot directory: load the model with --slot-save-path <dir> "
+                        + "(ModelParameters.setSlotSavePath)",
+                e.getMessage());
+    }
+
+    @Test
+    void aSlotFileIsANameInsideTheSlotDirectory(@TempDir Path slotDir) throws IOException {
+        ModelParameters parameters = new ModelParameters()
+                .setModel(FfmTestSupport.assumeModel().toString())
+                .setCtxSize(128)
+                .setGpuLayers(0)
+                .setThreads(2)
+                .setSlotSavePath(slotDir.toString());
+        try (FfmLlamaModel withSlots = FfmLlamaModel.load(parameters, null)) {
+            String saved = withSlots.slotAction(SlotOp.SAVE, 0, "slot0.bin");
+            assertTrue(Files.exists(slotDir.resolve("slot0.bin")), saved);
+            assertEquals("slot0.bin", JSON.readTree(saved).path("filename").asText(), saved);
+            assertEquals(0, JSON.readTree(withSlots.slotAction(SlotOp.RESTORE, 0, "slot0.bin")).path("id_slot").asInt());
+            // unique to the run, so a file another run left next to the temp directory cannot decide it
+            String escapedName = "escaped-" + UUID.randomUUID() + ".bin";
+            assertThrows(
+                    InvalidRequestException.class, () -> withSlots.slotAction(SlotOp.SAVE, 0, "../" + escapedName));
+            assertThrows(
+                    InvalidRequestException.class,
+                    () -> withSlots.slotAction(SlotOp.RESTORE, 0, slotDir.resolve("slot0.bin").toString()));
+            assertFalse(Files.exists(slotDir.getParent().resolve(escapedName)));
+        }
     }
 
     @Test

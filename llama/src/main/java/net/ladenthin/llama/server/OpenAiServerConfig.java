@@ -20,8 +20,11 @@ public final class OpenAiServerConfig {
     /** Default bind address: loopback only, so the endpoint is not exposed off-host. */
     public static final String DEFAULT_HOST = "127.0.0.1";
 
-    /** Default TCP port. */
-    public static final int DEFAULT_PORT = 8080;
+    /**
+     * Default TCP port: llama.cpp's own (9931 since b11521, upstream #30159), so that both servers of
+     * this library -- this one and {@link NativeServer} -- listen on the same port unless told otherwise.
+     */
+    public static final int DEFAULT_PORT = 9931;
 
     /** Default advertised model id (the {@code id} echoed by {@code GET /v1/models}). */
     public static final String DEFAULT_MODEL_ID = "local-model";
@@ -56,6 +59,7 @@ public final class OpenAiServerConfig {
     private final boolean supportsVision;
     private final int maxRequestBodyBytes;
     private final String modelFtype;
+    private final int totalSlots;
 
     private OpenAiServerConfig(Builder builder) {
         this.host = builder.host;
@@ -69,6 +73,7 @@ public final class OpenAiServerConfig {
         this.supportsVision = builder.supportsVision;
         this.maxRequestBodyBytes = builder.maxRequestBodyBytes;
         this.modelFtype = builder.modelFtype;
+        this.totalSlots = builder.totalSlots;
     }
 
     /**
@@ -109,6 +114,14 @@ public final class OpenAiServerConfig {
 
     /**
      * The advertised model id.
+     *
+     * <p>This is what {@code GET /v1/models} (and the Ollama {@code /api/tags} / {@code /api/show})
+     * reports, and the default {@code model} for a request that names none. It does <b>not</b> reach
+     * the {@code model} field of an answer: that comes from llama.cpp, which takes the first
+     * {@code --alias} and falls back to the model path for a local file. For the two to agree, the
+     * model has to be loaded with {@link net.ladenthin.llama.parameters.ModelParameters#setAlias(String)}
+     * set to the same name — which {@link OpenAiServerCli} does for you, and an embedding caller that
+     * loads its own {@code LlamaModel} has to do itself.
      *
      * @return the model id reported by {@code GET /v1/models}
      */
@@ -183,6 +196,16 @@ public final class OpenAiServerConfig {
     }
 
     /**
+     * The number of inference slots of the served model, advertised in {@code GET /props}
+     * ({@code total_slots}) as upstream's server does ({@code n_parallel}).
+     *
+     * @return the slot count, at least {@code 1}
+     */
+    public int getTotalSlots() {
+        return totalSlots;
+    }
+
+    /**
      * Whether bearer-token authentication is enabled (an API key is configured).
      *
      * @return {@code true} if requests must present a matching bearer token
@@ -231,6 +254,7 @@ public final class OpenAiServerConfig {
         private boolean supportsVision;
         private int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         private String modelFtype = "";
+        private int totalSlots = 1;
 
         private Builder() {}
 
@@ -303,10 +327,16 @@ public final class OpenAiServerConfig {
         /**
          * Sets the Server-Sent-Events heartbeat interval.
          *
-         * @param heartbeatMillis the heartbeat interval in milliseconds
+         * @param heartbeatMillis the heartbeat interval in milliseconds; must be positive
          * @return this builder
+         * @throws IllegalArgumentException if {@code heartbeatMillis} is not positive
          */
         public Builder heartbeatMillis(long heartbeatMillis) {
+            // the interval is a scheduleAtFixedRate period; a non-positive one would make every
+            // streaming request fail with an IllegalArgumentException reported as the client's error
+            if (heartbeatMillis <= 0L) {
+                throw new IllegalArgumentException("heartbeatMillis must be positive, was " + heartbeatMillis);
+            }
             this.heartbeatMillis = heartbeatMillis;
             return this;
         }
@@ -342,6 +372,21 @@ public final class OpenAiServerConfig {
          */
         public Builder modelFtype(@Nullable String modelFtype) {
             this.modelFtype = modelFtype == null ? "" : modelFtype;
+            return this;
+        }
+
+        /**
+         * Sets the number of inference slots of the served model, advertised in {@code GET /props}.
+         *
+         * @param totalSlots the slot count, at least {@code 1}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code totalSlots} is less than {@code 1}
+         */
+        public Builder totalSlots(int totalSlots) {
+            if (totalSlots < 1) {
+                throw new IllegalArgumentException("totalSlots must be at least 1 but was " + totalSlots);
+            }
+            this.totalSlots = totalSlots;
             return this;
         }
 

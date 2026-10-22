@@ -113,8 +113,18 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         speaker_bitmap.reset(wrapper.bitmap);
     }
 
-    mtmd_helper::gen_audio gen(engine->ctx, engine->mctx.get());
-    mtmd_helper_gen_audio_inp inp{};
+    // b11796 (#30902): the helper is default-constructed and initialised explicitly; init() leaves it
+    // invalid for a projector without audio generation (checked at load, but the contract is here).
+    mtmd_helper::gen_audio gen;
+    gen.init(engine->ctx, engine->mctx.get());
+    if (!gen.valid()) {
+        common_sampler_free(smpl);
+        err = "failed to initialise audio generation: the mmproj does not support it";
+        return false;
+    }
+    // upstream's defaults (b11796: a `stream` flag joined the struct, off for a one-shot synthesis);
+    // every field the caller controls is set below
+    mtmd_helper_gen_audio_inp inp = mtmd_helper_gen_audio_inp_default();
     inp.seq_id = 0;
     inp.prompt = text.c_str();
     inp.prompt_len = text.size();

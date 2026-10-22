@@ -121,6 +121,15 @@ enum RequestField {
     /** Request key {@code prompt}, consumed by the OAI/task layer. */
     PROMPT("prompt", RequestContract.OAI_LAYER),
 
+    /** Request key {@code reasoning_budget_end_tags}. */
+    REASONING_BUDGET_END_TAGS("reasoning_budget_end_tags"),
+
+    /** Request key {@code reasoning_budget_message}. */
+    REASONING_BUDGET_MESSAGE("reasoning_budget_message"),
+
+    /** Request key {@code reasoning_budget_start_tag}. */
+    REASONING_BUDGET_START_TAG("reasoning_budget_start_tag"),
+
     /** Request key {@code reasoning_budget_tokens}. */
     REASONING_BUDGET_TOKENS("reasoning_budget_tokens"),
 
@@ -132,6 +141,9 @@ enum RequestField {
 
     /** Request key {@code repeat_penalty}. */
     REPEAT_PENALTY("repeat_penalty"),
+
+    /** Request key {@code response_fields}. */
+    RESPONSE_FIELDS("response_fields"),
 
     /** Request key {@code response_format}, consumed by the OAI/task layer. */
     RESPONSE_FORMAT("response_format", RequestContract.OAI_LAYER),
@@ -183,6 +195,9 @@ enum RequestField {
 
     /** Request key {@code typical_p}. */
     TYPICAL_P("typical_p"),
+
+    /** Request key {@code verbose}. */
+    VERBOSE("verbose"),
 
     /** Request key {@code xtc_probability}. */
     XTC_PROBABILITY("xtc_probability"),
