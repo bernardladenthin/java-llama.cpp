@@ -165,8 +165,8 @@ the first two items break every existing consumer at upgrade.
   `posix_memalign` in the Vulkan buffers (#30828). The b11827 step (2026-10-22): `--mlock` locks the
   parts of a split host buffer too (a CUDA pinned host buffer above 4 GB, which it skipped before), SYCL
   mat-vec kernels on the Intel XMX engines for short batches (#29864, `GGML_SYCL_ENABLE_XMX_ESIMD`), an
-  OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979) and DFlash drafter
-  fixes for qwen4exp and glm5-next -- nothing here changed.
+  OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979), a DFlash drafter
+  fix for qwen4exp (#30927) and fewer graph inputs for glm5-next (#30932) -- nothing here changed.
   Two patches dropped (`0016`, `0019`), `0007` refreshed.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
@@ -1148,9 +1148,10 @@ the first two items break every existing consumer at upgrade.
   empty result list. `LlamaModel.rerank(String, String...)` returns its map in the order of the
   documents instead of hash order. The query and each document are read as llama.cpp reads them since
   b11820 (#29625): a string or `{"text": string or [strings]}` (an object query is accepted, a text array
-  concatenated), and an item with an `image` -- which upstream ranks through the projector -- is `400`
-  instead of being ranked by its text alone; `video` / `fps` / `max_frames` are refused with upstream's
-  message. `NativeServer` serves upstream's route, images included.
+  concatenated, a missing or `null` `text` empty), and an item with an `image` -- which upstream ranks
+  through the projector -- is `400` instead of being ranked by its text alone (a `null` or empty `image`
+  is none, there as here); `video` / `fps` / `max_frames` are refused, as upstream refuses them.
+  `NativeServer` serves upstream's route, images included.
 - **Java API.**
   - **`InferenceParameters.withMessages(List<ChatMessage>)` keeps `tool_calls` and `tool_call_id`**,
     which only `ChatRequest` added, so a tool round built through it sent an assistant turn without

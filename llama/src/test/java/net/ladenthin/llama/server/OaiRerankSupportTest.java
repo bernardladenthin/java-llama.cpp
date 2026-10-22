@@ -88,7 +88,7 @@ public class OaiRerankSupportTest {
         JsonNode request = read("{\"documents\":[{\"text\":[\"a\",1]}]}");
         IllegalArgumentException e =
                 assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
-        assertThat(e.getMessage(), containsString("'text' array elements must be strings"));
+        assertThat(e.getMessage(), containsString("\"text\" array elements must be strings"));
     }
 
     @Test
@@ -108,6 +108,54 @@ public class OaiRerankSupportTest {
         IllegalArgumentException e =
                 assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readQuery(request));
         assertThat(e.getMessage(), containsString("'image'"));
+        assertThat(e.getMessage(), containsString("NativeServer"));
+    }
+
+    @Test
+    public void aNullOrEmptyImageIsNoImageLikeUpstream() throws IOException {
+        // Upstream's parse_item adds a file only for a string or a string element; null and [] add none,
+        // so the item is ranked by its text. A serializer that writes absent fields as null must not
+        // make the request fail.
+        String[] docs = OaiRerankSupport.readDocuments(
+                read("{\"documents\":[{\"text\":\"x\",\"image\":null},{\"text\":\"y\",\"image\":[]}]}"));
+        assertThat(docs.length, is(2));
+        assertThat(docs[0], is("x"));
+        assertThat(docs[1], is("y"));
+        assertThat(OaiRerankSupport.readQuery(read("{\"query\":{\"text\":\"q\",\"image\":null}}")), is("q"));
+    }
+
+    @Test
+    public void aMissingOrNullTextIsEmptyTextLikeUpstream() throws IOException {
+        String[] docs = OaiRerankSupport.readDocuments(read("{\"documents\":[{},{\"text\":null}]}"));
+        assertThat(docs.length, is(2));
+        assertThat(docs[0], is(""));
+        assertThat(docs[1], is(""));
+    }
+
+    @Test
+    public void aTextOfAnotherTypeIsRefusedLikeUpstream() throws IOException {
+        JsonNode request = read("{\"documents\":[{\"text\":5}]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
+        assertThat(e.getMessage(), containsString("\"text\" must be a string or an array of strings"));
+    }
+
+    @Test
+    public void anImageOfAnotherTypeIsRefusedLikeUpstream() throws IOException {
+        JsonNode number = read("{\"documents\":[{\"text\":\"x\",\"image\":5}]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(number));
+        assertThat(e.getMessage(), containsString("\"image\" must be a string or an array of strings"));
+        JsonNode element = read("{\"documents\":[{\"text\":\"x\",\"image\":[5]}]}");
+        e = assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(element));
+        assertThat(e.getMessage(), containsString("\"image\" array elements must be strings"));
+    }
+
+    @Test
+    public void anImageListIsRefusedRatherThanDropped() throws IOException {
+        JsonNode request = read("{\"documents\":[{\"text\":\"x\",\"image\":[\"data:image/png;base64,AA==\"]}]}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readDocuments(request));
         assertThat(e.getMessage(), containsString("NativeServer"));
     }
 

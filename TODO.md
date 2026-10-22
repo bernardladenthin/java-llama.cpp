@@ -591,9 +591,9 @@ library does not expose, each a decision rather than an omission:
   (`format_prompt_rerank(..., query_files, doc_files, ...)`, `handle_media()` for the decoding); `NativeServer`
   serves it. `engine::rerank` passes empty file lists, `jllama_rerank` and `LlamaModel.rerank` take strings,
   and `OpenAiCompatServer` refuses an `image` with a `400` naming `NativeServer` rather than ranking the text
-  alone. Wiring it means items in the C API (text plus data URIs, as `jllama_completion`'s multimodal prompt
-  already carries) and a typed overload on `LlamaModel`; it needs a multimodal reranker in the CI model set to
-  be tested. Not before the release.
+  alone. Wiring it means items in the C API (text plus base64 media, as the multimodal prompt of
+  `jllama_completions` -- `multimodal_data` -- already carries) and a typed overload on `LlamaModel`; it
+  needs a multimodal reranker in the CI model set to be tested. Not before the release.
 - **Realtime transcription** (`/v1/realtime`, WebSocket, b11780, #30636: `mtmd_audio_stream`,
   `SERVER_TASK_TYPE_TRANSCRIBE_RT`, `SERVER_CONTROL_ACTION_AUDIO_*`). Served by `NativeServer`; the JDK's
   `com.sun.net.httpserver` has no WebSocket, so the Java transport cannot follow without a dependency. Not

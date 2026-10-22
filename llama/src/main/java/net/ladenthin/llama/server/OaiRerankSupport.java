@@ -40,12 +40,12 @@ final class OaiRerankSupport {
 
     /**
      * Read the required {@code query}: a string, or an object whose {@code "text"} is a string or an
-     * array of strings (concatenated), the item shape llama.cpp's rerank route reads since b11820 (#29625).
+     * array of strings (concatenated), the item shape llama.cpp's rerank route reads since b11820 (#29625;
+     * see {@link #readItem}).
      *
      * @param request the parsed rerank request
      * @return the query text
-     * @throws IllegalArgumentException if {@code query} is missing or not such an item, or carries media
-     *     (see {@link #readItem})
+     * @throws IllegalArgumentException if {@code query} is missing or not such an item, or carries an image
      */
     static String readQuery(JsonNode request) {
         JsonNode query = request.path("query");
@@ -81,50 +81,60 @@ final class OaiRerankSupport {
 
     /**
      * Read one rerank input item as llama.cpp's {@code handle_rerank_impl} reads it (b11820, #29625): a
-     * string, or an object whose {@code "text"} is a string or an array of strings, concatenated.
+     * string, or an object whose {@code "text"} is a string or an array of strings (concatenated) and is
+     * empty text when absent or {@code null}; {@code "video"}, {@code "fps"} and {@code "max_frames"} are
+     * refused, as upstream refuses them.
      *
-     * <p>Two differences, both refusals rather than another answer. An {@code "image"} upstream ranks
-     * through the multimodal projector, which this transport does not drive ({@link
-     * net.ladenthin.llama.LlamaModel}'s rerank takes text), so it is refused: ranking the text alone would
-     * answer another question than the one asked. {@link NativeServer} serves llama.cpp's own route. And
-     * an object without a {@code "text"} is refused, where upstream would rank an empty text. {@code
-     * "video"}, {@code "fps"} and {@code "max_frames"} are refused with upstream's own message.
+     * <p>One difference, a refusal rather than another answer: an {@code "image"} (a string, or an array
+     * with a string) upstream ranks through the multimodal projector, which this transport does not drive
+     * ({@link net.ladenthin.llama.LlamaModel}'s rerank takes text), so it is refused -- ranking the text
+     * alone would answer another question than the one asked. {@link NativeServer} serves llama.cpp's own
+     * route. An {@code "image"} that is {@code null} or an empty array carries no image there either, and
+     * is ignored here as there.
      *
      * @param item the query or one document
      * @param what {@code "query"} or {@code "document"}, for the message
      * @return the item's text
-     * @throws IllegalArgumentException if the item has none of these shapes or carries media
+     * @throws IllegalArgumentException if the item has none of these shapes or carries an image
      */
     private static String readItem(JsonNode item, String what) {
         if (item.isTextual()) {
             return item.asText();
         }
-        final String shape = ("query".equals(what) ? "'query'" : "each " + what)
-                + " must be a string or an object with a 'text' string";
         if (!item.isObject()) {
-            throw new IllegalArgumentException(shape);
+            throw new IllegalArgumentException(("query".equals(what) ? "'query'" : "each " + what)
+                    + " must be a string or an object with a 'text' string");
         }
+        final String in = " (in the " + what + ")";
         if (item.has("video") || item.has("fps") || item.has("max_frames")) {
-            throw new IllegalArgumentException(
-                    "video/fps/max_frames are not supported for rerank input (in the " + what + ")");
+            throw new IllegalArgumentException("video/fps/max_frames are not supported for rerank input" + in);
         }
-        if (item.has("image")) {
+        final StringBuilder out = new StringBuilder();
+        final JsonNode text = item.path("text");
+        if (text.isTextual()) {
+            out.append(text.asText());
+        } else if (text.isArray()) {
+            for (JsonNode part : text) {
+                if (!part.isTextual()) {
+                    throw new IllegalArgumentException("\"text\" array elements must be strings" + in);
+                }
+                out.append(part.asText());
+            }
+        } else if (!text.isMissingNode() && !text.isNull()) {
+            throw new IllegalArgumentException("\"text\" must be a string or an array of strings" + in);
+        }
+        // upstream decodes the images in order, so the first element decides which refusal comes first
+        final JsonNode image = item.path("image");
+        final boolean list = image.isArray() && image.size() > 0;
+        if (list && !image.get(0).isTextual()) {
+            throw new IllegalArgumentException("\"image\" array elements must be strings" + in);
+        }
+        if (image.isTextual() || list) {
             throw new IllegalArgumentException("an 'image' in a rerank " + what
                     + " is ranked by llama.cpp's own server only (NativeServer); this transport ranks text");
         }
-        final JsonNode text = item.path("text");
-        if (text.isTextual()) {
-            return text.asText();
-        }
-        if (!text.isArray()) {
-            throw new IllegalArgumentException(shape);
-        }
-        final StringBuilder out = new StringBuilder();
-        for (JsonNode part : text) {
-            if (!part.isTextual()) {
-                throw new IllegalArgumentException("'text' array elements must be strings (in the " + what + ")");
-            }
-            out.append(part.asText());
+        if (!image.isArray() && !image.isMissingNode() && !image.isNull()) {
+            throw new IllegalArgumentException("\"image\" must be a string or an array of strings" + in);
         }
         return out.toString();
     }
