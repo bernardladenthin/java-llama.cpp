@@ -400,10 +400,11 @@ JLLAMA_API jllama_status jllama_rpc_server_serve(const char *host, int port, int
  * thread itself (from a callback that runs there before the server starts), it returns at once and
  * serve returns without starting the server.
  *
- * A no-op when no serve call is in progress, and it does not carry over to the next one: a stop
- * issued before the serving thread has entered jllama_rpc_server_serve() is lost, so a caller that
- * stops a server that may not have come up yet repeats the stop until serve has returned, the way
- * the Java RpcServer does.
+ * A no-op when no serve call is in progress, and it is for the serve calls in progress when it is
+ * made: one that starts while the stop still waits (a restart from another thread) is not stopped.
+ * A stop issued before the serving thread has entered jllama_rpc_server_serve() is lost, so a
+ * caller that stops a server that may not have come up yet repeats the stop until serve has
+ * returned, the way the Java RpcServer does.
  */
 JLLAMA_API jllama_status jllama_rpc_server_stop(void);
 

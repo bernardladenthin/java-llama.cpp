@@ -2526,7 +2526,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** dieselben zwei Tests; modellgebunden (CodeLlama 7B Q2_K), lokal nicht ausführbar (kein Modell im Sandkasten).
 - **Rot-Grün-Nachweis:** rot im CI-Lauf 39692853697 (Windows 2025 x86-64, clang), grün erwartet im Lauf auf dem nächsten Head; `test-compile` und Spotless lokal.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `9daae5b`
 
 <a id="f271"></a>
 ### F271 – java-llama.cpp: `jllama_rpc_server_stop()` beendet auch den Serve, der startet, während der Stop auf den gemeinten wartet

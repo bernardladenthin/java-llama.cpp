@@ -1681,6 +1681,83 @@ TEST(CApiRpc, AStopBeforeTheBindFromAnotherThreadReturnsOnlyOnceTheServeHasEnded
     EXPECT_FALSE(jllama_rpc_server_listening());
 }
 
+namespace {
+
+// The second serve of the test below, started from the stop seam and held in the serve seam.
+held_serve g_held_next;
+std::unique_ptr<rpc_serve_run> g_next_run;
+std::atomic<int> g_serve_hook_calls{0};
+
+void hold_in(held_serve &held) {
+    std::unique_lock<std::mutex> lock(held.mutex);
+    held.entered = true;
+    held.changed.notify_all();
+    held.changed.wait(lock, [&held]() { return held.released; });
+}
+
+bool wait_entered(held_serve &held) {
+    std::unique_lock<std::mutex> lock(held.mutex);
+    return held.changed.wait_for(lock, std::chrono::seconds(10), [&held]() { return held.entered; });
+}
+
+void release(held_serve &held) {
+    std::lock_guard<std::mutex> lock(held.mutex);
+    held.released = true;
+    held.changed.notify_all();
+}
+
+struct stop_hook_scope {
+    explicit stop_hook_scope(void (*hook)()) { jllama::rpc::set_stop_hook_for_testing(hook); }
+    ~stop_hook_scope() { jllama::rpc::set_stop_hook_for_testing(nullptr); }
+    stop_hook_scope(const stop_hook_scope &) = delete;
+    stop_hook_scope &operator=(const stop_hook_scope &) = delete;
+};
+
+} // namespace
+
+// A stop is for the serve in progress when it is called, not for one started afterwards. Here the
+// next serve starts while the stop still waits for the first (the stop seam runs once the request
+// is recorded): the stop must return as soon as the first serve has ended, and the second must come
+// up and listen. Before, the stop repeated ggml's stop until no serve ran at all, so a serve that
+// took over right after the first had ended was ended too -- it returned without binding (the
+// request was still set, it is reset only when no serve runs), or lost its listener once bound.
+TEST(CApiRpc, AStopDoesNotReachTheServeStartedAfterIt) {
+    g_held.entered = g_held.released = false;
+    g_held_next.entered = g_held_next.released = false;
+    g_serve_hook_calls.store(0);
+    g_next_run.reset();
+    serve_hook_scope serve_hook([]() { hold_in(g_serve_hook_calls.fetch_add(1) == 0 ? g_held : g_held_next); });
+    stop_hook_scope stop_hook([]() {
+        // Once: the stop of the second serve below must not start a third.
+        jllama::rpc::set_stop_hook_for_testing(nullptr);
+        // The stop is recorded: start the next serve, let it enter its seam, then end the first.
+        g_next_run = std::make_unique<rpc_serve_run>(rpc_test_port(11));
+        EXPECT_TRUE(wait_entered(g_held_next)) << "the second serve did not start";
+        release(g_held);
+    });
+    rpc_serve_run first(rpc_test_port(10));
+    ASSERT_TRUE(wait_entered(g_held)) << "the first serve did not start";
+
+    const jllama_status stop_status = jllama_rpc_server_stop();
+    EXPECT_EQ(stop_status, JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(first.returned_within(std::chrono::seconds(10))) << "the first serve went on after the stop";
+    EXPECT_EQ(first.status(), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(g_next_run, nullptr);
+
+    // The second serve was not meant: released, it binds and listens.
+    release(g_held_next);
+    for (int i = 0;
+         i < 500 && !jllama_rpc_server_listening() && !g_next_run->returned_within(std::chrono::milliseconds(10));
+         ++i) {
+    }
+    EXPECT_TRUE(jllama_rpc_server_listening()) << "the stop of the first serve ended the second one";
+    EXPECT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(g_next_run->returned_within(std::chrono::seconds(10)));
+    EXPECT_EQ(g_next_run->status(), JLLAMA_STATUS_OK) << jllama_last_error();
+    g_next_run.reset();
+    EXPECT_FALSE(jllama_rpc_server_listening());
+}
+
 // A stop while nothing serves stays a no-op: it must not end the next serve as well.
 TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
     ASSERT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);

@@ -385,4 +385,9 @@ inline std::optional<std::string> exclude_stale_devices(std::vector<ggml_backend
 // the one way to issue a stop deterministically before the socket is bound. Not exported.
 void set_serve_hook_for_testing(void (*hook)());
 
+// Test seam of jllama_rpc_server_stop(): called on the stopping thread once the stop is recorded
+// for the serves in progress and before it waits for them, so a test can start the next serve
+// right there. nullptr clears it. Not exported; the C++ tests reach it, nothing else does.
+void set_stop_hook_for_testing(void (*hook)());
+
 } // namespace jllama::rpc

@@ -903,6 +903,13 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **`jllama_rpc_server_stop()` (C API, `llama-ffm`) is for the serve calls in progress when it is made.**
+  It waited for the count of serves to reach zero and reset the stop request only then, so a serve
+  that took over right after the one it targeted had ended (a restart from another thread, which
+  `FfmRpcServer` allows) was ended too: it returned without binding, or lost its listener once bound.
+  Every serve call has an id now; the stop records the newest as its target, waits for the serves up
+  to it, and issues ggml's stop under the mutex a new serve's registration takes first (F271). The
+  Java `RpcServer` was not affected: its single-instance slot stays taken until `close()` has returned.
 - **The classes jar carries `Main-Class: net.ladenthin.llama.server.ServerLauncher` again.** The entry
   had gone with the fat-jar assembly, so `java -jar llama-<v>.jar` and the README's
   `jbang --deps <natives jar> net.ladenthin:llama:<v>` lines, which run a GAV through its manifest,
