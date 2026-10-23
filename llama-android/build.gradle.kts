@@ -144,6 +144,16 @@ val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
     }
 }
 
+// The additive OpenCL AAR gets its Java API through the CPU AAR dependency. A second copy
+// of these classes would make D8/R8 reject that dependency graph as duplicate definitions.
+val moduleClassesJar = tasks.register<Jar>("moduleClassesJar") {
+    description = "Empty classes.jar for the native-only OpenCL add-on."
+    archiveBaseName.set("module-classes-payload")
+    destinationDirectory.set(layout.buildDirectory.dir("intermediates"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
 // AGP-built AARs always carry an R.txt (empty for resource-less libraries).
 val generateRTxt = tasks.register("generateRTxt") {
     val rTxt = layout.buildDirectory.file("intermediates/R.txt")
@@ -183,10 +193,11 @@ fun registerAarTask(
     artifactBase: String,
     nativesSubdir: String,
     requiredAbis: List<String>,
-    requiredLibrary: String
+    requiredLibrary: String,
+    classesJar: TaskProvider<Jar>
 ) =
     tasks.register<Zip>(taskName) {
-        description = "Assembles $artifactBase-$reactorVersion.aar from the core classes and natives/$nativesSubdir."
+        description = "Assembles $artifactBase-$reactorVersion.aar with natives/$nativesSubdir."
         archiveBaseName.set(artifactBase)
         archiveVersion.set(reactorVersion)
         archiveExtension.set("aar")
@@ -210,7 +221,7 @@ fun registerAarTask(
             }
         }
         from("src/main/AndroidManifest.xml")
-        from(coreClassesJar) { rename { "classes.jar" } }
+        from(classesJar) { rename { "classes.jar" } }
         from("consumer-proguard.txt") { rename { "proguard.txt" } }
         from(generateRTxt)
         // Only the libraries: the jllama-build.txt / jllama-files.txt lists a natives artifact
@@ -226,8 +237,8 @@ fun registerAarTask(
 // The OpenCL flavor stays arm64-only (Adreno = Qualcomm ARM hardware) and holds the
 // OpenCL backend module alone -- libjllama.so and the CPU modules come from the CPU AAR
 // it depends on, so an app's jni/arm64-v8a/ ends up with both sets side by side.
-val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so")
-val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so")
+val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so", coreClassesJar)
+val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so", moduleClassesJar)
 
 // ---------------------------------------------------------------------------
 // Publishing: POM <packaging>aar</packaging> + mirrored core dependencies.

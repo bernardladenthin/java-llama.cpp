@@ -1131,18 +1131,25 @@ unlaunched.
 fail-loud gating). `github-snapshot` / `github-release-signed` then attach the Maven artifacts with
 the `.asc` maven-gpg wrote at deploy -- the classes jar, every natives jar, every module's pom
 (`llama-parent` and `llama-platform` included: maven-gpg writes `target/<artifactId>-<version>.pom`
-next to its `.pom.asc`, also for a pom-only module), sources, javadoc, the agent's thin jar, and the
+next to its `.pom.asc`, also for a pom-only module), each reactor module's CycloneDX JSON,
+sources, javadoc, the agent's thin jar, and the
 two AARs with the `.aar.asc` Gradle writes next to them, their poms
 (`build/publications/<publication>/pom-default.xml`) and their sources/javadoc jars
 (`build/distributions/`) -- and nothing is signed or assembled in those jobs any more (no
 `sign-fatjars.sh`, no `environment:`; `verify-signing-key` still proves the key, and the publish jobs
 sign with it). Until 2026-10-12 the collect steps copied jars and bare AARs only: every pom was
 missing, `llama-platform` was absent entirely, the AARs went out unsigned and the `*.jar`-only
-signature check never noticed. The check counts jars, AARs and poms now, and `github-snapshot` ends
-by deleting every asset of the `snapshot` pre-release the run did not upload, each printed by name
+signature check never noticed. `collect-release-assets.py` now discovers all reactor modules from
+their POMs and all native classifiers from `natives.csv`, includes `llama-ffm`, renames each
+`target/bom.json` to its Central name and reports missing outputs/signatures. The check counts
+jars, AARs, poms, JSONs and the source archive. After a complete collection, `github-snapshot`
+deletes every asset of the `snapshot` pre-release the run did not upload, each printed by name
 (`gh release upload --clobber` never removed anything: 208 assets, 109 of them from 5.0.x). The
 prune refuses an empty upload, treats an asset that is already gone as removed and fails only after
-trying every deletion; a versioned release is never pruned. Why it prunes asset by asset instead of
+trying every deletion; a versioned release is never pruned. Incomplete collections still attach
+available files but preserve the existing source tag, notes and other assets. The whole snapshot
+update is serialized; `update-snapshot.py` rejects late older commits/runs, and updates the source
+tag and notes to the uploaded commit and run after a complete upload. Why it prunes asset by asset instead of
 deleting and recreating the release -- the job's first form, which failed in every burst of main
 pushes in May 2026 -- is recorded in `workspace/policies/fat-jar-release-assets.md`, "The `snapshot`
 pre-release holds exactly the current upload".
@@ -3067,7 +3074,7 @@ file shows `cmake -B build` / `src/main/...` / `mvn compile` at the root, read i
 **Version bump:** the child modules declare **no `<version>` of their own** — their *project*
 version is inherited from the parent. But each child still hardcodes the parent version inside its
 `<parent><version>` pointer (Maven requires a literal there — there is **no `${revision}`/CI-friendly
-versioning** here), so a version change must be applied to **all five poms in lockstep**:
+versioning** here), so a version change must be applied to **all six poms in lockstep**:
 
 - `pom.xml` (root) — `<version>`
 - `llama/pom.xml` — `<parent><version>`
@@ -3084,8 +3091,8 @@ root (it updates the parent and every child `<parent>` reference at once). Chang
 `<version>` leaves the children pointing at a non-existent parent and **fails the reactor build**
 (`Could not find artifact net.ladenthin:llama-parent:pom:X.Y.Z`).
 
-`versions:set` only rewrites the **poms**. The **two README files** that carry hardcoded
-release-version dependency snippets must be bumped **manually and in the same commit** — miss either
+`versions:set` only rewrites the **poms**. Hardcoded release-version dependency snippets in the
+README files and examples listed below must be bumped **manually and in the same commit** — miss one
 and the published docs point consumers at the previous release. (The `llama-langchain4j/README.md`
 snippet was exactly the one forgotten on the `5.0.4 → 5.0.5` bump; it is listed here so it is not
 missed again.)
@@ -3094,9 +3101,7 @@ missed again.)
   `<classifier>` template), and the `llama-langchain4j` snippet. The Maven Central **badge**
   auto-pulls the latest released version, so leave it. The **`-SNAPSHOT` line** in the "Snapshot
   builds" section documents the snapshot channel — set it to the *next* dev version, not the release.
-  (The per-classifier snippets were **deduplicated** to a single canonical + template pair, so the
-  release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
-  classifier table.)
+  Update the runnable server, agent and native-download examples as well as dependency snippets.
 - **`examples/jbang/Chat.java`** — the version in its `//DEPS` lines; `check-natives.py` holds it to
   the README install snippet's version, so forgetting it fails `code-style`.
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
@@ -3352,12 +3357,13 @@ the recommended path (README "Importing in Android", Option 1):
   desktop. Both carry a `minSdkVersion 28` manifest (AGP enforces the floor on consumers), and
   consumer R8/ProGuard rules (`consumer-proguard.txt` → `proguard.txt` in the AAR; keeps
   `net.ladenthin.llama.**` for the JNI `FindClass`/Jackson reflection surface). The AAR's
-  `classes.jar` is the **byte-identical Maven-built classes jar** minus `module-info.class` (D8
+  CPU AAR's `classes.jar` is the **byte-identical Maven-built classes jar** minus `module-info.class` (D8
   rejects it) — it carries no natives, which ship as separate natives jars; on Android `LlamaLoader`
   resolves via `System.loadLibrary("jllama")`, which finds the AAR-installed `.so` — no loader
   change was needed. `registerAarTask` copies `**/*.so` only (the `jllama-*.txt` lists are desktop
   loader input) and fails loud on the flavor's defining library per ABI; the CI job validates the
-  full set. Built by the **standalone plain-Gradle build** in `llama-android/`
+  full set. The additive OpenCL AAR has an empty `classes.jar`: its CPU AAR dependency already
+  supplies the Java API, and duplicating it breaks D8/R8. Built by the **standalone plain-Gradle build** in `llama-android/`
   (see "Repository layout" for why it is not a Maven module); the POM mirrors the core's
   compile-scope deps (jackson/slf4j-api/jspecify/checker-qual, versions parsed from
   `llama/pom.xml` — deliberately NOT the SLF4J binding, which is the JVM-only runtime dependency).
@@ -3396,8 +3402,9 @@ own; the AAR job additionally asserts the AAR's `jni/` library is the staged one
 `package-android-aar` (needs both Android native jobs) builds the core jar, stages the natives,
 assembles both AARs, validates structure (entries, minSdk, classes.jar content, 16 KB alignment),
 publishes to mavenLocal, and runs the **AGP consumer smoke test** — the minimal app fixture in
-`.github/android-consumer-test/` resolves the AAR from mavenLocal and runs a full R8
-`assembleRelease` on the runner's preinstalled Android SDK (this is what actually validates
+`.github/android-consumer-test/` resolves each AAR from mavenLocal (`jllamaBackend=cpu` and
+`jllamaBackend=opencl`, the latter with its transitive CPU AAR) and runs a full R8
+`assembleRelease` for each on the runner's preinstalled Android SDK (this is what actually validates
 AGP/Android Studio consumption). **On-device runtime IS now CI-covered** via
 `test-android-emulator`: a KVM-accelerated x86_64 emulator (API 30) runs the fixture's
 `connectedDebugAndroidTest` — `System.loadLibrary` from the AAR's `jni/x86_64`, on-device

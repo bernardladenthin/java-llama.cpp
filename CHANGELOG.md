@@ -953,6 +953,15 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **The Android OpenCL AAR no longer duplicates its CPU AAR dependency's Java classes.**
+  Its `classes.jar` is empty; the CPU AAR supplies the API. Both dependency graphs now pass
+  through the CI R8 consumer build, including the OpenCL POM's transitive CPU dependency.
+- **GitHub snapshot and release downloads include `llama-ffm` and the reactor's CycloneDX JSONs.**
+  Artifact collection follows the reactor POMs and native classifier list, reports missing outputs
+  and signatures, and includes the JSONs in provenance attestations.
+- **The rolling snapshot's source tag and notes follow the uploaded build.** Updates are serialized;
+  older commits/runs cannot overwrite a newer snapshot, and an incomplete artifact collection
+  uploads available files without pruning existing assets or advancing an existing source tag.
 - **`jllama_rpc_server_stop()` (C API, `llama-ffm`) is for the serve calls in progress when it is made.**
   It waited for the count of serves to reach zero and reset the stop request only then, so a serve
   that took over right after the one it targeted had ended (a restart from another thread, which

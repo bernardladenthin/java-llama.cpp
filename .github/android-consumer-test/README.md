@@ -10,7 +10,10 @@ Not a shipped project — it exists so CI proves Android Studio consumption end 
 
 Two CI jobs drive it (`.github/workflows/publish.yml`):
 
-1. **`package-android-aar`** — `assembleRelease` with R8: validates AAR format, manifest
+1. **`package-android-aar`** — `assembleRelease` with R8 for both `-PjllamaBackend=cpu` (the
+   default) and `-PjllamaBackend=opencl`. The latter declares only the OpenCL dependency and
+   resolves the CPU AAR transitively, catching duplicate classes between the two AARs.
+   Validates AAR format, manifest
    minSdk merge, `jni/{arm64-v8a,x86_64}` packaging, and the shipped consumer ProGuard
    rules (asserts the APK still carries the binding and, per ABI, `libjllama.so`, ggml's
    shared libraries and at least one `libggml-cpu-*.so` module).
@@ -23,5 +26,5 @@ Two CI jobs drive it (`.github/workflows/publish.yml`):
    so a local `connectedAndroidTest` against a bare emulator stays green.
 
 What the emulator job deliberately does NOT cover: arm64 kernels (real-device ABI — the
-example app on hardware covers that) and the Adreno/OpenCL flavor (no OpenCL ICD in the
-emulator).
+example app on hardware covers that) and Adreno/OpenCL execution (no OpenCL ICD in the
+emulator). OpenCL dependency resolution, R8 and APK packaging are covered by the first job.

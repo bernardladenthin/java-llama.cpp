@@ -63,10 +63,11 @@ unmaintained). It is intentionally *not* a Maven reactor module, but it stays ve
 the reactor: `build.gradle.kts` parses the version (and the mirrored dependency versions) out of
 the Maven poms at configure time, so `mvn versions:set` remains the single bump point.
 
-The AAR's `classes.jar` repackages the **byte-identical Maven-built core classes** (no
+The CPU AAR's `classes.jar` repackages the **byte-identical Maven-built core classes** (no
 recompilation) minus `module-info.class`; the Android `.so` files ship under `jni/<abi>/`
-instead of as Java resources (the desktop natives jars carry `jllama-files.txt` /
-`jllama-build.txt` lists for the JVM loader, which an AAR does not need and does not contain).
+instead of as Java resources. The OpenCL AAR has an empty `classes.jar`; its API comes through
+the CPU AAR dependency, so the two artifacts introduce no duplicate Java classes. The desktop natives jars carry `jllama-files.txt` /
+`jllama-build.txt` lists for the JVM loader, which an AAR does not need and does not contain.
 
 ### Building locally
 
