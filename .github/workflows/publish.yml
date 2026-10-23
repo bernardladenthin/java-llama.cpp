@@ -3745,6 +3745,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
@@ -3948,6 +3950,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
@@ -3990,6 +3994,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Resolve pinned llama.cpp tag from CMakeLists.txt
         id: tag
         shell: bash
@@ -4008,6 +4014,7 @@ jobs:
       - name: Checkout llama.cpp at the pinned commit (full history, the push needs it)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           repository: ggml-org/llama.cpp
           ref: ${{ steps.tag.outputs.ref }}
           path: llama-src

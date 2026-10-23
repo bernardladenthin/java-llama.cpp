@@ -1563,6 +1563,12 @@ used to exist only transiently in each build job's `_deps/`. Two jobs of `publis
   selected. The patches stay files in this repository, never fork commits: the review surface is the
   patch file.
 
+  Both mirror-job checkouts set `persist-credentials: false`. The script passes the mirror token
+  through Git's `--config-env`, scoped to the exact mirror URL, and clears inherited headers/helpers
+  for that URL; a failed remote lookup fails the job. Tests in `test_mirror.py` use dummy credentials
+  with real Git configuration resolution and intercepted network calls. Cross-repo policy:
+  [`../workspace/policies/git-checkout-credentials.md`](../workspace/policies/git-checkout-credentials.md).
+
 ## The C API: `jllama_api.h` over the engine (layer B)
 
 [`docs/c-api.md`](docs/c-api.md) is the consumer-facing page; this is the layout. Three files

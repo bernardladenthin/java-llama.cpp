@@ -48,6 +48,10 @@ deployment named `llama-android-{VERSION}` in the Central Portal UI. The agent
 (`net.ladenthin:llama-atmosphere-agent`) is likewise its own deployment, from the step after the
 reactor deploy.
 
+The Android bundle upload intentionally does not wait for Central's asynchronous validation:
+previous polling caused long timeouts and marked working builds as failed. Confirm availability
+afterwards independently of the build; do not add validation polling as a build gate.
+
 ## GitHub assets and the rolling snapshot
 
 `.github/collect-release-assets.py` is shared with the three sibling Maven repositories. It
