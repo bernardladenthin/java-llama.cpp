@@ -368,8 +368,8 @@ name). Introducing it found `vmlens` gating nothing in all four repos; it now ga
 srcmorph and streambuffer are listed with their SHA-256 in each repo's **`.github/shared-files.sha256`**
 (`sha256sum` format). An entry can also name **one job of a workflow**,
 `.github/workflows/publish.yml#startgate`: `startgate`, `shared-files`, `verify-signing-key`,
-`check-snapshot` and `check-tag` are identical in all four `publish.yml` files (plus
-`verify-signing-key-gradle`, `github-snapshot` and `github-release` in the three Maven-only ones), and
+`check-snapshot`, `check-tag`, `verify-signing-key-gradle` and `github-snapshot` are identical in all four `publish.yml` files (plus
+`github-release` in the three Maven-only ones), and
 such an entry hashes just that job -- so a job kept identical by convention is now checked like a
 file, without moving it into a reusable workflow (no check name or `needs:` changes). An entry ending
 in `?repo` covers a file or job identical up to the repository's name (hashed with the name replaced
@@ -1139,7 +1139,8 @@ two AARs with the `.aar.asc` Gradle writes next to them, their poms
 `sign-fatjars.sh`, no `environment:`; `verify-signing-key` still proves the key, and the publish jobs
 sign with it). Until 2026-10-12 the collect steps copied jars and bare AARs only: every pom was
 missing, `llama-platform` was absent entirely, the AARs went out unsigned and the `*.jar`-only
-signature check never noticed. `collect-release-assets.py` now discovers all reactor modules from
+signature check never noticed. `collect-release-assets.py` is shared across all four Java repositories; its local
+`.github/release-assets.json` declares the native/Android extras. It discovers all reactor modules from
 their POMs and all native classifiers from `natives.csv`, includes `llama-ffm`, renames each
 `target/bom.json` to its Central name and reports missing outputs/signatures. The check counts
 jars, AARs, poms, JSONs and the source archive. After a complete collection, `github-snapshot`
@@ -3472,3 +3473,9 @@ pinned defensively because of it — see that file), and merge-discipline guidan
 
 Open TODOs for this repo live in [`TODO.md`](TODO.md). Cross-repo status
 tracking lives in [`../workspace/crossrepostatus.md`](../workspace/crossrepostatus.md).
+
+## Shared release-asset script interface
+
+The collector, signature reporter, snapshot updater and their tests are byte-identical across the
+four Java repositories and listed in `.github/shared-files.sha256`. Parameters, the local JSON
+contract and synchronization rules: [`../workspace/policies/release-asset-scripts.md`](../workspace/policies/release-asset-scripts.md).

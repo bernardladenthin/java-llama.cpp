@@ -25,15 +25,16 @@ class FakeGitHub:
         self.calls = []
         self.fail_upload = False
         self.fail_deletes = set()
+        self.tag = "snapshot"
 
     def api(self, method, endpoint, payload=None, optional=False):
         self.calls.append((method, endpoint, payload))
         if method == "DELETE" and int(endpoint.rsplit("/", 1)[1]) in self.fail_deletes:
             raise RuntimeError("delete failed")
         if method == "GET":
-            if endpoint.endswith("git/ref/tags/snapshot"):
+            if endpoint.endswith(f"git/ref/tags/{self.tag}"):
                 return self.ref
-            if endpoint.endswith("releases/tags/snapshot"):
+            if endpoint.endswith(f"releases/tags/{self.tag}"):
                 return self.release
             if "/compare/" in endpoint:
                 return {"status": self.comparison}
@@ -98,6 +99,22 @@ class SnapshotTest(unittest.TestCase):
         self.gh.comparison = "behind"
         self.assertFalse(self.publish())
         self.assertTrue(all(c[0] == "GET" for c in self.gh.calls))
+
+    def test_empty_signature_or_orphan_also_prevents_promotion(self):
+        for name in ("new.json.asc", "orphan.jar.asc"):
+            with self.subTest(name=name):
+                (self.assets / name).write_text("")
+                with self.assertRaisesRegex(ValueError, "collection is incomplete"):
+                    self.publish()
+                self.assertFalse(any(c[0] in ("PATCH", "DELETE") for c in self.gh.calls))
+
+    def test_rolling_tag_and_title_are_parameters(self):
+        self.gh.tag = "nightly"
+        self.assertTrue(self.publish(tag="nightly", title="Nightly build"))
+        upload = next(c for c in self.gh.calls if c[0] == "upload")
+        self.assertEqual(upload[1][2], "nightly")
+        notes = next(c[2] for c in self.gh.calls if c[0] == "PATCH" and c[1].endswith("/releases/7"))
+        self.assertEqual(notes["name"], "Nightly build")
 
     def test_same_commit_older_run_or_attempt_is_skipped(self):
         self.gh.ref["object"]["sha"] = NEW

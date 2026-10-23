@@ -50,9 +50,11 @@ reactor deploy.
 
 ## GitHub assets and the rolling snapshot
 
-`.github/collect-release-assets.py` discovers the reactor from `pom.xml`, adds the standalone
-agent, the classifiers in `natives.csv`, both Android publications and the signed llama.cpp source
-archive. It copies each artifact and signature, naming `target/bom.json` as
+`.github/collect-release-assets.py` is shared with the three sibling Maven repositories. It
+reads `.github/release-assets.json`, discovers the reactor from `pom.xml`, then adds the configured
+standalone agent, classifiers in `natives.csv`, Android publications and signed llama.cpp source
+archive. The shared interface is documented in
+[`../../workspace/policies/release-asset-scripts.md`](../../workspace/policies/release-asset-scripts.md). It copies each artifact and signature, naming `target/bom.json` as
 `<artifactId>-<version>-cyclonedx.json`, as Central does. Missing outputs fail the publish job;
 available files are still uploaded so a Central polling failure does not hide signed artifacts.
 
