@@ -7,6 +7,7 @@
 
 **AI:**  
 [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#)  
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/bernardladenthin/java-llama.cpp?utm_source=oss&utm_medium=github&utm_campaign=bernardladenthin%2Fjava-llama.cpp&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)  
 
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
@@ -1331,6 +1332,9 @@ server, and this library's `RpcServer` works for any llama.cpp client.
 > only; `RpcServer.startOnNetwork(address, …)` (or `--host` on the command line) is the explicit
 > opt-in for another interface and logs a warning. Across machines, use a trusted network or a
 > tunnel (SSH, WireGuard).
+
+Peer listeners used by tensor-split RPC inherit that same bind address. Stopping the server
+also interrupts peer setup when the other server is absent or has not completed its handshake.
 
 What to know:
 

@@ -1231,6 +1231,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Consume full unzip output: grep -q can SIGPIPE unzip under pipefail.
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           for flavor in llama-android llama-android-opencl; do
             AAR="llama-android/build/aar/${flavor}-${VERSION}.aar"
@@ -1246,7 +1247,7 @@ jobs:
             ENTRIES="AndroidManifest.xml classes.jar proguard.txt R.txt"
             for abi in $ABIS; do for lib in $LIBS; do ENTRIES="$ENTRIES jni/$abi/$lib"; done; done
             for entry in $ENTRIES; do
-              unzip -l "$AAR" | grep -q "${entry}$" || { echo "::error::$AAR is missing $entry"; exit 1; }
+              unzip -l "$AAR" | grep "${entry}$" > /dev/null || { echo "::error::$AAR is missing $entry"; exit 1; }
             done
             if [ "$flavor" = "llama-android" ]; then
               for abi in $ABIS; do
@@ -1255,16 +1256,26 @@ jobs:
                 echo "$AAR: $n CPU module(s) for $abi"
               done
             else
-              if unzip -l "$AAR" | grep -q "jni/.*/libjllama.so$"; then
+              if unzip -l "$AAR" | grep "jni/.*/libjllama.so$" > /dev/null; then
                 echo "::error::$AAR carries a second libjllama.so -- the OpenCL AAR must hold its module only"; exit 1
               fi
             fi
-            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"' \
+            unzip -p "$AAR" AndroidManifest.xml | grep 'android:minSdkVersion="28"' > /dev/null \
               || { echo "::error::$AAR manifest lost minSdkVersion 28"; exit 1; }
+            # Both AARs merge into the OpenCL consumer. AGP requires unique library
+            # namespaces, including for native-only add-ons with an empty classes.jar.
+            MANIFEST_PACKAGE="net.ladenthin.llama.android"
+            if [ "$flavor" = "llama-android-opencl" ]; then MANIFEST_PACKAGE="$MANIFEST_PACKAGE.opencl"; fi
+            unzip -p "$AAR" AndroidManifest.xml | grep -F "package=\"$MANIFEST_PACKAGE\"" > /dev/null \
+              || { echo "::error::$AAR manifest has the wrong namespace (expected $MANIFEST_PACKAGE)"; exit 1; }
             unzip -p "$AAR" classes.jar > /tmp/aar-classes.jar
-            unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class" \
-              || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
-            if unzip -l /tmp/aar-classes.jar | grep -qE "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/"; then
+            if [ "$flavor" = "llama-android" ]; then
+              unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/LlamaModel.class" > /dev/null \
+                || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
+            elif unzip -Z -1 /tmp/aar-classes.jar | grep '\.class$' > /dev/null; then
+              echo "::error::$AAR duplicates Java classes from its CPU AAR dependency"; exit 1
+            fi
+            if unzip -l /tmp/aar-classes.jar | grep -E "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/" > /dev/null; then
               echo "::error::$AAR classes.jar carries module-info or desktop native resources"; exit 1
             fi
             # The libraries themselves (bionic-only DT_NEEDED + libOpenCL.so for the OpenCL
@@ -1277,25 +1288,32 @@ jobs:
           done
       - name: Android libraries -- dependency allowlist + 16 KB page alignment (buildcheck/nativedeps.py)
         run: python3 .github/verify-native-deps.py stage
-      - name: AGP consumer smoke test (R8 release build from mavenLocal)
+      - name: AGP consumer smoke tests (CPU and additive OpenCL, R8 release builds)
         shell: bash
         run: |
           set -euo pipefail
+          # Consume full unzip output: grep -q can SIGPIPE unzip under pipefail.
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
-          gradle -p .github/android-consumer-test assembleRelease "-PjllamaVersion=${VERSION}"
-          APK=.github/android-consumer-test/app/build/outputs/apk/release/app-release.apk
-          test -f "$APK"
-          for abi in arm64-v8a x86_64; do
-            for lib in libjllama.so libggml.so libggml-base.so; do
-              unzip -l "$APK" | grep -q "lib/$abi/$lib" \
-                || { echo "::error::consumer APK is missing lib/$abi/$lib"; exit 1; }
+          for backend in cpu opencl; do
+            gradle -p .github/android-consumer-test assembleRelease "-PjllamaVersion=${VERSION}" "-PjllamaBackend=$backend"
+            APK=.github/android-consumer-test/app/build/outputs/apk/release/app-release.apk
+            test -f "$APK"
+            for abi in arm64-v8a x86_64; do
+              for lib in libjllama.so libggml.so libggml-base.so; do
+                unzip -l "$APK" | grep "lib/$abi/$lib" > /dev/null \
+                  || { echo "::error::$backend consumer APK is missing lib/$abi/$lib"; exit 1; }
+              done
+              unzip -l "$APK" | grep "lib/$abi/libggml-cpu-.*\.so" > /dev/null \
+                || { echo "::error::$backend consumer APK has no CPU backend module under lib/$abi/"; exit 1; }
             done
-            unzip -l "$APK" | grep -q "lib/$abi/libggml-cpu-.*\.so" \
-              || { echo "::error::consumer APK has no CPU backend module under lib/$abi/"; exit 1; }
+            if [ "$backend" = opencl ]; then
+              unzip -l "$APK" | grep 'lib/arm64-v8a/libggml-opencl.so' > /dev/null \
+                || { echo "::error::OpenCL consumer APK lost its additive module"; exit 1; }
+            fi
+            # The AAR's consumer proguard.txt must have carried the binding through R8.
+            unzip -p "$APK" "classes*.dex" | grep -a "Lnet/ladenthin/llama/LlamaModel;" > /dev/null \
+              || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
           done
-          # The AAR's consumer proguard.txt must have carried the binding through R8.
-          unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
-            || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
       - name: Upload AARs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -3563,6 +3581,8 @@ jobs:
     needs: [check-snapshot, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
+    outputs:
+      assets_complete: ${{ steps.collect.outputs.complete }}
     environment: maven-central
     permissions:
       contents: write
@@ -3653,7 +3673,7 @@ jobs:
       # an upload to central.sonatype.com then goes out anonymously and fails with HTTP 401.
       # Restores id-only matching; replace with setup-java's `mvn-server-repository-origins:
       # central:https://central.sonatype.com` once a release of setup-java ships that input.
-      - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
+      - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
         run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
@@ -3695,43 +3715,11 @@ jobs:
       # the signed jars and poms + .asc files already exist in target/ (signing happens at
       # verify). Collecting on failure lets the github-snapshot job still attach them.
       - name: Collect signed artifacts
+        id: collect
         if: ${{ !cancelled() }}
-        run: |
-          mkdir -p signed-snapshot-assets
-          # The signed llama.cpp source archive (see "Sign the llama.cpp source archive" above).
-          cp llama-source-archive/*.tar.gz llama-source-archive/*.tar.gz.asc signed-snapshot-assets/
-          # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
-          # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
-          # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
-          # consumers are told to depend on and used to be absent from the release entirely).
-          for m in . llama llama-langchain4j llama-kotlin llama-platform llama-atmosphere-agent; do
-            cp "$m"/target/*.jar signed-snapshot-assets/ 2>/dev/null || true
-            cp "$m"/target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
-            cp "$m"/target/*.pom signed-snapshot-assets/ 2>/dev/null || true
-            cp "$m"/target/*.pom.asc signed-snapshot-assets/ 2>/dev/null || true
-          done
-          # The two AARs, as Central names them: Gradle signs the AAR next to itself
-          # (build/aar/*.aar.asc -- the signature was always there, it was never copied), each
-          # publication's pom as build/publications/<publication>/pom-default.xml(.asc), and the
-          # sources/javadoc jars the two publications share under build/distributions/.
-          for aar in llama-android/build/aar/*.aar; do
-            [ -e "$aar" ] || continue
-            base="$(basename "$aar" .aar)"
-            case "$base" in
-              llama-android-opencl-*) pub=llamaAndroidOpencl; v="${base#llama-android-opencl-}" ;;
-              *)                      pub=llamaAndroid;       v="${base#llama-android-}" ;;
-            esac
-            cp "$aar" signed-snapshot-assets/ 2>/dev/null || true
-            cp "$aar.asc" signed-snapshot-assets/ 2>/dev/null || true
-            cp "llama-android/build/publications/$pub/pom-default.xml" "signed-snapshot-assets/$base.pom" 2>/dev/null || true
-            cp "llama-android/build/publications/$pub/pom-default.xml.asc" "signed-snapshot-assets/$base.pom.asc" 2>/dev/null || true
-            for c in sources javadoc; do
-              cp "llama-android/build/distributions/llama-android-$v-$c.jar" "signed-snapshot-assets/$base-$c.jar" 2>/dev/null || true
-              cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-snapshot-assets/$base-$c.jar.asc" 2>/dev/null || true
-            done
-          done
+        run: python3 .github/collect-release-assets.py signed-snapshot-assets
       # The same provenance statement over the files Central and the GitHub release get (jars,
-      # poms, AARs, each next to its .asc). A consumer with the Central file in hand verifies it
+      # poms, CycloneDX JSONs and AARs, each next to its .asc). A consumer with the Central file in hand verifies it
       # with `gh attestation verify --owner bernardladenthin <file>`.
       - name: Attest build provenance of the published artifacts
         if: ${{ !cancelled() }}
@@ -3740,6 +3728,7 @@ jobs:
           subject-path: |
             signed-snapshot-assets/*.jar
             signed-snapshot-assets/*.pom
+            signed-snapshot-assets/*.json
             signed-snapshot-assets/*.aar
             signed-snapshot-assets/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -3756,14 +3745,16 @@ jobs:
     # the GitHub pre-release assets must not be lost in that case.
     if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') }}
     runs-on: ubuntu-latest
-    # Nothing is signed here: the assets are the Maven artifacts with the detached .asc that
-    # maven-gpg wrote at deploy (classes jar, natives jars, poms, sources, javadoc, the AARs). No
-    # fat jar: the project ships nothing a consumer could not get from Maven Central (CLAUDE.md,
-    # "Modular natives").
+    # Serialize the complete upload, tag/notes update and pruning operation.
+    concurrency:
+      group: snapshot-release-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
@@ -3777,105 +3768,12 @@ jobs:
         # still loudly red rather than quietly wrong.
         # See workspace/policies/fat-jar-release-assets.md, "Attach first, then go red".
         id: signatures
-        run: |
-          set -uo pipefail
-          dir="snapshot-assets"
-          # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
-          # unsigned for months and nothing counted them, so the job reported success.
-          # '*.tar.gz' is the llama.cpp source archive (archive-llama-source), signed by the publish job.
-          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' -o -name '*.tar.gz' \) | sort)
-          if [ -z "$artifacts" ]; then
-            echo "::error::no artifacts in $dir -- the collection step produced nothing"
-            echo "missing=-1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          missing=0
-          for artifact in $artifacts; do
-            if [ ! -e "$artifact.asc" ]; then
-              echo "::error::unsigned: $(basename "$artifact") has no detached .asc"
-              missing=$((missing + 1))
-            fi
-          done
-          echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          [ "$missing" -eq 0 ] && echo "all $(echo "$artifacts" | wc -l) artifact(s) signed"
-          exit 0
-      - name: Update snapshot pre-release
+        run: python3 .github/report-asset-signatures.py snapshot-assets
+      - name: Update snapshot assets, source tag and notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view snapshot --repo ${{ github.repository }} 2>/dev/null \
-            || gh release create snapshot \
-                 --repo ${{ github.repository }} \
-                 --prerelease \
-                 --title "Snapshot (latest)" \
-                 --notes "Latest snapshot build from the main branch."
-          gh release upload snapshot snapshot-assets/* \
-            --repo ${{ github.repository }} \
-            --clobber
-      - name: Remove the assets this run did not upload
-        # `snapshot` is a rolling "latest" pre-release, and `gh release upload --clobber` replaces
-        # same-named assets but never removes any other, so every asset of every past version stayed
-        # forever: 208 on java-llama.cpp (109 of them from 5.0.x, 43 in shapes that no longer exist),
-        # and SpotBugs plugin jars an old collect step attached in 2026-05 on three repositories. A
-        # non-current asset on this release is noise by definition. The keep-set is what this run
-        # uploaded -- the files in the asset directory -- never a version pattern, which would have to
-        # be re-taught at every classifier added or dropped (how the stale shapes arose). AFTER the
-        # upload on purpose: a failed upload must not leave the release emptier than it was. And only
-        # here: a versioned v* release is history, github-release never deletes anything. Every
-        # deletion is printed by name, so the job log is the audit trail.
-        #
-        # Asset by asset, never the release. The first form of this job (2026-05-07) deleted the whole
-        # `snapshot` release with its tag and recreated it; on 2026-05-10 the runs of several main
-        # pushes minutes apart deleted it under each other, and every job of each burst but the last
-        # failed in that step with its artifacts present. The job then went with the Central
-        # migration and came back as `view || create` + `upload --clobber` without any cleanup, which
-        # is how the backlog grew (workspace/policies/fat-jar-release-assets.md has the runs). Hence
-        # three guards: an empty upload is refused (every asset would count as stale; the download
-        # and upload steps above fail first, the guard keeps it so), an asset that is already gone
-        # counts as removed (two overlapping dispatches may both pick it), and a failed deletion is
-        # reported and the rest still tried -- the assets of this upload are on the release either
-        # way, so this is "attach first, then red" like the signature check.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          keep="$(ls -1 snapshot-assets | sort)"
-          if [ -z "$keep" ]; then
-            echo "::error::refusing to prune: this run uploaded nothing, so every asset of the release would count as stale"
-            exit 1
-          fi
-          list_assets() {
-            gh release view snapshot --repo ${{ github.repository }} --json assets --jq '.assets[].name' | sort
-          }
-          current="$(list_assets)"
-          stale="$(comm -13 <(printf '%s\n' "$keep") <(printf '%s\n' "$current"))"
-          if [ -z "$stale" ]; then
-            echo "nothing to remove: the release holds exactly the $(printf '%s\n' "$keep" | wc -l) asset(s) of this upload"
-            exit 0
-          fi
-          echo "removing $(printf '%s\n' "$stale" | wc -l) asset(s) that are not part of this upload:"
-          failed=0
-          while IFS= read -r name; do
-            [ -n "$name" ] || continue
-            echo "  deleting $name"
-            if gh release delete-asset snapshot "$name" --repo ${{ github.repository }} --yes; then
-              continue
-            fi
-            if ! remaining="$(list_assets)"; then
-              echo "::error::could not delete $name, and could not re-read the release to tell whether it is gone"
-              failed=$((failed + 1))
-            elif printf '%s\n' "$remaining" | grep -qxF -- "$name"; then
-              echo "::error::could not delete $name"
-              failed=$((failed + 1))
-            else
-              echo "  $name was already gone"
-            fi
-          done <<< "$stale"
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::$failed asset(s) could not be removed; the $(printf '%s\n' "$keep" | wc -l) asset(s) of this upload are on the release"
-            exit 1
-          fi
-          echo "kept the $(printf '%s\n' "$keep" | wc -l) asset(s) of this upload"
+          ASSETS_COMPLETE: ${{ needs.publish-snapshot.outputs.assets_complete }}
+        run: python3 .github/update-snapshot.py snapshot-assets
       - name: Fail if anything was attached unsigned
         # After the upload on purpose: the assets must exist even when the signature does not.
         if: ${{ always() && steps.signatures.outputs.missing != '0' }}
@@ -3888,6 +3786,8 @@ jobs:
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
     needs: [check-tag, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
+    outputs:
+      assets_complete: ${{ steps.collect.outputs.complete }}
     environment: maven-central
     permissions:
       contents: write
@@ -3966,7 +3866,7 @@ jobs:
       - name: Show effective POM (debug)
         run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
       # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
-      - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
+      - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
         run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
@@ -4020,43 +3920,11 @@ jobs:
       # the signed jars and poms + .asc files already exist in target/ (signing happens at
       # verify). Collecting on failure lets the github-release-signed job still attach them.
       - name: Collect signed artifacts
+        id: collect
         if: ${{ !cancelled() }}
-        run: |
-          mkdir -p signed-release-assets
-          # The signed llama.cpp source archive (see "Sign the llama.cpp source archive" above).
-          cp llama-source-archive/*.tar.gz llama-source-archive/*.tar.gz.asc signed-release-assets/
-          # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
-          # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
-          # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
-          # consumers are told to depend on and used to be absent from the release entirely).
-          for m in . llama llama-langchain4j llama-kotlin llama-platform llama-atmosphere-agent; do
-            cp "$m"/target/*.jar signed-release-assets/ 2>/dev/null || true
-            cp "$m"/target/*.jar.asc signed-release-assets/ 2>/dev/null || true
-            cp "$m"/target/*.pom signed-release-assets/ 2>/dev/null || true
-            cp "$m"/target/*.pom.asc signed-release-assets/ 2>/dev/null || true
-          done
-          # The two AARs, as Central names them: Gradle signs the AAR next to itself
-          # (build/aar/*.aar.asc -- the signature was always there, it was never copied), each
-          # publication's pom as build/publications/<publication>/pom-default.xml(.asc), and the
-          # sources/javadoc jars the two publications share under build/distributions/.
-          for aar in llama-android/build/aar/*.aar; do
-            [ -e "$aar" ] || continue
-            base="$(basename "$aar" .aar)"
-            case "$base" in
-              llama-android-opencl-*) pub=llamaAndroidOpencl; v="${base#llama-android-opencl-}" ;;
-              *)                      pub=llamaAndroid;       v="${base#llama-android-}" ;;
-            esac
-            cp "$aar" signed-release-assets/ 2>/dev/null || true
-            cp "$aar.asc" signed-release-assets/ 2>/dev/null || true
-            cp "llama-android/build/publications/$pub/pom-default.xml" "signed-release-assets/$base.pom" 2>/dev/null || true
-            cp "llama-android/build/publications/$pub/pom-default.xml.asc" "signed-release-assets/$base.pom.asc" 2>/dev/null || true
-            for c in sources javadoc; do
-              cp "llama-android/build/distributions/llama-android-$v-$c.jar" "signed-release-assets/$base-$c.jar" 2>/dev/null || true
-              cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-release-assets/$base-$c.jar.asc" 2>/dev/null || true
-            done
-          done
+        run: python3 .github/collect-release-assets.py signed-release-assets
       # The same provenance statement over the files Central and the GitHub release get (jars,
-      # poms, AARs, each next to its .asc). A consumer with the Central file in hand verifies it
+      # poms, CycloneDX JSONs and AARs, each next to its .asc). A consumer with the Central file in hand verifies it
       # with `gh attestation verify --owner bernardladenthin <file>`.
       - name: Attest build provenance of the published artifacts
         if: ${{ !cancelled() }}
@@ -4065,6 +3933,7 @@ jobs:
           subject-path: |
             signed-release-assets/*.jar
             signed-release-assets/*.pom
+            signed-release-assets/*.json
             signed-release-assets/*.aar
             signed-release-assets/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -4089,6 +3958,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
@@ -4102,28 +3973,7 @@ jobs:
         # still loudly red rather than quietly wrong.
         # See workspace/policies/fat-jar-release-assets.md, "Attach first, then go red".
         id: signatures
-        run: |
-          set -uo pipefail
-          dir="release-assets"
-          # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
-          # unsigned for months and nothing counted them, so the job reported success.
-          # '*.tar.gz' is the llama.cpp source archive (archive-llama-source), signed by the publish job.
-          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' -o -name '*.tar.gz' \) | sort)
-          if [ -z "$artifacts" ]; then
-            echo "::error::no artifacts in $dir -- the collection step produced nothing"
-            echo "missing=-1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          missing=0
-          for artifact in $artifacts; do
-            if [ ! -e "$artifact.asc" ]; then
-              echo "::error::unsigned: $(basename "$artifact") has no detached .asc"
-              missing=$((missing + 1))
-            fi
-          done
-          echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          [ "$missing" -eq 0 ] && echo "all $(echo "$artifacts" | wc -l) artifact(s) signed"
-          exit 0
+        run: python3 .github/report-asset-signatures.py release-assets
       - name: Upload release assets
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
@@ -4152,6 +4002,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Resolve pinned llama.cpp tag from CMakeLists.txt
         id: tag
         shell: bash
@@ -4170,6 +4022,7 @@ jobs:
       - name: Checkout llama.cpp at the pinned commit (full history, the push needs it)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           repository: ggml-org/llama.cpp
           ref: ${{ steps.tag.outputs.ref }}
           path: llama-src

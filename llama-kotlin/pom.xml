@@ -111,6 +111,19 @@ SPDX-License-Identifier: MIT
 	</dependencies>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>${project.basedir}/src/main/resources</directory>
+			</resource>
+			<resource>
+				<directory>${project.basedir}/..</directory>
+				<targetPath>META-INF/third-party/net.ladenthin/${project.artifactId}</targetPath>
+				<includes>
+					<include>LICENSE</include>
+					<include>THIRD_PARTY.md</include>
+				</includes>
+			</resource>
+		</resources>
 		<!-- Kotlin-only module: point the standard source roots at the Kotlin trees
 		     (the documented kotlin-maven-plugin setup; without this the compile
 		     executions silently find zero sources). -->

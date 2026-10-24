@@ -161,6 +161,10 @@ if (jllama_chat_completions_stream_request(model, request, &task) == JLLAMA_STAT
   and the model still answering after the server stopped, the RPC server serving the CPU over
   loopback and stopped, text to speech refusing missing models, and a fine-tuning run over the
   random F32 model that writes a GGUF.
+- `src/test/cpp/test_rpc_comm.cpp`: protocol-v8 TCP clients drive the C API with CPU only,
+  without a model. Six subprocess scenarios hold loopback/network binding, stop with no peer,
+  both incomplete peer capability handshakes, successful setup and reuse of the released ports.
+  Test deadlines turn blocked shutdown into a failure without leaving threads in the test runner.
 - `src/test/c/test_c_abi.c` (the ctest `c_abi` of every modular build job): plain C11 linking the
   shipped `libjllama` and `libllama`; it compiles the header as C and resolves `jllama_api_version`
   and `jllama_build_info` through the library's exports, next to its layer-A checks.

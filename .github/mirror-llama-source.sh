@@ -36,6 +36,9 @@ fail() {
 }
 
 [ -n "${LLAMA_MIRROR_TOKEN:-}" ] || fail "LLAMA_MIRROR_TOKEN is empty -- the release job needs that secret to push to $MIRROR"
+[[ "$MIRROR" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$ ]] \
+    && [ "${MIRROR##*/}" != "." ] && [ "${MIRROR##*/}" != ".." ] \
+    || fail "mirror must be a GitHub owner/repository name"
 [ -d "$SRC/.git" ] || fail "$SRC is not a git checkout"
 
 TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' "$CMAKELISTS" | grep -oE 'b[0-9]+' | head -1)
@@ -51,11 +54,21 @@ COUNT=$(git -C "$SRC" rev-list --count HEAD)
 
 MIRROR_URL="https://github.com/$MIRROR.git"
 REF="refs/tags/jllama/$TAG"
-# The token travels in a header, never in a URL (a URL ends up in process listings and error text).
-AUTH="AUTHORIZATION: basic $(printf '%s' "x-access-token:$LLAMA_MIRROR_TOKEN" | base64 -w0)"
-echo "::add-mask::${AUTH#AUTHORIZATION: basic }"
+# Match only this mirror URL, replacing any inherited checkout header for it. Pass the header
+# through the environment, not argv or a persistent Git config. Requires Git >= 2.31.
+JLLAMA_MIRROR_AUTH_HEADER="AUTHORIZATION: basic $(printf '%s' "x-access-token:$LLAMA_MIRROR_TOKEN" | base64 -w0)"
+export JLLAMA_MIRROR_AUTH_HEADER
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    echo "::add-mask::${JLLAMA_MIRROR_AUTH_HEADER#AUTHORIZATION: basic }"
+fi
+mirror_git() {
+    GIT_TERMINAL_PROMPT=0 git -C "$SRC" \
+        -c "credential.$MIRROR_URL.helper=" \
+        -c "http.$MIRROR_URL.extraheader=" \
+        --config-env="http.$MIRROR_URL.extraheader=JLLAMA_MIRROR_AUTH_HEADER" "$@"
+}
 
-EXISTING=$(git -c "http.extraheader=$AUTH" ls-remote --tags "$MIRROR_URL" "$REF" | cut -f1 || true)
+EXISTING=$(mirror_git ls-remote --tags "$MIRROR_URL" "$REF" | cut -f1)
 if [ -n "$EXISTING" ]; then
     if [ "$EXISTING" = "$HEAD_COMMIT" ]; then
         echo "mirror-llama-source: $MIRROR already has $REF = $HEAD_COMMIT; nothing to push"
@@ -63,5 +76,5 @@ if [ -n "$EXISTING" ]; then
     fi
     fail "$MIRROR has $REF = $EXISTING, but $TAG is $HEAD_COMMIT here -- one number, one commit; resolve by hand"
 fi
-git -C "$SRC" -c "http.extraheader=$AUTH" push "$MIRROR_URL" "$HEAD_COMMIT:$REF"
+mirror_git push "$MIRROR_URL" "$HEAD_COMMIT:$REF"
 echo "mirror-llama-source: pushed $HEAD_COMMIT to $MIRROR as $REF"

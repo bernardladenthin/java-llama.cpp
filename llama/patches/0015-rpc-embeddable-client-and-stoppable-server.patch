@@ -30,9 +30,10 @@ JVM) cannot use ggml-rpc as it is:
 
 3. ggml_backend_rpc_start_server() cannot be stopped: while(true) around accept(). Two new
    entry points, both also exposed through get_proc_address:
-   - ggml_backend_rpc_stop_server() disconnects the client being served and wakes accept()
-     with a loopback connection (the one portable way to interrupt it). The loop then
-     releases its backends; it used to never reach that code.
+   - ggml_backend_rpc_stop_server() disconnects the client and every live peer socket.
+     Listener accept and outgoing peer connect poll cancellation at 50 ms intervals; no
+     wake-up connection can fill the listen backlog and block the stopping thread. The
+     loop releases its backends when it ends.
    - ggml_backend_rpc_server_listening() tells the host whether the socket was bound.
    The transport stays initialised on the way out, because WSACleanup() would invalidate
    every other RPC socket in the process.
@@ -43,10 +44,22 @@ JVM) cannot use ggml-rpc as it is:
 
 Upstream-submittable; not filed upstream yet. The runnable guard is
 src/test/cpp/test_rpc.cpp: it links both new functions and exercises the registration and
-stop paths over loopback.
+stop paths over loopback. test_rpc_comm.cpp drives protocol-v8 COMM_INIT through the C
+API: loopback/network binding, missing peer, stalled caps handshakes in both ranks,
+normal peer setup, socket cleanup and restart. Subprocess deadlines bound failures.
+
+5. COMM_INIT preserves the configured server bind address instead of opening a wildcard
+   listener for a loopback-only server. Peer sockets are weakly registered before any
+   caps I/O, under the same mutex as stop; stop also catches a peer accepted/connected
+   concurrently. Normal COMM_FREE/disconnect still frees them immediately. The rank-1
+   retry loop checks cancellation too. The former main-listener wake-up connection is
+   removed: repeated C-API stops while the peer was absent filled its backlog.
+
+Drop-check on each upstream bump: inspect comm_init, the stoppable accept/connect
+paths and stop_server. Drop upstream-fixed hunks instead of mechanically refreshing them.
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index f56d57552..60a0cd9be 100644
+index 267b84874..3d6886eff 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -1183,6 +1183,11 @@ static void add_rpc_devices(const std::string & servers) {
@@ -62,11 +75,11 @@ index f56d57552..60a0cd9be 100644
      }
  }
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
-index 482bd3666..f7fc68956 100644
+index ecf0a3a6d..9d73a48a7 100644
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
 @@ -26,6 +26,11 @@ GGML_BACKEND_API void ggml_backend_rpc_get_device_memory(const char * endpoint,
- 
+
  GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                                      size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices);
 +// Makes a ggml_backend_rpc_start_server() running on another thread return: the client being
@@ -74,16 +87,16 @@ index 482bd3666..f7fc68956 100644
 +GGML_BACKEND_API void ggml_backend_rpc_stop_server(void);
 +// true while ggml_backend_rpc_start_server() is accepting connections
 +GGML_BACKEND_API bool ggml_backend_rpc_server_listening(void);
- 
+
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
-index 45fa8a42d..8061e6186 100644
+index 49f11073e..62925820d 100644
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -422,7 +422,12 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock) {
+@@ -427,7 +427,12 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock) {
      sock->get_caps(request.conn_caps);
- 
+
      bool status = send_rpc_cmd(sock, RPC_CMD_HELLO, &request, sizeof(request), &response, sizeof(response));
 -    RPC_STATUS_ASSERT(status);
 +    if (!status) {
@@ -92,22 +105,22 @@ index 45fa8a42d..8061e6186 100644
 +        LOG_ERROR("RPC handshake: no valid HELLO response\n");
 +        return false;
 +    }
- 
+
      if (response.major != RPC_PROTO_MAJOR_VERSION || response.minor > RPC_PROTO_MINOR_VERSION) {
          LOG_ERROR("RPC server version mismatch: %d.%d.%d\n",
-@@ -505,7 +510,7 @@ public:
+@@ -510,7 +515,7 @@ public:
      void busy_spin_release();
      void graph_compute(uint32_t device, const ggml_cgraph * cgraph);
- 
+
 -    void start(const std::string & endpoint);
 +    bool start(const std::string & endpoint);
      void work();
- 
+
      ~rpc_dispatcher();
-@@ -630,26 +635,32 @@ void rpc_dispatcher::busy_spin_release() {
+@@ -635,26 +640,32 @@ void rpc_dispatcher::busy_spin_release() {
      GGML_ASSERT(previous > 0);
  }
- 
+
 -void rpc_dispatcher::start(const std::string & endpoint) {
 +bool rpc_dispatcher::start(const std::string & endpoint) {
      std::string host;
@@ -122,7 +135,7 @@ index 45fa8a42d..8061e6186 100644
 +        LOG_ERROR("RPC transport initialization failed\n");
 +        return false;
      }
- 
+
      sock = socket_t::connect(host.c_str(), port);
      if (sock == nullptr) {
 -        GGML_ABORT("Failed to connect to %s\n", endpoint.c_str());
@@ -140,21 +153,21 @@ index 45fa8a42d..8061e6186 100644
      thread = std::thread(rpc_dispatcher_trampoline, this);
 +    return true;
  }
- 
+
  void rpc_dispatcher::work() {
-@@ -699,7 +710,8 @@ rpc_dispatcher::~rpc_dispatcher() {
+@@ -705,7 +716,8 @@ rpc_dispatcher::~rpc_dispatcher() {
      }
  }
- 
+
 -static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoint) {
 +// Returns nullptr when the endpoint cannot be parsed, reached or handshaken with.
 +static std::shared_ptr<rpc_dispatcher> try_get_dispatcher(const std::string & endpoint) {
      static std::mutex mutex;
      std::lock_guard<std::mutex> lock(mutex);
      static std::unordered_map<std::string, std::weak_ptr<rpc_dispatcher>> dispatchers;
-@@ -712,11 +724,23 @@ static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoi
+@@ -718,11 +730,23 @@ static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoi
      }
- 
+
      auto dispatcher = std::make_shared<rpc_dispatcher>();
 -    dispatcher->start(endpoint);
 +    if (!dispatcher->start(endpoint)) {
@@ -163,7 +176,7 @@ index 45fa8a42d..8061e6186 100644
      dispatchers[endpoint] = dispatcher;
      return dispatcher;
  }
- 
+
 +// Every path below ggml_backend_rpc_add_server() keeps the original contract: a server that
 +// disappears after it was registered is still fatal (see the RPC_STATUS_ASSERT in work()).
 +static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoint) {
@@ -177,7 +190,7 @@ index 45fa8a42d..8061e6186 100644
  static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
      auto request = std::make_shared<rpc_msg_free_buffer_req>();
-@@ -1335,6 +1359,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
+@@ -1357,6 +1381,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
          /* .name       = */ dev_name,
      };
      auto reg = ggml_backend_rpc_add_server(endpoint);
@@ -188,9 +201,9 @@ index 45fa8a42d..8061e6186 100644
      LOG_DBG("[%s] %s\n", __func__, dev_name.c_str());
      ggml_backend_t backend = new ggml_backend {
          /* .guid    = */ ggml_backend_rpc_guid(),
-@@ -1350,7 +1378,15 @@ bool ggml_backend_is_rpc(ggml_backend_t backend) {
+@@ -1372,7 +1400,15 @@ bool ggml_backend_is_rpc(ggml_backend_t backend) {
  }
- 
+
  void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device, size_t * free, size_t * total) {
 -    auto dispatcher = get_dispatcher(endpoint);
 +    auto dispatcher = try_get_dispatcher(endpoint);
@@ -205,39 +218,125 @@ index 45fa8a42d..8061e6186 100644
      auto request = std::make_shared<rpc_msg_get_device_memory_req>();
      request->device = device;
      rpc_msg_get_device_memory_rsp response;
-@@ -2724,6 +2760,41 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
+@@ -1383,12 +1419,37 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device,
+     *total = response.total_mem;
+ }
+
++// State of the one embedding server. Peer sockets are registered before their blocking caps
++// handshake, and kept weakly so COMM_FREE/client disconnect still release them immediately.
++static std::mutex                         g_rpc_server_mutex;
++static std::atomic<bool>                  g_rpc_server_stop{false};
++static std::atomic<bool>                  g_rpc_server_listening{false};
++static socket_ptr                         g_rpc_server_client;
++static std::vector<std::weak_ptr<socket_t>> g_rpc_server_peers;
++
++static bool rpc_server_track_peer(const socket_ptr & peer) {
++    std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
++    if (g_rpc_server_stop) {
++        peer->shutdown();
++        return false;
++    }
++    for (auto it = g_rpc_server_peers.begin(); it != g_rpc_server_peers.end();) {
++        if (it->expired()) {
++            it = g_rpc_server_peers.erase(it);
++        } else {
++            ++it;
++        }
++    }
++    g_rpc_server_peers.push_back(peer);
++    return true;
++}
++
+ // RPC server-side implementation
+
+ class rpc_server {
+ public:
+-    rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
+-        : backends(std::move(all_backends)), cache_dir(cache_dir) {
++    rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir, const std::string & bind_host)
++        : backends(std::move(all_backends)), cache_dir(cache_dir), bind_host(bind_host) {
+         stored_graphs.resize(backends.size());
+         comm_states.resize(backends.size());
+     }
+@@ -1445,6 +1506,7 @@ private:
+
+     std::vector<ggml_backend_t> backends;
+     const char * cache_dir;
++    const std::string bind_host;
+     std::unordered_set<ggml_backend_buffer_t> buffers;
+     // computed graphs cached per backend, keyed by uid
+     std::vector<std::unordered_map<uint64_t, stored_graph>> stored_graphs;
+@@ -2234,13 +2296,15 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+     uint8_t local_caps[RPC_CONN_CAPS_SIZE] = {};
+     uint8_t remote_caps[RPC_CONN_CAPS_SIZE] = {};
+     if (request.rank == 0) {
+-        socket_ptr srv = socket_t::create_server("0.0.0.0", request.port);
++        // A local embedding server must not become network-visible on a client-selected port.
++        socket_ptr srv = socket_t::create_server(bind_host.c_str(), request.port);
+         if (srv == nullptr) {
+             LOG_ERROR("[%s] failed to listen on comm port %u\n", __func__, request.port);
+             return true;
+         }
+-        state.peer = srv->accept();
+-        if (state.peer == nullptr) {
++        state.peer = srv->accept(&g_rpc_server_stop);
++        if (state.peer == nullptr || !rpc_server_track_peer(state.peer)) {
++            state.peer = nullptr;
+             return true;
+         }
+         if (!state.peer->recv_data(remote_caps, sizeof(remote_caps))) {
+@@ -2256,9 +2320,9 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+     } else {
+         const std::string host(request.host, strnlen(request.host, sizeof(request.host)));
+         // rank 0 may not be listening yet, retry for a few seconds
+-        for (int i = 0; i < 100 && state.peer == nullptr; i++) {
+-            state.peer = socket_t::connect(host.c_str(), request.port);
+-            if (state.peer == nullptr) {
++        for (int i = 0; i < 100 && state.peer == nullptr && !g_rpc_server_stop; i++) {
++            state.peer = socket_t::connect(host.c_str(), request.port, &g_rpc_server_stop);
++            if (state.peer == nullptr && !g_rpc_server_stop) {
+                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
+             }
+         }
+@@ -2266,6 +2330,10 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+             LOG_ERROR("[%s] failed to connect to peer %s:%u\n", __func__, host.c_str(), request.port);
+             return true;
+         }
++        if (!rpc_server_track_peer(state.peer)) {
++            state.peer = nullptr;
++            return true;
++        }
+         state.peer->get_caps(local_caps);
+         if (!state.peer->send_data(local_caps, sizeof(local_caps)) ||
+             !state.peer->recv_data(remote_caps, sizeof(remote_caps))) {
+@@ -2432,8 +2500,8 @@ rpc_server::~rpc_server() {
+ }
+
+ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
+-                             socket_ptr sock) {
+-    rpc_server server(backends, cache_dir);
++                             socket_ptr sock, const std::string & bind_host) {
++    rpc_server server(backends, cache_dir, bind_host);
+     uint8_t cmd;
+     if (!sock->recv_data(&cmd, 1)) {
+         return;
+@@ -2759,6 +2827,25 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
      }
  }
- 
-+// State of the one server a process can run, so that another thread can stop it.
-+// ggml_backend_rpc_start_server() blocks for the lifetime of the server; an embedding host
-+// (e.g. a JVM) runs it on a thread of its own and needs a way to end it without ending the process.
-+static std::mutex             g_rpc_server_mutex;
-+static std::atomic<bool>      g_rpc_server_stop{false};
-+static std::atomic<bool>      g_rpc_server_listening{false};
-+static socket_ptr             g_rpc_server_client;   // the client being served, if any
-+static std::string            g_rpc_server_wake;     // endpoint that reaches the listening socket
-+
+
 +void ggml_backend_rpc_stop_server(void) {
-+    std::string wake;
-+    {
-+        std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
-+        g_rpc_server_stop = true;
-+        if (g_rpc_server_client) {
-+            // ends rpc_serve_client(): its blocking recv returns an error
-+            g_rpc_server_client->shutdown();
-+        }
-+        wake = g_rpc_server_wake;
++    std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
++    g_rpc_server_stop = true;
++    if (g_rpc_server_client) {
++        g_rpc_server_client->shutdown();
 +    }
-+    if (!wake.empty()) {
-+        // accept() is not interruptible from another thread in a portable way; a connection
-+        // is. The loop sees the stop flag as soon as accept() returns and closes it unserved.
-+        std::string host;
-+        int port;
-+        if (parse_endpoint(wake, host, port)) {
-+            socket_t::connect(host.c_str(), port);
++    for (const auto & weak : g_rpc_server_peers) {
++        if (auto peer = weak.lock()) {
++            peer->shutdown();
 +        }
 +    }
++    // Listener accept / outgoing peer connect poll the stop flag. No wake-up connection:
++    // repeated C-API stop calls used to fill the main listener's backlog and block here too.
 +}
 +
 +bool ggml_backend_rpc_server_listening(void) {
@@ -247,7 +346,7 @@ index 45fa8a42d..8061e6186 100644
  void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
      if (n_devices == 0 || devices == nullptr) {
-@@ -2731,6 +2802,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2766,6 +2853,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          return;
      }
      std::vector<ggml_backend_t> backends;
@@ -260,7 +359,7 @@ index 45fa8a42d..8061e6186 100644
      LOG_INFO("Starting RPC server v%d.%d.%d\n",
          RPC_PROTO_MAJOR_VERSION,
          RPC_PROTO_MINOR_VERSION,
-@@ -2747,6 +2824,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2782,6 +2875,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          auto backend = ggml_backend_dev_init(dev, nullptr);
          if (!backend) {
              LOG_ERROR("Failed to create backend for device %s\n", dev->iface.get_name(dev));
@@ -268,15 +367,15 @@ index 45fa8a42d..8061e6186 100644
              return;
          }
          backends.push_back(backend);
-@@ -2762,6 +2840,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2797,6 +2891,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
      std::string host;
      int port;
      if (!parse_endpoint(endpoint, host, port)) {
 +        free_backends();
          return;
      }
- 
-@@ -2772,27 +2851,55 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+
+@@ -2807,27 +2902,54 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
  #endif // GGML_RPC_RDMA
      if (!rpc_transport_init()) {
          LOG_ERROR("Failed to initialize RPC transport\n");
@@ -290,15 +389,14 @@ index 45fa8a42d..8061e6186 100644
          return;
      }
 -    while (true) {
+-        auto client_socket = server_socket->accept();
 +    {
 +        std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
 +        g_rpc_server_stop = false;
-+        // a server bound to every interface is reached for the wake-up on loopback
-+        g_rpc_server_wake = (host == "0.0.0.0" ? std::string("127.0.0.1") : host) + ":" + std::to_string(port);
 +    }
 +    g_rpc_server_listening = true;
 +    while (!g_rpc_server_stop) {
-         auto client_socket = server_socket->accept();
++        auto client_socket = server_socket->accept(&g_rpc_server_stop);
          if (client_socket == nullptr) {
 -            LOG_ERROR("Failed to accept client connection\n");
 -            return;
@@ -310,15 +408,17 @@ index 45fa8a42d..8061e6186 100644
 +        {
 +            std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
 +            if (g_rpc_server_stop) {
-+                break; // the wake-up connection of ggml_backend_rpc_stop_server()
++                break;
 +            }
 +            g_rpc_server_client = client_socket;
          }
          LOG_INFO("Accepted client connection\n");
-         rpc_serve_client(backends, cache_dir, client_socket);
+-        rpc_serve_client(backends, cache_dir, client_socket);
++        rpc_serve_client(backends, cache_dir, client_socket, host);
 +        {
 +            std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
 +            g_rpc_server_client = nullptr;
++            g_rpc_server_peers.clear();
 +        }
          LOG_INFO("Client connection closed\n");
      }
@@ -327,7 +427,7 @@ index 45fa8a42d..8061e6186 100644
 -        ggml_backend_free(backend);
 +    {
 +        std::lock_guard<std::mutex> lock(g_rpc_server_mutex);
-+        g_rpc_server_wake.clear();
++        g_rpc_server_peers.clear();
      }
 +    g_rpc_server_listening = false;
 +    server_socket = nullptr;
@@ -336,9 +436,9 @@ index 45fa8a42d..8061e6186 100644
 +    // original loop never got here, so it never cleaned up either.
 +    free_backends();
  }
- 
+
  static const char * ggml_backend_rpc_device_get_name(ggml_backend_dev_t dev) {
-@@ -3076,6 +3183,12 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
+@@ -3111,6 +3233,12 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
      if (std::strcmp(name, "ggml_backend_comm_allreduce_tensor") == 0) {
          return (void *)ggml_backend_rpc_comm_allreduce_tensor;
      }
@@ -349,12 +449,12 @@ index 45fa8a42d..8061e6186 100644
 +        return (void *)ggml_backend_rpc_server_listening;
 +    }
      return NULL;
- 
+
      GGML_UNUSED(reg);
-@@ -3098,8 +3211,13 @@ ggml_backend_reg_t ggml_backend_rpc_reg(void) {
+@@ -3133,8 +3261,13 @@ ggml_backend_reg_t ggml_backend_rpc_reg(void) {
      return &ggml_backend_rpc_reg;
  }
- 
+
 +// 0 when the server cannot be reached, so that registering an unreachable server is an
 +// ordinary failure for the caller rather than an abort of the whole process.
  static uint32_t ggml_backend_rpc_get_device_count(const char * endpoint) {
@@ -366,7 +466,7 @@ index 45fa8a42d..8061e6186 100644
      rpc_msg_device_count_rsp response;
      dispatcher->send(RPC_CMD_DEVICE_COUNT, nullptr, 0, &response, sizeof(response));
      return response.device_count;
-@@ -3118,6 +3236,11 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
+@@ -3153,6 +3286,11 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
      static uint32_t dev_id = 0;
      std::lock_guard<std::mutex> lock(mutex);
      if (reg_map.find(endpoint) != reg_map.end()) {
@@ -379,10 +479,25 @@ index 45fa8a42d..8061e6186 100644
          return reg_map[endpoint];
      }
 diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
-index 0d5343853..08284395d 100644
+index 22b38e00f..36360b0a7 100644
 --- a/ggml/src/ggml-rpc/transport.cpp
 +++ b/ggml/src/ggml-rpc/transport.cpp
-@@ -545,7 +545,12 @@ bool socket_t::impl::send_data(const void * data, size_t size) {
+@@ -16,11 +16,14 @@
+ #  include <netinet/tcp.h>
+ #  include <netdb.h>
+ #  include <unistd.h>
++#  include <fcntl.h>
++#  include <poll.h>
+ #endif
+ #include <cstdlib>
+ #include <cstring>
+ #include <mutex>
+ #include <optional>
++#include <cerrno>
+
+ #ifdef GGML_RPC_RDMA
+ #  include <infiniband/verbs.h>
+@@ -545,7 +548,12 @@ bool socket_t::impl::send_data(const void * data, size_t size) {
      size_t bytes_sent = 0;
      while (bytes_sent < size) {
          size_t size_to_send = std::min(size - bytes_sent, MAX_CHUNK_SIZE);
@@ -395,10 +510,10 @@ index 0d5343853..08284395d 100644
          if (n < 0) {
              LOG_ERROR("send failed (bytes_sent=%zu, size_to_send=%zu)\n",
                             bytes_sent, size_to_send);
-@@ -702,6 +707,32 @@ static bool set_no_delay(sockfd_t sockfd) {
+@@ -702,21 +710,117 @@ static bool set_no_delay(sockfd_t sockfd) {
      return ret == 0;
  }
- 
+
 +static void close_fd(sockfd_t sockfd) {
 +#ifdef _WIN32
 +    closesocket(sockfd);
@@ -428,8 +543,84 @@ index 0d5343853..08284395d 100644
  static bool set_reuse_addr(sockfd_t sockfd) {
      int flag = 1;
      int ret = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&flag, sizeof(int));
-@@ -715,8 +746,10 @@ socket_ptr socket_t::accept() {
+     return ret == 0;
+ }
+
+-socket_ptr socket_t::accept() {
+-    auto client_socket_fd = ::accept(pimpl->fd, NULL, NULL);
++static bool set_nonblocking(sockfd_t fd, bool enabled) {
++#ifdef _WIN32
++    u_long mode = enabled ? 1 : 0;
++    return ioctlsocket(fd, FIONBIO, &mode) == 0;
++#else
++    const int flags = fcntl(fd, F_GETFL, 0);
++    return flags >= 0 && fcntl(fd, F_SETFL, enabled ? flags | O_NONBLOCK : flags & ~O_NONBLOCK) == 0;
++#endif
++}
++
++static bool socket_would_block() {
++#ifdef _WIN32
++    const int error = WSAGetLastError();
++    return error == WSAEWOULDBLOCK || error == WSAEINPROGRESS;
++#else
++    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS;
++#endif
++}
++
++// poll/WSAPoll work for high-numbered JVM descriptors too, unlike FD_SET/select on POSIX.
++static bool wait_socket(sockfd_t fd, bool write, const std::atomic<bool> * stop) {
++#ifdef _WIN32
++    WSAPOLLFD pending = {};
++#else
++    struct pollfd pending = {};
++#endif
++    pending.fd = fd;
++    pending.events = write ? POLLOUT : POLLIN;
++    while (!stop->load()) {
++#ifdef _WIN32
++        const int ready = WSAPoll(&pending, 1, 50);
++        if (ready < 0 && WSAGetLastError() == WSAEINTR) {
++            continue;
++        }
++#else
++        const int ready = poll(&pending, 1, 50);
++        if (ready < 0 && errno == EINTR) {
++            continue;
++        }
++#endif
++        if (ready < 0 || (pending.revents & POLLNVAL)) {
++            return false;
++        }
++        if (ready > 0) {
++            return !stop->load();
++        }
++    }
++    return false;
++}
++
++socket_ptr socket_t::accept(const std::atomic<bool> * stop) {
++    if (stop && !set_nonblocking(pimpl->fd, true)) {
++        return nullptr;
++    }
++    sockfd_t client_socket_fd;
++    for (;;) {
++        if (stop && !wait_socket(pimpl->fd, false, stop)) {
++            return nullptr;
++        }
++        client_socket_fd = ::accept(pimpl->fd, NULL, NULL);
++        if (is_valid_fd(client_socket_fd) || !stop || !socket_would_block()) {
++            break;
++        }
++    }
+     if (!is_valid_fd(client_socket_fd)) {
+         return nullptr;
      }
++    // Windows inherits the listener's nonblocking mode; recv/send on the accepted client stay
++    // blocking and are cancelled by shutdown() through the embedding server's socket registry.
++    if (stop && (stop->load() || !set_nonblocking(client_socket_fd, false))) {
++        close_fd(client_socket_fd);
++        return nullptr;
++    }
      if (!set_no_delay(client_socket_fd)) {
          LOG_ERROR("Failed to set TCP_NODELAY\n");
 +        close_fd(client_socket_fd);
@@ -439,7 +630,7 @@ index 0d5343853..08284395d 100644
      LOG_DBG("[%s] accepted client connection\n", __func__);
      return socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
  }
-@@ -728,10 +761,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -728,10 +832,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      }
      if (!set_reuse_addr(sockfd)) {
          LOG_ERROR("Failed to set SO_REUSEADDR\n");
@@ -452,9 +643,9 @@ index 0d5343853..08284395d 100644
          return nullptr;
      }
      struct sockaddr_in serv_addr;
-@@ -740,9 +775,11 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -740,34 +846,60 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      serv_addr.sin_port = htons(port);
- 
+
      if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 +        close_fd(sockfd);
          return nullptr;
@@ -464,7 +655,14 @@ index 0d5343853..08284395d 100644
          return nullptr;
      }
      LOG_DBG("[%s] listening on %s:%d\n", __func__, host, port);
-@@ -756,18 +793,22 @@ socket_ptr socket_t::connect(const char * host, int port) {
+     return socket_ptr(new socket_t(std::make_unique<impl>(sockfd)));
+ }
+
+-socket_ptr socket_t::connect(const char * host, int port) {
++socket_ptr socket_t::connect(const char * host, int port, const std::atomic<bool> * stop) {
+     auto sockfd = socket(AF_INET, SOCK_STREAM, 0);
+     if (!is_valid_fd(sockfd)) {
+         return nullptr;
      }
      if (!set_no_delay(sockfd)) {
          LOG_ERROR("Failed to set TCP_NODELAY\n");
@@ -482,23 +680,63 @@ index 0d5343853..08284395d 100644
          return nullptr;
      }
      memcpy(&addr.sin_addr.s_addr, server->h_addr, server->h_length);
++    if (stop && (stop->load() || !set_nonblocking(sockfd, true))) {
++        close_fd(sockfd);
++        return nullptr;
++    }
      if (::connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
++        if (!stop || !socket_would_block() || !wait_socket(sockfd, true, stop)) {
++            close_fd(sockfd);
++            return nullptr;
++        }
++        int error = 0;
++#ifdef _WIN32
++        int length = sizeof(error);
++#else
++        socklen_t length = sizeof(error);
++#endif
++        if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, (char *) &error, &length) != 0 || error != 0) {
++            close_fd(sockfd);
++            return nullptr;
++        }
++    }
++    if (stop && (stop->load() || !set_nonblocking(sockfd, false))) {
 +        close_fd(sockfd);
          return nullptr;
      }
      LOG_DBG("[%s] connected to %s:%d\n", __func__, host, port);
 diff --git a/ggml/src/ggml-rpc/transport.h b/ggml/src/ggml-rpc/transport.h
-index 59b8845c0..f8aa5728e 100644
+index 59b8845c0..d24dd7531 100644
 --- a/ggml/src/ggml-rpc/transport.h
 +++ b/ggml/src/ggml-rpc/transport.h
-@@ -22,6 +22,10 @@ struct socket_t {
- 
-     socket_ptr accept();
- 
+@@ -3,6 +3,7 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <memory>
++#include <atomic>
+
+ struct socket_t;
+ typedef std::shared_ptr<socket_t> socket_ptr;
+@@ -20,14 +21,20 @@ struct socket_t {
+     // here. No-op on TCP.
+     bool flush();
+
+-    socket_ptr accept();
++    // Optional cancellation for an embedding server's listener. Waiting uses short polls,
++    // not a wake-up connection that can itself block behind an unserved accept queue.
++    socket_ptr accept(const std::atomic<bool> * stop = nullptr);
++
 +    // Ends any blocking send/recv/accept on this socket from another thread, so
 +    // an embedding host can stop a server that is waiting for or serving a client.
 +    void shutdown();
-+
+
      void get_caps(uint8_t * local_caps);
      void update_caps(const uint8_t * remote_caps);
      const char * transport_name() const;
+
+     static socket_ptr create_server(const char * host, int port);
+-    static socket_ptr connect(const char * host, int port);
++    static socket_ptr connect(const char * host, int port, const std::atomic<bool> * stop = nullptr);
+
+ private:
+     struct impl;
