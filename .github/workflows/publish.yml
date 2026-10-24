@@ -3592,12 +3592,10 @@ jobs:
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     outputs:
-      assets_complete: ${{ steps.preflight.outputs.complete }}
+      assets_complete: ${{ steps.finalize.outputs.complete }}
     environment: maven-central
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -3671,27 +3669,11 @@ jobs:
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-      - name: Collect signed artifacts
-        id: collect
-        run: python3 .github/collect-release-assets.py signed-snapshot-assets
-      - name: Verify and freeze the complete signed publication
-        id: preflight
-        run: python3 .github/publication.py prepare signed-snapshot-assets publication-package
-      - name: Attest build provenance of the published artifacts
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+      - name: Finalize and secure the signed publication
+        id: finalize
+        uses: ./.github/actions/finalize-publication
         with:
-          subject-path: |
-            signed-snapshot-assets/*.jar
-            signed-snapshot-assets/*.pom
-            signed-snapshot-assets/*.json
-            signed-snapshot-assets/*.aar
-            signed-snapshot-assets/*.tar.gz
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: signed-snapshot-assets
-          path: publication-package/
-          if-no-files-found: error
-        if: ${{ !cancelled() && steps.preflight.outcome == 'success' }}
+          channel: snapshot
 
   github-snapshot:
     name: Update Snapshot Pre-release on GitHub
@@ -3744,12 +3726,10 @@ jobs:
       - shared-files
     runs-on: ubuntu-latest
     outputs:
-      assets_complete: ${{ steps.preflight.outputs.complete }}
+      assets_complete: ${{ steps.finalize.outputs.complete }}
     environment: maven-central
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -3819,30 +3799,14 @@ jobs:
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-      - name: Collect signed artifacts
-        id: collect
-        run: python3 .github/collect-release-assets.py signed-release-assets
-      - name: Verify and freeze the complete signed publication
-        id: preflight
-        run: python3 .github/publication.py prepare signed-release-assets publication-package
-      - name: Attest build provenance of the published artifacts
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+      - name: Finalize and secure the signed publication
+        id: finalize
+        uses: ./.github/actions/finalize-publication
         with:
-          subject-path: |
-            signed-release-assets/*.jar
-            signed-release-assets/*.pom
-            signed-release-assets/*.json
-            signed-release-assets/*.aar
-            signed-release-assets/*.tar.gz
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: signed-release-assets
-          path: publication-package/
-          if-no-files-found: error
-        if: ${{ !cancelled() && steps.preflight.outcome == 'success' }}
+          channel: release
 
-  github-release-signed:
-    name: Attach Signed Binaries to GitHub Release
+  github-release:
+    name: Attach Binaries to GitHub Release
     needs:
       - publish-release
     if: ${{ !cancelled() && needs.publish-release.outputs.assets_complete == 'true' }}
@@ -3974,3 +3938,56 @@ jobs:
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
+
+  attest-snapshot:
+    name: Attest the checked snapshot publication
+    needs:
+      - publish-snapshot
+    if: ${{ !cancelled() && needs.publish-snapshot.outputs.assets_complete == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: signed-snapshot-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Verify the secured package before attesting
+        run: python3 .github/publication.py verify publication-package
+      - name: Attest the frozen artifacts and detached signatures
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: publication-package/github/*
+
+
+  attest-release:
+    name: Attest the checked release publication
+    needs:
+      - publish-release
+    if: ${{ !cancelled() && needs.publish-release.outputs.assets_complete == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: signed-release-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Verify the secured package before attesting
+        run: python3 .github/publication.py verify publication-package
+      - name: Attest the frozen artifacts and detached signatures
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: publication-package/github/*

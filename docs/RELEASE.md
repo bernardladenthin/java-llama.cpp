@@ -41,16 +41,10 @@ One reactor `mvn -P release,natives deploy` signs and publishes the parent pom, 
 `llama-langchain4j`, `llama-kotlin`, `llama-ffm`, and `llama-platform` together at the same version,
 including the reactor modules' CycloneDX JSON artifacts. CI assembles and checks the complete
 native tree before activating `natives`; a local one-platform build must not deploy that profile.
-The **Android AARs**
-(`llama-android`, `llama-android-opencl`) are published by the `publish-release` job's separate
-Gradle step (signed Central Portal bundle upload) — no manual action, but they appear as their own
-deployment named `llama-android-{VERSION}` in the Central Portal UI. The agent
-(`net.ladenthin:llama-atmosphere-agent`) is likewise its own deployment, from the step after the
-reactor deploy.
-
-The Android bundle upload intentionally does not wait for Central's asynchronous validation:
-previous polling caused long timeouts and marked working builds as failed. Confirm availability
-afterwards independently of the build; do not add validation polling as a build gate.
+The **Android AARs** (`llama-android`, `llama-android-opencl`) are signed and staged locally
+by Gradle in the preparation job. The standalone agent (`net.ladenthin:llama-atmosphere-agent`)
+is staged locally too. The Central consumer combines all these frozen outputs into one Portal
+bundle. It waits for upload acceptance only, with no asynchronous validation polling.
 
 ## GitHub assets and the rolling snapshot
 
@@ -60,7 +54,8 @@ standalone agent, classifiers in `natives.csv`, Android publications and signed 
 archive. The shared interface is documented in
 [`../../workspace/policies/release-asset-scripts.md`](../../workspace/policies/release-asset-scripts.md). It copies each artifact and signature, naming `target/bom.json` as
 `<artifactId>-<version>-cyclonedx.json`, as Central does. Missing outputs fail the publish job;
-available files are still uploaded so a Central polling failure does not hide signed artifacts.
+incomplete collections are not published. A complete checked package is secured before any
+Central transfer, so Central failures cannot hide signed GitHub artifacts.
 
 The `github-snapshot` job serializes the complete upload/update/prune operation.
 `.github/update-snapshot.py` refuses an older commit or an older run/attempt of the same commit.
@@ -73,7 +68,10 @@ versioned releases are never pruned.
 
 The `publish-snapshot` / `publish-release` jobs now prepare locally with `skipUpload=true`,
 finish all signing and extra packaging, and verify the complete frozen publication.
-`central-snapshot` / `central-release` and the GitHub attach jobs independently consume that
-Actions handoff. Neither consumer rebuilds or signs files. Portal upload acceptance is enough;
+The shared `.github/actions/finalize-publication` action collects, verifies and secures the
+Actions handoff before emitting readiness. The `central-*`, `github-*` and `attest-*` jobs
+independently consume that handoff, identically to the three sibling Maven repositories.
+Attestation verifies the package and covers all frozen GitHub assets and detached signatures.
+None of these consumers rebuilds or signs files. Portal upload acceptance is enough;
 validation and automatic publication happen asynchronously. See
 [the shared publication policy](publication-preflight.md).

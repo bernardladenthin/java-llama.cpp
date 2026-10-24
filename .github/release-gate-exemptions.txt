@@ -11,7 +11,7 @@ publish-release: a publish job itself
 check-snapshot: publish-snapshot's own precondition (the version is a SNAPSHOT)
 check-tag: publish-release's own precondition (the version matches the tag)
 github-snapshot: runs after publishing; attaches the signed Maven artifacts to the rolling snapshot release
-github-release-signed: runs after publishing; attaches the signed Maven artifacts to the tag release
+github-release: runs after publishing; attaches the signed Maven artifacts to the tag release
 verify-signing-key: red by design where the secret is withheld (forks, other contributors' branches); the publish jobs sign with the same key and fail on it themselves
 verify-signing-key-gradle: same as verify-signing-key, for the Gradle/BouncyCastle signing path
 test-java-llama-langchain4j-integration: validation only; a cold model cache degrades it to self-skips (CLAUDE.md, LangChain4j integration)
@@ -20,3 +20,5 @@ test-android-llmservice: the emulator UI test of that app, optional for the same
 mirror-llama-source: runs after publish-release; pushes the pinned llama.cpp commit to the mirror fork
 central-snapshot: Independent post-preflight Central transfer; must not gate the GitHub publication path.
 central-release: Independent post-preflight Central transfer; must not gate the GitHub publication path.
+attest-snapshot: Independent provenance after the secured handoff; cannot gate either publication consumer.
+attest-release: Independent provenance after the secured handoff; cannot gate either publication consumer.
