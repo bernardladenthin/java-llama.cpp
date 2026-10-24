@@ -191,6 +191,7 @@ val javadocJar = tasks.register<Jar>("javadocJar") {
 fun registerAarTask(
     taskName: String,
     artifactBase: String,
+    manifestPackage: String,
     nativesSubdir: String,
     requiredAbis: List<String>,
     requiredLibrary: String,
@@ -205,6 +206,7 @@ fun registerAarTask(
         isPreserveFileTimestamps = false
         isReproducibleFileOrder = true
         val nativesDir = file("natives/$nativesSubdir")
+        inputs.property("manifestPackage", manifestPackage)
         doFirst {
             // Fail-loud per ABI: a missing staging copy must never silently produce an
             // AAR that lacks an advertised ABI (emulator/x86_64 consumers would crash
@@ -220,7 +222,12 @@ fun registerAarTask(
                 }
             }
         }
-        from("src/main/AndroidManifest.xml")
+        // Plain-Gradle AARs declare their namespace through the manifest package.
+        // CPU and additive OpenCL are consumed together, so AGP requires distinct
+        // packages even though OpenCL has no Java classes or Android resources.
+        from("src/main/AndroidManifest.xml") {
+            expand(mapOf("aarPackage" to manifestPackage))
+        }
         from(classesJar) { rename { "classes.jar" } }
         from("consumer-proguard.txt") { rename { "proguard.txt" } }
         from(generateRTxt)
@@ -237,8 +244,8 @@ fun registerAarTask(
 // The OpenCL flavor stays arm64-only (Adreno = Qualcomm ARM hardware) and holds the
 // OpenCL backend module alone -- libjllama.so and the CPU modules come from the CPU AAR
 // it depends on, so an app's jni/arm64-v8a/ ends up with both sets side by side.
-val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so", coreClassesJar)
-val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so", moduleClassesJar)
+val aarCpu = registerAarTask("aarCpu", "llama-android", "net.ladenthin.llama.android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so", coreClassesJar)
+val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "net.ladenthin.llama.android.opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so", moduleClassesJar)
 
 // ---------------------------------------------------------------------------
 // Publishing: POM <packaging>aar</packaging> + mirrored core dependencies.

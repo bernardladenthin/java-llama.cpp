@@ -9,8 +9,10 @@ weak-symbol gate for posix_spawn used by the upstream mtmd helper — see
 CLAUDE.md "Android minimum API level"); AGP enforces it against every
 consuming app at merge time, so an app with a lower minSdk fails its build
 instead of crashing at runtime.
+
+The plain-Gradle AAR tasks expand aarPackage to a distinct namespace per artifact.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="net.ladenthin.llama.android">
+    package="${aarPackage}">
     <uses-sdk android:minSdkVersion="28" />
 </manifest>

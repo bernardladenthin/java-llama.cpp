@@ -1231,6 +1231,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Consume full unzip output: grep -q can SIGPIPE unzip under pipefail.
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           for flavor in llama-android llama-android-opencl; do
             AAR="llama-android/build/aar/${flavor}-${VERSION}.aar"
@@ -1246,7 +1247,7 @@ jobs:
             ENTRIES="AndroidManifest.xml classes.jar proguard.txt R.txt"
             for abi in $ABIS; do for lib in $LIBS; do ENTRIES="$ENTRIES jni/$abi/$lib"; done; done
             for entry in $ENTRIES; do
-              unzip -l "$AAR" | grep -q "${entry}$" || { echo "::error::$AAR is missing $entry"; exit 1; }
+              unzip -l "$AAR" | grep "${entry}$" > /dev/null || { echo "::error::$AAR is missing $entry"; exit 1; }
             done
             if [ "$flavor" = "llama-android" ]; then
               for abi in $ABIS; do
@@ -1255,20 +1256,26 @@ jobs:
                 echo "$AAR: $n CPU module(s) for $abi"
               done
             else
-              if unzip -l "$AAR" | grep -q "jni/.*/libjllama.so$"; then
+              if unzip -l "$AAR" | grep "jni/.*/libjllama.so$" > /dev/null; then
                 echo "::error::$AAR carries a second libjllama.so -- the OpenCL AAR must hold its module only"; exit 1
               fi
             fi
-            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"' \
+            unzip -p "$AAR" AndroidManifest.xml | grep 'android:minSdkVersion="28"' > /dev/null \
               || { echo "::error::$AAR manifest lost minSdkVersion 28"; exit 1; }
+            # Both AARs merge into the OpenCL consumer. AGP requires unique library
+            # namespaces, including for native-only add-ons with an empty classes.jar.
+            MANIFEST_PACKAGE="net.ladenthin.llama.android"
+            if [ "$flavor" = "llama-android-opencl" ]; then MANIFEST_PACKAGE="$MANIFEST_PACKAGE.opencl"; fi
+            unzip -p "$AAR" AndroidManifest.xml | grep -F "package=\"$MANIFEST_PACKAGE\"" > /dev/null \
+              || { echo "::error::$AAR manifest has the wrong namespace (expected $MANIFEST_PACKAGE)"; exit 1; }
             unzip -p "$AAR" classes.jar > /tmp/aar-classes.jar
             if [ "$flavor" = "llama-android" ]; then
-              unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class" \
+              unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/LlamaModel.class" > /dev/null \
                 || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
-            elif unzip -Z -1 /tmp/aar-classes.jar | grep -q '\.class$'; then
+            elif unzip -Z -1 /tmp/aar-classes.jar | grep '\.class$' > /dev/null; then
               echo "::error::$AAR duplicates Java classes from its CPU AAR dependency"; exit 1
             fi
-            if unzip -l /tmp/aar-classes.jar | grep -qE "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/"; then
+            if unzip -l /tmp/aar-classes.jar | grep -E "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/" > /dev/null; then
               echo "::error::$AAR classes.jar carries module-info or desktop native resources"; exit 1
             fi
             # The libraries themselves (bionic-only DT_NEEDED + libOpenCL.so for the OpenCL
@@ -1285,6 +1292,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Consume full unzip output: grep -q can SIGPIPE unzip under pipefail.
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           for backend in cpu opencl; do
             gradle -p .github/android-consumer-test assembleRelease "-PjllamaVersion=${VERSION}" "-PjllamaBackend=$backend"
@@ -1292,18 +1300,18 @@ jobs:
             test -f "$APK"
             for abi in arm64-v8a x86_64; do
               for lib in libjllama.so libggml.so libggml-base.so; do
-                unzip -l "$APK" | grep -q "lib/$abi/$lib" \
+                unzip -l "$APK" | grep "lib/$abi/$lib" > /dev/null \
                   || { echo "::error::$backend consumer APK is missing lib/$abi/$lib"; exit 1; }
               done
-              unzip -l "$APK" | grep -q "lib/$abi/libggml-cpu-.*\.so" \
+              unzip -l "$APK" | grep "lib/$abi/libggml-cpu-.*\.so" > /dev/null \
                 || { echo "::error::$backend consumer APK has no CPU backend module under lib/$abi/"; exit 1; }
             done
             if [ "$backend" = opencl ]; then
-              unzip -l "$APK" | grep -q 'lib/arm64-v8a/libggml-opencl.so' \
+              unzip -l "$APK" | grep 'lib/arm64-v8a/libggml-opencl.so' > /dev/null \
                 || { echo "::error::OpenCL consumer APK lost its additive module"; exit 1; }
             fi
             # The AAR's consumer proguard.txt must have carried the binding through R8.
-            unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
+            unzip -p "$APK" "classes*.dex" | grep -a "Lnet/ladenthin/llama/LlamaModel;" > /dev/null \
               || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
           done
       - name: Upload AARs

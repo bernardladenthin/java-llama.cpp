@@ -69,6 +69,11 @@ instead of as Java resources. The OpenCL AAR has an empty `classes.jar`; its API
 the CPU AAR dependency, so the two artifacts introduce no duplicate Java classes. The desktop natives jars carry `jllama-files.txt` /
 `jllama-build.txt` lists for the JVM loader, which an AAR does not need and does not contain.
 
+The shared manifest template is expanded with a distinct package for each AAR:
+`net.ladenthin.llama.android` for CPU and `net.ladenthin.llama.android.opencl` for OpenCL.
+AGP requires unique library namespaces when the two AARs are consumed together; these
+manifest packages do not change the Java API package `net.ladenthin.llama`.
+
 ### Building locally
 
 ```bash
