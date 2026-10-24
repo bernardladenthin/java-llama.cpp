@@ -1,7 +1,7 @@
 # Release Process
 
 The maintainer-facing release procedure is **centralized in the workspace repo**:
-[`../workspace/workflows/release-process.md`](../workspace/workflows/release-process.md).
+[`../../workspace/workflows/release-process.md`](../../workspace/workflows/release-process.md).
 
 java-llama.cpp is a **Maven reactor**, so two repo-specific points extend the canonical procedure.
 
