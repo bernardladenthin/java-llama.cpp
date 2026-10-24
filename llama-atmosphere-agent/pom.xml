@@ -442,8 +442,7 @@ SPDX-License-Identifier: MIT
 						<configuration>
 							<publishingServerId>central</publishingServerId>
 							<autoPublish>true</autoPublish>
-							<waitUntil>validated</waitUntil>
-							<waitMaxTime>21600</waitMaxTime>
+							<waitUntil>uploaded</waitUntil>
 						</configuration>
 					</plugin>
 				</plugins>

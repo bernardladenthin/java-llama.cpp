@@ -68,3 +68,12 @@ After a complete upload it moves the `snapshot` tag to that build's commit, upda
 notes with the commit and workflow run, and removes obsolete assets. An incomplete collection
 keeps the existing tag, notes and other assets. The release itself is retained throughout;
 versioned releases are never pruned.
+
+## Publication gate and upload jobs
+
+The `publish-snapshot` / `publish-release` jobs now prepare locally with `skipUpload=true`,
+finish all signing and extra packaging, and verify the complete frozen publication.
+`central-snapshot` / `central-release` and the GitHub attach jobs independently consume that
+Actions handoff. Neither consumer rebuilds or signs files. Portal upload acceptance is enough;
+validation and automatic publication happen asynchronously. See
+[the shared publication policy](publication-preflight.md).

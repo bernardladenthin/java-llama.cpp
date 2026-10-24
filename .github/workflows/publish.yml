@@ -3577,63 +3577,63 @@ jobs:
         run: echo "Confirmed on tag ${{ github.ref }}"
 
   publish-snapshot:
-    name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    name: Prepare and verify signed snapshot artifacts
+    needs:
+      - check-snapshot
+      - crosscompile-linux-x86_64-cuda
+      - test-source-archive
+      - crosscompile-android-aarch64-opencl
+      - package-android-aar
+      - test-android-emulator
+      - code-style
+      - test-java-llama-langchain4j
+      - test-java-llama-kotlin
+      - test-java-llama-ffm
+      - test-java-llama-atmosphere-agent
+      - test-java-llama-atmosphere-agent-integration
+      - smoke-natives
+      - smoke-natives-macos
+      - smoke-agent-linux
+      - vmlens
+      - shared-files
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     outputs:
-      assets_complete: ${{ steps.collect.outputs.complete }}
+      assets_complete: ${{ steps.preflight.outputs.complete }}
     environment: maven-central
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
-      # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
-      # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
-      # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
-      # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
-      # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
-      # outside the glob for that reason.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          pattern: "natives-*"
+          pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
       - name: Merge native libraries into the natives tree (checked per artifact)
         run: |
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
-      # The same check package ran, over the tree this job deploys: the dependency allowlists and,
-      # with the `sign_windows` switch, every Windows DLL signed.
       - name: Verify native runtime dependencies and the Windows signatures
         run: |
           python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
-      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
-      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
-      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
-      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
-      # shared file of the four repositories).
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '25'
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
           java-version-file: .java-version
-          distribution: 'temurin'
+          distribution: temurin
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
-      # The patched llama.cpp source this build was compiled from (archive-llama-source, proven
-      # buildable by test-source-archive), signed with the release key setup-java just imported --
-      # the same key and passphrase name as every Maven file -- and collected below next to them.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3654,76 +3654,42 @@ jobs:
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           echo "Resolved project version: $VERSION"
           case "$VERSION" in
-            *-SNAPSHOT) echo "OK: -SNAPSHOT version, continuing snapshot deploy." ;;
+            *-SNAPSHOT) echo "OK: -SNAPSHOT version, continuing local snapshot staging." ;;
             *) echo "::error::Refusing to publish non-SNAPSHOT version '$VERSION' from the snapshot job. Snapshot publishing requires a -SNAPSHOT version; releases go through the v* tag path."; exit 1 ;;
           esac
-      # One reactor deploy publishes all six Maven artifacts at the same version:
-      # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
-      # :llama-langchain4j, :llama-kotlin, :llama-ffm and :llama-platform (a pom). The `release` profile (GPG + Central
-      # Publishing) is inherited from the parent, so every module — including the
-      # parent pom — is signed. The Android AARs are published by the separate
-      # Gradle step below (Maven cannot deploy <packaging>aar</packaging>).
-      # Informational only (nothing depends on it): logs the effective POM with the same
-      # profile set as the deploy below, so the resolved central-publishing configuration
-      # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
-        run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
-      # -Dmaven.repository.credentialScope=id: Maven 3.10 (on the runners since 2026-10) sends a server's
-      # credentials only to its declared origins, and for the id `central` that is repo.maven.apache.org --
-      # an upload to central.sonatype.com then goes out anonymously and fails with HTTP 401.
-      # Restores id-only matching; replace with setup-java's `mvn-server-repository-origins:
-      # central:https://central.sonatype.com` once a release of setup-java ships that input.
-      - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -DskipUpload=true help:effective-pom
+      - name: Stage snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
-          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
-      # core and the natives jars llama-platform names from the local repository, where the reactor
-      # deploy above has just installed them; check-natives.py holds its version to the reactor's.
-      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
-      - name: Publish snapshot (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
+      - name: Stage snapshot (llama-atmosphere-agent)
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
-          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      # Android AARs (llama-android, llama-android-opencl): assembled and published by
-      # the plain-Gradle build in llama-android/ — Maven cannot deploy
-      # <packaging>aar</packaging>. Natives are already on disk from the artifact
-      # downloads above; the core jar was just built by the reactor deploy.
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
-      - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
+      - name: Stage signed Android AARs locally
         run: |
           # every .so of the natives tree: the library, ggml, the CPU modules; the one OpenCL module
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
           cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/*.so llama-android/natives/cpu/arm64-v8a/
           cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
           cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/*.so llama-android/natives/opencl/arm64-v8a/
-          gradle -p llama-android publishAllPublicationsToCentralSnapshotsRepository
+          gradle -p llama-android publishAllPublicationsToStagingRepository
         env:
-          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-      # Runs even when the deploy step failed: a Central publish-poll timeout reds the
-      # job *after* the bundle was uploaded (and typically published server-side), while
-      # the signed jars and poms + .asc files already exist in target/ (signing happens at
-      # verify). Collecting on failure lets the github-snapshot job still attach them.
       - name: Collect signed artifacts
         id: collect
-        if: ${{ !cancelled() }}
         run: python3 .github/collect-release-assets.py signed-snapshot-assets
-      # The same provenance statement over the files Central and the GitHub release get (jars,
-      # poms, CycloneDX JSONs and AARs, each next to its .asc). A consumer with the Central file in hand verifies it
-      # with `gh attestation verify --owner bernardladenthin <file>`.
+      - name: Verify and freeze the complete signed publication
+        id: preflight
+        run: python3 .github/publication.py prepare signed-snapshot-assets publication-package
       - name: Attest build provenance of the published artifacts
-        if: ${{ !cancelled() }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: |
             signed-snapshot-assets/*.jar
@@ -3731,117 +3697,102 @@ jobs:
             signed-snapshot-assets/*.json
             signed-snapshot-assets/*.aar
             signed-snapshot-assets/*.tar.gz
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: ${{ !cancelled() }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: signed-snapshot-assets
-          path: signed-snapshot-assets/
+          path: publication-package/
+          if-no-files-found: error
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' }}
 
   github-snapshot:
     name: Update Snapshot Pre-release on GitHub
-    needs: [publish-snapshot]
-    # Also runs when publish-snapshot FAILED (not when skipped/cancelled): a Central
-    # publish-poll timeout reds that job after the artifacts were already uploaded —
-    # the GitHub pre-release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') }}
+    needs:
+      - publish-snapshot
+    if: ${{ !cancelled() && needs.publish-snapshot.outputs.assets_complete == 'true' }}
     runs-on: ubuntu-latest
-    # Serialize the complete upload, tag/notes update and pruning operation.
     concurrency:
       group: snapshot-release-${{ github.repository }}
       cancel-in-progress: false
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: signed-snapshot-assets
-          path: snapshot-assets/
-      - name: Report unsigned assets (does not block the upload)
-        # Deliberately NON-blocking, and deliberately BEFORE the upload. Both attach jobs run even
-        # when their publish job failed, because a Central publish-poll timeout must not cost the
-        # GitHub assets: if Central is unreachable these are the ONLY way to get the artifacts at
-        # all. Refusing to attach on a signing failure would defeat exactly that. So annotate here,
-        # upload regardless, and fail the job afterwards. Assets always land; an unsigned release is
-        # still loudly red rather than quietly wrong.
-        # See workspace/policies/fat-jar-release-assets.md, "Attach first, then go red".
-        id: signatures
-        run: python3 .github/report-asset-signatures.py snapshot-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Verify transport integrity and export checked GitHub files
+        run: python3 .github/publication.py verify publication-package --export-github snapshot-assets
       - name: Update snapshot assets, source tag and notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ASSETS_COMPLETE: ${{ needs.publish-snapshot.outputs.assets_complete }}
         run: python3 .github/update-snapshot.py snapshot-assets
-      - name: Fail if anything was attached unsigned
-        # After the upload on purpose: the assets must exist even when the signature does not.
-        if: ${{ always() && steps.signatures.outputs.missing != '0' }}
-        run: |
-          echo "::error::${{ steps.signatures.outputs.missing }} asset(s) attached without a signature (-1 means none were collected at all)"
-          exit 1
 
   publish-release:
-    name: Publish Release to Central
+    name: Prepare and verify signed release artifacts
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    needs:
+      - check-tag
+      - crosscompile-linux-x86_64-cuda
+      - test-source-archive
+      - crosscompile-android-aarch64-opencl
+      - package-android-aar
+      - test-android-emulator
+      - code-style
+      - test-java-llama-langchain4j
+      - test-java-llama-kotlin
+      - test-java-llama-ffm
+      - test-java-llama-atmosphere-agent
+      - test-java-llama-atmosphere-agent-integration
+      - smoke-natives
+      - smoke-natives-macos
+      - smoke-agent-linux
+      - vmlens
+      - shared-files
     runs-on: ubuntu-latest
     outputs:
-      assets_complete: ${{ steps.collect.outputs.complete }}
+      assets_complete: ${{ steps.preflight.outputs.complete }}
     environment: maven-central
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
-      # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
-      # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
-      # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
-      # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
-      # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
-      # outside the glob for that reason.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          pattern: "natives-*"
+          pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
       - name: Merge native libraries into the natives tree (checked per artifact)
         run: |
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
-      # The same check package ran, over the tree this job deploys: the dependency allowlists and,
-      # with the `sign_windows` switch, every Windows DLL signed.
       - name: Verify native runtime dependencies and the Windows signatures
         run: |
           python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
       - name: Warn when the release ships unsigned Windows DLLs
         if: env.SIGN_WINDOWS != 'true'
         run: echo "::warning::This release is deployed without the sign_windows switch -- its Windows DLLs carry no Authenticode signature (jllama-build.txt says signed=no)."
-      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
-      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
-      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
-      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
-      # shared file of the four repositories).
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '25'
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
           java-version-file: .java-version
-          distribution: 'temurin'
+          distribution: temurin
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
-      # The patched llama.cpp source this build was compiled from (archive-llama-source, proven
-      # buildable by test-source-archive), signed with the release key setup-java just imported --
-      # the same key and passphrase name as every Maven file -- and collected below next to them.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3856,43 +3807,20 @@ jobs:
             printf '%s' "$MAVEN_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor "$f"
             gpg --batch --verify "$f.asc" "$f"
           done
-      # One reactor deploy publishes all six Maven artifacts at the same version:
-      # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
-      # :llama-langchain4j, :llama-kotlin, :llama-ffm and :llama-platform (a pom). The `release` profile (GPG + Central Publishing) is inherited
-      # from the parent, so every module — including the parent pom — is signed.
-      # Informational only (nothing depends on it): logs the effective POM with the same
-      # profile set as the deploy below, so the resolved central-publishing configuration
-      # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
-        run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
-      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
-      - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -DskipUpload=true help:effective-pom
+      - name: Stage release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
-          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
-      # core and the natives jars llama-platform names from the local repository, where the reactor
-      # deploy above has just installed them; check-natives.py holds its version to the reactor's.
-      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
-      - name: Publish release (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
+      - name: Stage release (llama-atmosphere-agent)
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
-          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      # Android AARs (llama-android, llama-android-opencl): Maven cannot deploy
-      # <packaging>aar</packaging>, so the plain-Gradle build signs + publishes them
-      # into a local Maven-layout staging repo, which is zipped into a Central
-      # Portal bundle and uploaded via the Publisher API (publishingType=AUTOMATIC:
-      # the deployment publishes as soon as portal validation passes). Natives are
-      # already on disk from the artifact downloads above; the core jar was just
-      # built by the reactor deploy.
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
-      - name: Publish Android AAR release bundle to Central Portal
+      - name: Stage signed Android AARs locally
         shell: bash
         run: |
           set -euo pipefail
@@ -3902,33 +3830,18 @@ jobs:
           cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
           cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/*.so llama-android/natives/opencl/arm64-v8a/
           gradle -p llama-android publishAllPublicationsToStagingRepository
-          VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
-          ( cd llama-android/build/staging-repo && zip -r -q ../central-bundle.zip net -x "*maven-metadata*" )
-          TOKEN=$(printf "%s:%s" "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
-          curl --fail-with-body -X POST \
-            -H "Authorization: Bearer $TOKEN" \
-            -F "bundle=@llama-android/build/central-bundle.zip" \
-            "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC&name=llama-android-$VERSION"
         env:
-          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-      # Runs even when the deploy step failed: a Central publish-poll timeout reds the
-      # job *after* the bundle was uploaded (and typically published server-side), while
-      # the signed jars and poms + .asc files already exist in target/ (signing happens at
-      # verify). Collecting on failure lets the github-release-signed job still attach them.
       - name: Collect signed artifacts
         id: collect
-        if: ${{ !cancelled() }}
         run: python3 .github/collect-release-assets.py signed-release-assets
-      # The same provenance statement over the files Central and the GitHub release get (jars,
-      # poms, CycloneDX JSONs and AARs, each next to its .asc). A consumer with the Central file in hand verifies it
-      # with `gh attestation verify --owner bernardladenthin <file>`.
+      - name: Verify and freeze the complete signed publication
+        id: preflight
+        run: python3 .github/publication.py prepare signed-release-assets publication-package
       - name: Attest build provenance of the published artifacts
-        if: ${{ !cancelled() }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: |
             signed-release-assets/*.jar
@@ -3936,54 +3849,36 @@ jobs:
             signed-release-assets/*.json
             signed-release-assets/*.aar
             signed-release-assets/*.tar.gz
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: ${{ !cancelled() }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: signed-release-assets
-          path: signed-release-assets/
+          path: publication-package/
+          if-no-files-found: error
+        if: ${{ !cancelled() && steps.preflight.outcome == 'success' }}
 
   github-release-signed:
     name: Attach Signed Binaries to GitHub Release
-    needs: [publish-release]
-    # Also runs when publish-release FAILED (not when skipped/cancelled): a Central
-    # publish-poll timeout reds that job after the artifacts were already uploaded —
-    # the GitHub release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') }}
+    needs:
+      - publish-release
+    if: ${{ !cancelled() && needs.publish-release.outputs.assets_complete == 'true' }}
     runs-on: ubuntu-latest
-    # Nothing is signed here: the assets are the Maven artifacts with the detached .asc that
-    # maven-gpg wrote at deploy (classes jar, natives jars, poms, sources, javadoc, the AARs). No
-    # fat jar: the project ships nothing a consumer could not get from Maven Central (CLAUDE.md,
-    # "Modular natives").
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: signed-release-assets
-          path: release-assets/
-      - name: Report unsigned assets (does not block the upload)
-        # Deliberately NON-blocking, and deliberately BEFORE the upload. Both attach jobs run even
-        # when their publish job failed, because a Central publish-poll timeout must not cost the
-        # GitHub assets: if Central is unreachable these are the ONLY way to get the artifacts at
-        # all. Refusing to attach on a signing failure would defeat exactly that. So annotate here,
-        # upload regardless, and fail the job afterwards. Assets always land; an unsigned release is
-        # still loudly red rather than quietly wrong.
-        # See workspace/policies/fat-jar-release-assets.md, "Attach first, then go red".
-        id: signatures
-        run: python3 .github/report-asset-signatures.py release-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Verify transport integrity and export checked GitHub files
+        run: python3 .github/publication.py verify publication-package --export-github release-assets
       - name: Upload release assets
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           files: release-assets/*
-      - name: Fail if anything was attached unsigned
-        # After the upload on purpose: the assets must exist even when the signature does not.
-        if: ${{ always() && steps.signatures.outputs.missing != '0' }}
-        run: |
-          echo "::error::${{ steps.signatures.outputs.missing }} asset(s) attached without a signature (-1 means none were collected at all)"
-          exit 1
 
   mirror-llama-source:
     name: Mirror the pinned llama.cpp commit to bernardladenthin/llama.cpp
@@ -4032,3 +3927,65 @@ jobs:
         env:
           LLAMA_MIRROR_TOKEN: ${{ secrets.LLAMA_MIRROR_TOKEN }}
         run: bash .github/mirror-llama-source.sh llama-src bernardladenthin/llama.cpp
+
+  central-snapshot:
+    name: Upload checked snapshot artifacts to Maven Central
+    needs:
+      - publish-snapshot
+    if: ${{ !cancelled() && needs.publish-snapshot.outputs.assets_complete == 'true' }}
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          java-version-file: .java-version
+          distribution: temurin
+          server-id: central
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: signed-snapshot-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
+        run: python3 .github/publication.py upload publication-package
+        env:
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
+
+  central-release:
+    name: Upload checked release artifacts to Maven Central
+    needs:
+      - publish-release
+    if: ${{ !cancelled() && needs.publish-release.outputs.assets_complete == 'true' }}
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          java-version-file: .java-version
+          distribution: temurin
+          server-id: central
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: signed-release-assets
+          path: publication-package/
+          digest-mismatch: error
+      - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
+        run: python3 .github/publication.py upload publication-package
+        env:
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
