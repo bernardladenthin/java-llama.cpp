@@ -29,7 +29,7 @@ match a binary to this page.
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 4 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 30 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
@@ -232,9 +232,10 @@ JVM) cannot use ggml-rpc as it is:
 
 3. ggml_backend_rpc_start_server() cannot be stopped: while(true) around accept(). Two new
    entry points, both also exposed through get_proc_address:
-   - ggml_backend_rpc_stop_server() disconnects the client being served and wakes accept()
-     with a loopback connection (the one portable way to interrupt it). The loop then
-     releases its backends; it used to never reach that code.
+   - ggml_backend_rpc_stop_server() disconnects the client and every live peer socket.
+     Listener accept and outgoing peer connect poll cancellation at 50 ms intervals; no
+     wake-up connection can fill the listen backlog and block the stopping thread. The
+     loop releases its backends when it ends.
    - ggml_backend_rpc_server_listening() tells the host whether the socket was bound.
    The transport stays initialised on the way out, because WSACleanup() would invalidate
    every other RPC socket in the process.
@@ -245,7 +246,19 @@ JVM) cannot use ggml-rpc as it is:
 
 Upstream-submittable; not filed upstream yet. The runnable guard is
 src/test/cpp/test_rpc.cpp: it links both new functions and exercises the registration and
-stop paths over loopback.
+stop paths over loopback. test_rpc_comm.cpp drives protocol-v8 COMM_INIT through the C
+API: loopback/network binding, missing peer, stalled caps handshakes in both ranks,
+normal peer setup, socket cleanup and restart. Subprocess deadlines bound failures.
+
+5. COMM_INIT preserves the configured server bind address instead of opening a wildcard
+   listener for a loopback-only server. Peer sockets are weakly registered before any
+   caps I/O, under the same mutex as stop; stop also catches a peer accepted/connected
+   concurrently. Normal COMM_FREE/disconnect still frees them immediately. The rank-1
+   retry loop checks cancellation too. The former main-listener wake-up connection is
+   removed: repeated C-API stops while the peer was absent filled its backlog.
+
+Drop-check on each upstream bump: inspect comm_init, the stoppable accept/connect
+paths and stop_server. Drop upstream-fixed hunks instead of mechanically refreshing them.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch

@@ -1332,6 +1332,9 @@ server, and this library's `RpcServer` works for any llama.cpp client.
 > opt-in for another interface and logs a warning. Across machines, use a trusted network or a
 > tunnel (SSH, WireGuard).
 
+Peer listeners used by tensor-split RPC inherit that same bind address. Stopping the server
+also interrupts peer setup when the other server is absent or has not completed its handshake.
+
 What to know:
 
 - **An unreachable server fails the load** with a `LlamaException` naming it, instead of reaching

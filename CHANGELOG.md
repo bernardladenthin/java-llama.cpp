@@ -953,6 +953,13 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+
+- **Embedded RPC peer setup respects loopback binding and can be stopped.** A protocol-v8
+  `COMM_INIT` request no longer opens a wildcard listener behind `RpcServer.startLocal`.
+  Stop interrupts a missing peer or an incomplete capability handshake in either rank and frees
+  the sockets for restart. Listener/connection waits observe cancellation; stop no longer opens
+  repeated wake-up connections that can themselves block behind a full accept backlog.
+  Six model-free C-API regression scenarios cover binding, shutdown, normal setup and port reuse.
 - **The Android OpenCL AAR no longer duplicates its CPU AAR dependency's Java classes.**
   Its `classes.jar` is empty; the CPU AAR supplies the API. Both dependency graphs now pass
   through the CI R8 consumer build, including the OpenCL POM's transitive CPU dependency.

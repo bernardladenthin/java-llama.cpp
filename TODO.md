@@ -17,11 +17,6 @@ so entries below describe remaining work or an explicit deferral policy.
 
 ## Release 6.0.0 — prerequisites
 
-- [ ] **Resolve the RPC `COMM_INIT` bind/stop defect before the release.** A local client can
-      open an additional wildcard listener even when `RpcServer.startLocal` binds the main port
-      to loopback. A missing peer also prevents shutdown. Reproduced against the published
-      Linux CPU natives on 2026-10-23; details and acceptance criteria are under
-      [RPC backend — follow-ups](#rpc-backend--follow-ups).
 - [ ] Merge the fixes on `refactor/shared-release-checks` and obtain a complete green Publish
       run for the resulting release candidate, including packaging, classpath/module-path and
       macOS smokes, Android CPU + additive OpenCL consumers, FFM, source-archive and integration
@@ -197,22 +192,6 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### RPC backend — follow-ups
 
-- **Release blocker: server-to-server `COMM_INIT` violates the bind/stop contract.**
-  `rpc_server::comm_init` binds the rank-0 peer listener to `0.0.0.0` on a client-selected port,
-  even when the main `RpcServer.startLocal` listener uses `127.0.0.1`, and blocks in `accept()`
-  awaiting rank 1. The stop machinery tracks the main client/listener, but not this peer listener.
-  **Reproduced 2026-10-23 on the published Linux x86-64 CPU natives from run 39922567350:**
-  a model-free C-API probe serving CPU on loopback completed HELLO (RPC 8.0.1), sent rank-0
-  `COMM_INIT` for a two-peer group, and observed `00000000:<peer-port>` in `/proc/net/tcp`.
-  Stop and serve were still blocked after 32 seconds despite the C API's 30-second deadline;
-  supplying a local peer released both, with stop reporting its deadline error. A separate probe
-  supplying the peer after one second ended both successfully. These are two independent runs;
-  Java/FFM wrappers share the C API, but were not driven through this sequence separately.
-  **To fix:** preserve the configured bind address for the peer listener and make every wait in
-  peer setup interruptible by stop, including accept/handshake and the main-listener wake-up.
-  Add regression coverage proving no wildcard listener for `startLocal`, bounded stop without
-  a peer, cleanup of all sockets and a successful subsequent restart. Recheck Windows/macOS;
-  the local reproduction establishes Linux behaviour only.
 - **A server lost mid-inference still aborts the JVM.** Patch `0015` makes *registration* fail
   softly; every call after it (`get_dispatcher()`, `RPC_STATUS_ASSERT` in the dispatcher's `work()`)
   still ends in `GGML_ABORT`, because the ggml backend interface has no error return for a lost
