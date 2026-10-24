@@ -7,6 +7,7 @@
 
 **AI:**  
 [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#)  
+[![CodeRabbit](https://img.shields.io/badge/CodeRabbit-AI%20Reviews-FF570A)](https://coderabbit.ai/)  
 
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
