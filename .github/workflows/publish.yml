@@ -467,15 +467,7 @@ jobs:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/restore-models
-      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
-      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
-      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
-      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
-      # shared file of the four repositories).
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: '25'
+      # Build with the shared JDK; llama-ffm retains its Java 22 bytecode target.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -3233,15 +3225,7 @@ jobs:
       - name: Verify native runtime dependencies and the Windows signatures
         run: |
           python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
-      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
-      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
-      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
-      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
-      # shared file of the four repositories).
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: '25'
+      # Build with the shared JDK; llama-ffm retains its Java 22 bytecode target.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -3405,6 +3389,15 @@ jobs:
       - name: Run the RPC smoke test (two JVMs)
         if: runner.os == 'Linux'
         run: .github/smoke-rpc.sh smoke "models/${DRAFT_MODEL_NAME}"
+      - name: Install Java 8 for the core runtime compatibility check
+        if: matrix.target == 'linux-x86-64'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '8'
+      - name: Run the same published core and natives on Java 8
+        if: matrix.target == 'linux-x86-64'
+        run: .github/smoke-test-natives.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -3619,10 +3612,6 @@ jobs:
       - name: Verify native runtime dependencies and the Windows signatures
         run: |
           python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
-        with:
-          distribution: temurin
-          java-version: '25'
       - name: Set up Maven Central Repository
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
@@ -3778,10 +3767,6 @@ jobs:
       - name: Warn when the release ships unsigned Windows DLLs
         if: env.SIGN_WINDOWS != 'true'
         run: echo "::warning::This release is deployed without the sign_windows switch -- its Windows DLLs carry no Authenticode signature (jllama-build.txt says signed=no)."
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
-        with:
-          distribution: temurin
-          java-version: '25'
       - name: Set up Maven Central Repository
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:

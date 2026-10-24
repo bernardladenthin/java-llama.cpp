@@ -78,10 +78,10 @@ String grammar = Jllama.jsonSchemaToGrammar("{\"type\": \"object\"}");
 
 ## Build
 
-Reactor module — built, versioned and released with the core. The reactor is built with the JDK of
-`.java-version` (21), so this module compiles through `maven-toolchains-plugin` with a JDK 22+ from
-`~/.m2/toolchains.xml` (CI registers Temurin 25 with a second `setup-java` step); on a JDK 22+ it
-builds like every other module.
+Reactor module — built, versioned and released with the core. The reactor uses JDK 25 from
+`.java-version`; this module still targets Java 22 and the core still targets Java 8.
+The `toolchain-jdk22` profile remains a fallback for developers running Maven on an older JDK:
+it selects a registered JDK 22+ from `~/.m2/toolchains.xml`. CI needs only the shared JDK.
 
 ```bash
 mvn -pl llama -am -DskipTests install          # the core first

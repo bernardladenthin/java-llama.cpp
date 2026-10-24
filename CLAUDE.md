@@ -2047,9 +2047,9 @@ Built libraries are placed in `src/main/natives/net/ladenthin/llama/{OS}/{ARCH}/
 
 ### Building the native library for local Java tests
 
-**The JDK must be one whose `javac` accepts `-XDaddTypeAnnotationsToSymbol` -- Temurin 21 (what CI
-uses, `distribution: temurin`), not Oracle JDK 21.** `llama/pom.xml` passes that flag because
-NullAway's JSpecify mode needs it below JDK 22; on Oracle JDK 21.0.9 `mvn compile` dies in an
+**Use Temurin 25 from `.java-version` for builds; the core still targets Java 8.**
+The compiler must accept the configured `-XDaddTypeAnnotationsToSymbol` flag. Historically,
+Temurin 21 accepted it while Oracle JDK 21 did not. NullAway's JSpecify mode needs it below JDK 22; on Oracle JDK 21.0.9 `mvn compile` dies in an
 Error Prone `IllegalStateException` naming exactly that flag, while Temurin 21.0.12.1 compiles the
 same tree (measured, `docs/handover/local-agent-report-b11538-windows.md`, deliverable 1). Check
 `mvn -version` before blaming anything else.
@@ -2880,7 +2880,7 @@ EXPECT_FALSE(j.contains("stop_type"));  // filtered out
 
 ## Key Constraints
 
-- **Java 8+** runtime required. Built with JDK 21 targeting bytecode 1.8 for broad compatibility.
+- **Java 8+** runtime required. Built with JDK 25 targeting bytecode 1.8 for broad compatibility.
 - Native memory allocated by llama.cpp is not GC-managed — always use `LlamaModel` in try-with-resources or call `close()` explicitly.
 - The `server.hpp` file is adapted from llama.cpp upstream — minimize modifications to ease future upgrades.
 - Platform-specific native libraries must be pre-built and placed under `src/main/natives/` before packaging for distribution (CI does this; see "Natives jars").
@@ -3167,17 +3167,10 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   `Automatic-Module-Name: net.ladenthin.llama.ffm`. The compiler runs `-Xlint:all -Werror` minus
   `restricted` (every FFM call is one) and `classfile` (the core's checker-qual annotations are
   provided scope there and absent here). Surefire passes `--enable-native-access=ALL-UNNAMED`.
-- **Toolchain.** The reactor builds with the JDK of `.java-version` (21, a shared file of the four
-  repositories). The profile `toolchain-jdk22` (active on a JDK below 22) runs `maven-toolchains-plugin`
-  with `<jdk><version>[22,)</version></jdk>`, so the compiler, surefire and javadoc of this module use
-  a JDK 22+ from `~/.m2/toolchains.xml` while Maven itself stays on 21; on a JDK 22+ the profile is
-  inactive. **Every job that runs Maven over the whole reactor therefore registers a second JDK**:
-  `package`, `publish-snapshot`, `publish-release` and the module's own `test-java-llama-ffm` each
-  have a `setup-java` step with `java-version: '25'` (the current LTS above the floor) **before** the
-  `.java-version` one -- setup-java writes a `toolchains.xml` entry per installed JDK and the last
-  step keeps `JAVA_HOME` on 21. `build-core` (`-pl llama -am`) never reaches the module and stays as it
-  is. Locally: unpack a Temurin 22+ (the Adoptium GitHub releases are reachable where
-  `api.adoptium.net` is not) and write the entry by hand.
+- **Toolchain.** The reactor uses JDK 25 from the shared `.java-version`. The core still targets
+  Java 8, this optional module targets Java 22, and test release settings remain unchanged.
+  CI needs one JDK installation. The `toolchain-jdk22` profile remains a local fallback for
+  Maven running below JDK 22, selecting a registered JDK 22+ from `~/.m2/toolchains.xml`.
 - **CI**: `test-java-llama-ffm` (`needs: [crosscompile-linux-x86_64, verify-model-cache]`) downloads
   the Linux x86-64 natives, restores the models, builds the core, runs `mvn -f llama-ffm/pom.xml
   verify` with `lib.path` and the draft model, and fails when `FfmLlamaModelIntegrationTest` skipped

@@ -1823,12 +1823,13 @@ files flat next to it, if you use one) and start the JVM with
 desktop platform.) A signed DLL is also what lets such a policy allow the files by publisher
 instead of by hash.
 
-### Contributors: build with Temurin 21, not Oracle JDK 21
+### Contributors: build with Temurin 25
 
-`llama/pom.xml` passes `-XDaddTypeAnnotationsToSymbol=true` to `javac` (NullAway's JSpecify mode
-needs it below JDK 22). **Oracle JDK 21 rejects that flag**: `mvn compile` dies in an Error Prone
-`IllegalStateException` naming it (measured on 21.0.9). Eclipse Temurin 21, which CI uses, compiles
-the same tree; `mvn -version` shows which JDK Maven runs on.
+CI and `.java-version` use Temurin 25. This is the build JDK, not the runtime floor:
+the core still compiles with `--release 8`, and other modules retain their declared targets.
+`mvn -version` shows the JDK Maven actually uses. Historically, Oracle JDK 21 rejected the
+`-XDaddTypeAnnotationsToSymbol=true` flag required by NullAway below JDK 22; Temurin 21
+accepted it. That older-JDK incident does not require raising any bytecode target.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 
