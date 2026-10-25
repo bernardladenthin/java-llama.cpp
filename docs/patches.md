@@ -248,7 +248,8 @@ JVM) cannot use ggml-rpc as it is:
    every other RPC socket in the process.
 
 4. transport: no SIGPIPE when the peer went away (MSG_NOSIGNAL / SO_NOSIGPIPE), a
-   socket_t::shutdown(), and the file descriptors that connect()/create_server()/accept()
+   socket_t::shutdown() (on Windows also CancelIoEx: shutdown alone does not wake a recv
+   blocked in another thread there), and the file descriptors that connect()/create_server()/accept()
    leaked on their error paths are closed.
 
 Upstream-submittable; not filed upstream yet. The runnable guard is

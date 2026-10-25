@@ -165,9 +165,10 @@ class loopback_server {
     loopback_server() {
         devices_ = jllama::rpc::server_devices({"CPU"});
         for (int attempt = 0; attempt < 50 && !listening_; ++attempt) {
-            port_ = 42000 +
+            // Below every default ephemeral range (Linux from 32768, Windows and macOS from 49152).
+            port_ = 20000 +
                     static_cast<int>(
-                        (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+                        (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 12000);
             const std::string endpoint = "127.0.0.1:" + std::to_string(port_);
             auto done = std::make_shared<std::atomic<bool>>(false);
             thread_ = std::thread([this, endpoint, done]() {
@@ -310,7 +311,12 @@ TEST(RpcLoopback, StopDisconnectsAClientThatIsStillConnected) {
     // an open backend keeps its connection -- the server is inside rpc_serve_client when stopped
     ggml_backend_t rpc = ggml_backend_rpc_init(server.endpoint().c_str(), 0);
     ASSERT_NE(rpc, nullptr);
-    server.stop(); // must return rather than wait for the client to hang up
+    // Must return rather than wait for the client to hang up. Without the deadline this passed on
+    // Windows after 120 s, where shutdown() alone does not wake the server's blocked recv().
+    const auto started = std::chrono::steady_clock::now();
+    server.stop();
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(10))
+        << "stop waited for the connected client instead of disconnecting it";
     EXPECT_FALSE(ggml_backend_rpc_server_listening());
     ggml_backend_free(rpc);
 }

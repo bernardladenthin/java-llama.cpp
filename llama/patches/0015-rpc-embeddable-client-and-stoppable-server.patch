@@ -39,7 +39,8 @@ JVM) cannot use ggml-rpc as it is:
    every other RPC socket in the process.
 
 4. transport: no SIGPIPE when the peer went away (MSG_NOSIGNAL / SO_NOSIGPIPE), a
-   socket_t::shutdown(), and the file descriptors that connect()/create_server()/accept()
+   socket_t::shutdown() (on Windows also CancelIoEx: shutdown alone does not wake a recv
+   blocked in another thread there), and the file descriptors that connect()/create_server()/accept()
    leaked on their error paths are closed.
 
 Upstream-submittable; not filed upstream yet. The runnable guard is
@@ -510,7 +511,7 @@ index 22b38e00f..36360b0a7 100644
          if (n < 0) {
              LOG_ERROR("send failed (bytes_sent=%zu, size_to_send=%zu)\n",
                             bytes_sent, size_to_send);
-@@ -702,21 +710,117 @@ static bool set_no_delay(sockfd_t sockfd) {
+@@ -702,21 +710,121 @@ static bool set_no_delay(sockfd_t sockfd) {
      return ret == 0;
  }
 
@@ -535,6 +536,10 @@ index 22b38e00f..36360b0a7 100644
 +void socket_t::shutdown() {
 +#ifdef _WIN32
 +    ::shutdown(pimpl->fd, SD_BOTH);
++    // A recv()/send() blocked in another thread does not return on Windows when the socket is
++    // shut down (it does on POSIX). Cancelling the handle's pending I/O ends it with WSAEINTR,
++    // which is what stop relies on for the client and every peer.
++    CancelIoEx(reinterpret_cast<HANDLE>(pimpl->fd), nullptr);
 +#else
 +    ::shutdown(pimpl->fd, SHUT_RDWR);
 +#endif
@@ -630,7 +635,7 @@ index 22b38e00f..36360b0a7 100644
      LOG_DBG("[%s] accepted client connection\n", __func__);
      return socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
  }
-@@ -728,10 +832,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -728,10 +836,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      }
      if (!set_reuse_addr(sockfd)) {
          LOG_ERROR("Failed to set SO_REUSEADDR\n");
@@ -643,7 +648,7 @@ index 22b38e00f..36360b0a7 100644
          return nullptr;
      }
      struct sockaddr_in serv_addr;
-@@ -740,34 +846,60 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -740,34 +850,60 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      serv_addr.sin_port = htons(port);
 
      if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
