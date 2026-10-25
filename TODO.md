@@ -22,14 +22,27 @@ so entries below describe remaining work or an explicit deferral policy.
       macOS smokes, Android CPU + additive OpenCL consumers, FFM, source-archive and integration
       jobs. The latest completed snapshot run,
       [39922567350](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/39922567350),
-      is green on `fb6b693a`; it predates this branch's packaging and Git-credential fixes. Every
-      Publish run of the branch before `e49411d0` was cancelled by the next push; run
-      [40195444689](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40195444689) was
-      the first to run the Windows C++ suites at all (`ctest -C Release`, before 0 tests) and found the
-      Windows RPC stop hanging (fixed in `0015`) and a port collision on the aarch64 runner (fixed in
-      the tests); the rest of that run has to be read once it completes. Merge PR #559 together with
-      its siblings (BitcoinAddressFinder #397, streambuffer #191, srcmorph #238; workspace #61 before
-      BroomCabinet #88, whose links point into it).
+      is green on `fb6b693a`; it predates this branch's packaging and Git-credential fixes. No Publish
+      run of the branch has completed yet: every one up to `e49411d0` was cancelled by the next push;
+      run [40195444689](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40195444689)
+      was the first to run the Windows C++ suites at all (`ctest -C Release`, before 0 tests) and
+      found the Windows RPC stop hanging (fixed in `0015`) and a port collision on the aarch64 runner
+      (fixed in the tests) before it was cancelled. Merge PR #559 together with its siblings
+      (BitcoinAddressFinder #397, streambuffer #191, srcmorph #238; workspace #61 before BroomCabinet
+      #88, whose links point into it).
+- [ ] **The first runs on bernardladenthin/actions v1.0.0** (since `c9f5c3a1`, 2026-10-25, in all four
+      repositories): read the `repository-checks` job (templates, release gate, `bash -n`, Maven
+      versions -- warnings about the siblings' missing configuration are expected until all four are
+      merged --, publication wiring and the contract dry run), the callers of the reusable workflows
+      (CodeQL, dependency submission, REUSE, OSV-Scanner; SonarQube in srcmorph and streambuffer, which
+      checks out the actions at `job.workflow_sha` for the license collector), and the composite
+      actions on the Windows and macOS jobs (`print-host-info`, `print-crash-logs` through
+      `GITHUB_ACTION_PATH`). A fix there is a new release of bernardladenthin/actions and a pin bump
+      here.
+- [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
+      (pull request required, no force push, no deletion), Dependabot alerts and security updates,
+      secret scanning; tags `v*` protected. Its releases are what every repository's Dependabot
+      proposes.
 - [ ] **Owner:** turn off GitHub's "Automatic dependency submission" (repository settings, Code
       security) after the merge. The generated run fails on every push (it has no JDK 22+ toolchain);
       `dependency-submission.yml` (JDK 25, `push` on `main`) replaces it. A bot token cannot change
@@ -62,7 +75,7 @@ so entries below describe remaining work or an explicit deferral policy.
       plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
       build stops at its license collector against a llama snapshot older than the natives license
       texts. Re-run its checks once the release is on Central.
-- [ ] At the tag: read `check-tag` (`publication.py check-ref` on `v6.0.0`) and `central-release`
+- [ ] At the tag: read `check-tag` (`java/check-release-ref` on `v6.0.0`) and `central-release`
       (one Portal bundle, `AUTOMATIC`) in the release run; neither has run on a real tag yet.
 
 ## Delivery roadmap — remaining work
