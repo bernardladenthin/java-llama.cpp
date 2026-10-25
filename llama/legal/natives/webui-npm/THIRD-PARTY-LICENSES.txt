@@ -646,84 +646,84 @@ SOFTWARE.
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-darwin-arm64@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-darwin-x64@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-arm-gnueabihf@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-arm64-gnu@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-arm64-musl@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-riscv64-gnu@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-x64-gnu@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-linux-x64-musl@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-win32-arm64-msvc@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @napi-rs/canvas-win32-x64-msvc@0.1.100 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): not declared
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @polka/url@1.0.0-next.29 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Luke Edwards luke@lukeed.com
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 @standard-schema/spec@1.1.0 (MIT): LICENSE
@@ -4040,7 +4040,7 @@ fastdom@1.0.12 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Wilson Page wilsonpage@me.com
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 fflate@0.8.3 (MIT): LICENSE
@@ -4947,7 +4947,7 @@ is-reference@3.0.3 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Rich Harris
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 isexe@2.0.0 (ISC): LICENSE
@@ -5210,7 +5210,7 @@ locate-character@3.0.0 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Rich Harris
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 lodash-es@4.18.1 (MIT): LICENSE
@@ -7544,7 +7544,7 @@ rehype-katex@7.0.1 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Junyoung Choi <fluke8259@gmail.com> (https://rokt33r.github.io)
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 rehype-stringify@10.0.1 (MIT): license
@@ -7653,7 +7653,7 @@ remark-math@6.0.0 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Junyoung Choi <fluke8259@gmail.com> (https://rokt33r.github.io)
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 remark-parse@11.0.0 (MIT): license
@@ -8146,7 +8146,7 @@ sirv@3.0.2 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Luke Edwards luke@lukeed.com
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 space-separated-tokens@2.0.2 (MIT): license
@@ -8206,7 +8206,7 @@ strictdom@1.0.1 (MIT): (declared in package.json)
 ==============================================================================
 License (package.json): MIT
 Author (package.json): Wilson Page wilsonpage@me.com
-(The package ships no license file; this is the license and author its package.json declares. The SPDX license text applies.)
+(The package ships no license file; this is the license and author its package.json declares; its full text is at the end of this file.)
 
 ==============================================================================
 stringify-entities@4.0.4 (MIT): license
@@ -9433,3 +9433,25 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+License text MIT (for the packages above marked (declared in package.json))
+==============================================================================
+MIT License
+
+Copyright (c) <year> <copyright holders>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.

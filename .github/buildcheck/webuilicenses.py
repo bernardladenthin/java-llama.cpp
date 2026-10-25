@@ -13,9 +13,13 @@ llama/legal/natives/webui-npm/, generated from the pinned tools/ui:
   that tree-shaking dropped is harmless, missing one is not.
 - `generate()` -- each package's own license/notice files, byte for byte from the tarball
   package-lock.json names (nothing is executed), concatenated into THIRD-PARTY-LICENSES.txt; a
-  package without a license file gets its declared SPDX id and the author package.json names.
+  package without a license file gets its declared SPDX id and the author package.json names, and
+  the file ends with the full text of every such id (from the repository's LICENSES/), so an MIT
+  package without a LICENSE file still has its license text in the jar.
 - `check()` -- build-webui compares the lockfile it builds with the one the texts came from
-  (LOCKFILE.sha256), so a llama.cpp bump that changes the WebUI's packages cannot ship the old list.
+  (LOCKFILE.sha256), recomputes the closure from the sources it builds (a new import of a package
+  the lockfile already had changes no hash), and holds packages.csv and the text file to each other:
+  a section for every package and file it names, the full text of every declared-only license.
 """
 
 import csv
@@ -41,6 +45,10 @@ TYPE_ONLY = re.compile(r"(?m)^\s*(?:import|export)\s+type\s[^;]*?from\s*" + QUOT
 SKIPPED = re.compile(r"\.(spec|test|stories)\.|/tests?/|\.stories\.svelte$")
 # Not imported by name, but part of every bundle the build produces.
 IMPLICIT = ("svelte", "@sveltejs/kit", "workbox-window")
+DECLARED = "(declared in package.json)"
+# The SPDX texts for a package that ships no license file: the repository's REUSE folder.
+SPDX_TEXTS = Path(__file__).resolve().parents[2] / "LICENSES"
+SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
 def lockfile_digest(ui):
@@ -125,9 +133,22 @@ def _texts(package, fetch):
         declared = (f"License (package.json): {package['license'] or 'not declared'}\n"
                     f"Author (package.json): {author or 'not declared'}\n"
                     "(The package ships no license file; this is the license and author its "
-                    "package.json declares. The SPDX license text applies.)\n")
-        texts.append(("(declared in package.json)", declared.encode("utf-8")))
+                    "package.json declares; its full text is at the end of this file.)\n")
+        texts.append((DECLARED, declared.encode("utf-8")))
     return texts
+
+
+def declared_ids(expression):
+    """The SPDX license ids of a package.json license expression (operators left out)."""
+    return [token for token in SPDX_ID.findall(expression or "") if token not in ("AND", "OR", "WITH")]
+
+
+def _section(title):
+    return f"\n{'=' * 78}\n{title}\n{'=' * 78}\n"
+
+
+def _spdx_title(spdx_id):
+    return f"License text {spdx_id} (for the packages above marked {DECLARED})"
 
 
 def generate(ui, out, fetch=None, workers=12):
@@ -138,15 +159,27 @@ def generate(ui, out, fetch=None, workers=12):
     packages = closure(lock, imports(ui))
     with ThreadPoolExecutor(workers) as pool:
         texts = list(pool.map(lambda package: _texts(package, fetch), packages))
+    undeclared = [f"{package['name']}@{package['version']}" for package, files in zip(packages, texts)
+                  if files[0][0] == DECLARED and not declared_ids(package["license"])]
+    if undeclared:
+        raise ValueError(f"ships no license file and declares no license: {', '.join(undeclared)}")
+    fallback = sorted({spdx_id for package, files in zip(packages, texts) if files[0][0] == DECLARED
+                       for spdx_id in declared_ids(package["license"])})
+    missing = [spdx_id for spdx_id in fallback if not (SPDX_TEXTS / f"{spdx_id}.txt").is_file()]
+    if missing:
+        raise ValueError(f"no text for {', '.join(missing)} in {SPDX_TEXTS}: add the SPDX text there")
     out.mkdir(parents=True, exist_ok=True)
     body = io.StringIO()
     body.write("Licenses of the npm packages the embedded llama.cpp WebUI can contain (an upper bound,\n"
                "see .github/buildcheck/webuilicenses.py). Generated; do not edit.\n")
     for package, files in zip(packages, texts):
         for name, data in files:
-            body.write(f"\n{'=' * 78}\n{package['name']}@{package['version']} ({package['license']}): {name}\n"
-                       f"{'=' * 78}\n")
+            body.write(_section(f"{package['name']}@{package['version']} ({package['license']}): {name}"))
             body.write(data.decode("utf-8", errors="replace").replace("\r\n", "\n").rstrip("\n") + "\n")
+    for spdx_id in fallback:
+        body.write(_section(_spdx_title(spdx_id)))
+        text = (SPDX_TEXTS / f"{spdx_id}.txt").read_text(encoding="utf-8")
+        body.write(text.replace("\r\n", "\n").rstrip("\n") + "\n")
     (out / "THIRD-PARTY-LICENSES.txt").write_bytes(body.getvalue().encode("utf-8"))
     with (out / "packages.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream, lineterminator="\n")
@@ -154,16 +187,55 @@ def generate(ui, out, fetch=None, workers=12):
         for package, files in zip(packages, texts):
             writer.writerow([package["name"], package["version"], package["license"],
                              ";".join(name for name, _ in files), package["resolved"]])
-    (out / "LOCKFILE.sha256").write_text(lockfile_digest(ui) + "  tools/ui/package-lock.json\n", encoding="utf-8")
+    (out / "LOCKFILE.sha256").write_bytes(f"{lockfile_digest(ui)}  tools/ui/package-lock.json\n".encode("utf-8"))
     return packages
 
 
+def _listed(out):
+    with (Path(out) / "packages.csv").open(newline="", encoding="utf-8") as stream:
+        return list(csv.DictReader(stream))
+
+
+def check_texts(out):
+    """packages.csv and THIRD-PARTY-LICENSES.txt describe each other: one section per listed file."""
+    text = (Path(out) / "THIRD-PARTY-LICENSES.txt").read_text(encoding="utf-8")
+    problems, needed = [], set()
+    for row in _listed(out):
+        package = f"{row['package']}@{row['version']}"
+        files = [name for name in row["files"].split(";") if name]
+        if not files:
+            problems.append(f"{package}: packages.csv names no license file")
+        for name in files:
+            if _section(f"{package} ({row['license']}): {name}") not in text:
+                problems.append(f"{package}: no section for {name} in THIRD-PARTY-LICENSES.txt")
+            if name == DECLARED:
+                ids = declared_ids(row["license"])
+                needed.update(ids)
+                if not ids:
+                    problems.append(f"{package}: ships no license file and declares no license")
+    for spdx_id in sorted(needed):
+        if _section(_spdx_title(spdx_id)) not in text:
+            problems.append(f"no {spdx_id} license text in THIRD-PARTY-LICENSES.txt for the packages "
+                            "that only declare it")
+    return problems
+
+
 def check(ui, out):
-    """[] when the texts in `out` were generated from this tools/ui/package-lock.json."""
+    """[] when the texts in `out` cover this tools/ui: its lockfile, its imports, every listed file."""
+    regenerate = ("run `python3 .github/webui-licenses.py generate <llama.cpp>/tools/ui "
+                  "llama/legal/natives/webui-npm` and commit the result")
     recorded = (Path(out) / "LOCKFILE.sha256").read_text(encoding="utf-8").split()[0]
     actual = lockfile_digest(ui)
-    if recorded == actual:
-        return []
-    return [f"tools/ui/package-lock.json is {actual}, the WebUI license texts were generated from "
-            f"{recorded}: run `python3 .github/webui-licenses.py generate <llama.cpp>/tools/ui "
-            f"llama/legal/natives/webui-npm` and commit the result"]
+    problems = []
+    if recorded != actual:
+        problems.append(f"tools/ui/package-lock.json is {actual}, the WebUI license texts were generated "
+                        f"from {recorded}: {regenerate}")
+    # A new import of a package the lockfile already had changes no hash.
+    lock = json.loads((Path(ui) / "package-lock.json").read_text(encoding="utf-8"))
+    listed = {(row["package"], row["version"]) for row in _listed(out)}
+    absent = [f"{package['name']}@{package['version']}" for package in closure(lock, imports(ui))
+              if (package["name"], package["version"]) not in listed]
+    if absent:
+        problems.append(f"{len(absent)} package(s) the WebUI sources can reach are not in packages.csv "
+                        f"({', '.join(absent[:10])}{', ...' if len(absent) > 10 else ''}): {regenerate}")
+    return problems + check_texts(out)
