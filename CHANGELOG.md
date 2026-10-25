@@ -45,8 +45,11 @@ the first two items break every existing consumer at upgrade.
    `OpenAiServerConfig.Builder.port(int)`) where a fixed port matters, and point clients that were
    configured for `http://localhost:8080` at the new port.
 5. **Platform floors:** Windows 10 or newer (Universal CRT), macOS 15.0, glibc 2.28 on Linux
-   (RHEL 8, Ubuntu 20.04, Debian 10 and later), Android API 28; the ROCm jars need a ROCm 10
-   runtime, the CUDA jars CUDA 13. 32-bit Windows and the `msvc-windows-x86-64` jar no longer ship.
+   x86-64 and aarch64 (RHEL 8, Ubuntu 20.04, Debian 10 and later), Android API 28. The s390x jar is
+   the exception: glibc 2.38 and the libstdc++ of GCC 13 (Ubuntu 24.04, SLES 15 SP6, Debian 13; not
+   RHEL 8/9, not Ubuntu 22.04), because it is cross-compiled on `ubuntu-latest`. The ROCm jars
+   need a ROCm 10 runtime, the CUDA jars CUDA 13. 32-bit Windows and the `msvc-windows-x86-64` jar
+   no longer ship.
 6. **Rejected requests** come back as `InvalidRequestException` (a `LlamaException`, so existing
    handlers still match) with the bare reason as the message; the OpenAI-compatible server answers
    `400` for them.
