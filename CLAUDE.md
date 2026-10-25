@@ -337,31 +337,44 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   `-Dnet.ladenthin.llama.backend=cpu` the module stayed out and a separate extraction directory was
   used. The GPU jobs themselves (12 module-only builds) are proven by the CI run.
 
-## Build checks, shared files and the release gate (`.github/buildcheck/`)
+## Build checks, the shared CI and the release gate (`.github/buildcheck/`, bernardladenthin/actions)
 
-The pipeline's static checks are a small **stdlib-only Python package**, `.github/buildcheck/`, with
-unit tests in `.github/buildcheck/tests/` (`python3 -m unittest discover -s .github/buildcheck/tests
--t .github`, from the repo root). The `.github/*.py` scripts are thin command-line wrappers around it,
-so every check can be driven with literal inputs in a test — including the ELF/PE/Mach-O parsers
-(synthesized binaries) and the workflow parser. It deliberately does not use PyYAML: the runners do
-not guarantee it, and the checks only need the job graph, which `workflow.py` reads from the two
-shapes this repo writes and rejects anything else loudly.
+The pipeline's static checks are **stdlib-only Python** in two places. What the four Java
+repositories (java-llama.cpp, BitcoinAddressFinder, srcmorph, streambuffer) share lives once in
+[bernardladenthin/actions](https://github.com/bernardladenthin/actions) -- the `actionlib` library,
+composite actions for single steps, reusable workflows for whole jobs and templates for the files
+every repository must carry -- and this repository pins it by commit (`uses:
+bernardladenthin/actions/<common|java>/<action>@<commit> # v1.x.y`; Dependabot moves the pin). Until
+2026-10 that code was four byte-identical copies held together by `.github/shared-files.sha256` per
+repository. What only this repository needs stays in `.github/buildcheck/`, with unit tests in
+`.github/buildcheck/tests/` (`python3 -m unittest discover -s .github/buildcheck/tests -t .github`,
+from the repo root; they run in the `repository-checks` job). The `.github/*.py` scripts are thin
+command-line wrappers around it, so every check can be driven with literal inputs in a test --
+including the ELF/PE/Mach-O parsers (synthesized binaries). `natives.py` reads the job graph with
+actionlib's workflow parser: `.github/buildcheck/__init__.py` finds actionlib on `PYTHONPATH`
+(`common/setup` in CI), in `ACTIONS_DIR`, or in a checkout next to this repository (`../actions`),
+and `natives.py` imports it only in the checks that need it, so `check-natives.py smoke-targets` /
+`smoke-set` run without it. Nothing uses PyYAML: the runners do not guarantee it, and the checks only
+need the job graph, which the workflow parser reads from the two shapes these workflows use and
+rejects anything else loudly.
 
-| Module | CLI | What it checks |
+| Module (here) | CLI | What it checks |
 |---|---|---|
 | `natives.py` | `check-natives.py` (`code-style`) | everything that names a natives jar agrees with `natives.csv` (see "Natives jars") |
 | `models.py` | `check-natives.py` | every `*_MODEL_NAME` of publish.yml's `env:` is a filename of `models.csv` |
 | `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
-| `workflow.py` | — | the job graph of a workflow (`needs`, uploads, transitive closure) |
-| `releasegate.py` | `check-release-gate.py` (`shared-files`) | every job gates **both** publish jobs, unless `.github/release-gate-exemptions.txt` names it with a reason |
-| `sharedfiles.py` | `check-shared-files.py` (`shared-files`) | the files kept byte-identical across the four sibling repos |
-| `versions.py` | `check-versions.py` (`shared-files`) | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
-| `runscripts.py` | `check-run-scripts.py` (`shared-files`) | every `run:` script of the workflows and composite actions that runs in bash parses (`bash -n`) |
-| `releaseassets.py` | `collect-release-assets.py` (`finalize-publication`) | collects the signed outputs `.github/release-assets.json` names, reports every missing file or signature |
-| `publication.py` | `publication.py` (`check-snapshot`, `check-tag`, `finalize-publication`, the six consumers) | version against ref and channel, the gate that freezes the signed publication, its transport check and the two Central transfers (see "Signed publication") |
-| `snapshot.py` | `update-snapshot.py` (`github-snapshot`) | the rolling `snapshot` pre-release: no older commit or run over a newer one, prune only after a complete upload |
+| `webuilicenses.py` | `webui-licenses.py` (`build-webui`) | the WebUI's npm license texts cover the pinned lockfile and its imports |
+
+| Action (bernardladenthin/actions) | Job here | What it checks or does |
+|---|---|---|
+| `common/check-templates` | `repository-checks` | the files this repository carries equal their templates (`.github/actions-config.json`, `templates`) |
+| `common/check-release-gate` | `repository-checks` | every job gates **both** publish jobs, unless `.github/release-gate-exemptions.txt` names it with a reason |
+| `common/check-run-scripts` | `repository-checks` | every bash `run:` script of the workflows and local actions parses (`bash -n`) |
+| `java/check-maven-versions` | `repository-checks` | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
+| `java/check-publication` | `repository-checks` | the publication jobs are wired as documented; a dry run of `.github/release-assets.json` collects what it promises |
+| `java/check-release-ref`, `java/finalize-publication`, `java/publish-central`, `java/publish-github`, `java/attest-publication` | `check-snapshot` / `check-tag`, the publish jobs, the six consumers | the signed publication (see "Signed publication") |
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
@@ -370,83 +383,59 @@ without any job launching them, were both that shape. So "not gating" is a writt
 gating nor listed, and a listed job that gates after all (a stale exemption hides the next job of that
 name). Introducing it found `vmlens` gating nothing in all four repos; it now gates both publish jobs.
 
-**Shared files (all four repos).** Files kept byte-identical in java-llama.cpp, BitcoinAddressFinder,
-srcmorph and streambuffer are listed with their SHA-256 in each repo's **`.github/shared-files.sha256`**
-(`sha256sum` format). An entry can also name **one job of a workflow**,
-`.github/workflows/publish.yml#startgate`: `startgate`, `shared-files`, `verify-signing-key`,
-`verify-signing-key-gradle`, `check-snapshot`, `check-tag` and the six publication consumers
-(`github-snapshot`, `github-release`, `central-snapshot`, `central-release`, `attest-snapshot`,
-`attest-release`, see "Signed publication") are identical in all four `publish.yml` files, and
-such an entry hashes just that job -- so a job kept identical by convention is now checked like a
-file, without moving it into a reusable workflow (no check name or `needs:` changes). An entry ending
-in `?repo` covers a file or job identical up to the repository's name (hashed with the name replaced
-by `{repo}`), e.g. `SUPPORT.md?repo`. The
-`shared-files` job, gating both publish jobs, **fails** when a listed file changed here
-alone, and **warns** when another repo's default branch lists the same file with a different hash (a
-sync is one change per repo and lands in four steps, so a warning, not a failure). **The manifest is
-the reference for what must stay equal**: changing a shared file means changing every copy, then
-`python3 .github/check-shared-files.py --write` in each repo. Forgetting one is not a disaster — the
-job says so, and the history shows it — but nobody can edit a shared script without learning that it
-is shared. Duplicating the library across repos is therefore deliberate. A separate actions/library
-repo was considered and rejected: every consumer would need a pinned SHA per use (Scorecard's
-pinned-dependencies rule), a release process of its own, and a cross-repo checkout; copies with a
-checksum keep each repo self-contained.
+**The files every repository carries (templates).** Community files, `LICENSES/{MIT,Apache-2.0}.txt`,
+`.editorconfig`, `.gitattributes`, `.java-version`, `.mvn/jvm.config`, `lombok.config` (here
+`llama/lombok.config`, the `relocate` entry), Dependabot, `scorecard.yml`, `claude.yml`,
+`claude-code-review.yml` and the callers of the reusable workflows (`codeql.yml`,
+`dependency-submission.yml`, `reuse.yml`, `osv-scanner.yml`) are templates in bernardladenthin/actions;
+`common/check-templates` fails when a copy here differs (up to the repository name and the action
+pins, which Dependabot moves per repository). To change one, change the template there and run
+`python3 -m actionlib.common.templates --write` here (with its `lib/` on `PYTHONPATH`). This repository
+excludes `sonarqube.yml` (its analysis is its own), `.mvn/settings.xml` and `CITATION.cff`.
 
-**Maven versions across the four repos (`check-versions.py`).** They pin the same build tooling and
-Dependabot bumps each repo on its own, so the versions drift one pull request at a time; the
-`shared-files` job therefore compares every `groupId:artifactId` the POMs use (plugins, dependencies,
-annotation-processor paths, and the formatter version Spotless is configured with -- `${...}`
-resolved) with the siblings' default branches and **warns** per difference. Warnings only, because a
-bump lands in four pull requests and the first one merged must not turn the other three red; the
-repos' own artifacts (`net.ladenthin:*`) are left out. It compares what is used, not property names:
-those differ between repos and include values that must differ (`maven.compiler.release`). The POM
-list per repo is `versions.POMS` -- a new module's POM goes there, in all four copies (here also
+**Maven versions across the four repos.** They pin the same build tooling and Dependabot bumps each
+repo on its own, so the versions drift one pull request at a time; `java/check-maven-versions`
+compares every `groupId:artifactId` the POMs use (plugins, dependencies, annotation-processor paths,
+and the formatter version Spotless is configured with -- `${...}` resolved) with the default branches
+of the `java-maven` family and **warns** per difference. Warnings only, because a bump lands in four
+pull requests and the first one merged must not turn the other three red; the repos' own artifacts
+(`net.ladenthin:*`, `ignore-groups`) are left out. It compares what is used, not property names: those
+differ between repos and include values that must differ (`maven.compiler.release`). **The POM list
+of this repository is `maven-versions.poms` in `.github/actions-config.json`** -- a new module's POM
+goes there, and only there: a sibling reads it from this repository's configuration (here also
 `examples/server/pom.xml`, whose `exec-maven-plugin` sat two patch releases behind the reactor's unseen
 until it was listed). It also compares the Kotlin Gradle plugins of every `*.gradle.kts` with the Kotlin
 the POMs use (`org.jetbrains.kotlin:*`): Dependabot's maven ecosystem bumps `kotlin.version` and never
 sees the Gradle files, which is how the Compose compiler plugin stayed at 2.4.20 while the POMs went to
 2.4.21.
 
-**Run scripts parse (`check-run-scripts.py`).** A cleanup once lost the trailing ` \` of six continued
-lines in `publish.yml` -- each left a line starting with `||`/`&&`, a syntax error in a step only a
-native build, the AAR job or the snapshot release reaches. actionlint did not see it (it parses
-scripts only with shellcheck installed), `bash -n` sees every one. So the `shared-files` job runs
-`bash -n` over every `run:` script of `.github/workflows/` and `.github/actions/*/action.yml` that
-runs in bash, deciding the shell as the runner does (step `shell:`, job then workflow
-`defaults.run.shell`, else PowerShell on a `windows` runner and bash elsewhere; a matrix/input runner
-is Windows only where the step's `if:` says `runner.os == 'Windows'`). pwsh/powershell/cmd/python are
-skipped, an unknown shell is an error. Literal blocks are checked line for line (errors point at the
-file line), folded and plain values as YAML folds them, `${{ ... }}` becomes a word. Like
-`workflow.py` it reads the two-space layout these workflows use, not general YAML.
+**Run scripts parse.** A cleanup once lost the trailing ` \` of six continued lines in `publish.yml`
+-- each left a line starting with `||`/`&&`, a syntax error in a step only a native build, the AAR job
+or the snapshot release reaches. actionlint did not see it (it parses scripts only with shellcheck
+installed), `bash -n` sees every one. So `common/check-run-scripts` runs `bash -n` over every `run:`
+script of `.github/workflows/` and `.github/actions/*/action.yml` that runs in bash, deciding the
+shell as the runner does (step `shell:`, job then workflow `defaults.run.shell`, else PowerShell on a
+`windows` runner and bash elsewhere; a matrix/input runner is Windows only where the step's `if:` says
+`runner.os == 'Windows'`). pwsh/powershell/cmd/python are skipped, an unknown shell is an error.
 
 **And the workflows must parse as YAML (`code-style`, first step).** None of the checks above reads the
-files as YAML -- `workflow.py` and `runscripts.py` read the two-space layout on purpose, and a run script
-that parses in bash tells nothing about the document around it. So a step `name:` with an unquoted
-`: ` inside it (`(full history: the commit count is checked)`, a plain scalar that YAML reads as a nested
-mapping) passed every check, `code-style` included, and failed the **whole** run of the 6.0.0 merge
-(38807436221) before a single job started: zero jobs, the run named after the file path, `gh run view`
-saying "workflow file issue". The step loads every `.github/workflows/*.yml` and
-`.github/actions/*/action.yml` with PyYAML (preinstalled on the Ubuntu runner, `pip install --user`
-as the fallback) and fails on the first file that does not parse. It stays out of `buildcheck/`, which
-is stdlib-only by design; a colon in a step name is best avoided rather than quoted.
+files as YAML -- the workflow parser and the run-script check read the two-space layout on purpose,
+and a run script that parses in bash tells nothing about the document around it. So a step `name:`
+with an unquoted `: ` inside it (`(full history: the commit count is checked)`, a plain scalar that
+YAML reads as a nested mapping) passed every check, `code-style` included, and failed the **whole**
+run of the 6.0.0 merge (38807436221) before a single job started: zero jobs, the run named after the
+file path, `gh run view` saying "workflow file issue". The step loads every `.github/workflows/*.yml`
+and `.github/actions/*/action.yml` with PyYAML (preinstalled on the Ubuntu runner, `pip install
+--user` as the fallback) and fails on the first file that does not parse. It stays out of
+`buildcheck/`, which is stdlib-only by design; a colon in a step name is best avoided rather than
+quoted.
 
-Shared today: the `buildcheck` modules above marked shared in
-`__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `print-host-info.sh` (the runner's CPU at the top of every
-test job, so a timing or a chosen CPU module can be read against the hardware), `verify-signing-key.sh`,
-`verify-bytecode-version.sh`, `smoke-fatjar-cli.sh` (BAF + srcmorph; `sign-fatjars.sh` is srcmorph's
-alone since jllama ships no fat jar), the signing self-test, `lombok.config`, the issue/PR templates, `CODE_OF_CONDUCT.md`,
-`claude.yml`, `claude-code-review.yml`, `codeql.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml`,
-`dependabot.yml`, `.java-version`, `.editorconfig`, `.gitattributes`, `FUNDING.yml`, `CODEOWNERS`,
-`LICENSES/{MIT,Apache-2.0}.txt` and `.mvn/jvm.config`; the job `verify-signing-key-gradle` (its Gradle
-version is a literal for that reason -- bump it with `GRADLE_VERSION`); and, identical up to the
-repository name (`?repo` entries, see `sharedfiles.py`), `SUPPORT.md` and `ISSUE_TEMPLATE/config.yml`
-(in the siblings also `CITATION.cff`, `sonarqube.yml` for srcmorph + streambuffer, and the
-`code-style` job for BAF + streambuffer). **License of `.github`:** every file there is `MIT OR Apache-2.0` in all four repos
--- one header, so a file can be shared byte for byte -- except the third-party ones annotated in
-`REUSE.toml` (the generated dockcross wrappers, the JNI headers).
+**License of `.github`:** every file there is `MIT OR Apache-2.0` -- the license of
+bernardladenthin/actions, so a file can move between them without a second header -- except the
+third-party ones annotated in `REUSE.toml` (the generated dockcross wrappers, the JNI headers).
 
-**Composite actions (`.github/actions/`).** `finalize-publication` is shared by the four repositories
-(see "Signed publication"); the others are this repo's own: `restore-models` (restore the shared GGUF
+**Composite actions (`.github/actions/`).** The shared ones are in bernardladenthin/actions (see
+above and "Signed publication"); the local ones are this repo's own: `restore-models` (restore the shared GGUF
 cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
 `install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`),
 `build-core` (parent + `llama`, optionally more modules, built without tests/checks/javadoc/signing,
@@ -1115,7 +1104,7 @@ macOS server smoke would be strictly more, but this catches the failure class th
 and is cheap enough to always run. It is the macOS member of the cross-repo convention in
 [`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md)
 ("No release asset is attached that CI has not run" -- here: no natives jar is published that CI has
-not loaded), which BAF and srcmorph implement with a shared `smoke-fatjar-cli.sh`.
+not loaded), which BAF and srcmorph implement with the `java/smoke-fatjar-cli` action of bernardladenthin/actions.
 
 ## Smoke sets: the published jars launched before they are published
 
@@ -1156,17 +1145,17 @@ and the two AARs with the `.aar.asc` Gradle writes next to them, their poms
 (`build/distributions/`). `github-snapshot` / `github-release` attach exactly those files and sign or
 assemble nothing (no `sign-fatjars.sh`, no `environment:`). Until 2026-10-12 the collect steps copied
 jars and bare AARs only: every pom was missing, `llama-platform` was absent entirely, the AARs went out
-unsigned and the `*.jar`-only signature check never noticed. `collect-release-assets.py` is shared
-across all four Java repositories; its local `.github/release-assets.json` declares the native/Android
-extras. It discovers all reactor modules from their POMs and all native classifiers from
+unsigned and the `*.jar`-only signature check never noticed. The collection is shared across all
+four Java repositories (`java/finalize-publication` of bernardladenthin/actions); the local
+`.github/release-assets.json` declares the native/Android extras. It discovers all reactor modules from their POMs and all native classifiers from
 `natives.csv`, includes `llama-ffm`, renames each `target/bom.json` to its Central name and reports
 missing outputs/signatures. After a complete upload, `github-snapshot` deletes every asset of the
 `snapshot` pre-release the run did not upload, each printed by name (`gh release upload --clobber`
 never removed anything: 208 assets, 109 of them from 5.0.x). The prune refuses an empty upload,
 treats an asset that is already gone as removed and fails only after trying every deletion; a
 versioned release (`v<digit>...`) is refused as a rolling tag, so it is never pruned. An incomplete
-collection never reaches the job (the gate fails first), and `update-snapshot.py` itself refuses one
-before any change. The whole snapshot update is serialized; `update-snapshot.py` rejects late older
+collection never reaches the job (the gate fails first), and the snapshot update itself refuses one
+before any change. The whole snapshot update is serialized; it rejects late older
 commits/runs, and updates the source tag and notes to the uploaded commit and run after a complete
 upload; the first snapshot of a repository is a draft until then, so a failed first upload leaves
 neither a public pre-release nor a tag. Why it prunes asset by asset instead of
@@ -2944,19 +2933,23 @@ easy to undo by accident:
   `<optional>true</optional>` would not have been enough on its own — that descriptor filters on
   scope only. Safe because no source imports `org.checkerframework`.
 
-**The gate: `.github/verify-bytecode-version.sh`.** Kept **byte-identical** across java-llama.cpp /
-BitcoinAddressFinder / streambuffer / srcmorph (listed in `.github/shared-files.sha256`, checked by the `shared-files` job).
+**The gate: the `java/verify-bytecode` action of [bernardladenthin/actions](https://github.com/bernardladenthin/actions)** (its `verify-bytecode-version.sh`).
 It opens every `.class` in every jar it is given and fails on any whose class-file major version
-exceeds `--max-major`:
+exceeds `max-major`:
 
-```bash
-.github/verify-bytecode-version.sh --max-major 52 [--allow '<jar>:<entry>']... <jar-or-dir>...
+```yaml
+- uses: bernardladenthin/actions/java/verify-bytecode@<commit> # v1.x.y
+  with:
+    max-major: "52"
+    paths: |          # jars or directories, one per line
+      llama/target
+    allow: |          # optional: '<jar-basename>:<entry-path>' globs to tolerate
 ```
 
 Paths may be jars or directories (searched recursively for `*.jar`), so one invocation covers a whole
 artifact set — here the classes jar and all 23 natives jars, then each smoke set. `module-info.class`
 and `META-INF/versions/**` are skipped unconditionally: a classpath JVM never loads either, which is
-why a `release 9` `module-info` is fine. `--allow` is a repeatable glob matched against
+why a `release 9` `module-info` is fine. `allow` takes globs matched against
 `<jar-basename>:<entry-path>` for anything else that must be tolerated. Exit codes: 0 clean,
 1 violations, **2 nothing to scan** (an empty input is a failure, never a pass — the first version of
 this check reported a clean pass over a directory a failed build had left empty).
@@ -3203,7 +3196,7 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   the Linux x86-64 natives, restores the models, builds the core, runs `mvn -f llama-ffm/pom.xml
   verify` with `lib.path` and the draft model, and fails when `FfmLlamaModelIntegrationTest` skipped
   itself (a self-skip would hide a broken binding). It gates both publish jobs; the release gate check
-  demands it. `verify-bytecode-version.sh` keeps scanning `llama/target` only: the module's classes
+  demands it. The bytecode gate (`java/verify-bytecode`) keeps scanning `llama/target` only: the module's classes
   are major 66 and are not part of the smoke sets.
 - **Tests**: `JllamaNativeTest` (model-free: `apiVersion` equals the pom version surefire passes,
   `buildInfo` starts with `LlamaCppVersion`, a grammar conversion, a missing model's message, the log
@@ -3222,7 +3215,8 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   outliving it, an `Error` thrown by the progress callback aborting the load instead of the JVM, a
   closed model refusing calls). Locally the C++ test fixture's twin, a
   tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
-- **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
+- **`maven-versions.poms`** of `.github/actions-config.json` names `llama-ffm/pom.xml` (the siblings
+  read this repository's POM list from there).
 
 ## Code signing of the Windows DLLs (SSL.com eSigner, one switch; inert until the certificate exists)
 
@@ -3506,18 +3500,20 @@ tracking lives in [`../workspace/crossrepostatus.md`](../workspace/crossrepostat
 
 ## Signed publication: one gate, three independent consumers
 
-Shared byte for byte by the four Java repositories (`.github/shared-files.sha256`); the full text is
-[`docs/publication-preflight.md`](docs/publication-preflight.md), the JSON contract and the sync rules
+The actions of [bernardladenthin/actions](https://github.com/bernardladenthin/actions), shared by the four Java repositories; the full text is
+[docs/publication.md](https://github.com/bernardladenthin/actions/blob/main/docs/publication.md) there, the JSON contract and its rules
 [`../workspace/policies/release-asset-scripts.md`](../workspace/policies/release-asset-scripts.md).
+The jobs stay in this workflow (environment, permissions, concurrency); `java/check-publication`
+checks their wiring and dry-runs `.github/release-assets.json` in every pull request.
 
-- **`check-snapshot` / `check-tag`** run `publication.py check-ref`: a release publishes only from the
+- **`check-snapshot` / `check-tag`** run `java/check-release-ref`: a release publishes only from the
   tag `v<version>` of a non-SNAPSHOT version, a snapshot only a `-SNAPSHOT` version and never from a
   tag (the snapshot check only when the run publishes: `main` carries the release version for the
   commit a release is tagged on).
 - **`publish-snapshot` / `publish-release`** build and sign everything, stage the Central files
   locally (`-DskipUpload=true deploy`, here plus the Gradle staging repository of the AARs) and end in
-  the composite action `finalize-publication`: `collect-release-assets.py`, then
-  `publication.py prepare --channel <channel>`, the one gate. It checks the version against the
+  `java/finalize-publication`: the collection of what `.github/release-assets.json` names, then
+  `publication prepare --channel <channel>`, the one gate. It checks the version against the
   channel and `GITHUB_REF`, exact membership of the Central staging (every artifact with its own
   signature, no orphan, no unknown file; Maven metadata and checksums are ignored, Gradle's
   timestamped snapshot names are mapped back to `-SNAPSHOT`) and of the GitHub files against the
@@ -3526,11 +3522,12 @@ Shared byte for byte by the four Java repositories (`.github/shared-files.sha256
   (commit, version, channel, size and SHA-256 per file), and only after the Actions upload of that
   package does the job output `assets_complete=true`.
 - **The consumers** each `need` only that job and that output, never each other:
-  `github-snapshot` / `github-release` (attach the `github/` files; the rolling `snapshot`
-  pre-release through `update-snapshot.py`), `central-snapshot` / `central-release`
-  (`publication.py upload`: the release as one Portal bundle with `publishingType=AUTOMATIC`, no
-  validation polling; the snapshot through `maven-deploy-plugin:deploy-file`, serialized by a
-  concurrency group and skipped when another run already transferred a newer commit), and
-  `attest-snapshot` / `attest-release` (Sigstore over `github/*`). Each verifies the manifest after
-  the download; none rebuilds or re-signs. A failed Central transfer leaves the GitHub release and
-  the attestation in place, and the other way round.
+  `github-snapshot` / `github-release` (`java/publish-github`: attach the `github/` files; the rolling
+  `snapshot` pre-release is serialized, prunes only after a complete upload and starts as a draft),
+  `central-snapshot` / `central-release` (`java/publish-central`: the release as one Portal bundle
+  with `publishingType=AUTOMATIC`, no validation polling; the snapshot through
+  `maven-deploy-plugin:deploy-file`, serialized by a concurrency group and skipped when another run
+  already transferred a newer commit), and `attest-snapshot` / `attest-release`
+  (`java/attest-publication`: Sigstore over `github/*`). Each verifies the manifest after the
+  download; none rebuilds or re-signs. A failed Central transfer leaves the GitHub release and the
+  attestation in place, and the other way round.

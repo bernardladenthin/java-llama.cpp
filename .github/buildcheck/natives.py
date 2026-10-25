@@ -36,7 +36,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-from . import nativedeps, workflow
+from . import nativedeps
 
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 
@@ -215,6 +215,7 @@ def check_platform(natives, platform_pom_text):
 def check_workflow(natives, jobs):
     """The build jobs upload natives-<classifier> for every row, `package` waits for each of them and
     uploads llama-smoke-<target> per smoke target, and every target is downloaded by a smoke job."""
+    from actionlib.common import workflow  # here, not at the top: smoke-targets/smoke-set need no actionlib
     uploads = {}
     for job in jobs.values():
         for name in job.uploads():
@@ -262,6 +263,7 @@ def check_signing(natives, jobs, uploads):
     form was `if:`-skipped without the switch, `package` tolerated that with `!cancelled()` and ran
     green, and the smoke sets, the report and both publish jobs behind `package` were skipped with
     the run concluding "success" (run 38870889665, attempt 2)."""
+    from actionlib.common import workflow  # here, not at the top: smoke-targets/smoke-set need no actionlib
     windows = [r["classifier"] for r in natives if tree(r).split("/")[0] == "Windows"]
     sign = jobs.get(SIGN_JOB)
     if sign is None:
@@ -505,6 +507,7 @@ def read(root, path):
 
 def check(root):
     """Every check, over the files of the repository at `root`."""
+    from actionlib.common import workflow  # here, not at the top: smoke-targets/smoke-set need no actionlib
     natives = rows(read(root, ".github/natives.csv"))
     readme = read(root, "README.md")
     return (check_rows(natives)

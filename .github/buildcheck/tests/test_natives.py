@@ -7,7 +7,8 @@ import subprocess
 import sys
 import unittest
 
-from buildcheck import natives, workflow
+from actionlib.common import workflow
+from buildcheck import natives
 from buildcheck.tests.helpers import REPO, upload, workflow_text
 
 CSV = """# a comment

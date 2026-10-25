@@ -337,8 +337,8 @@ precedence = "override"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-# The issue/PR templates are kept byte-identical in java-llama.cpp, BitcoinAddressFinder, srcmorph
-# and streambuffer (.github/shared-files.sha256) and carry the license of the other shared files.
+# The issue/PR templates are templates of bernardladenthin/actions (templates/common), checked by
+# its check-templates action, and carry the license of the other template files.
 # Last in this file on purpose: of several matching annotations the last one applies.
 [[annotations]]
 path = [

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from buildcheck import workflow
+from actionlib.common import workflow
 from buildcheck.tests.helpers import REPO
 
 

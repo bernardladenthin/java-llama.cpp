@@ -140,7 +140,7 @@ SPDX-License-Identifier: MIT
 					build: Maven 3.10.0 binds clean 3.5.0, install 3.2.0 and deploy 3.2.0 and manages no dependency plugin
 					(dependency:... then takes the newest release); Maven 3.9 binds clean 3.2.0, install and deploy 3.1.x and
 					manages dependency 3.7.0. Stated here so the build does not depend on the Maven that runs it, and so
-					check-versions.py compares them across the repositories.
+					the maven-versions check of bernardladenthin/actions compares them across the repositories.
 				-->
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>

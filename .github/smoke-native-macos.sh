@@ -19,7 +19,7 @@
 # This is the macOS member of the cross-repo "no artifact ships that CI has not run" convention
 # (workspace/policies/fat-jar-release-assets.md; this repository ships no fat jar, its artifacts are
 # the natives jars, and every one of a platform is launched from a smoke set). It is NOT the shared
-# smoke-fatjar-cli.sh that BitcoinAddressFinder and srcmorph run: the assertion that matters here
+# java/smoke-fatjar-cli action that BitcoinAddressFinder and srcmorph run: the assertion that matters here
 # is native-library loadability, not a CLI exit code.
 #
 # No cache restore and no model of the CI set: it runs in ~1 min. A full model-backed macOS server

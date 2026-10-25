@@ -48,8 +48,8 @@ bundle. It waits for upload acceptance only, with no asynchronous validation pol
 
 ## GitHub assets and the rolling snapshot
 
-`.github/collect-release-assets.py` is shared with the three sibling Maven repositories. It
-reads `.github/release-assets.json`, discovers the reactor from `pom.xml`, then adds the configured
+The collection (`java/finalize-publication` of [bernardladenthin/actions](https://github.com/bernardladenthin/actions)) is shared with the three sibling Maven
+repositories. It reads `.github/release-assets.json`, discovers the reactor from `pom.xml`, then adds the configured
 standalone agent, classifiers in `natives.csv`, Android publications and signed llama.cpp source
 archive. The shared interface is documented in
 [`../../workspace/policies/release-asset-scripts.md`](../../workspace/policies/release-asset-scripts.md). It copies each artifact and signature, naming `target/bom.json` as
@@ -58,20 +58,21 @@ incomplete collections are not published. A complete checked package is secured 
 Central transfer, so Central failures cannot hide signed GitHub artifacts.
 
 The `github-snapshot` job serializes the complete upload/update/prune operation.
-`.github/update-snapshot.py` refuses an older commit or an older run/attempt of the same commit.
+`java/publish-github` refuses an older commit or an older run/attempt of the same commit.
 After a complete upload it moves the `snapshot` tag to that build's commit, updates the release
 notes with the commit and workflow run, and removes obsolete assets. An incomplete collection
 keeps the existing tag, notes and other assets. The release itself is retained throughout;
-versioned releases are never pruned.
+versioned releases are never pruned. The first snapshot of a repository is a draft until its upload
+is complete.
 
 ## Publication gate and upload jobs
 
 The `publish-snapshot` / `publish-release` jobs now prepare locally with `skipUpload=true`,
 finish all signing and extra packaging, and verify the complete frozen publication.
-The shared `.github/actions/finalize-publication` action collects, verifies and secures the
+The shared `java/finalize-publication` action collects, verifies and secures the
 Actions handoff before emitting readiness. The `central-*`, `github-*` and `attest-*` jobs
 independently consume that handoff, identically to the three sibling Maven repositories.
 Attestation verifies the package and covers all frozen GitHub assets and detached signatures.
 None of these consumers rebuilds or signs files. Portal upload acceptance is enough;
 validation and automatic publication happen asynchronously. See
-[the shared publication policy](publication-preflight.md).
+[the publication documentation of bernardladenthin/actions](https://github.com/bernardladenthin/actions/blob/main/docs/publication.md).

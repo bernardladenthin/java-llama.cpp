@@ -16,7 +16,7 @@ Their license texts travel with them (see below; `llama/legal/natives/NOTICE.md`
 
 ## Review evidence
 
-See [the dependency license review](docs/dependency-license-review.md) in the source repository
+See [the dependency license review](https://github.com/bernardladenthin/actions/blob/main/docs/dependency-license-review.md) of bernardladenthin/actions
 for exact-version evidence and remaining decisions. This inventory is not an approval of all
 licenses found by a scanner. Test-tool redistribution requires a separate review.
 
@@ -36,6 +36,6 @@ every component compiled into a natives directory, each from its upstream byte f
 `.github/webui-licenses.py` from the pinned `tools/ui/package-lock.json`, which `build-webui`
 checks). A jar carries the texts of every kind of natives directory; `NOTICE.md` says which
 component is in which.
-`.github/collect-third-party-licenses.py`, which collects dependency legal files into the runnable
-fat JARs of BitcoinAddressFinder and srcmorph, is kept here byte-identical with them but not run.
+The license collector of bernardladenthin/actions (`actionlib.java.thirdpartylicenses`), which puts
+dependency legal files into the runnable fat JARs of BitcoinAddressFinder and srcmorph, does not run here.
 This source-location statement does not clear unknown proprietary or historical Git findings.

@@ -213,7 +213,7 @@ SPDX-License-Identifier: MIT
 		     scope runtime), so no checker-qual class of any version reaches a consumer's JVM.
 		     Safe because no source in this module imports org.checkerframework: the
 		     annotations exist for the processor, not for our code.
-		     .github/verify-bytecode-version.sh enforces the resulting class-file floor. -->
+		     The verify-bytecode action of bernardladenthin/actions enforces the resulting class-file floor. -->
 		<dependency>
 			<groupId>org.checkerframework</groupId>
 			<artifactId>checker-qual</artifactId>

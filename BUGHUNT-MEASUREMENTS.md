@@ -16,7 +16,8 @@ Auftrag. Hintergrund in `BUGHUNT-FOUND.md` (die Fund-IDs) und `CHANGELOG.md` (�
 - **Nur messen und berichten.** Keine Produktionsänderung, keine Fixes. Wegwerf-Proben (Testklassen,
   kleine `main`-Programme) nach dem Lauf entfernen; committet wird nur diese Datei mit den Ergebnissen.
 - Arbeitsstand: Branch `ccr-90fc5f6a-vs4s0f` (mindestens `573619a`). Pin: llama.cpp b11639.
-- Dateien aus `.github/shared-files.sha256` nicht verändern.
+- Dateien, die Vorlagen von bernardladenthin/actions sind (`.github/actions-config.json`, Abschnitt
+  `templates`), nicht verändern.
 - Jeder Punkt wird beantwortet, auch wenn er nicht ausführbar war (mit Grund). Zu jedem Ergebnis die
   Umgebung (CPU, Kerne, RAM, GPU, OS, JDK) und die wörtlichen Ausgaben, die das Ergebnis tragen.
 - Ergebnis unter **Ergebnis:**, darunter **Folgerung:** (bestätigt der Lauf den Fix, oder was weicht ab).

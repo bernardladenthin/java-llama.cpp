@@ -35,7 +35,7 @@ so entries below describe remaining work or an explicit deferral policy.
       `dependency-submission.yml` (JDK 25, `push` on `main`) replaces it. A bot token cannot change
       the setting (403).
 - [ ] **After the merge, before the tag: read the first snapshot dispatch on `main`** with
-      `publish_to_central`. What only a real run shows: `update-snapshot.py` moving the `snapshot` tag
+      `publish_to_central`. What only a real run shows: `java/publish-github` moving the `snapshot` tag
       through the REST API with the workflow token, the Android AARs' timestamped Gradle names mapped
       back to `-SNAPSHOT` by the gate, `central-snapshot` skipping itself for a superseded commit, and
       the transfer of the frozen publication. The unit tests drive all of it against fakes only.
@@ -328,7 +328,7 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
 
 The FSFE REUSE check is green on every run. FOSSA analyses the dependencies against the policy the
 four Maven repositories share (`.fossa.yml`; rules and the version-specific decisions in
-[`docs/dependency-license-review.md`](docs/dependency-license-review.md)), and its "License
+[the dependency license review](https://github.com/bernardladenthin/actions/blob/main/docs/dependency-license-review.md)), and its "License
 Compliance" check reports open findings as review requests, not approvals. Which of them block a
 release, and which get a documented component decision in FOSSA, is the owner's call.
 

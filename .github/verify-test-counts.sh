@@ -53,7 +53,7 @@ shopt -s nullglob
 reports=("$REPORT_DIR"/TEST-*.xml)
 shopt -u nullglob
 
-# An empty input is a failure, never a pass — the same rule verify-bytecode-version.sh follows,
+# An empty input is a failure, never a pass — the same rule the java/verify-bytecode action follows,
 # for the same reason: a job that produced no reports at all has not proved anything.
 if [ "${#reports[@]}" -eq 0 ]; then
     echo "ERROR: no TEST-*.xml under $REPORT_DIR — the suite did not run" >&2

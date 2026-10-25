@@ -20,6 +20,7 @@ files:
 | Jackson, JSpecify | Apache-2.0 |
 | SLF4J Simple | MIT |
 
-The repository's `THIRD_PARTY.md` and `docs/dependency-license-review.md` hold the review evidence.
+The repository's `THIRD_PARTY.md` and [the dependency license review](https://github.com/bernardladenthin/actions/blob/main/docs/dependency-license-review.md) of bernardladenthin/actions hold the review
+evidence.
 This folder is meant to be copied out and run on its own, which is why it carries both files
 itself; `check-natives.py` holds `LICENSE` byte-identical to the repository's.

@@ -1,0 +1,33 @@
+{
+  "$comment": "Configuration of the shared checks of bernardladenthin/actions (see its README).",
+  "templates": {
+    "sets": [
+      "common",
+      "java"
+    ],
+    "relocate": {
+      "lombok.config": "llama/lombok.config"
+    },
+    "exclude": [
+      ".github/workflows/sonarqube.yml",
+      ".mvn/settings.xml",
+      "CITATION.cff"
+    ]
+  },
+  "maven-versions": {
+    "poms": [
+      "pom.xml",
+      "llama/pom.xml",
+      "llama-langchain4j/pom.xml",
+      "llama-kotlin/pom.xml",
+      "llama-ffm/pom.xml",
+      "llama-platform/pom.xml",
+      "llama-atmosphere-agent/pom.xml",
+      "examples/server/pom.xml"
+    ],
+    "family": "java-maven",
+    "ignore-groups": [
+      "net.ladenthin"
+    ]
+  }
+}
