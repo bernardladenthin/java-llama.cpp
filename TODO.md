@@ -472,58 +472,49 @@ ROCm anyway. So this needs a real Radeon machine, or a deliberate decision to sh
 of a green link plus `verify-native-deps.py`'s dependency allowlist. Do not quietly treat "the job is
 green" as the measurement.
 
-### Linux s390x: glibc 2.38 floor (after the release)
+### Linux s390x: the glibc floor is 2.28 (fixed on `fix/s390x-glibc-floor`, 2026-10-26)
 
-**Measured 2026-10-25** on the CI artifacts of Publish runs 40217818548 and 40227501358.
+**The defect, measured 2026-10-25** on the CI artifacts of Publish runs 40217818548 and 40227501358:
+the 6.0.0 `cpu-linux-s390x` jar referenced `GLIBC_2.38` (`__isoc23_strtol` / `strtoul` / `sscanf`
+and relatives, `fmod`), `GLIBCXX_3.4.32` and `CXXABI_1.3.13` -- only the newest symbol versions of
+the ubuntu runner's cross sysroot (glibc 2.39, GCC 13.3.0), no code needed them. Loaded as a consumer
+does it (`llama` + `cpu-linux-s390x`, `LlamaLoader.initialize()`, s390x under qemu in Docker) it
+failed on RHEL 8.10 (`UnsatisfiedLinkError … GLIBC_2.38 not found`), RHEL 9 and Ubuntu 22.04, and
+loaded on Ubuntu 24.04; x86-64 and aarch64 (2.27 / 3.4.25, manylinux_2_28) loaded on RHEL 8. Not a
+decision but a side effect: `GLIBC_CEILING` held only the manylinux directories, and the qemu `ctest`
+ran against the same new sysroot.
 
-What each Linux CPU jar references:
+**The fix** (CLAUDE.md, "Linux s390x"): clang-18 cross-compiles against the pypa
+`manylinux_2_28_s390x` image unpacked as a sysroot, with gcc-toolset-14's libstdc++ treatment, on a
+runner pinned to `ubuntu-24.04`. Measured locally (b11887): `GLIBC_2.27`, `GLIBCXX_3.4.25`,
+`CXXABI_1.3.11`, new dependencies `libpthread.so.0` and `libdl.so.2`; 694/694 C++ tests under qemu
+against the sysroot's glibc 2.28 and natively on cfarm191 (LinuxONE z16, Debian 13, 2.7 s); the jar
+loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 jar still fails with
+`GLIBC_2.38 not found` -- the same script, so the check really catches it.
 
-| jar | GLIBC | GLIBCXX | built with |
-|---|---|---|---|
-| `cpu-linux-x86-64` | 2.27 | 3.4.25 | GCC 14.2.1, manylinux_2_28 |
-| `cpu-linux-aarch64` | 2.27 | 3.4.25 | GCC 14.2.1, manylinux_2_28 |
-| `cpu-linux-s390x` | **2.38** | **3.4.32** | GCC 13.3.0, Ubuntu 24.04 cross toolchain |
-
-The 2.38 symbols are `__isoc23_strtol` / `strtoul` / `sscanf` and their relatives, and `fmod`. The
-2.34 symbols are `pthread_*` and `dl*`. All of them are only the newest symbol versions of the
-cross sysroot (glibc 2.39); no code needs them.
-
-The load was tested as a consumer does it: `llama` + `cpu-linux-s390x` from `llama-jars` on the
-classpath, then `LlamaLoader.initialize()`, in Docker with s390x emulated by qemu.
-
-- **Fails** on RHEL 8.10 (glibc 2.28) with `UnsatisfiedLinkError … GLIBC_2.38 not found`. `ldd`
-  also lists `GLIBCXX_3.4.26`..`3.4.32` and `CXXABI_1.3.13`, so libstdc++ blocks it as well.
-- **Fails** on RHEL 9 (2.34) and Ubuntu 22.04 (2.35).
-- **Loads** on Ubuntu 24.04.
-- **`ldd` clean** on SLES 15 SP6 (BCI, glibc 2.38), Debian 13 and Ubuntu 25.04.
-- **Control:** `cpu-linux-x86-64` and `cpu-linux-aarch64` load on RHEL 8.
-
-**Not a decision but a side effect.** `GLIBC_CEILING` in `.github/buildcheck/nativedeps.py` holds
-only the manylinux directories. Every other Linux build "inherits the floor of the ubuntu runner";
-CLAUDE.md justifies that for GPU modules only. `1559fe4c` never mentions s390x. The CI test cannot
-see the gap: its `ctest` runs under qemu against the same 2.39 sysroot. The README and the
-CHANGELOG now state the real floor.
-
-Follow-ups, none of them before the release (no build change now):
-
-- [ ] **Pin `build-linux-s390x` to `runs-on: ubuntu-24.04`** instead of `ubuntu-latest`. The output
-      stays identical (24.04 is `ubuntu-latest` today), but a runner image change can no longer
-      raise the floor to ~2.42 without anyone noticing.
-- [ ] **`"Linux/s390x/cpu": (2, 38)` in `GLIBC_CEILING`.** This freezes today's floor, so
-      `verify-native-deps.py` fails loudly on any further rise instead of passing it. Extend
-      `test_nativedeps.py` with it. Optionally add a GLIBCXX ceiling too; the check reads GLIBC
-      only today.
-- [ ] **The real fix: floor 2.28 like the other Linux jars.** Then set `(2, 28)`, and put back the
-      README row and CHANGELOG item 5.
-      - **Candidates** (measure them, do not guess):
-        - (a) build in `quay.io/pypa/manylinux_2_28_s390x` (gcc-toolset-14) as aarch64 does. No
-          GitHub s390x runner exists: either emulate (slow) or check whether IBM's runner offer for
-          open-source projects applies;
-        - (b) cross-compile against a glibc 2.28 s390x sysroot (AlmaLinux 8) with a newer cross GCC.
-      - **libstdc++:** either way it needs the gcc-toolset treatment (newer parts linked statically,
-        `GLIBCXX` ≤ 3.4.25).
-      - **Acceptance:** on real LinuxONE hardware, cfarm191/192 (`workspacePrivate/cfarm`), with
-        RHEL 8 in Docker as the quick check.
+- [x] `build-linux-s390x` pinned to `ubuntu-24.04` (the toolchain names `clang-18`).
+- [x] `"Linux/s390x/cpu": (2, 28)` in `GLIBC_CEILING`, plus a libstdc++ ceiling for every floor
+      directory (`LIBSTDCXX_CEILING`: `GLIBCXX_3.4.25`, `CXXABI_1.3.11`, which x86-64, aarch64 and
+      the CUDA module already met); `test_nativedeps.py` covers both, and the job runs
+      `verify-native-deps.py` on its own tree.
+- [x] The floor 2.28 itself: candidate (b) of this list, with clang instead of a cross GCC (none is
+      packaged for glibc 2.28). Candidate (a), the image's own gcc under qemu, would take hours per
+      uncached tag build. README row back to 2.28; the 6.0.0 CHANGELOG item 5 stays as it was (it is
+      what 6.0.0 shipped), [Unreleased] records the fix.
+- [x] `smoke-glibc-floor`: the three Linux CPU jars are loaded on RHEL 8.10 in every run, s390x under
+      qemu; `check-natives.py` holds the rows to `floor-set` (derived from `GLIBC_CEILING`).
+- [ ] **Read the first Publish run of this branch** -- none has run yet: `build-linux-s390x` (apt
+      `clang-18` / `binutils-s390x-linux-gnu`, the `docker pull` of the s390x image on the runner,
+      sccache wrapping clang: hit rate on the second run), its `verify-native-deps.py` step,
+      `package` (the `llama-glibc-floor` upload) and the three `smoke-glibc-floor` rows -- the s390x
+      row needs qemu-user-static's binfmt entry to reach Docker on the runner (it did locally, with
+      Docker Desktop's own entry), the aarch64 row runs natively on `ubuntu-24.04-arm`.
+- [ ] Unmeasured: the speed of the clang build against the former GCC 13 build on real s390x (both
+      scalar, `-march=z13`). No model-backed check runs on s390x at all (a GGUF would have to be
+      big-endian), so only `llama-bench` on cfarm191 with a converted model could say.
+- [ ] **Owner:** cfarm192 refused the connection with "Host key verification failed" on 2026-10-26
+      (cfarm191 worked): its host key changed. Compare the new fingerprint with the farm's published
+      one before accepting it; nothing was changed in `known_hosts`.
 - **Ruled out:** `ubuntu-22.04` as the runner (glibc 2.35 still misses RHEL 8/9, and its cross GCC 11
   cannot build llama.cpp, which needs GCC >= 12). `-static-libstdc++` alone is ruled out too: it
   fixes GLIBCXX but not GLIBC.

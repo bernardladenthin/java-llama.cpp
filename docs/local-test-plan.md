@@ -22,6 +22,7 @@ expectation phrased like a result.
 | the C++ suite on x86-64, aarch64, s390x (big-endian, under qemu) | `C++ Tests …`, `build-linux-s390x` |
 | every native build of the 23 natives jars (8 library, 15 GPU module), plus their dependency allowlists | the build jobs, `package` |
 | the published jars launched as a consumer's classpath (library jar + every GPU module jar of the platform, the modules skipped for lack of a runtime) | the `smoke-natives` matrix, `smoke-natives-macos`, `smoke-agent-linux` |
+| the three Linux CPU jars loaded on their glibc floor, RHEL 8.10 (glibc 2.28), each on its own architecture (s390x under qemu) | the `smoke-glibc-floor` matrix |
 | the agent's `--web` at HTTP level (401, token cookie, console page) and `--acp` at protocol level | `smoke-agent-linux` |
 
 So a green CI run already means: it builds everywhere, the unit suites pass, the jars load, and the

@@ -9,6 +9,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Fixed
+- **`cpu-linux-s390x` loads on glibc 2.28, like the other Linux CPU jars** (RHEL 8, Ubuntu 20.04,
+  Debian 10 and later, z13 or newer). The 6.0.0 jar was cross-compiled against the
+  ubuntu runner's glibc 2.39 sysroot and needed `GLIBC_2.38`, `GLIBCXX_3.4.32` and `CXXABI_1.3.13`, so
+  it failed on RHEL 8/9 and Ubuntu 22.04 with `GLIBC_2.38 not found`. `build-linux-s390x` now
+  cross-compiles with clang against the manylinux_2_28 s390x image unpacked as a sysroot
+  (`.github/manylinux/manylinux_2_28-s390x-sysroot`, `s390x-toolchain.cmake`: glibc 2.28,
+  gcc-toolset-14's libstdc++ treatment); the library references `GLIBC_2.27`, `GLIBCXX_3.4.25` and
+  `CXXABI_1.3.11`, and its C++ suite runs under qemu against that runtime.
+
+### Added
+- **`smoke-glibc-floor`: every Linux CPU jar is loaded on RHEL 8.10 in CI**, on its own architecture
+  (x86-64 and aarch64 natively, s390x under qemu), from the published jars, in Red Hat's UBI 8 OpenJDK
+  21 runtime image (glibc 2.28, GCC 8's libstdc++). The set is derived from the glibc floors
+  (`check-natives.py floor-set`), and `check-natives.py` fails when the job's rows differ from it.
+- **`verify-native-deps.py` also holds the libstdc++ floor**: the directories with a glibc floor may
+  not reference a version above `GLIBCXX_3.4.25` / `CXXABI_1.3.11`, and `Linux/s390x/cpu` is held to
+  `GLIBC_2.28` like the other manylinux directories. Its output names the highest `GLIBC`, `GLIBCXX`
+  and `CXXABI` version of every library.
+
 ## [6.0.0] - 2026-10-25
 
 ### Upgrading from 5.1

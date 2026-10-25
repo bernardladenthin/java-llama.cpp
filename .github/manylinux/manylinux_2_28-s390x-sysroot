@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Unpacks the pypa manylinux_2_28 s390x image as a SYSROOT for the cross build of the
+# cpu-linux-s390x natives jar (s390x-toolchain.cmake next to this file): the x86-64 runner compiles
+# with clang against the image's headers and libraries, and nothing of the image is executed --
+# the build stays at native speed, and pulling a foreign-architecture image needs no qemu.
+#
+# Why this image: it is what the other two Linux CPU jars are built in (../dockcross
+# manylinux_2_28-x64, manylinux_2_28-aarch64), so s390x gets the same floor by the same means.
+# Contents (checked 2026-10-25): AlmaLinux 8.10, glibc 2.28, gcc-toolset-14 (GCC 14.2.1) with the
+# system libstdc++ of GCC 8 (GLIBCXX_3.4.25). gcc-toolset's libstdc++.so is a linker script that
+# takes the system libstdc++.so.6 plus libstdc++_nonshared.a, which links what GCC 14's headers
+# need beyond 3.4.25 statically -- the gcc-toolset treatment, here exactly as in a native build,
+# because clang uses the toolset's install directory (--gcc-install-dir) for headers and libraries.
+# The previous build used the cross toolchain of the ubuntu runner, whose glibc 2.39 sysroot and
+# GCC 13 libstdc++ made the jar need glibc 2.38 and GLIBCXX_3.4.32 (CLAUDE.md, "Linux s390x").
+#
+# Pinned by digest, tag 2026.10.03-1 (the tag of the aarch64 image). Bump it deliberately, with a
+# Publish run: the image decides the artifact's glibc floor (verify-native-deps.py holds
+# Linux/s390x/cpu to GLIBC_2.28) and its C++ runtime.
+#
+# Only what a compile, a link and the qemu run of the test binary read is unpacked (~300 MB):
+# the dynamic loader symlinks, /usr/lib64, /usr/include and gcc-toolset-14's headers and
+# compiler directory. The image's absolute symlinks (e.g. /usr/lib/ld64.so.1 -> /usr/lib64/...)
+# are rewritten relative so that they resolve inside the sysroot, not on the host.
+#
+# Usage: .github/manylinux/manylinux_2_28-s390x-sysroot <empty-or-new-directory>
+set -euo pipefail
+
+IMAGE="quay.io/pypa/manylinux_2_28_s390x@sha256:c64d9390efad901ed09ca959df4bc441468c65478f5750e37197813a6017a49c"
+GCC_DIR="opt/rh/gcc-toolset-14/root/usr/lib/gcc/s390x-redhat-linux/14"
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: $0 <sysroot-directory>" >&2
+  exit 2
+fi
+SYSROOT="$1"
+mkdir -p "$SYSROOT"
+if [ -n "$(ls -A "$SYSROOT")" ]; then
+  echo "$0: $SYSROOT is not empty" >&2
+  exit 2
+fi
+
+docker pull --quiet --platform linux/s390x "$IMAGE" >/dev/null
+cid="$(docker create --platform linux/s390x "$IMAGE" /bin/true)"
+trap 'docker rm "$cid" >/dev/null' EXIT
+docker export "$cid" | tar -x --no-same-owner -C "$SYSROOT" \
+  lib lib64 usr/lib/ld64.so.1 usr/lib64 usr/include \
+  opt/rh/gcc-toolset-14/root/usr/include "$GCC_DIR"
+
+# Absolute symlinks -> relative ones inside the sysroot. A target outside the unpacked set stays
+# dangling, as it would be at an absolute path; only those the build reads matter, checked below.
+SYSROOT="$(cd "$SYSROOT" && pwd)"
+find "$SYSROOT" -type l -lname '/*' -print0 | while IFS= read -r -d '' link; do
+  target="$(readlink "$link")"
+  ln -sfn "$(realpath -m --relative-to="$(dirname "$link")" "$SYSROOT$target")" "$link"
+done
+
+# What the toolchain relies on; a different image layout fails here, not in the middle of a build.
+for f in "lib/ld64.so.1" "usr/lib64/libc.so.6" "usr/lib64/libstdc++.so.6.0.25" "usr/lib64/libgcc_s.so.1" \
+         "$GCC_DIR/crtbeginS.o" "$GCC_DIR/libstdc++.so" "$GCC_DIR/libstdc++_nonshared.a" \
+         "opt/rh/gcc-toolset-14/root/usr/include/c++/14/vector"; do
+  if [ ! -e "$SYSROOT/$f" ]; then
+    echo "$0: the sysroot lacks $f (image layout changed?)" >&2
+    exit 1
+  fi
+done
+echo "s390x sysroot ready: $SYSROOT ($(du -sh "$SYSROOT" | cut -f1), glibc $(basename "$(readlink "$SYSROOT/usr/lib64/libc.so.6")"))"

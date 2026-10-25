@@ -155,7 +155,16 @@ class ParserTest(unittest.TestCase):
         self.assertEqual((plain["runpath"], plain["glibc"]), (None, None))
         info = nativedeps.elf_info(elf64(["libggml.so", "libc.so.6"], runpath="$ORIGIN",
                                          glibc=["GLIBC_2.28", "GLIBC_2.2.5", "GLIBC_2.17"]))
-        self.assertEqual(info, {"needed": ["libggml.so", "libc.so.6"], "runpath": "$ORIGIN", "glibc": (2, 28)})
+        self.assertEqual(info, {"needed": ["libggml.so", "libc.so.6"], "runpath": "$ORIGIN", "glibc": (2, 28),
+                                "glibcxx": None, "cxxabi": None})
+
+    def test_elf_libstdcxx_versions(self):
+        # the highest of each family; s390x's long double twins count as their family, and the
+        # versions without a number carry no floor (a crash on int("PRIVATE") before)
+        info = nativedeps.elf_info(elf64(["libstdc++.so.6", "libc.so.6"], glibc=[
+            "GLIBC_2.17", "GLIBC_PRIVATE", "GLIBCXX_3.4.9", "GLIBCXX_3.4.21", "GLIBCXX_LDBL_3.4.25",
+            "CXXABI_1.3.9", "CXXABI_TM_1", "CXXABI_LDBL_1.3"]))
+        self.assertEqual((info["glibc"], info["glibcxx"], info["cxxabi"]), ((2, 17), (3, 4, 25), (1, 3, 9)))
 
     def test_elf_load_alignments(self):
         self.assertEqual(nativedeps.elf_load_alignments(elf64_segments([16384, 65536])), [16384, 65536])
@@ -329,7 +338,32 @@ class ViolationsTest(unittest.TestCase):
         self.assertIn("GLIBC_2.28", failures[0])
         # a build on the ubuntu runner promises no floor
         self.assertEqual(nativedeps.violations("x/Linux/x86_64/vulkan/libggml-vulkan.so",
-                                               ["libggml-base.so", "libc.so.6"], runpath="$ORIGIN", glibc=(2, 39)), [])
+                                               ["libggml-base.so", "libc.so.6"], runpath="$ORIGIN", glibc=(2, 39),
+                                               glibcxx=(3, 4, 33), cxxabi=(1, 3, 15)), [])
+
+    def test_s390x_keeps_the_manylinux_floor(self):
+        # what the 6.0.0 jar, cross-built against the ubuntu runner's sysroot, referenced
+        rel = "x/Linux/s390x/cpu/libjllama.so"
+        deps = ["libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"]
+        failures = nativedeps.violations(rel, deps, glibc=(2, 38), glibcxx=(3, 4, 32), cxxabi=(1, 3, 13))
+        self.assertEqual(len(failures), 3, failures)
+        for found, floor in (("GLIBC_2.38", "GLIBC_2.28"), ("GLIBCXX_3.4.32", "GLIBCXX_3.4.25"),
+                             ("CXXABI_1.3.13", "CXXABI_1.3.11")):
+            self.assertTrue(any(found in f and floor in f for f in failures), (found, failures))
+        # the build against the manylinux_2_28 sysroot: glibc 2.28 names libpthread and libdl itself
+        self.assertEqual(nativedeps.violations(rel, deps + ["libpthread.so.0", "libdl.so.2"], glibc=(2, 27),
+                                               glibcxx=(3, 4, 25), cxxabi=(1, 3, 11)), [])
+
+    def test_the_manylinux_directories_keep_their_libstdcxx_floor(self):
+        for rel in ("x/Linux/x86_64/cpu/libllama.so", "x/Linux/aarch64/cpu/libllama.so"):
+            self.assertEqual(nativedeps.violations(rel, ["libc.so.6"], glibcxx=(3, 4, 25), cxxabi=(1, 3, 11)), [])
+            failures = nativedeps.violations(rel, ["libc.so.6"], glibcxx=(3, 4, 26))
+            self.assertEqual(len(failures), 1, failures)
+            self.assertIn("GLIBCXX_3.4.26", failures[0])
+            self.assertIn("libstdc++_nonshared.a", failures[0])
+        rel = "x/Linux/x86_64/cuda13/libggml-cuda.so"
+        self.assertEqual(len(nativedeps.violations(rel, ["libggml-base.so", "libc.so.6"], runpath="$ORIGIN",
+                                                   cxxabi=(1, 3, 12))), 1)
 
     def test_gpu_modules_are_held_to_the_denylist_and_must_be_modules(self):
         rel = "x/Linux/x86_64/cuda13/libggml-cuda.so"

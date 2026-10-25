@@ -32,8 +32,9 @@ and not a second monolithic library. Two more checks for ELF libraries: one that
 or is a module (whose libggml-base lies next to it only after extraction), must carry the run path
 `$ORIGIN` and nothing else (a build-tree path would point at the CI runner) -- except on Android,
 where a library carries no run path at all and only a build-tree path fails (see violations()) --
-and the directories in GLIBC_CEILING, built in a manylinux image, may not reference a glibc symbol
-version above the floor they promise. Android libraries must also have every LOAD segment 16 KB
+and the directories in GLIBC_CEILING, built in a manylinux image or against its sysroot, may not
+reference a glibc symbol version above the floor they promise, nor a libstdc++ one (GLIBCXX_*,
+CXXABI_*) above LIBSTDCXX_CEILING. Android libraries must also have every LOAD segment 16 KB
 aligned.
 That every listed build arrived is merge-native-artifacts.sh's check.
 
@@ -41,6 +42,7 @@ Exit codes: 0 clean, 1 violation, 2 nothing found to check.
 """
 
 import os
+import re
 import struct
 import sys
 
@@ -81,7 +83,9 @@ WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/aarch64/cpu"}
 
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
-# builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately.
+# builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately;
+# s390x is one of them since its build moved to the manylinux_2_28 sysroot (2026-10-25), and its
+# single static library needs libpthread and libdl, not librt (measured).
 # libgomp.so.1 is deliberately absent from the three Linux cpu entries: llama/CMakeLists.txt forces
 # GGML_OPENMP=OFF there so the jar loads in slim and distroless images, which do not ship it, and
 # this list is what keeps it that way -- a build that regains the dependency fails `package` instead
@@ -92,7 +96,8 @@ ALLOWED = {
                      "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"},
     "Linux/aarch64/cpu": {"libdl.so.2", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
                       "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-aarch64.so.1"},
-    "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
+    "Linux/s390x/cpu": {"libdl.so.2", "libpthread.so.0", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1",
+                        "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     # Exactly WINDOWS_OS, plus any api-ms-win-crt-* forwarder through ucrt_forwarder() -- see
@@ -122,12 +127,27 @@ ALLOWED["Linux-Android/aarch64/opencl"] = ALLOWED["Linux-Android/aarch64/cpu"] |
 # The glibc floor a directory promises (README, "Runtime requirement"): the highest GLIBC_x.y symbol
 # version any of its libraries references may not exceed it. These are the builds made in a
 # manylinux_2_28 image (publish.yml: crosscompile-linux-x86_64, crosscompile-linux-aarch64,
-# crosscompile-linux-x86_64-cuda); the other Linux builds inherit the floor of the ubuntu runner.
+# crosscompile-linux-x86_64-cuda) or cross-compiled against one unpacked as the sysroot
+# (build-linux-s390x, .github/manylinux/s390x-toolchain.cmake); the other Linux builds inherit the
+# floor of the ubuntu runner. s390x joined on 2026-10-25: its cross build against the ubuntu
+# runner's own sysroot had shipped GLIBC_2.38 without any check noticing (CLAUDE.md, "Linux s390x").
 GLIBC_CEILING = {
     "Linux/x86_64/cpu": (2, 28),
     "Linux/aarch64/cpu": (2, 28),
     "Linux/x86_64/cuda13": (2, 28),
+    "Linux/s390x/cpu": (2, 28),
 }
+# The libstdc++ half of the same floor, for the same directories: the system libstdc++.so.6 of
+# manylinux_2_28 is GCC 8's (GLIBCXX_3.4.25, CXXABI_1.3.11), and gcc-toolset-14 links whatever its
+# GCC 14 headers need beyond that from libstdc++_nonshared.a. A version above it means the library
+# was linked against a newer libstdc++ and fails to load on RHEL 8 even when its glibc symbols fit
+# (the s390x jar of 6.0.0 needed GLIBCXX_3.4.32 and CXXABI_1.3.13). Measured on the CI artifacts of
+# 2026-10-25: x86-64 and aarch64 reference 3.4.25 / 1.3.11 exactly, the CUDA module 3.4.21 / 1.3.9.
+LIBSTDCXX_CEILING = {"GLIBCXX": (3, 4, 25), "CXXABI": (1, 3, 11)}
+# The symbol versions elf_info() reports, by family. libstdc++ on s390x (and ppc64) also defines
+# GLIBCXX_LDBL_x / CXXABI_LDBL_x for its second long double ABI; they count as their family.
+# Anything else (GLIBC_PRIVATE, CXXABI_TM_1, ...) carries no floor and is skipped.
+SYMBOL_VERSION = re.compile(r"(GLIBC|GLIBCXX|CXXABI)_(?:LDBL_)?(\d+(?:\.\d+)*)")
 
 # Google Play's 16 KB page-size requirement (Android 15+ targets): every LOAD segment of an
 # Android library must be aligned to a multiple of it. CMake pins -Wl,-z,max-page-size=16384.
@@ -172,10 +192,12 @@ def _cstring(data, start):
 
 
 def elf_info(data):
-    """DT_NEEDED, the run path (DT_RUNPATH, else DT_RPATH, else None) and the highest GLIBC_x.y
-    symbol version the library references (a tuple, or None when it references none)."""
+    """DT_NEEDED, the run path (DT_RUNPATH, else DT_RPATH, else None) and the highest GLIBC_x.y,
+    GLIBCXX_x.y.z and CXXABI_x.y.z symbol version the library references (`glibc`, `glibcxx`,
+    `cxxabi`: a tuple each, or None when it references none of that family)."""
     is64, end, sections = _elf_sections(data)
-    needed, runpath, rpath, glibc = [], None, None, []
+    needed, runpath, rpath = [], None, None
+    versions = {"GLIBC": [], "GLIBCXX": [], "CXXABI": []}
     for sh_type, sh_offset, sh_size, sh_link, sh_info in sections:
         strtab = sections[sh_link][1] if sh_link < len(sections) else 0
         if sh_type == SHT_DYNAMIC:
@@ -197,15 +219,16 @@ def elf_info(data):
                 aux = off + vn_aux
                 for _ in range(vn_cnt):
                     _, _, _, vna_name, vna_next = struct.unpack_from(end + "IHHII", data, aux)
-                    name = _cstring(data, strtab + vna_name)
-                    if name.startswith("GLIBC_"):
-                        glibc.append(tuple(int(p) for p in name[len("GLIBC_"):].split(".")))
+                    match = SYMBOL_VERSION.fullmatch(_cstring(data, strtab + vna_name))
+                    if match:
+                        versions[match.group(1)].append(tuple(int(p) for p in match.group(2).split(".")))
                     aux += vna_next
                 if vn_next == 0:
                     break
                 off += vn_next
+    top = {family: max(found) if found else None for family, found in versions.items()}
     return {"needed": needed, "runpath": runpath if runpath is not None else rpath,
-            "glibc": max(glibc) if glibc else None}
+            "glibc": top["GLIBC"], "glibcxx": top["GLIBCXX"], "cxxabi": top["CXXABI"]}
 
 
 def elf_needed(data):
@@ -482,15 +505,16 @@ def denied(deps):
     return [d for d in deps if any(bad in d.lower() for bad in DENIED)]
 
 
-def glibc_name(version):
-    return "GLIBC_" + ".".join(str(p) for p in version)
+def glibc_name(version, family="GLIBC"):
+    return family + "_" + ".".join(str(p) for p in version)
 
 
-def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
+def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None, glibcxx=None, cxxabi=None):
     """The violations of one library, `rel` being its path below the natives root
     (.../<OS>/<ARCH>/<backend>/<library>); `alignments` are its LOAD segment alignments (checked
     for Android libraries), `siblings` the names of the other files in its directory, `runpath`
-    its ELF run path and `glibc` the highest glibc symbol version it references."""
+    its ELF run path, `glibc` the highest glibc symbol version it references and `glibcxx` /
+    `cxxabi` the highest libstdc++ ones."""
     failures = [f"{rel} needs {d}, which no consumer can be expected to have" for d in denied(deps)]
     parts = rel.split("/")
     key = "/".join(parts[-4:-1]) if len(parts) >= 4 else ""
@@ -553,7 +577,14 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
     ceiling = GLIBC_CEILING.get(key)
     if ceiling and glibc and glibc > ceiling:
         failures.append(f"{rel} references {glibc_name(glibc)}, above the {glibc_name(ceiling)} floor its "
-                        f"directory promises -- was it built in the manylinux image?")
+                        f"directory promises -- was it built in (or against) the manylinux image?")
+    if ceiling:
+        for family, found in (("GLIBCXX", glibcxx), ("CXXABI", cxxabi)):
+            top = LIBSTDCXX_CEILING[family]
+            if found and found > top:
+                failures.append(f"{rel} references {glibc_name(found, family)}, above the {glibc_name(top, family)} "
+                                f"of manylinux_2_28's libstdc++ -- was it linked against gcc-toolset's libstdc++ "
+                                f"(the system libstdc++.so.6 plus libstdc++_nonshared.a)?")
     allowed = ALLOWED.get(key)
     if allowed is None:
         if key.rsplit("/", 1)[-1] not in CPU_BACKENDS:
@@ -579,23 +610,26 @@ def main(argv):
         checked += 1
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         siblings = {n for n in os.listdir(os.path.dirname(path)) if n != os.path.basename(path)}
-        alignments, runpath, glibc, note = (), None, None, ""
+        alignments, runpath, glibc, glibcxx, cxxabi, note = (), None, None, None, None, ""
         try:
             if path.endswith(".so"):
                 with open(path, "rb") as f:
                     data = f.read()
                 info = elf_info(data)
                 deps, runpath, glibc = info["needed"], info["runpath"], info["glibc"]
+                glibcxx, cxxabi = info["glibcxx"], info["cxxabi"]
                 if "/Linux-Android/" in "/" + rel:
                     alignments = elf_load_alignments(data)
-                note = (f" [runpath={runpath}]" if runpath else "") + (f" [{glibc_name(glibc)}]" if glibc else "")
+                note = (f" [runpath={runpath}]" if runpath else "") + "".join(
+                    f" [{glibc_name(v, family)}]" for family, v in (("GLIBC", glibc), ("GLIBCXX", glibcxx),
+                                                                     ("CXXABI", cxxabi)) if v)
             else:
                 deps = dependencies(path)
         except (ValueError, struct.error) as e:
             failures.append(f"{rel}: not a readable native library ({e})")
             continue
         print(f"{rel}: {' '.join(deps)}{note}")
-        failures += violations(rel, deps, alignments, siblings, runpath, glibc)
+        failures += violations(rel, deps, alignments, siblings, runpath, glibc, glibcxx, cxxabi)
         if os.path.basename(path) in JLLAMA_LIBRARIES:
             try:
                 names = exports(path)

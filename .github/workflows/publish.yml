@@ -888,19 +888,25 @@ jobs:
   build-linux-s390x:
     name: Build and Test Linux s390x (big-endian, qemu)
     needs: [startgate, build-webui]
-    # Cross-compile for IBM Z (s390x, BIG-ENDIAN) with the GCC cross toolchain, then run the full
-    # C++ unit suite under qemu-user — a real big-endian correctness gate for our helpers and
-    # serializers (esp. the little-endian WAV writer, JSON/token/embedding transforms). The BUILD
-    # is native speed (x86 cross-gcc); only the tiny test binary is emulated. s390x is a CPU
-    # platform like aarch64 and ships as the cpu-linux-s390x natives jar. Model-backed Java tests
-    # are NOT run under emulation (a JVM + GGUF inference under qemu-user is slow/flaky); the
-    # C++ gate covers the actual byte-order risk since the Java<->JNI boundary uses host-native
-    # array copies. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml uses
-    # its own std::thread pool). CMAKE_CROSSCOMPILING_EMULATOR makes ctest run the s390x exe via qemu;
-    # QEMU_LD_PREFIX lets the emulated binary find the s390x sysroot libs.
-    runs-on: ubuntu-latest
+    # Cross-compile for IBM Z (s390x, BIG-ENDIAN), then run the full C++ unit suite under qemu-user --
+    # a real big-endian correctness gate for our helpers and serializers (esp. the little-endian WAV
+    # writer, JSON/token/embedding transforms). The BUILD is native speed: clang on the x86-64 runner
+    # against the manylinux_2_28 s390x image unpacked as the sysroot (.github/manylinux/
+    # manylinux_2_28-s390x-sysroot and s390x-toolchain.cmake), linked by binutils-s390x-linux-gnu, so
+    # the jar has the floor of the other Linux CPU jars -- glibc 2.28, GLIBCXX_3.4.25 -- which
+    # verify-native-deps.py holds and smoke-glibc-floor proves on RHEL 8. (Until 2026-10-25 the job
+    # used the runner's GCC 13 cross toolchain and its glibc 2.39 sysroot: the 6.0.0 jar needed glibc
+    # 2.38 and GCC 13's libstdc++, CLAUDE.md "Linux s390x".) Only the test binary is emulated, and it
+    # runs against the sysroot's glibc 2.28 and GCC 8 libstdc++.so.6, the oldest runtime the jar
+    # promises. s390x is a CPU platform like aarch64 and ships as the cpu-linux-s390x natives jar.
+    # Model-backed Java tests are NOT run under emulation (a JVM + GGUF inference under qemu-user is
+    # slow/flaky); the C++ gate covers the actual byte-order risk since the Java<->JNI boundary uses
+    # host-native array copies. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml uses its own
+    # std::thread pool). The toolchain's CMAKE_CROSSCOMPILING_EMULATOR runs the s390x executables
+    # through qemu with QEMU_LD_PREFIX pointing at the sysroot.
+    # Pinned to ubuntu-24.04: the toolchain names its clang-18.
+    runs-on: ubuntu-24.04
     env:
-      QEMU_LD_PREFIX: /usr/s390x-linux-gnu
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -915,10 +921,14 @@ jobs:
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      - name: Install s390x cross toolchain + qemu-user
+      - name: Install clang, the s390x binutils and qemu-user
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-s390x-linux-gnu g++-s390x-linux-gnu qemu-user-static
+          sudo apt-get install -y clang-18 binutils-s390x-linux-gnu qemu-user-static
+      - name: Unpack the manylinux_2_28 s390x sysroot
+        run: |
+          .github/manylinux/manylinux_2_28-s390x-sysroot "$RUNNER_TEMP/s390x-sysroot"
+          echo "JLLAMA_S390X_SYSROOT=$RUNNER_TEMP/s390x-sysroot" >> "$GITHUB_ENV"
       # NOTE: GGML_NATIVE=OFF is required here (an x86 build host must not bake -march=native into an
       # s390x artifact), and it has a non-obvious second effect: ggml declares
       # `option(GGML_VXE "ggml: enable vxe" ${GGML_NATIVE})`, so VXE is off too. No `-mvx -mzvector` is
@@ -926,16 +936,20 @@ jobs:
       # never self-defines `__VXE__`/`__VXE2__`. This job therefore builds a SCALAR s390x binary -- which is
       # exactly right for what it is (a big-endian correctness gate for our own layer, not a perf target).
       # Do NOT "fix" a VXE-related compile error by adding -DGGML_VXE=ON: that define sets __VXE__ and
-      # __VXE2__ together while -march stays at the toolchain default arch11, so every z14+ builtin is
-      # rejected. See the `0013` note in docs/history/dropped-llama-patches.md for the measured
+      # __VXE2__ together while -march stays at z13 (arch11, s390x-toolchain.cmake), so every z14+
+      # builtin is rejected. See the `0013` note in docs/history/dropped-llama-patches.md for the measured
       # comparison (the patch itself is gone -- upstream merged it as ggml-org/llama.cpp#28775).
       - name: Build libraries (cross-compile s390x)
         shell: bash
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_TESTING=ON -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=s390x -DCMAKE_C_COMPILER=s390x-linux-gnu-gcc -DCMAKE_CXX_COMPILER=s390x-linux-gnu-g++ -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/qemu-s390x-static -DOS_NAME=Linux -DOS_ARCH=s390x"
+          .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/.github/manylinux/s390x-toolchain.cmake -DOS_NAME=Linux -DOS_ARCH=s390x"
       - name: Run C++ unit tests under qemu-s390x (big-endian gate)
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
+      # The same check `package` runs over the merged tree, here so a lost floor fails in this job:
+      # GLIBC_2.28, GLIBCXX_3.4.25, CXXABI_1.3.11 and the exact dependency list.
+      - name: Check the dependencies and the glibc floor
+        run: python3 .github/verify-native-deps.py llama/src/main/natives/net/ladenthin/llama/
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -3273,6 +3287,56 @@ jobs:
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
+      # The library jars that promise a glibc floor (check-natives.py floor-set), with the classes
+      # jar and its dependencies, for smoke-glibc-floor below.
+      - name: Upload the glibc-floor set
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: llama-glibc-floor
+          path: smoke-sets/glibc-floor/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  # Every library jar that promises a glibc floor (nativedeps.GLIBC_CEILING: the three Linux CPU
+  # jars) loaded on the oldest distribution of that floor, RHEL 8.10 (glibc 2.28, GCC 8's
+  # libstdc++.so.6), on its own architecture: x86-64 and aarch64 natively, s390x under qemu-user
+  # (smoke-glibc-floor.sh, NativeLoadSmoke.java in Red Hat's UBI 8 OpenJDK 21 runtime image).
+  # verify-native-deps.py in `package` compares the symbol versions with the ceiling; this is the load
+  # itself. Before it no job ran a jar on an old runtime, and the s390x jar of 6.0.0 shipped needing
+  # glibc 2.38 with every job green (CLAUDE.md, "Linux s390x"). check-natives.py holds the rows to the
+  # floor set. Model-free and quick (the s390x row JIT-starts a JVM under qemu: ~15 s locally).
+  smoke-glibc-floor:
+    name: Load the Linux CPU jars on RHEL 8 (${{ matrix.target }})
+    needs: [package]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x86-64, runner: ubuntu-24.04 }
+          - { target: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { target: linux-s390x, runner: ubuntu-24.04 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: llama-glibc-floor
+          path: floor/
+      # javac for the smoke class; the image brings its own JRE.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - name: Install qemu-user (s390x on the x86-64 runner)
+        if: matrix.target == 'linux-s390x'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+      - name: Load the jar on RHEL 8
+        run: .github/smoke-glibc-floor.sh floor ${{ matrix.target }}
 
   # Every smoke set, launched on a GPU-less runner of its OS/arch: the loader puts every GPU module
   # jar of the platform next to the CPU library (the loader line names each one, checked against
@@ -3553,6 +3617,7 @@ jobs:
       - smoke-natives
       - smoke-natives-macos
       - smoke-agent-linux
+      - smoke-glibc-floor
       - vmlens
       - repository-checks
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
@@ -3678,6 +3743,7 @@ jobs:
       - smoke-natives
       - smoke-natives-macos
       - smoke-agent-linux
+      - smoke-glibc-floor
       - vmlens
       - repository-checks
     runs-on: ubuntu-latest

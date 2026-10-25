@@ -43,7 +43,8 @@ NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 KINDS = ("library", "module")
 
 # Platforms that get no smoke set: `java -cp` does not apply on Android (the AAR and the emulator
-# job do), and no GitHub runner exists for s390x (its C++ suite runs under qemu instead).
+# job do), and no GitHub runner exists for s390x (its C++ suite runs under qemu instead, and
+# smoke-glibc-floor loads its jar under qemu on RHEL 8 -- a load, not the model-backed server smoke).
 SMOKE_EXCLUDED_OSES = ("Linux-Android",)
 # The job that re-uploads the Windows natives artifacts Authenticode-signed (CLAUDE.md, "Code signing").
 SIGN_JOB = "sign-windows-natives"
@@ -132,6 +133,54 @@ def smoke_targets(natives):
 def smoke_set(natives, smoke_target):
     """The natives jars of one smoke target: the library row and every module row of its platform."""
     return [r for r in natives if target(r) == smoke_target]
+
+
+# The glibc-floor smoke (publish.yml smoke-glibc-floor): every library jar whose directory promises a
+# glibc floor (nativedeps.GLIBC_CEILING) is loaded on the oldest distribution of that floor, RHEL 8
+# (glibc 2.28 and GCC 8's libstdc++.so.6), on its own architecture -- s390x under qemu. verify-native-
+# deps.py reads the symbol versions; only a load on the old runtime proves the jar starts there, and
+# none ran before the s390x jar of 6.0.0 shipped needing glibc 2.38 (CLAUDE.md, "Linux s390x"). `package`
+# uploads one set (the classes jar, its dependencies and these jars) as FLOOR_ARTIFACT, and the job has
+# one matrix row per floor target, which check_floor holds to the list.
+FLOOR_ARTIFACT = "llama-glibc-floor"
+FLOOR_JOB = "smoke-glibc-floor"
+
+
+def floor_set(natives):
+    """The library rows whose directory promises a glibc floor (nativedeps.GLIBC_CEILING), in list order.
+    Module rows are left out: a GPU module needs its vendor runtime, which an RHEL 8 image does not have."""
+    return [r for r in libraries(natives) if r["directory"] in nativedeps.GLIBC_CEILING]
+
+
+def floor_targets(natives):
+    """The <os>-<arch> of every floor_set row, sorted: one smoke-glibc-floor matrix row each."""
+    return sorted(target(r) for r in floor_set(natives))
+
+
+def check_floor(natives, jobs):
+    """`package` uploads the floor set as FLOOR_ARTIFACT, and FLOOR_JOB downloads it and launches one
+    matrix row per floor target: a library jar that promises a glibc floor does not ship unloaded on it."""
+    targets = floor_targets(natives)
+    if not targets:
+        return []
+    failures = []
+    package = jobs.get("package")
+    if package is not None and FLOOR_ARTIFACT not in package.uploads():
+        failures.append(f"publish.yml: package does not upload {FLOOR_ARTIFACT}, the set {FLOOR_JOB} loads "
+                        f"(package-smoke-sets.sh writes it)")
+    job = jobs.get(FLOOR_JOB)
+    if job is None:
+        return failures + [f"publish.yml has no `{FLOOR_JOB}` job, which loads {', '.join(targets)} on RHEL 8"]
+    downloads = any(any("actions/download-artifact@" in line for line in step)
+                    and any(line.strip() == f"name: {FLOOR_ARTIFACT}" for line in step) for step in job.steps())
+    if not downloads:
+        failures.append(f"publish.yml {FLOOR_JOB} does not download {FLOOR_ARTIFACT}")
+    launched = {m.group(1) for m in map(MATRIX_ROW.match, job.lines) if m}
+    failures += [f"publish.yml {FLOOR_JOB}: no matrix row for {t}, whose jar promises the glibc floor of "
+                 f"nativedeps.GLIBC_CEILING" for t in sorted(set(targets) - launched)]
+    failures += [f"publish.yml {FLOOR_JOB}: the matrix row {t} is no library jar with a glibc floor "
+                 f"(nativedeps.GLIBC_CEILING)" for t in sorted(launched - set(targets))]
+    return failures
 
 
 def compare(what, expected, actual):
@@ -514,6 +563,7 @@ def check(root):
             + check_pom(natives, read(root, "llama/pom.xml"))
             + check_platform(natives, read(root, "llama-platform/pom.xml"))
             + check_workflow(natives, workflow.parse(read(root, ".github/workflows/publish.yml")))
+            + check_floor(natives, workflow.parse(read(root, ".github/workflows/publish.yml")))
             + check_loader(natives, read(root, "llama/src/main/java/net/ladenthin/llama/loader/LlamaLoader.java"))
             + check_cmake(natives, read(root, "llama/CMakeLists.txt"))
             + check_dependency_allowlist(natives, nativedeps.ALLOWED)
