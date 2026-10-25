@@ -3,153 +3,40 @@ server: let an embedding host attach the HTTP frontend to an already-loaded serv
 Adds llama_server_attach(argc, argv, server_context &, server_routes &), which serves a model the
 host has already loaded over the upstream HTTP frontend: no second model load, no start_loop() --
 the host's worker keeps driving the shared server_context and the HTTP routes post tasks to its
-queue. The stable route table is factored out of llama_server() into
-llama_server_register_common_routes(), byte-identical to the block it replaces (the invariant to
-re-check on every bump); the attach entry point registers it plus the non-router resumable-streaming
-handlers and the GCP shim, answers /cors-proxy and /tools with 403 (the MCP/tools host belongs to a
-full llama-server), marks ready immediately and blocks in ctx_http.join() until
+queue. The attach entry point registers upstream's own server_register_routes() (the route table and
+the GCP shim) plus the instance (non-router) resumable-streaming handlers through
+server_register_stream_routes(), exactly what server_run_instance() registers, so the two entry
+points cannot drift on the endpoint set; it answers /cors-proxy and /tools with 403 (the MCP/tools
+host belongs to a full llama-server), marks ready immediately and blocks in ctx_http.join() until
 llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
 server_routes' constructor registers a sleeping-state callback on the model's task queue that
 outlives the attach call. Applies after 0001 and 0006.
 
-Refreshed at b11799: POST /tts (b11781, #26603) and the WebSocket /v1/realtime (b11780, #30636) joined
-the route table between the transcription and the Anthropic routes; both are in the removed block and
-in the helper, so attach mode serves them too.
+Refreshed at b11881: #31113 factored the route table out of llama_server() itself
+(server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
+it -- the helper this patch used to add, and the "verbatim copy" invariant it had to keep, are gone.
 
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index d3131f206..287d6708e 100644
+index 2fa87673c..7d0691999 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -91,6 +91,7 @@ int llama_server(int argc, char ** argv);
+@@ -96,6 +96,7 @@ int llama_server(int argc, char ** argv);
+ 
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
- int llama_server(common_params & params, int argc, char ** argv, server_child & child);
 +int llama_server_attach(int argc, char ** argv, server_context & ctx_server, server_routes & routes);
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
-@@ -139,6 +140,60 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
-     };
- }
- 
-+// [jllama] Pure route table shared by the standalone single-model server and the embedded
-+// attach mode (llama_server_attach below), extracted verbatim from llama_server() so the two
-+// entry points cannot drift on the core endpoint set. Only the stable, state-independent
-+// routes live here (health .. slots); the resumable-streaming routes (handlers differ by
-+// router vs non-router), the GCP-compat shim and the experimental CORS-proxy / MCP /
-+// built-in-tools wiring stay in each entry point, since upstream couples them to per-call
-+// state (server_mcp mcp_mgr lifecycle, is_router_server).
-+static void llama_server_register_common_routes(server_http_context & ctx_http, server_routes & routes) {
-+    ctx_http.get ("/health",                   ex_wrapper(routes.get_health)); // public endpoint (no API key check)
-+    ctx_http.get ("/v1/health",                ex_wrapper(routes.get_health)); // public endpoint (no API key check)
-+    ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
-+    ctx_http.get ("/props",                    ex_wrapper(routes.get_props));
-+    ctx_http.post("/props",                    ex_wrapper(routes.post_props));
-+    ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
-+    ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
-+    ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
-+    ctx_http.post("/completions",              ex_wrapper(routes.post_completions));
-+    ctx_http.post("/v1/completions",           ex_wrapper(routes.post_completions_oai));
-+    ctx_http.post("/chat/completions",         ex_wrapper(routes.post_chat_completions));
-+    ctx_http.post("/v1/chat/completions",      ex_wrapper(routes.post_chat_completions));
-+    ctx_http.post("/v1/chat/completions/control", ex_wrapper(routes.post_control));
-+    ctx_http.post("/v1/responses",             ex_wrapper(routes.post_responses_oai));
-+    ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
-+    ctx_http.post("/v1/audio/transcriptions",  ex_wrapper(routes.post_transcriptions_oai));
-+    ctx_http.post("/audio/transcriptions",     ex_wrapper(routes.post_transcriptions_oai));
-+    ctx_http.post("/tts",                      ex_wrapper(routes.post_tts));
-+    ctx_http.ws  ("/v1/realtime",              routes.ws_realtime);
-+    ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
-+    ctx_http.post("/infill",                   ex_wrapper(routes.post_infill));
-+    ctx_http.post("/embedding",                ex_wrapper(routes.post_embeddings)); // legacy
-+    ctx_http.post("/embeddings",               ex_wrapper(routes.post_embeddings));
-+    ctx_http.post("/v1/embeddings",            ex_wrapper(routes.post_embeddings_oai));
-+    ctx_http.post("/rerank",                   ex_wrapper(routes.post_rerank));
-+    ctx_http.post("/reranking",                ex_wrapper(routes.post_rerank));
-+    ctx_http.post("/v1/rerank",                ex_wrapper(routes.post_rerank));
-+    ctx_http.post("/v1/reranking",             ex_wrapper(routes.post_rerank));
-+    ctx_http.post("/v1/systemone",             ex_wrapper(routes.post_systemone));
-+    ctx_http.post("/tokenize",                 ex_wrapper(routes.post_tokenize));
-+    ctx_http.post("/detokenize",               ex_wrapper(routes.post_detokenize));
-+    ctx_http.post("/apply-template",           ex_wrapper(routes.post_apply_template));
-+    // token counting
-+    ctx_http.post("/chat/completions/input_tokens",    ex_wrapper(routes.post_chat_completions_tok));
-+    ctx_http.post("/v1/chat/completions/input_tokens", ex_wrapper(routes.post_chat_completions_tok));
-+    ctx_http.post("/responses/input_tokens",           ex_wrapper(routes.post_responses_tok_oai));
-+    ctx_http.post("/v1/responses/input_tokens",        ex_wrapper(routes.post_responses_tok_oai));
-+    ctx_http.post("/v1/messages/count_tokens",         ex_wrapper(routes.post_anthropic_count_tokens)); // anthropic token counting
-+    // LoRA adapters hotswap
-+    ctx_http.get ("/lora-adapters",            ex_wrapper(routes.get_lora_adapters));
-+    ctx_http.post("/lora-adapters",            ex_wrapper(routes.post_lora_adapters));
-+    // Save & load slots
-+    ctx_http.get ("/slots",                    ex_wrapper(routes.get_slots));
-+    ctx_http.post("/slots/:id_slot",           ex_wrapper(routes.post_slots));
-+}
-+
- int llama_server(int argc, char ** argv) {
-     server_child child;
- 
-@@ -334,50 +389,7 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
-         ctx_http.del ("/models",               ex_wrapper(models_routes->del_router_models));
-     }
- 
--    ctx_http.get ("/health",                   ex_wrapper(routes.get_health)); // public endpoint (no API key check)
--    ctx_http.get ("/v1/health",                ex_wrapper(routes.get_health)); // public endpoint (no API key check)
--    ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
--    ctx_http.get ("/props",                    ex_wrapper(routes.get_props));
--    ctx_http.post("/props",                    ex_wrapper(routes.post_props));
--    ctx_http.get ("/models",                   ex_wrapper(routes.get_models));
--    ctx_http.get ("/v1/models",                ex_wrapper(routes.get_models));
--    ctx_http.post("/completion",               ex_wrapper(routes.post_completions)); // legacy
--    ctx_http.post("/completions",              ex_wrapper(routes.post_completions));
--    ctx_http.post("/v1/completions",           ex_wrapper(routes.post_completions_oai));
--    ctx_http.post("/chat/completions",         ex_wrapper(routes.post_chat_completions));
--    ctx_http.post("/v1/chat/completions",      ex_wrapper(routes.post_chat_completions));
--    ctx_http.post("/v1/chat/completions/control", ex_wrapper(routes.post_control));
--    ctx_http.post("/v1/responses",             ex_wrapper(routes.post_responses_oai));
--    ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));
--    ctx_http.post("/v1/audio/transcriptions",  ex_wrapper(routes.post_transcriptions_oai));
--    ctx_http.post("/audio/transcriptions",     ex_wrapper(routes.post_transcriptions_oai));
--    ctx_http.post("/tts",                      ex_wrapper(routes.post_tts));
--    ctx_http.ws  ("/v1/realtime",              routes.ws_realtime);
--    ctx_http.post("/v1/messages",              ex_wrapper(routes.post_anthropic_messages)); // anthropic messages API
--    ctx_http.post("/infill",                   ex_wrapper(routes.post_infill));
--    ctx_http.post("/embedding",                ex_wrapper(routes.post_embeddings)); // legacy
--    ctx_http.post("/embeddings",               ex_wrapper(routes.post_embeddings));
--    ctx_http.post("/v1/embeddings",            ex_wrapper(routes.post_embeddings_oai));
--    ctx_http.post("/rerank",                   ex_wrapper(routes.post_rerank));
--    ctx_http.post("/reranking",                ex_wrapper(routes.post_rerank));
--    ctx_http.post("/v1/rerank",                ex_wrapper(routes.post_rerank));
--    ctx_http.post("/v1/reranking",             ex_wrapper(routes.post_rerank));
--    ctx_http.post("/v1/systemone",             ex_wrapper(routes.post_systemone));
--    ctx_http.post("/tokenize",                 ex_wrapper(routes.post_tokenize));
--    ctx_http.post("/detokenize",               ex_wrapper(routes.post_detokenize));
--    ctx_http.post("/apply-template",           ex_wrapper(routes.post_apply_template));
--    // token counting
--    ctx_http.post("/chat/completions/input_tokens",    ex_wrapper(routes.post_chat_completions_tok));
--    ctx_http.post("/v1/chat/completions/input_tokens", ex_wrapper(routes.post_chat_completions_tok));
--    ctx_http.post("/responses/input_tokens",           ex_wrapper(routes.post_responses_tok_oai));
--    ctx_http.post("/v1/responses/input_tokens",        ex_wrapper(routes.post_responses_tok_oai));
--    ctx_http.post("/v1/messages/count_tokens",         ex_wrapper(routes.post_anthropic_count_tokens)); // anthropic token counting
--    // LoRA adapters hotswap
--    ctx_http.get ("/lora-adapters",            ex_wrapper(routes.get_lora_adapters));
--    ctx_http.post("/lora-adapters",            ex_wrapper(routes.post_lora_adapters));
--    // Save & load slots
--    ctx_http.get ("/slots",                    ex_wrapper(routes.get_slots));
--    ctx_http.post("/slots/:id_slot",           ex_wrapper(routes.post_slots));
-+    llama_server_register_common_routes(ctx_http, routes);
- 
-     // resumable streaming: a child binds the local session factories, the router binds
-     // proxies that resolve the owning child, see server-stream.h
-@@ -653,3 +665,98 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
- 
-     return 0;
+@@ -831,3 +832,96 @@ int llama_server(common_params & params, int argc, char ** argv) {
+     server_role role;
+     return server_run(params, argc, argv, role, opts);
  }
 +
-+// [jllama] Attach the upstream HTTP frontend — full core route table, WebUI assets, resumable
-+// streaming — to an ALREADY-LOADED server_context owned by an embedding caller (a LlamaModel
-+// driven over JNI). Unlike llama_server(): no common_init(), no backend/NUMA init, no model
-+// load and no start_loop() — the caller's worker thread keeps driving the context, the HTTP
++// [jllama] Attach the upstream HTTP frontend — the route table of every server, WebUI assets,
++// resumable streaming — to an ALREADY-LOADED server_context owned by an embedding caller (a
++// LlamaModel driven over JNI). Unlike llama_server(): no common_init(), no backend/NUMA init, no
++// model load and no start_loop() — the caller's worker thread keeps driving the context, the HTTP
 +// routes only post tasks to its queue (the queue is the synchronization point). Parses only the
 +// HTTP-relevant argv (--host/--port/--api-key/...; no -m). Blocks until
 +// llama_server_request_shutdown(); never terminates the shared server_context or frees the
@@ -159,7 +46,7 @@ index d3131f206..287d6708e 100644
 +// llama-server host, not an embedded model); they answer 403 "disabled" like a stock build with
 +// those features off.
 +// `routes` is the caller's own server_routes over that context -- the one its model load built,
-+// as llama_server() builds one before load_model(). It must be the caller's: server_routes
++// as server_run_instance() builds one before load_model(). It must be the caller's: server_routes
 +// registers a sleeping-state callback on the context's task queue in its constructor and the
 +// queue never unregisters, so a server_routes built on this frame left a callback into a
 +// destroyed object behind when the attach returned, and the model's next idle sleep ran it.
@@ -187,15 +74,13 @@ index d3131f206..287d6708e 100644
 +        return 1;
 +    }
 +
-+    llama_server_register_common_routes(ctx_http, routes);
-+
-+    // single-model (non-router) resumable-streaming handlers (upstream b10154 paths)
-+    ctx_http.get ("/v1/stream",                ex_wrapper(server_stream_make_get_handler()));
-+    ctx_http.post("/v1/streams/lookup",        ex_wrapper(server_stream_make_lookup_handler()));
-+    ctx_http.del ("/v1/stream",                ex_wrapper(server_stream_make_delete_handler()));
-+
-+    // Google Cloud Platform (Vertex AI) compat — cheap, kept for parity with llama_server()
-+    ctx_http.register_gcp_compat();
++    // the same route table, GCP compat shim and instance (non-router) streaming handlers as
++    // server_run_instance(), so the two entry points cannot drift on the endpoint set
++    server_register_routes(ctx_http, routes);
++    server_register_stream_routes(ctx_http,
++        server_stream_make_get_handler(),
++        server_stream_make_lookup_handler(),
++        server_stream_make_delete_handler());
 +
 +    // return 403 for the experimental features attach mode does not wire (CORS proxy, built-in
 +    // tools), so those paths answer "disabled" rather than 404 — matching a stock server built

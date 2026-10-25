@@ -25,8 +25,8 @@ match a binary to this page.
 | 0001 | [`0001-win32-arg-parse-embed-guard.patch`](#0001-win32-arg-parse-embed-guardpatch) | common: parse exactly the argv an embedding caller passes (no GetCommandLineW override) | 35 | 36 |
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 6 |
-| 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 4 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 8 |
+| 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
 | 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 30 |
@@ -121,6 +121,13 @@ hijack the JVM's), common_params_parse instead of common_params_parse_main for t
 it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
 over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
 Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+
+Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
+server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
+server_run_opts::install_signal_handlers (upstream's own switch, which llama-cli uses) instead of
+guarding the sigaction block, and each role function that installs a shutdown handler declares the
+reset after the last local its handler captures: models_routes in the router, ctx_http in the
+instance.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -135,18 +142,18 @@ server: let an embedding host attach the HTTP frontend to an already-loaded serv
 Adds llama_server_attach(argc, argv, server_context &, server_routes &), which serves a model the
 host has already loaded over the upstream HTTP frontend: no second model load, no start_loop() --
 the host's worker keeps driving the shared server_context and the HTTP routes post tasks to its
-queue. The stable route table is factored out of llama_server() into
-llama_server_register_common_routes(), byte-identical to the block it replaces (the invariant to
-re-check on every bump); the attach entry point registers it plus the non-router resumable-streaming
-handlers and the GCP shim, answers /cors-proxy and /tools with 403 (the MCP/tools host belongs to a
-full llama-server), marks ready immediately and blocks in ctx_http.join() until
+queue. The attach entry point registers upstream's own server_register_routes() (the route table and
+the GCP shim) plus the instance (non-router) resumable-streaming handlers through
+server_register_stream_routes(), exactly what server_run_instance() registers, so the two entry
+points cannot drift on the endpoint set; it answers /cors-proxy and /tools with 403 (the MCP/tools
+host belongs to a full llama-server), marks ready immediately and blocks in ctx_http.join() until
 llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
 server_routes' constructor registers a sleeping-state callback on the model's task queue that
 outlives the attach call. Applies after 0001 and 0006.
 
-Refreshed at b11799: POST /tts (b11781, #26603) and the WebSocket /v1/realtime (b11780, #30636) joined
-the route table between the transcription and the Anthropic routes; both are in the removed block and
-in the helper, so attach mode serves them too.
+Refreshed at b11881: #31113 factored the route table out of llama_server() itself
+(server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
+it -- the helper this patch used to add, and the "verbatim copy" invariant it had to keep, are gone.
 ```
 
 ## 0008-server-models-worker-cmd-override.patch

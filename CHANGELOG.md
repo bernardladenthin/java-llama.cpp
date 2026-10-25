@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11827** (from b11639, in ten steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827). What the
+- **llama.cpp b11881** (from b11639, in eleven steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827, b11881). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -167,7 +167,18 @@ the first two items break every existing consumer at upgrade.
   mat-vec kernels on the Intel XMX engines for short batches (#29864, `GGML_SYCL_ENABLE_XMX_ESIMD`), an
   OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979), a DFlash drafter
   fix for qwen4exp (#30927) and fewer graph inputs for glm5-next (#30932) -- nothing here changed.
-  Two patches dropped (`0016`, `0019`), `0007` refreshed.
+  The b11881 step (2026-10-25, 54 commits; upstream had not tagged the number yet, so the pin names the
+  commit `fa3645feb`): llama.cpp's server entry point is one function per role now (#31113), which
+  `NativeServer` does not show -- `0006` and `0007` were rewritten onto it, and attach mode registers
+  upstream's own route table instead of a copy; JSON nested more than 128 levels deep (tools, tool-call
+  arguments, `chat_template_kwargs`, `json_schema`, the `/v1/systemone` body) is refused as an invalid
+  request instead of overflowing the stack of the thread that walks it (#30242); `-hf` downloads of one file
+  from several processes are serialized by a lock shared with the hf CLI (#29312); DeepSeek V4.1 Flash
+  (#31086), Soprano TTS in mtmd (#28607, not tried with `TextToSpeech` here), a `MUL_MAT_ID` index of -1
+  that skips the slot (#26631), `-sm tensor` refused for architectures with MoE amax rescaling (#31081),
+  jinja's `select`/`selectattr` arguments (#31059), Nemotron-3.5-Embed tokenization (#30974) and an
+  overflow in `ggml_time_us` (#30969).
+  Two patches dropped (`0016`, `0019`), `0006` rewritten, `0007` refreshed and rewritten.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
 - **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and

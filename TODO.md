@@ -126,7 +126,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 - **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
   `SERVER_TASK_TYPE_TTS` on a chat model loaded with a TTS mmproj and streams `server_task_result_tts` chunks
   (`audio`, `sample_rate`, `final`; WAV or PCM per `out_type`). `NativeServer` serves it already (classic and
-  attach mode, the route is in `0007`'s common table). A `LlamaModel.tts(...)` over the C API and a
+  attach mode, the route is in upstream's `server_register_routes()`, which `0007` registers). A `LlamaModel.tts(...)` over the C API and a
   `/v1/audio/speech`-shaped route on `OpenAiCompatServer` would make it reachable without the native
   frontend; `TextToSpeech` (its own context over `mtmd_helper::gen_audio`) stays the one-shot path. Not before
   the release.
