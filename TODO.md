@@ -41,11 +41,13 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
         token was refused (`Resource not accessible by integration`, 403), so the `snapshot` tag and
         notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
         not move a ref across commits that change `.github/workflows/` (12 files between the two);
-        not verified. Fix in actions v1.0.3: delete and re-create the tag, then point the release at
-        it. `github-release` does not move a tag (the owner's `v6.0.0` exists already).
+        not verified. actions v1.0.3 (pinned) deletes and re-creates the tag on that 403 and points
+        the release at it; whether GitHub accepts that shows only the next snapshot dispatch.
+        `github-release` does not move a tag (the owner's `v6.0.0` exists already).
       - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
-        run; a transient error, re-run the job. Fix in actions v1.0.3: retry GitHub API calls on 5xx.
-        `central-release` does not call it.
+        run, in the re-run too: with 100 per page GitHub fails that listing for large runs, with 50
+        it answered every try. actions v1.0.3 (pinned) lists 50 per page and repeats GitHub reads on
+        5xx. `central-release` does not call it.
 - [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
       (pull request required, no force push, no deletion), Dependabot alerts and security updates,
       secret scanning; tags `v*` protected. Its releases are what every repository's Dependabot
@@ -69,7 +71,8 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       build stops at its license collector against a llama snapshot older than the natives license
       texts. Re-run its checks once the release is on Central.
 - [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
-      actions v1.0.2 (none has run on `main` since the pin bump).
+      actions v1.0.3 (none has run on `main` since the pin bumps), and the next one of this
+      repository, which shows whether the re-created `snapshot` tag is accepted.
 
 ## Delivery roadmap — remaining work
 
