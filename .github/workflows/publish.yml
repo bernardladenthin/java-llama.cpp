@@ -892,7 +892,7 @@ jobs:
           mvn -q --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh "-DBUILD_TESTING=ON -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=$RUNNER_TEMP/llama-src"
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   crosscompile-linux-aarch64:
     name: Build manylinux_2_28 aarch64 (CPU variants)
@@ -983,7 +983,7 @@ jobs:
           mvn --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_TESTING=ON -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=s390x -DCMAKE_C_COMPILER=s390x-linux-gnu-gcc -DCMAKE_CXX_COMPILER=s390x-linux-gnu-g++ -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/qemu-s390x-static -DOS_NAME=Linux -DOS_ARCH=s390x"
       - name: Run C++ unit tests under qemu-s390x (big-endian gate)
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -1698,7 +1698,7 @@ jobs:
           mvn --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DBUILD_TESTING=ON
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -1736,7 +1736,7 @@ jobs:
           mvn --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh -DLLAMA_METAL_EMBED_LIBRARY=ON -DBUILD_TESTING=ON
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -1768,7 +1768,7 @@ jobs:
         run: |
           .github\build.bat -G "Visual Studio 18 2026" -A "x64" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build -C Release --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -2698,7 +2698,7 @@ jobs:
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-linux-aarch64:
     name: C++ Tests Ubuntu 24.04 aarch64
@@ -2731,7 +2731,7 @@ jobs:
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-windows-x86_64:
     name: C++ Tests Windows 2025 x86_64 (clang)
@@ -2763,7 +2763,7 @@ jobs:
         shell: bash
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build -C Release --no-tests=error --output-on-failure
 
   # The static arm64 build with the C++ suite: the shipped arm64 artifact is modular (see
   # build-windows-arm64), where jllama_test cannot link the CPU and RPC backends it calls directly,
@@ -2790,7 +2790,7 @@ jobs:
         shell: bash
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build -C Release --no-tests=error --output-on-failure
 
   build-macos-arm64-metal-15:
     name: Build and Test macOS 15 arm64 (Metal)
@@ -2823,7 +2823,7 @@ jobs:
           mvn --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh -DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF -DBUILD_TESTING=ON
       - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

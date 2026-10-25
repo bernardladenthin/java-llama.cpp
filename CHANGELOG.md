@@ -716,6 +716,10 @@ the first two items break every existing consumer at upgrade.
   2026-10-11; measured with that list, sccache caches the device passes (108/108 hits warm). `build.sh`'s
   uncached-retry pattern matches `fatbinary fatal` and `Missing "cubin"` instead of relying on the old
   signal line, and the CUDA job forwards `SCCACHE_WRAP_NVCC` into its container, so the opt-out works.
+- **CI: the Windows C++ test jobs run their tests.** `ctest` ran without `-C Release` against the
+  multi-config build trees of `test-cpp-windows-x86_64`, `test-cpp-windows-arm64` and the MSVC
+  build-and-test job, found no test and exited 0, so none of the C++ suite ever ran on Windows. Every
+  `ctest` step also passes `--no-tests=error` now.
 - **CI: a publication is checked against its tag and staged exactly before anything is uploaded.**
   `check-tag` refuses a release whose version is not the tag's (`v<version>`, no `-SNAPSHOT`),
   `check-snapshot` a snapshot dispatch of a release version, and the gate repeats both. Unknown files
