@@ -1975,6 +1975,30 @@ TEST(ParamsFromJsonCmpl, DrySequenceBreakers_NonEmpty_RoundTrip) {
     EXPECT_EQ(p.sampling.dry_sequence_breakers[3], "*");
 }
 
+// Since b11887 (#31035) the schema drops duplicate breakers, keeping the first occurrence of each,
+// and refuses more than LLAMA_DRY_MAX_SEQ_BREAKERS distinct ones: every distinct breaker costs a
+// scan of the whole vocabulary when the sampler is built, so a long list exhausted CPU and memory.
+TEST(ParamsFromJsonCmpl, DrySequenceBreakers_DuplicatesDropped) {
+    const auto p = parse_params({{"dry_sequence_breakers", json::array({"\n", ":", "\n", "*", ":"})}});
+    ASSERT_EQ(p.sampling.dry_sequence_breakers.size(), 3u);
+    EXPECT_EQ(p.sampling.dry_sequence_breakers[0], "\n");
+    EXPECT_EQ(p.sampling.dry_sequence_breakers[1], ":");
+    EXPECT_EQ(p.sampling.dry_sequence_breakers[2], "*");
+}
+
+TEST(ParamsFromJsonCmpl, DrySequenceBreakers_DistinctLimit) {
+    json breakers = json::array();
+    for (int i = 0; i < LLAMA_DRY_MAX_SEQ_BREAKERS; ++i) {
+        breakers.push_back("b" + std::to_string(i));
+    }
+    // a duplicate does not count against the limit
+    breakers.push_back("b0");
+    EXPECT_EQ(parse_params({{"dry_sequence_breakers", breakers}}).sampling.dry_sequence_breakers.size(),
+              static_cast<size_t>(LLAMA_DRY_MAX_SEQ_BREAKERS));
+    breakers.push_back("one too many");
+    EXPECT_THROW(parse_params({{"dry_sequence_breakers", breakers}}), std::invalid_argument);
+}
+
 TEST(ParamsFromJsonCmpl, LoraNotArray_Throws) {
     EXPECT_THROW(parse_params({{"lora", "not-an-array"}}), std::invalid_argument);
 }

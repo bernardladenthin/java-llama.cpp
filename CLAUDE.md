@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11883**
+Current llama.cpp pinned version: **b11887**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -214,7 +214,7 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   a `llama-common`/`cpp-httplib` that came out shared (one more file to ship). On the static
   platforms (macOS, s390x) all of it stays inside `libjllama`. **Every ggml default llama.cpp's own
   CMakeLists changes before its `add_subdirectory(ggml)` is repeated** -- `GGML_LLAMAFILE_DEFAULT`
-  and `GGML_CUDA_GRAPHS_DEFAULT` at b11883 (unchanged since b11639) -- because adding ggml first skips that block; re-check with
+  and `GGML_CUDA_GRAPHS_DEFAULT` at b11887 (unchanged since b11639) -- because adding ggml first skips that block; re-check with
   `grep -n _DEFAULT CMakeLists.txt` at the new tag on every bump. The second one was missing once:
   ggml's own default for CUDA graphs is OFF, and a CUDA module built without it lost two thirds of
   its token generation (265.6 -> 88.8 tg128 on an RTX 3070, prompt processing -20%; Vulkan, which
@@ -1213,7 +1213,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11883 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11887 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -1253,7 +1253,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b11883`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b11887`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -2709,7 +2709,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | File | Tests | Scope |
 |------|-------|-------|
 | `src/test/cpp/test_utils.cpp` | 168 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse`, `parse_lora_request`, `common_chat_parse` over malformed UTF-8 (the `ContentOnlyParseUtf8` guard, which pins upstream #29161's one-U+FFFD-per-invalid-run contract — formerly the guard for the dropped `patches/0011`) |
-| `src/test/cpp/test_server.cpp` | 206 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_metrics()` = the `/metrics` Prometheus exposition text; its `to_json()` has been unused since b10519 and returns `json{}` = JSON null), `server_task_result_slots` (`to_json()` = the `/slots` array, fed by the b10519 `SERVER_TASK_TYPE_SLOT_GET` task), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
+| `src/test/cpp/test_server.cpp` | 208 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_metrics()` = the `/metrics` Prometheus exposition text; its `to_json()` has been unused since b10519 and returns `json{}` = JSON null), `server_task_result_slots` (`to_json()` = the `/slots` array, fed by the b10519 `SERVER_TASK_TYPE_SLOT_GET` task), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
 | `src/test/cpp/test_json_helpers.cpp` | 72 | All functions in `json_helpers.hpp`: `get_result_error_message`, `get_result_error_code` (the HTTP code of a failed task result, from which `jllama.cpp` picks `InvalidRequestException` or `LlamaException`), `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection and the `tokens_evaluated` pass-through), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json`, `route_error_message` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_common_log_callback.cpp` | 7 | **The runnable guard for `patches/0014`**: `common_log_set_callback()` on a private `common_log_init()` instance (never `common_log_main()`, so the process-wide logger the other tests print through is untouched) — delivery of level + bare text, no prefix/timestamp even when both are on (what `common_init()` does), clearing stops delivery, a swap drains queued entries to the *previous* sink (the property behind `LlamaModel.setLogger(format, null)` being a synchronous flush), a `--log-file` keeps being written alongside the sink, every `ggml_log_level` passes through unchanged, and the sink is not gated on upstream's `common_log_set_stdo()` console switch (b11612: entries reach the callback with stdout/stderr output off). The Java half (`LlamaLoggerTest`, model-free) proves the JNI trampoline on top of it. |
@@ -2727,12 +2727,12 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_gallocr_leafs.cpp` | 1 | **The runnable guard for `patches/0020`.** Two graphs with the same two nodes in the same order (`n1 = add(x, x)`, `n2 = mul(w, n1)`) and only the leafs moved: one expands `n1` before `n2` and meets the input first, the other expands only `n2`, whose first source is the weight -- the shape of the llama.cpp case, where every node and node source still matches its slot, so the old check passed it. Reserved with the first, the second must get an allocation for the input inside the allocator's buffer and compute the right product on it. No model, every platform. **Verified both ways:** with the fix removed from the source tree the test dies with SIGSEGV (rc 139); a first version that swapped the operands of one `add` passed without the fix, because a swapped *node source* was already caught -- a guard has to move only the leafs. |
 | `src/test/cpp/test_lora_cache.cpp` | 5 | **The runnable guard for `patches/0021`.** Writes a random llama model (the shared `tiny_llama_gguf.hpp`, also used by `test_c_api.cpp`) and a random LoRA adapter on K, V and the FFN output of every layer, loads them with one slot and `--cache-ram 0`, and answers the same prompt greedily. After `jllama_set_lora_adapters` (scale 1 -> 0 and back) and after a request with its own adapters, the warm slot must answer exactly like an emptied one. One case guards the others against passing vacuously: the adapter changes the answer, and a repeated request reuses the cache (`timings.cache_n > 0`; not `tokens_cached`, which counts every token the slot holds and is positive after any request). After each adapter change the next request must take nothing from the cache (`timings.cache_n == 0`), so those three cases are red without the patch whether or not the random model happens to answer differently. **Verified both ways:** without the patch 3 of 4 red (the warm slot answered from the old scales), with it 4 of 4 green in three runs; no model, every platform. A second fixture (`LoraCacheFreshSlot`: two slots, `--slot-save-path`) saves slot 0 (by its file name inside that directory) after a request and restores it into the never-used slot 1, whose request must take all of the prompt but at most two tokens from it and answer like slot 0 -- red before the `init()` hunk (`Expected: (prompt_n) <= (2), actual: 77 vs 2`), green with it (F240). |
 
-**Current total: 671 tests** (`TEST`/`TEST_F`/`TEST_P` definitions; ctest counts 692 cases, because
+**Current total: 673 tests** (`TEST`/`TEST_F`/`TEST_P` definitions; ctest counts 694 cases, because
 the parameterized `CApiVocabOnly` case expands to 22 instances).
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b11883`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b11887`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

@@ -778,7 +778,8 @@ public final class InferenceParameters extends JsonParameters {
      * tokens at which DRY restarts matching, so repetition is not penalized across them (llama.cpp
      * default: {@code ["\n", ":", "\"", "*"]}). Empty input is a no-op (returns {@code this}), so when
      * this wither is not called nothing is emitted and the server's default breakers apply. Only takes
-     * effect when {@link #withDryMultiplier(float)} is non-zero.
+     * effect when {@link #withDryMultiplier(float)} is non-zero. The server drops duplicates and refuses
+     * more than 64 distinct breakers as an invalid request (each one costs a scan of the vocabulary).
      *
      * @param breakers the sequence-breaker strings
      * @return a new instance with the breaker array set, or {@code this} if {@code breakers} is empty

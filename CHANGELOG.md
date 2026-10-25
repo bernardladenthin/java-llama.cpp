@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11883** (from b11639, in twelve steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827, b11881, b11883). What the
+- **llama.cpp b11887** (from b11639, in thirteen steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827, b11881, b11883, b11887). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -167,6 +167,11 @@ the first two items break every existing consumer at upgrade.
   mat-vec kernels on the Intel XMX engines for short batches (#29864, `GGML_SYCL_ENABLE_XMX_ESIMD`), an
   OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979), a DFlash drafter
   fix for qwen4exp (#30927) and fewer graph inputs for glm5-next (#30932) -- nothing here changed.
+  The b11887 step (2026-10-25, 4 commits, tagged): a request's `dry_sequence_breakers` (`InferenceParameters
+  .withDrySequenceBreakers`) lose their duplicates and more than 64 distinct ones are refused as an invalid
+  request -- each costs a scan of the vocabulary when the sampler is built, so a long list exhausted CPU and
+  memory (#31035; the sampler itself stops at 64 for `--dry-sequence-breaker` with a warning); Qwen4-exp
+  models with merged tensors (#31028). No patch changed.
   The b11883 step (2026-10-25, 2 commits, tagged): a grammar nested deeper than upstream's new limit is
   refused instead of overflowing the stack while it is parsed (#29755, for #29495), and quantizing 4D
   tensors counts their rows with `ggml_nrows()` and finds MoE experts by name (#30820). No patch changed.
