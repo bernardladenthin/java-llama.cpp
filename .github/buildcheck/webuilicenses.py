@@ -52,7 +52,13 @@ SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
 def lockfile_digest(ui):
-    return hashlib.sha256((Path(ui) / "package-lock.json").read_bytes()).hexdigest()
+    """SHA-256 of the lockfile as git stores it, with LF line ends.
+
+    A Windows checkout (`core.autocrlf`) has CRLF; hashing those bytes recorded a digest that the
+    Linux checkout of the same commit in CI never matched, and the release run of v6.0.0
+    (40238595195) failed on it.
+    """
+    return hashlib.sha256((Path(ui) / "package-lock.json").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def imports(ui):

@@ -96,6 +96,14 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("webui-licenses.py generate", problems[0])
 
+    def test_the_lockfile_digest_does_not_depend_on_the_line_ends(self):
+        lock = self.ui / "package-lock.json"
+        lf = (json.dumps(json.loads(lock.read_text(encoding="utf-8")), indent=2) + "\n").encode("utf-8")
+        lock.write_bytes(lf)
+        digest = webuilicenses.lockfile_digest(self.ui)
+        lock.write_bytes(lf.replace(b"\n", b"\r\n"))
+        self.assertEqual(webuilicenses.lockfile_digest(self.ui), digest)
+
     def test_check_reports_a_new_import_of_a_package_the_lockfile_already_had(self):
         self.generated()
         (self.ui / "src/lib/more.ts").write_text("import { t } from 'testonly';\n")

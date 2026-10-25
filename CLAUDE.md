@@ -365,7 +365,7 @@ rejects anything else loudly.
 | `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
-| `webuilicenses.py` | `webui-licenses.py` (`build-webui`) | the WebUI's npm license texts cover the pinned lockfile and its imports |
+| `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
 |---|---|---|

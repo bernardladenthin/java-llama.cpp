@@ -615,11 +615,12 @@ jobs:
           cache-dependency-path: llamacpp-ui/tools/ui/package-lock.json
       # The bundle strips every legal comment, so the texts of its npm packages travel in
       # llama/legal/natives/webui-npm/ (every natives jar carries them). They were generated from one
-      # package-lock.json; a llama.cpp bump that changes it must regenerate them before a release.
+      # package-lock.json; a llama.cpp bump that changes it regenerates them in the same pull request.
+      # Fails on every run: it only warned outside a release tag until the release run of v6.0.0
+      # (40238595195) failed on it hours after the cause. webui-licenses.yml runs the same check in
+      # every pull request and push, where Publish is usually cancelled at the start gate.
       - name: Check the WebUI license texts against this package-lock.json
-        run: >
-          python3 .github/webui-licenses.py check llamacpp-ui/tools/ui llama/legal/natives/webui-npm
-          ${{ !startsWith(github.ref, 'refs/tags/v') && '--warn-only' || '' }}
+        run: python3 .github/webui-licenses.py check llamacpp-ui/tools/ui llama/legal/natives/webui-npm
       - name: Build WebUI (Svelte/Vite)
         working-directory: llamacpp-ui/tools/ui
         env:
