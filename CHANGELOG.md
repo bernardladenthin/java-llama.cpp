@@ -9,6 +9,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-10-25
+
 ### Upgrading from 5.1
 
 Everything a 5.1 consumer has to change, in one place; the bullets below record each change where it
@@ -2471,7 +2473,8 @@ Releases `1.1.1` through `4.2.0` were authored by [@kherud](https://github.com/k
 
 For an architecture-level diff between the pre-fork baseline (`49be664`) and the first 5.0.0 candidate (`24918e4`), see [`docs/history/49be664_24918e4.md`](docs/history/49be664_24918e4.md). For the server-fork-deletion refactor that culminated in 5.0.0, see [`docs/history/REFACTORING.md`](docs/history/REFACTORING.md). For the chat-completion integration that landed in 5.0.0, see [`docs/history/CHAT_INTEGRATION_SUMMARY.md`](docs/history/CHAT_INTEGRATION_SUMMARY.md).
 
-[Unreleased]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.1.0...HEAD
+[Unreleased]: https://github.com/bernardladenthin/java-llama.cpp/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.1.0...v6.0.0
 [5.1.0]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.6...v5.1.0
 [5.0.6]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.5...v5.0.6
 [5.0.5]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.4...v5.0.5

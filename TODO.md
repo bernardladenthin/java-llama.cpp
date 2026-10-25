@@ -17,46 +17,43 @@ so entries below describe remaining work or an explicit deferral policy.
 
 ## Release 6.0.0 — prerequisites
 
-- [ ] **A complete green Publish run on `main`.** PR #559 and its siblings are merged (2026-10-25),
-      and so is the b11883 bump (#563). The first dispatch on `main`,
-      [40217818548](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40217818548) on
-      `8c1fc767`, had every build and test job green -- 61 of them, the three Windows C++ suites with
-      692 of 692 tests each (`ctest -C Release --no-tests=error`, 0 before #559), the Java suites on
-      Linux, macOS and Windows, Android, FFM, source archive --, `package` and the smokes of
-      linux-x86-64, linux-aarch64, windows-x86-64, macOS and the agent too. What it cannot pass is the
-      publication step: see the next item. Still to read on the run after the fix: the windows-aarch64
-      smoke and the publication jobs.
-- [ ] **bernardladenthin/actions v1.0.1 (`df774809`), pinned in all four repositories (java-llama.cpp
-      #565, BitcoinAddressFinder #398, streambuffer #192, srcmorph #239); read the next snapshot run
-      of each.** The first
-      snapshot dispatches on v1.0.0 (BitcoinAddressFinder
-      [40217936091](https://github.com/bernardladenthin/BitcoinAddressFinder/actions/runs/40217936091),
-      streambuffer
-      [40217930246](https://github.com/bernardladenthin/streambuffer/actions/runs/40217930246)) failed
-      in `java/finalize-publication`: `central-publishing` 0.12.0 installs the snapshot into
-      `target/central-deferred` with the resolver, which writes `_remote.repositories`, and the gate
-      refused it as an unknown file (bernardladenthin/actions#2 skips it like the Maven metadata). The
-      rest of v1.0.0 works in all three runs: `repository-checks`, the reusable workflows (REUSE,
-      OSV-Scanner, CodeQL, SonarQube with its `job.workflow_sha` checkout) and the composite actions
-      on Linux, macOS and Windows through `GITHUB_ACTION_PATH`.
+The release commit (version 6.0.0 in the six reactor poms and the agent pom, the CHANGELOG heading
+and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
+
+- [ ] **Owner:** tag/dispatch `v6.0.0` on the merged release commit using the
+      [workspace release procedure](../workspace/workflows/release-process.md):
+      Publish by `workflow_dispatch` on the tag with `publish_to_central=true`. The tag push starts a
+      Publish run of its own that builds everything and publishes nothing (no dispatch input); it is
+      not cancelled by the dispatch (the concurrency group carries the run id). A tag build is
+      uncached (`USE_CACHE` is false on `refs/tags/v*`): expect 4-5 h, the Windows ROCm and CUDA
+      jobs on the critical path, no job above GitHub's 6 h default.
+- [ ] At the tag: read `check-tag` (`java/check-release-ref` on `v6.0.0`), `central-release` (one
+      Portal bundle, `AUTOMATIC`), `github-release` and `attest-release`; none has run on a real tag
+      yet. Check the reactor, the standalone agent and both Android publications on Central after
+      the upload. Android Central validation polling stays outside the build gate (`docs/RELEASE.md`).
+- [ ] **The snapshot path of bernardladenthin/actions, read in dispatch
+      [40227501358](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40227501358)**
+      (`081457f0`, b11887, actions v1.0.1, `publish_to_central`): every build, test and smoke job
+      green, and so is the gate `Prepare and verify signed snapshot artifacts` -- the
+      `_remote.repositories` fix of v1.0.1 holds, the Android AARs' timestamped Gradle names map
+      back -- and `attest-snapshot`. Two consumers failed, neither on the release path:
+      - `github-snapshot`: uploaded the assets, then `PATCH git/refs/tags/snapshot` with the workflow
+        token was refused (`Resource not accessible by integration`, 403), so the `snapshot` tag and
+        notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
+        not move a ref across commits that change `.github/workflows/` (12 files between the two);
+        not verified. Fix in actions v1.0.3: delete and re-create the tag, then point the release at
+        it. `github-release` does not move a tag (the owner's `v6.0.0` exists already).
+      - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
+        run; a transient error, re-run the job. Fix in actions v1.0.3: retry GitHub API calls on 5xx.
+        `central-release` does not call it.
 - [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
       (pull request required, no force push, no deletion), Dependabot alerts and security updates,
       secret scanning; tags `v*` protected. Its releases are what every repository's Dependabot
       proposes.
 - [ ] **Owner:** turn off GitHub's "Automatic dependency submission" (repository settings, Code
-      security) after the merge. The generated run fails on every push (it has no JDK 22+ toolchain);
+      security). The generated run fails on every push (it has no JDK 22+ toolchain);
       `dependency-submission.yml` (JDK 25, `push` on `main`) replaces it. A bot token cannot change
       the setting (403).
-- [ ] **After the merge, before the tag: read the first snapshot dispatch on `main`** with
-      `publish_to_central`. What only a real run shows: `java/publish-github` moving the `snapshot` tag
-      through the REST API with the workflow token, the Android AARs' timestamped Gradle names mapped
-      back to `-SNAPSHOT` by the gate, `central-snapshot` skipping itself for a superseded commit, and
-      the transfer of the frozen publication. The unit tests drive all of it against fakes only.
-- [ ] Strip `-SNAPSHOT` from **all six reactor poms and the standalone agent pom** in one release
-      commit. Follow [docs/RELEASE.md](docs/RELEASE.md) for dependency snippets, JBang and the server
-      example; keep the existing "Upgrading from 5.1" list current for any further breaking change.
-- [ ] Set the CHANGELOG release heading/date and footer links, and update `SECURITY.md`'s
-      supported line from `5.x` to `6.x` as part of that release commit.
 - [ ] **Owner: the open points of the natives license texts** (`llama/legal/natives/`, in every
       natives jar since 2026-10-25): whether the oneMKL SYCL headers compiled into the two SYCL
       modules need Intel's Simplified Software License text (it ships only in Intel's installer); the
@@ -64,18 +61,15 @@ so entries below describe remaining work or an explicit deferral policy.
       contribution by its author; KoboldCpp, where it came from, is AGPL-3.0); the third-party logos
       the WebUI embeds (trademarks, no license text). The WebUI package list is an upper bound
       (imports + lockfile); an exact list from the bundle would need a plugin in upstream's build.
-- [ ] **Owner:** tag/dispatch `v6.0.0` using the
-      [workspace release procedure](../workspace/workflows/release-process.md). Check the reactor,
-      standalone agent and both Android publications after upload. Android Central validation
-      polling remains deliberately outside the build gate (see `docs/RELEASE.md`).
-- [ ] After publication: bump `main` to the next `-SNAPSHOT` in all seven poms and carry out the
-      upstream submissions queued below.
+- [ ] After publication: bump `main` to the next `-SNAPSHOT` in all seven poms and the README's
+      snapshot line (it stays `6.0.0-SNAPSHOT` in the release commit), and carry out the upstream
+      submissions queued below.
 - [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
       plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
       build stops at its license collector against a llama snapshot older than the natives license
       texts. Re-run its checks once the release is on Central.
-- [ ] At the tag: read `check-tag` (`java/check-release-ref` on `v6.0.0`) and `central-release`
-      (one Portal bundle, `AUTOMATIC`) in the release run; neither has run on a real tag yet.
+- [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
+      actions v1.0.2 (none has run on `main` since the pin bump).
 
 ## Delivery roadmap — remaining work
 
