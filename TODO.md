@@ -26,7 +26,8 @@ so entries below describe remaining work or an explicit deferral policy.
       linux-x86-64, linux-aarch64, windows-x86-64, macOS and the agent too. What it cannot pass is the
       publication step: see the next item. Still to read on the run after the fix: the windows-aarch64
       smoke and the publication jobs.
-- [ ] **bernardladenthin/actions v1.0.1, then the pin bump in all four repositories.** The first
+- [ ] **bernardladenthin/actions v1.0.1 (`df774809`), pinned in all four repositories; read the
+      next snapshot run of each.** The first
       snapshot dispatches on v1.0.0 (BitcoinAddressFinder
       [40217936091](https://github.com/bernardladenthin/BitcoinAddressFinder/actions/runs/40217936091),
       streambuffer
