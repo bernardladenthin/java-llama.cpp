@@ -1,0 +1,2 @@
+LICENSE.md: https://github.com/ROCm/rocm-systems/blob/therock-10.0/projects/hip/LICENSE.md
+projects/clr/LICENSE.md at the same tag is byte-identical (checked), so only this copy is kept.

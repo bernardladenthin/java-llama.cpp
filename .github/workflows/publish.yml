@@ -662,6 +662,13 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: llamacpp-ui/tools/ui/package-lock.json
+      # The bundle strips every legal comment, so the texts of its npm packages travel in
+      # llama/legal/natives/webui-npm/ (every natives jar carries them). They were generated from one
+      # package-lock.json; a llama.cpp bump that changes it must regenerate them before a release.
+      - name: Check the WebUI license texts against this package-lock.json
+        run: >
+          python3 .github/webui-licenses.py check llamacpp-ui/tools/ui llama/legal/natives/webui-npm
+          ${{ !startsWith(github.ref, 'refs/tags/v') && '--warn-only' || '' }}
       - name: Build WebUI (Svelte/Vite)
         working-directory: llamacpp-ui/tools/ui
         env:
@@ -1268,6 +1275,9 @@ jobs:
             elif unzip -Z -1 /tmp/aar-classes.jar | grep '\.class$' > /dev/null; then
               echo "::error::$AAR duplicates Java classes from its CPU AAR dependency"; exit 1
             fi
+            # The license texts of the code in its .so files (llama/legal/natives/), at a path of its own.
+            unzip -l /tmp/aar-classes.jar | grep "META-INF/third-party/$flavor/natives/llama.cpp/LICENSE" > /dev/null \
+              || { echo "::error::$AAR classes.jar lacks the natives license texts (llama/legal/natives)"; exit 1; }
             if unzip -l /tmp/aar-classes.jar | grep -E "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/" > /dev/null; then
               echo "::error::$AAR classes.jar carries module-info or desktop native resources"; exit 1
             fi
@@ -3658,11 +3668,11 @@ jobs:
       - name: Show effective POM (debug)
         run: mvn --batch-mode --no-transfer-progress -P release,natives -DskipUpload=true help:effective-pom
       - name: Stage snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - name: Stage snapshot (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
+        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
@@ -3786,11 +3796,11 @@ jobs:
       - name: Show effective POM (debug)
         run: mvn --batch-mode --no-transfer-progress -P release,natives -DskipUpload=true help:effective-pom
       - name: Stage release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-ffm + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - name: Stage release (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
+        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6

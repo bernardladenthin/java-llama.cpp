@@ -1,0 +1,2 @@
+LICENSE: https://boringssl.googlesource.com/boringssl/+/refs/tags/0.20261020.0/LICENSE (commit d3bf4795ad5b79d646cddf2fec687da5b9b502db)
+third_party-fiat/{LICENSE,AUTHORS,METADATA}: https://boringssl.googlesource.com/boringssl/+/refs/tags/0.20261020.0/third_party/fiat/ (fiat-crypto 6ccc6638716d4632304baf1adbb5c47c3a12ea6f, compiled into libcrypto)

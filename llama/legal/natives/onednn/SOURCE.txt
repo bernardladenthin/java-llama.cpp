@@ -1,0 +1,2 @@
+LICENSE: https://github.com/uxlfoundation/oneDNN/blob/v3.11/LICENSE
+THIRD-PARTY-PROGRAMS: https://github.com/uxlfoundation/oneDNN/blob/v3.11/THIRD-PARTY-PROGRAMS

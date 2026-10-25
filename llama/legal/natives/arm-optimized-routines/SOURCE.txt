@@ -1,0 +1,1 @@
+LICENSE: https://github.com/ARM-software/optimized-routines/blob/0b5e3775c6c04761a2ecda8218eb45958c28be02/LICENSE

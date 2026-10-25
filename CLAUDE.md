@@ -93,7 +93,7 @@ it or is checked against it:
 | Place | Relation to the list |
 |---|---|
 | `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `metal` = Apple + `GGML_METAL`), writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, and -- through `cmake/jllama-build-info.cmake` -- writes `jllama-build.txt` and `jllama-sbom.json` there (plus `jllama-files.txt` on the modular platforms and in a module-only build); the build file's `classifier=` is derived from the directory and must equal the row's |
-| `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them |
+| `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them; each also includes `META-INF/third-party/natives/**`, the license texts of `llama/legal/natives/` that the `natives-legal` execution copies next to the natives tree (`NOTICE.md` there is the index; the WebUI's npm texts come from `.github/webui-licenses.py`, which `build-webui` checks against the pinned `package-lock.json`) |
 | `llama-platform/pom.xml` | depends on the rows with `platform=yes` |
 | `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>`; `package` waits for every one of them (transitively) |
 | `LlamaLoader.LIBRARY_BACKENDS` / `MODULE_BACKENDS` | must name every backend directory of their kind |

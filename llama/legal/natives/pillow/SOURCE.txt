@@ -1,0 +1,1 @@
+LICENSE: https://github.com/python-pillow/Pillow/blob/923a595a2466414c019c1318cc634d84c167e9ad/LICENSE

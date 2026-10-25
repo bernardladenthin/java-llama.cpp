@@ -1,0 +1,3 @@
+LICENSE.md: https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.350.0/LICENSE.md
+Apache-2.0.txt: https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.350.0/LICENSES/Apache-2.0.txt
+MIT.txt: https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.350.0/LICENSES/MIT.txt

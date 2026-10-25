@@ -29,14 +29,13 @@ so entries below describe remaining work or an explicit deferral policy.
 - [ ] Set the CHANGELOG release heading/date and footer links, and update `SECURITY.md`'s
       supported line from `5.x` to `6.x` as part of that release commit.
 - [ ] Verify the mirror credential and destination access described in roadmap item 6 below.
-- [ ] **Owner decision: license notices in the natives JARs and the OpenCL AAR.** They contain
-      compiled llama.cpp/ggml (MIT) and, on most desktop platforms, BoringSSL, but none of the
-      license texts: the jars are built from `src/main/natives` only, and a natives directory may
-      hold nothing but its libraries and the `jllama-*` lists (`merge-native-artifacts.sh`). Options:
-      license files next to the libraries (the merge check and `jllama-files.txt` would have to allow
-      them), a second `classesDirectory`-free jar input through `maven-resources-plugin`, or the
-      texts inside `jllama-sbom.json`. The Maven classes jars already carry `LICENSE` and
-      `THIRD_PARTY.md`; nothing on `main` carried them in the natives either.
+- [ ] **Owner: the open points of the natives license texts** (`llama/legal/natives/`, in every
+      natives jar since 2026-10-25): whether the oneMKL SYCL headers compiled into the two SYCL
+      modules need Intel's Simplified Software License text (it ships only in Intel's installer); the
+      provenance of the DRY sampler in `src/llama-sampler.cpp` (upstream treats it as an MIT
+      contribution by its author; KoboldCpp, where it came from, is AGPL-3.0); the third-party logos
+      the WebUI embeds (trademarks, no license text). The WebUI package list is an upper bound
+      (imports + lockfile); an exact list from the bundle would need a plugin in upstream's build.
 - [ ] **Owner:** tag/dispatch `v6.0.0` using the
       [workspace release procedure](../workspace/workflows/release-process.md). Check the reactor,
       standalone agent and both Android publications after upload. Android Central validation

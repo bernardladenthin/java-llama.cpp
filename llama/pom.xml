@@ -935,6 +935,33 @@ SPDX-License-Identifier: MIT
 			<id>natives</id>
 			<build>
 				<plugins>
+					<!-- The license texts of the third-party code compiled into the natives (llama.cpp/ggml,
+					     its vendored libraries, BoringSSL, the GPU vendors' header libraries), committed
+					     under llama/legal/natives/ and copied next to the natives tree before packaging,
+					     so every natives jar below carries them under META-INF/third-party/natives/
+					     (the include check-natives.py generates). src/main/natives is generated anyway:
+					     CMake writes the libraries there and CI merges every build's artifact into it. -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-resources-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>natives-legal</id>
+								<phase>prepare-package</phase>
+								<goals>
+									<goal>copy-resources</goal>
+								</goals>
+								<configuration>
+									<outputDirectory>${project.basedir}/src/main/natives/META-INF/third-party/natives</outputDirectory>
+									<resources>
+										<resource>
+											<directory>${project.basedir}/legal/natives</directory>
+										</resource>
+									</resources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-jar-plugin</artifactId>
@@ -950,6 +977,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -970,6 +998,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/aarch64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -990,6 +1019,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/s390x/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1010,6 +1040,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux-Android/aarch64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1030,6 +1061,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux-Android/x86_64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1050,6 +1082,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1070,6 +1103,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/aarch64/cpu/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1090,6 +1124,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Mac/aarch64/metal/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1110,6 +1145,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/cuda13/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1130,6 +1166,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/cuda13/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1150,6 +1187,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/rocm/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1170,6 +1208,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/rocm/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1190,6 +1229,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/sycl/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1210,6 +1250,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/sycl/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1230,6 +1271,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/aarch64/vulkan/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1250,6 +1292,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/vulkan/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1270,6 +1313,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/aarch64/vulkan/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1290,6 +1334,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/vulkan/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1310,6 +1355,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux-Android/aarch64/opencl/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1330,6 +1376,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/aarch64/opencl/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1350,6 +1397,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/opencl/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1370,6 +1418,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Linux/x86_64/openvino/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
@@ -1390,6 +1439,7 @@ SPDX-License-Identifier: MIT
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
 										<include>net/ladenthin/llama/Windows/x86_64/openvino/**</include>
+										<include>META-INF/third-party/natives/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>

@@ -92,6 +92,11 @@ def module_name(classifier):
     return "net.ladenthin.llama.natives." + classifier.replace("-", "_")
 
 
+# Where the natives profile copies llama/legal/natives/ before packaging (CMake writes the natives
+# tree next to it, so it is a generated directory); every natives jar includes it.
+LEGAL_INCLUDE = "META-INF/third-party/natives/**"
+
+
 def pom_execution(row):
     return f"""\t\t\t\t\t\t\t<execution>
 \t\t\t\t\t\t\t\t<id>natives-{row['classifier']}</id>
@@ -104,6 +109,7 @@ def pom_execution(row):
 \t\t\t\t\t\t\t\t\t<classesDirectory>${{project.basedir}}/src/main/natives</classesDirectory>
 \t\t\t\t\t\t\t\t\t<includes>
 \t\t\t\t\t\t\t\t\t\t<include>net/ladenthin/llama/{row['directory']}/**</include>
+\t\t\t\t\t\t\t\t\t\t<include>{LEGAL_INCLUDE}</include>
 \t\t\t\t\t\t\t\t\t</includes>
 \t\t\t\t\t\t\t\t\t<archive>
 \t\t\t\t\t\t\t\t\t\t<addMavenDescriptor>false</addMavenDescriptor>
@@ -186,13 +192,14 @@ def check_pom(natives, pom_text):
             conf = ex.find("m:configuration", NS)
             classifier = conf.findtext("m:classifier", namespaces=NS) if conf is not None else None
             if classifier:
-                found[classifier] = (conf.findtext("m:includes/m:include", namespaces=NS),
+                found[classifier] = (tuple(i.text for i in conf.iterfind("m:includes/m:include", NS)),
                                      conf.findtext("m:archive/m:manifestEntries/m:Automatic-Module-Name",
                                                    namespaces=NS))
     by_classifier = {r["classifier"]: r for r in natives}
     failures = compare("llama/pom.xml natives profile", by_classifier, found)
     for classifier in sorted(set(found) & set(by_classifier)):
-        want = (f"net/ladenthin/llama/{by_classifier[classifier]['directory']}/**", module_name(classifier))
+        want = ((f"net/ladenthin/llama/{by_classifier[classifier]['directory']}/**", LEGAL_INCLUDE),
+                module_name(classifier))
         if found[classifier] != want:
             failures.append(f"llama/pom.xml: {classifier} has {found[classifier]}, expected {want} "
                             f"(check-natives.py pom prints the executions)")
@@ -483,6 +490,14 @@ def check_agent_version(root_pom_text, agent_pom_text):
     return [f"llama-atmosphere-agent/pom.xml is version {agent}, the reactor {core}: set both to the same version"]
 
 
+def check_agent_license(root_license_text, agent_license_text):
+    """The agent folder carries its own LICENSE (it is copied out and run on its own) and its jar
+    ships that copy, so it must stay the repository's text."""
+    if root_license_text == agent_license_text:
+        return []
+    return ["llama-atmosphere-agent/LICENSE differs from LICENSE: copy the repository's LICENSE there"]
+
+
 def read(root, path):
     with open(os.path.join(root, path), encoding="utf-8") as f:
         return f.read()
@@ -503,4 +518,5 @@ def check(root):
             + check_jbang_example(natives, read(root, JBANG_EXAMPLE), readme)
             + check_server_example(natives, read(root, SERVER_EXAMPLE), readme)
             + check_module_readmes(readme, {p: read(root, p) for p in MODULE_READMES})
-            + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml")))
+            + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml"))
+            + check_agent_license(read(root, "LICENSE"), read(root, "llama-atmosphere-agent/LICENSE")))

@@ -1,0 +1,1 @@
+LICENSE.md: https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/hash/rotate-bits/LICENSE.md (jb55/rotate-bits.h@27e784942f67db44abf2115c6638e735b579acd1)

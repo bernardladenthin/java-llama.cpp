@@ -142,16 +142,21 @@ val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
         exclude("module-info.class")
         exclude("META-INF/maven/**")
     }
+    // The license texts of the code compiled into the .so files under jni/ (llama/legal/natives/,
+    // NOTICE.md there). A path of this artifact's own: AGP merges the java resources of every
+    // classes.jar into the APK and fails on two equal paths, and the OpenCL AAR carries the same set.
+    from("../llama/legal/natives") { into("META-INF/third-party/llama-android/natives") }
 }
 
 // The additive OpenCL AAR gets its Java API through the CPU AAR dependency. A second copy
 // of these classes would make D8/R8 reject that dependency graph as duplicate definitions.
 val moduleClassesJar = tasks.register<Jar>("moduleClassesJar") {
-    description = "Empty classes.jar for the native-only OpenCL add-on."
+    description = "Class-free classes.jar for the native-only OpenCL add-on (its license texts only)."
     archiveBaseName.set("module-classes-payload")
     destinationDirectory.set(layout.buildDirectory.dir("intermediates"))
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
+    from("../llama/legal/natives") { into("META-INF/third-party/llama-android-opencl/natives") }
 }
 
 // AGP-built AARs always carry an R.txt (empty for resource-less libraries).

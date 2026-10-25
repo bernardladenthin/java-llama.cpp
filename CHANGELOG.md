@@ -716,6 +716,14 @@ the first two items break every existing consumer at upgrade.
   2026-10-11; measured with that list, sccache caches the device passes (108/108 hits warm). `build.sh`'s
   uncached-retry pattern matches `fatbinary fatal` and `Missing "cubin"` instead of relying on the old
   signal line, and the CUDA job forwards `SCCACHE_WRAP_NVCC` into its container, so the opt-out works.
+- **The natives jars and the Android AARs carry the license texts of the code compiled into them.**
+  `llama/legal/natives/` (index `NOTICE.md`): java-llama.cpp's own license, llama.cpp/ggml and every
+  library it vendors or derives code from, BoringSSL, the GPU vendors' header libraries (CCCL, HIP,
+  oneDNN, Vulkan/SPIR-V, OpenCL, OpenVINO) and the npm packages of the embedded WebUI, each taken
+  from its upstream byte for byte. Every natives jar has them under `META-INF/third-party/natives/`,
+  the AARs inside `classes.jar`; before, none of the 23 natives jars carried any license text.
+  `build-webui` checks the WebUI list against the pinned `package-lock.json`. The agent folder
+  carries its own `LICENSE` and `THIRD_PARTY.md` (it is copied out and run on its own).
 - **CI: the Windows C++ test jobs run their tests.** `ctest` ran without `-C Release` against the
   multi-config build trees of `test-cpp-windows-x86_64`, `test-cpp-windows-arm64` and the MSVC
   build-and-test job, found no test and exited 0, so none of the C++ suite ever ran on Windows. Every

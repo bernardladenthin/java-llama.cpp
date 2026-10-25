@@ -1,0 +1,1 @@
+base64.hpp-LICENSE.txt: verbatim lines 1-26 of https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/common/base64.hpp

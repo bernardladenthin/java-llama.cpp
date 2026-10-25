@@ -1,0 +1,1 @@
+LICENSE: https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/hash/xxhash/LICENSE (Cyan4973/xxHash@9f465f1ea932d6ad9a26cd77496311ffa544cd68)

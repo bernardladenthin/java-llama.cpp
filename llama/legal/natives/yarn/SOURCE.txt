@@ -1,0 +1,1 @@
+LICENSE: https://github.com/jquesnelle/yarn/blob/995db5b575e75230b3384d658f8b944c9662f775/LICENSE
