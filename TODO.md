@@ -555,9 +555,6 @@ measurements and is not evidence that GPU testing is currently blocked.
   `install`, `deploy`, `compiler`, `jar`) are pinned in this reactor. Still open across the four
   repositories: an explicit `site` version where that lifecycle is used and an enforcer
   `requirePluginVersions` rule, initially warnings-only while aligning the repositories.
-- **"Claude Code Review" fails on every pull request run** in all four Java repositories
-  (`is_error: true` in the action's result, the review is never posted). Not investigated: the
-  token/secret, the account's quota and the pinned action version are the candidates.
 - **Unread SonarCloud finding:** inspect the "1 new issue" reported on #486. The quality gate
   subsequently passed, but that does not identify or explain the finding; the sandbox proxy
   previously blocked access to sonarcloud.io.
