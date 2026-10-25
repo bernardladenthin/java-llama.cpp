@@ -18,7 +18,6 @@ verify-signing-key-gradle: same as verify-signing-key, for the Gradle/BouncyCast
 test-java-llama-langchain4j-integration: validation only; a cold model cache degrades it to self-skips (CLAUDE.md, LangChain4j integration)
 build-android-llmservice: an app, not a library release; a Compose/AGP pin must not block a release (CLAUDE.md, Android app "LLM Service")
 test-android-llmservice: the emulator UI test of that app, optional for the same reason
-mirror-llama-source: runs after publish-release; pushes the pinned llama.cpp commit to the mirror fork
 central-snapshot: Independent post-preflight Central transfer; must not gate the GitHub publication path.
 central-release: Independent post-preflight Central transfer; must not gate the GitHub publication path.
 attest-snapshot: Independent provenance after the secured handoff; cannot gate either publication consumer.

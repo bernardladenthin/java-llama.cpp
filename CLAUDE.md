@@ -1538,7 +1538,7 @@ exist yet: `git show` returned an empty file, the grep found nothing, and "upstr
 was read out of a file that was never read. **A drop-check that cannot distinguish "no match" from
 "nothing examined" has not been run.**
 
-## Source archive and mirror: a release stays rebuildable without upstream
+## Source archive: a release stays rebuildable without upstream
 
 Every natives jar is compiled from the pinned upstream commit plus `llama/patches/`, a tree that
 used to exist only transiently in each build job's `_deps/`. Two jobs of `publish.yml` keep it
@@ -1569,20 +1569,6 @@ used to exist only transiently in each build job's `_deps/`. Two jobs of `publis
   artifacts: a GitHub-only file of the signed publication, so the gate verifies its signature and
   `attest-*` covers it (see "Signed publication").
   A consumer rebuilds a release with `cmake -B build -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`.
-- **`mirror-llama-source`** (after a successful `publish-release`, exempt from the release gate like
-  the attach jobs; `.github/mirror-llama-source.sh`): pushes the pristine pinned commit to the fork
-  `bernardladenthin/llama.cpp` as the tag `jllama/b<nnnn>` -- idempotent, and a tag that already
-  names another commit fails rather than being moved. It needs `LLAMA_MIRROR_TOKEN` (contents:write
-  on the fork) in the `maven-central` environment and **fails without it** rather than skipping. The
-  configure's `JLLAMA_GIT_REPOSITORY` cache variable (default upstream) is where the mirror is
-  selected. The patches stay files in this repository, never fork commits: the review surface is the
-  patch file.
-
-  Both mirror-job checkouts set `persist-credentials: false`. The script passes the mirror token
-  through Git's `--config-env`, scoped to the exact mirror URL, and clears inherited headers/helpers
-  for that URL; a failed remote lookup fails the job. Tests in `test_mirror.py` use dummy credentials
-  with real Git configuration resolution and intercepted network calls. Cross-repo policy:
-  [`../workspace/policies/git-checkout-credentials.md`](../workspace/policies/git-checkout-credentials.md).
 
 ## The C API: `jllama_api.h` over the engine (layer B)
 

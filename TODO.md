@@ -57,7 +57,6 @@ so entries below describe remaining work or an explicit deferral policy.
       example; keep the existing "Upgrading from 5.1" list current for any further breaking change.
 - [ ] Set the CHANGELOG release heading/date and footer links, and update `SECURITY.md`'s
       supported line from `5.x` to `6.x` as part of that release commit.
-- [ ] Verify the mirror credential and destination access described in roadmap item 6 below.
 - [ ] **Owner: the open points of the natives license texts** (`llama/legal/natives/`, in every
       natives jar since 2026-10-25): whether the oneMKL SYCL headers compiled into the two SYCL
       modules need Intel's Simplified Software License text (it ships only in Intel's installer); the
@@ -84,8 +83,10 @@ The remaining items retain the numbering of the 2026-10-15 roadmap referenced by
 Done and therefore deleted here, while comments in the code still name them by number: **1** the
 provenance record (`jllama-build.txt` keys, `jllama-sbom.json`, `docs/patches.md`; CLAUDE.md,
 "Modular natives"), **2** the natives directory as a tested contract (`lib.path`; CLAUDE.md, "Native
-Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Natives jars"), **7** layer
-B, the `jllama_*` C API (CLAUDE.md, "The C API"; `docs/c-api.md`), **9** the decision for 6.0.0
+Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Natives jars"), **6** the
+signed source archive of a release (CLAUDE.md, "Source archive"; the push of the pinned commit to a
+fork was removed again on 2026-10-25, the owner maintains that fork), **7** layer B, the `jllama_*`
+C API (CLAUDE.md, "The C API"; `docs/c-api.md`), **9** the decision for 6.0.0
 (section "Release 6.0.0" above) and **10** `llama-ffm` (CLAUDE.md, "Java 22+ without JNI").
 Windows code signing stays deferred by the owner's decision. Vendor hash pinning and the
 measurements below remain open hardening/coverage work; they do not establish a runtime defect.
@@ -113,16 +114,6 @@ measurements below remain open hardening/coverage work; they do not establish a 
 - [ ] Set `JLLAMA_C_ABI_MODEL` in a suitable CI job and exercise the model-backed half of
       `c_abi`. The existing plain-C compile/smoke runs without a model; Java/C++/FFM inference
       coverage does not exercise this particular consumer. macOS and s390x remain static builds.
-
-### 6. Release mirror — destination credential and first real push
-
-- [ ] **Owner:** verify/provision `LLAMA_MIRROR_TOKEN` with contents-write access to
-      `bernardladenthin/llama.cpp` in the `maven-central` environment before the release.
-      Its current availability cannot be inferred from a snapshot run: `mirror-llama-source`
-      is release-only and was skipped in run 39922567350. The credential-selection fix is on
-      this branch; tests with temporary repositories do not prove real destination access.
-- [ ] Check the first actual `mirror-llama-source` release run and the immutable upstream tag
-      it creates. Source-archive creation and `test-source-archive` are already CI-covered.
 
 ### 8. Cached/uncached reproducibility measurement (C.3)
 
