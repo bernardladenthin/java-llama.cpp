@@ -242,14 +242,11 @@ the first two items break every existing consumer at upgrade.
   jars into a directory and starts from it with no natives jar on the classpath. README, "Natives
   outside Maven", documents the directory, how to fetch a natives jar without Maven and the WDAC /
   AppLocker case.
-- **The patched llama.cpp source of a release is an asset of its own, and mirrored.**
+- **The patched llama.cpp source of a release is an asset of its own.**
   `archive-llama-source` packs the pinned commit with the patches applied, reproducibly, as
   `llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz`, signed and attached with the Maven artifacts;
   `test-source-archive` builds the C++ suite from that archive before either publish job runs, and a
-  consumer rebuilds a release with `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`. After a release
-  `mirror-llama-source` pushes the pinned commit to `bernardladenthin/llama.cpp` as `jllama/b<nnnn>`
-  (`JLLAMA_GIT_REPOSITORY` selects the mirror for a build); the patches stay files in this
-  repository, never fork commits.
+  consumer rebuilds a release with `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`.
 - **Modular natives: the GPU backends are additive module jars, and every platform a GPU can join is
   built modular.** A GPU natives jar (`cuda13-linux-x86-64`, `vulkan-windows-aarch64`, ... -- 15 of
   them) now holds **only** ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`,

@@ -772,9 +772,7 @@ jobs:
   # upstream (no fetch, no patching: the archived tree carries the applier's stamp, which
   # verify-patches-applied.sh checks against the patches on disk). The publish jobs sign the
   # archive with the release key and attach it next to the Maven artifacts, so "no release asset
-  # is attached that CI has not run" holds for it too. mirror-llama-source (after a release) pushes
-  # the pristine commit to bernardladenthin/llama.cpp as jllama/b<nnnn>, the fallback the
-  # configure's JLLAMA_GIT_REPOSITORY can be pointed at.
+  # is attached that CI has not run" holds for it too.
   # ---------------------------------------------------------------------------
   archive-llama-source:
     name: Archive the patched llama.cpp source
@@ -3776,54 +3774,6 @@ jobs:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-  mirror-llama-source:
-    name: Mirror the pinned llama.cpp commit to bernardladenthin/llama.cpp
-    needs: [publish-release]
-    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
-    runs-on: ubuntu-latest
-    # The pristine upstream commit every natives jar of this release was built from, pushed to the
-    # project's fork as the tag jllama/b<nnnn> (.github/mirror-llama-source.sh: idempotent, and a
-    # tag that names another commit fails rather than being moved). Together with the signed source
-    # archive this is what keeps a release rebuildable without upstream (TODO.md, delivery roadmap,
-    # item 6); the configure takes the mirror through -DJLLAMA_GIT_REPOSITORY. LLAMA_MIRROR_TOKEN
-    # is a token with contents:write on the fork, kept with the release secrets; the job fails
-    # without it rather than skipping, so a release never silently goes unmirrored.
-    environment: maven-central
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Resolve pinned llama.cpp tag from CMakeLists.txt
-        id: tag
-        shell: bash
-        run: |
-          # The same rule as build-webui: JLLAMA_GIT_TAG is the number, JLLAMA_GIT_COMMIT the commit
-          # it names; the checkout takes the commit when it is set.
-          TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
-          if [ -z "$TAG" ]; then
-            echo "could not resolve llama.cpp JLLAMA_GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
-            exit 1
-          fi
-          COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
-          echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
-      - name: Checkout llama.cpp at the pinned commit (full history, the push needs it)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          repository: ggml-org/llama.cpp
-          ref: ${{ steps.tag.outputs.ref }}
-          path: llama-src
-          fetch-depth: 0
-      - name: Push the commit as jllama/<tag> to the mirror
-        shell: bash
-        env:
-          LLAMA_MIRROR_TOKEN: ${{ secrets.LLAMA_MIRROR_TOKEN }}
-        run: bash .github/mirror-llama-source.sh llama-src bernardladenthin/llama.cpp
 
   central-snapshot:
     name: Upload checked snapshot artifacts to Maven Central

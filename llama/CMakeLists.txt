@@ -384,15 +384,12 @@ else()
     message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by tag name (JLLAMA_GIT_COMMIT is empty; CI would refuse this)")
 endif()
 
-# Where the pinned commit is fetched from. The default is upstream; the mirror
-# bernardladenthin/llama.cpp (every pinned commit is pushed there as the tag jllama/b<nnnn> by the
-# mirror-llama-source job of publish.yml) serves the same commit when upstream's repository or tag
-# is gone -- the commit hash is identical in both, so nothing else changes. The archived patched
-# source of every release (llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz on the GitHub release) is
-# the third way: -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked archive>. TODO.md, delivery roadmap,
-# item 6.
+# Where the pinned commit is fetched from: upstream. Any other clone that carries the same commit
+# serves as well -- the commit hash is the pin, so nothing else changes. Without any repository, the
+# archived patched source of a release (llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz on the GitHub
+# release) builds it: -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked archive>.
 set(JLLAMA_GIT_REPOSITORY "https://github.com/ggerganov/llama.cpp.git" CACHE STRING
-    "The git repository llama.cpp is fetched from (upstream, or the mirror https://github.com/bernardladenthin/llama.cpp.git)")
+    "The git repository llama.cpp is fetched from (upstream, or any clone carrying the pinned commit)")
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY ${JLLAMA_GIT_REPOSITORY}
