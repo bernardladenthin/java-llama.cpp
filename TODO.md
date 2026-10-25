@@ -17,28 +17,26 @@ so entries below describe remaining work or an explicit deferral policy.
 
 ## Release 6.0.0 — prerequisites
 
-- [ ] Merge the fixes on `refactor/shared-release-checks` and obtain a complete green Publish
-      run for the resulting release candidate, including packaging, classpath/module-path and
-      macOS smokes, Android CPU + additive OpenCL consumers, FFM, source-archive and integration
-      jobs. The latest completed snapshot run,
-      [39922567350](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/39922567350),
-      is green on `fb6b693a`; it predates this branch's packaging and Git-credential fixes. No Publish
-      run of the branch has completed yet: every one up to `e49411d0` was cancelled by the next push;
-      run [40195444689](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40195444689)
-      was the first to run the Windows C++ suites at all (`ctest -C Release`, before 0 tests) and
-      found the Windows RPC stop hanging (fixed in `0015`) and a port collision on the aarch64 runner
-      (fixed in the tests) before it was cancelled. Merge PR #559 together with its siblings
-      (BitcoinAddressFinder #397, streambuffer #191, srcmorph #238; workspace #61 before BroomCabinet
-      #88, whose links point into it).
-- [ ] **The first runs on bernardladenthin/actions v1.0.0** (since `c9f5c3a1`, 2026-10-25, in all four
-      repositories): read the `repository-checks` job (templates, release gate, `bash -n`, Maven
-      versions -- warnings about the siblings' missing configuration are expected until all four are
-      merged --, publication wiring and the contract dry run), the callers of the reusable workflows
-      (CodeQL, dependency submission, REUSE, OSV-Scanner; SonarQube in srcmorph and streambuffer, which
-      checks out the actions at `job.workflow_sha` for the license collector), and the composite
-      actions on the Windows and macOS jobs (`print-host-info`, `print-crash-logs` through
-      `GITHUB_ACTION_PATH`). A fix there is a new release of bernardladenthin/actions and a pin bump
-      here.
+- [ ] **A complete green Publish run on `main`.** PR #559 and its siblings are merged (2026-10-25),
+      and so is the b11883 bump (#563). The first dispatch on `main`,
+      [40217818548](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40217818548) on
+      `8c1fc767`, had every build and test job green -- 61 of them, the three Windows C++ suites with
+      692 of 692 tests each (`ctest -C Release --no-tests=error`, 0 before #559), the Java suites on
+      Linux, macOS and Windows, Android, FFM, source archive --, `package` and the smokes of
+      linux-x86-64, linux-aarch64, windows-x86-64, macOS and the agent too. What it cannot pass is the
+      publication step: see the next item. Still to read on the run after the fix: the windows-aarch64
+      smoke and the publication jobs.
+- [ ] **bernardladenthin/actions v1.0.1, then the pin bump in all four repositories.** The first
+      snapshot dispatches on v1.0.0 (BitcoinAddressFinder
+      [40217936091](https://github.com/bernardladenthin/BitcoinAddressFinder/actions/runs/40217936091),
+      streambuffer
+      [40217930246](https://github.com/bernardladenthin/streambuffer/actions/runs/40217930246)) failed
+      in `java/finalize-publication`: `central-publishing` 0.12.0 installs the snapshot into
+      `target/central-deferred` with the resolver, which writes `_remote.repositories`, and the gate
+      refused it as an unknown file (bernardladenthin/actions#2 skips it like the Maven metadata). The
+      rest of v1.0.0 works in all three runs: `repository-checks`, the reusable workflows (REUSE,
+      OSV-Scanner, CodeQL, SonarQube with its `job.workflow_sha` checkout) and the composite actions
+      on Linux, macOS and Windows through `GITHUB_ACTION_PATH`.
 - [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
       (pull request required, no force push, no deletion), Dependabot alerts and security updates,
       secret scanning; tags `v*` protected. Its releases are what every repository's Dependabot
@@ -220,10 +218,6 @@ Kept as a list because each entry names the machine it needs -- the harness is
 3. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
-4. **Measure warm ROCm CI cache performance.** Read the second run's build timings and cache
-   size for both ROCm jobs with the full GPU target lists. Local single-target measurements already
-   exist in CLAUDE.md ("sccache on every Windows Ninja job" / "CI build cache"); the implemented
-   Windows runtime-flag workaround and Linux HIP launcher no longer need implementation work.
 
 ### sccache — optional upstream and nvcc follow-ups
 
@@ -231,18 +225,13 @@ Kept as a list because each entry names the machine it needs -- the harness is
   (`src/compiler/clang.rs`, `PassThroughFlag`, with a test of CMake's full sequence). The Windows
   workaround in `llama/cmake/msvc-runtime-gnu-clang.cmake` already permits caching; see CLAUDE.md
   "sccache on every Windows Ninja job". This is independent of the nvcc issue below.
-- **nvcc caching is on again (2026-10-25), the CI number is still to read.** The 0.18.0 failures
-  (`Missing "cubin"` / `Compiler killed by signal 126`) came from ggml's default arch list
-  (`90-virtual`, mozilla/sccache#2862), which this project no longer builds since 2026-10-11; the
-  signal line was an exit code printed as a signal, fixed in sccache 0.19.0 (#2932), the pinned
-  version now. **Open:** the Linux CUDA job's build step in the second run after the change (the
-  first fills the cache): CUDA hits in its `### sccache statistics` table and the time against
-  ~100 min today. If it fails or does not hit, `SCCACHE_WRAP_NVCC=false` on the job switches it off
-  again. The Windows CUDA job does not wrap nvcc at all (`build.bat`); whether 0.19.0 parses its
-  command line (#2470, fixed by #2811 since 0.18.0) is a separate, untested question.
-- **Windows CPU jobs hit the cache only partly** (about 54 % in the last warm runs read), while the
-  Linux jobs are near 100 %. Not investigated: compare the cache keys of two runs of the same commit
-  (`SCCACHE_LOG=debug` on one job) before assuming a non-deterministic flag.
+- **The Windows CUDA job is the pipeline's critical path, uncached: 96 min** in run 40217818548,
+  nearly all of it nvcc, because `build.bat` does not wrap nvcc (12 compile requests through
+  sccache, all C/C++). The Linux CUDA job wraps it again since 2026-10-25 and hit 2640 of 2640
+  (CUDA, PTX and CUBIN at 100 %, build step ~12 min) in the same run. Whether sccache 0.19.0 parses
+  the Windows nvcc command line (#2470, fixed by #2811 since 0.18.0) is untested: try
+  `-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` in `build.bat` on a branch, with the existing uncached
+  retry as the fallback, and read two runs (the first fills the cache).
 - **Upstream sccache, open on their side:** mozilla/sccache#2809 (the `-virtual` arch fix, not ours)
   and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
 
