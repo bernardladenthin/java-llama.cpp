@@ -120,19 +120,19 @@ jobs:
         with:
           persist-credentials: false
       - name: Files equal their templates in bernardladenthin/actions
-        uses: bernardladenthin/actions/common/check-templates@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/check-templates@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       # This repository's own build checks build on actionlib (the setup step puts it on PYTHONPATH).
-      - uses: bernardladenthin/actions/common/setup@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/common/setup@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build-check tests of this repository
         run: python3 -m unittest discover -s .github/buildcheck/tests -t .github
       - name: Release gate (every job gates both publish jobs, or release-gate-exemptions.txt says why)
-        uses: bernardladenthin/actions/common/check-release-gate@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/check-release-gate@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Run scripts parse (bash -n over every bash run script of the workflows and actions)
-        uses: bernardladenthin/actions/common/check-run-scripts@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/check-run-scripts@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Maven versions (warns where a dependency or plugin differs from a sibling repository)
-        uses: bernardladenthin/actions/java/check-maven-versions@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/check-maven-versions@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Publication wiring and release asset contract (dry run)
-        uses: bernardladenthin/actions/java/check-publication@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/check-publication@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
 
   # ---------------------------------------------------------------------------
   # GPG signing-key preflight (standalone, no `needs:` -- runs in parallel at the
@@ -148,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: maven-central
     steps:
-      - uses: bernardladenthin/actions/common/verify-gpg-key@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/common/verify-gpg-key@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -168,7 +168,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: bernardladenthin/actions/java/verify-signing-key-gradle@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/java/verify-signing-key-gradle@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -272,7 +272,7 @@ jobs:
           print(f'{len(files)} workflow files, {bad} that do not parse')
           sys.exit(1 if bad else 0)
           PY
-      - uses: bernardladenthin/actions/common/setup@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/common/setup@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
       - name: Patch hunk check (every hunk of llama/patches/*.patch declares exactly the lines it carries)
@@ -353,7 +353,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -378,7 +378,7 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/print-crash-logs@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           modules: llama-langchain4j
       - if: failure()
@@ -410,7 +410,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -441,7 +441,7 @@ jobs:
           done
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/print-crash-logs@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           modules: llama-ffm
       - if: failure()
@@ -534,7 +534,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -561,7 +561,7 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/print-crash-logs@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           modules: llama-atmosphere-agent
       - if: failure()
@@ -712,7 +712,7 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: bash
         run: |
@@ -749,7 +749,7 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: bash
         run: |
@@ -840,7 +840,7 @@ jobs:
           # source directory, so the stamp the archive carries is what proves the patches are in.
           bash .github/verify-patches-applied.sh "$RUNNER_TEMP/llama-src"
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries from the archive
         shell: bash
         run: |
@@ -875,7 +875,7 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: bash
         run: |
@@ -906,7 +906,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -1042,7 +1042,7 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: bash
         run: |
@@ -1300,7 +1300,7 @@ jobs:
           swap-storage: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
@@ -1640,7 +1640,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1677,7 +1677,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1713,7 +1713,7 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: cmd
         run: |
@@ -1772,7 +1772,7 @@ jobs:
         with:
           arch: x64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1822,7 +1822,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -2634,7 +2634,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
@@ -2670,7 +2670,7 @@ jobs:
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
@@ -2699,7 +2699,7 @@ jobs:
         with:
           arch: x64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: cmd
         run: |
@@ -2726,7 +2726,7 @@ jobs:
         with:
           arch: arm64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Build libraries
         shell: cmd
         run: |
@@ -2756,7 +2756,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -2785,7 +2785,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-linux-x86-64
@@ -2839,7 +2839,7 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/print-crash-logs@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           modules: llama
       - if: failure()
@@ -3146,7 +3146,7 @@ jobs:
       # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: "natives-*"
@@ -3188,7 +3188,7 @@ jobs:
       # module-info.class and META-INF/versions/** are skipped unconditionally because a
       # classpath JVM never loads them. Kept byte-identical across all four sibling repos.
       - name: Verify Java 8 bytecode (no class newer than major 52)
-        uses: bernardladenthin/actions/java/verify-bytecode@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/verify-bytecode@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           max-major: "52"
           paths: |
@@ -3304,7 +3304,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-smoke-${{ matrix.target }}
@@ -3319,7 +3319,7 @@ jobs:
       # script is bash-only, so the Linux rows check; the Windows sets hold the same jars.
       - name: Verify Java 8 bytecode (no class newer than major 52)
         if: runner.os == 'Linux'
-        uses: bernardladenthin/actions/java/verify-bytecode@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/verify-bytecode@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           max-major: "52"
           paths: |
@@ -3380,7 +3380,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-atmosphere-agent-jar
@@ -3408,7 +3408,7 @@ jobs:
       # dumb terminal instead of failing (verified on 21.0.10). Only that package is waived, so
       # any other class above 65 still fails the gate.
       - name: Verify Java 21 bytecode (no class newer than major 65)
-        uses: bernardladenthin/actions/java/verify-bytecode@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/verify-bytecode@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           max-major: "65"
           allow: |
@@ -3451,7 +3451,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/common/print-host-info@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-smoke-macos-aarch64
@@ -3517,7 +3517,7 @@ jobs:
       # a release is tagged on.
       - name: Require a SNAPSHOT version
         if: inputs.publish_to_central
-        uses: bernardladenthin/actions/java/check-release-ref@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/check-release-ref@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: snapshot
 
@@ -3532,7 +3532,7 @@ jobs:
           persist-credentials: false
       # The tag names exactly the project version (v1.2.3 for 1.2.3), which is no SNAPSHOT.
       - name: Require the release version the tag names
-        uses: bernardladenthin/actions/java/check-release-ref@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/check-release-ref@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: release
 
@@ -3638,7 +3638,7 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       - name: Finalize and secure the signed publication
         id: finalize
-        uses: bernardladenthin/actions/java/finalize-publication@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/finalize-publication@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: snapshot
 
@@ -3654,7 +3654,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: bernardladenthin/actions/java/publish-github@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/java/publish-github@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3758,7 +3758,7 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       - name: Finalize and secure the signed publication
         id: finalize
-        uses: bernardladenthin/actions/java/finalize-publication@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/finalize-publication@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: release
 
@@ -3771,7 +3771,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: bernardladenthin/actions/java/publish-github@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/java/publish-github@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
@@ -3844,7 +3844,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
-        uses: bernardladenthin/actions/java/publish-central@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/publish-central@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3865,7 +3865,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
-        uses: bernardladenthin/actions/java/publish-central@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+        uses: bernardladenthin/actions/java/publish-central@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
@@ -3883,7 +3883,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: bernardladenthin/actions/java/attest-publication@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/java/attest-publication@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3899,7 +3899,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: bernardladenthin/actions/java/attest-publication@7646ab0603d75ee130463eceaa8988f7352e2d6a # v1.0.0
+      - uses: bernardladenthin/actions/java/attest-publication@df774809fbe99a5adc7b1243d053692cd840fe05 # v1.0.1
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
