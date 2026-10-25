@@ -43,7 +43,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@40191d24afef2c99260bfacb27f269b95563e4bc # v1.0.2
+        uses: bernardladenthin/actions/common/print-host-info@23543c8554ca9de6792a1b8d8aae0bcd001d8508 # v1.0.3
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.natives-artifact }}
@@ -116,7 +116,7 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@40191d24afef2c99260bfacb27f269b95563e4bc # v1.0.2
+        uses: bernardladenthin/actions/java/print-crash-logs@23543c8554ca9de6792a1b8d8aae0bcd001d8508 # v1.0.3
         with:
           modules: llama
       - if: failure()

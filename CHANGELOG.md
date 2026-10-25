@@ -435,7 +435,11 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
-- **`bernardladenthin/actions` pinned at v1.0.2.** The release carries a documentation change only:
+- **`bernardladenthin/actions` pinned at v1.0.3.** v1.0.3 makes the snapshot publication survive
+  GitHub: the Central snapshot transfer lists the jobs of older runs 50 per page and repeats GitHub
+  reads on a server error, and a refused move of the `snapshot` tag deletes and re-creates it (both
+  failed in java-llama.cpp's first snapshot dispatch on v1.0.1). v1.0.2 before it carried a
+  documentation change only:
   the license collector's `python3 -c` guard must use single-quoted Python string literals, because
   `exec-maven-plugin` drops a double quote out of an argument on Windows. This repository does not use
   that construct, so nothing changes here; the pin moves so all four repositories stay on the same tag.
