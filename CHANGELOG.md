@@ -433,6 +433,10 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
+- **`bernardladenthin/actions` pinned at v1.0.2.** The release carries a documentation change only:
+  the license collector's `python3 -c` guard must use single-quoted Python string literals, because
+  `exec-maven-plugin` drops a double quote out of an argument on Windows. This repository does not use
+  that construct, so nothing changes here; the pin moves so all four repositories stay on the same tag.
 - **The shared CI code moved to [bernardladenthin/actions](https://github.com/bernardladenthin/actions).**
   The build-check library, the publication gate and its consumers, the signing-key checks and the
   shared scripts and workflows are actions and reusable workflows there, pinned by commit; the
