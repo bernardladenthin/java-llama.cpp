@@ -183,12 +183,15 @@ Kept as a list because each entry names the machine it needs -- the harness is
   (`src/compiler/clang.rs`, `PassThroughFlag`, with a test of CMake's full sequence). The Windows
   workaround in `llama/cmake/msvc-runtime-gnu-clang.cmake` already permits caching; see CLAUDE.md
   "sccache on every Windows Ninja job". This is independent of the nvcc issue below.
-- **Re-test nvcc caching when a newer sccache is available.** sccache 0.18.0 with CUDA 13.4 failed
-  with `Missing "cubin" file output` / `Compiler killed by signal 126` (runs 37680715063 and
-  37925157175). `build.sh` therefore uses direct nvcc by default and caches the host compiler.
-  On a branch, bump `SCCACHE_DL_VERSION`, enable `SCCACHE_WRAP_NVCC=true` for one CUDA job and
-  inspect the compilation results and warm-run hits before changing the default. The existing
-  uncached retry can otherwise cost another 47–80 minutes.
+- **nvcc caching is on again (2026-10-25), the CI number is still to read.** The 0.18.0 failures
+  (`Missing "cubin"` / `Compiler killed by signal 126`) came from ggml's default arch list
+  (`90-virtual`, mozilla/sccache#2862), which this project no longer builds since 2026-10-11; the
+  signal line was an exit code printed as a signal, fixed in sccache 0.19.0 (#2932), the pinned
+  version now. **Open:** the Linux CUDA job's build step in the second run after the change (the
+  first fills the cache): CUDA hits in its `### sccache statistics` table and the time against
+  ~100 min today. If it fails or does not hit, `SCCACHE_WRAP_NVCC=false` on the job switches it off
+  again. The Windows CUDA job does not wrap nvcc at all (`build.bat`); whether 0.19.0 parses its
+  command line (#2470, fixed by #2811 since 0.18.0) is a separate, untested question.
 
 ### RPC backend — follow-ups
 

@@ -595,16 +595,19 @@ and the Windows redist components at `https://developer.download.nvidia.com/comp
 The CUDA artifact must ship kernels for **every supported GPU generation**, so the default
 build — and every CI build — compiles the **full `CMAKE_CUDA_ARCHITECTURES` set** that
 ggml/llama.cpp selects. nvcc recompiles each `.cu` kernel once per architecture, which is the
-dominant cost of the CUDA job. **nvcc through `sccache` is opt-in since CUDA 13.4**
-(`SCCACHE_WRAP_NVCC=true`: `build.sh` then adds `-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` when it
-detects `GGML_CUDA` in the cmake args) and **off by default** -- the rollout item 2 below has the
-measurements. With CUDA 13.2 it cached the per-arch `.cu` device passes over Depot alongside the
-gcc C/C++ TUs (~51 min cold, ~15 min warm); with CUDA 13.4 and sccache 0.18.0 it fails on the first
-`.cu` TUs of every run examined (`Missing "cubin" file output`, `Compiler killed by signal 126`), and
-the retry that follows rebuilds everything without any launcher, gcc TUs included (47-80 min
-depending on the runner). Today the gcc TUs are cached and nvcc runs directly: CI keeps the **full
-arch set on every run** (release-safe everywhere) at roughly the cold nvcc cost, never a reduced
-arch set.
+dominant cost of the CUDA job. **nvcc goes through `sccache` again since 2026-10-25** (`build.sh` adds
+`-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` when it detects `GGML_CUDA` in the cmake args;
+`SCCACHE_WRAP_NVCC=false` opts out), so the per-arch `.cu` device passes cache over Depot alongside
+the gcc C/C++ TUs -- with CUDA 13.2 that was ~51 min cold, ~15 min warm. From 2026-10-09 to 2026-10-25
+it was off: with CUDA 13.4 and sccache 0.18.0 every run failed on the first `.cu` TUs (`Missing "cubin"
+file output`, `Compiler killed by signal 126`) and the uncached retry rebuilt everything. The trigger
+was ggml's default arch list, whose PTX-only `90-virtual` makes nvcc run a ptxas check pass without
+`-o` (mozilla/sccache#2862, fix PR #2809); the list this project passes since 2026-10-11 (every arch
+`-real`, only `121-virtual` PTX-only) does not hit it -- measured in `nvidia/cuda:13.4.3` with b11815:
+108/108 hits warm with sccache 0.18.0, while ggml's list fails as CI did. The "signal 126" was sccache
+printing an exit code as a signal, fixed in 0.19.0 (mozilla/sccache#2932), which is the pinned version
+now. Either way CI keeps the **full arch set on every run** (release-safe everywhere), never a
+reduced arch set; the cache is what makes it affordable.
 
 `CUDA_FAST_BUILD` remains as a **local-dev** single-arch knob (CI no longer sets it).
 `build_cuda_linux.sh` honors it — default **off** (full arch set, release-safe):
@@ -626,10 +629,10 @@ the full arch set**. The script default is **off** (full) so any *local/manual* 
 release-safe, and **CI no longer sets `CUDA_FAST_BUILD` at all** — the `crosscompile-linux-x86_64-cuda`
 job always builds the full set on PR / push / dispatch / publish, so every artifact (not just the ones
 that reach Central) runs on every GPU generation. The full-arch CI cost is paid by the job
-itself since CUDA 13.4 (nvcc uncached, see above); the sccache-over-Depot cache still covers the gcc
-TUs, and `SCCACHE_WRAP_NVCC=true` re-enables the nvcc launcher (gated behind the same probe;
-`build.sh`'s mid-build retry treats an sccache `Compiler not supported` / `Compiler killed by signal`
-failure like any other cache error and rebuilds the job without any launcher rather than redding it).
+on a cold cache; warm, the sccache-over-Depot cache covers the nvcc device passes and the gcc TUs
+(the launcher is gated behind the same probe, and `build.sh`'s mid-build retry treats an sccache
+`Compiler not supported` / `fatbinary fatal` failure like any other cache error and rebuilds the job
+without any launcher rather than redding it).
 **Measured with CUDA 13.2:** a warm run in the manylinux_2_28 container hit **100%** on CUDA / CUBIN /
 device-code (139 CUDA hits, 99.86% overall, 3 misses) and cut the job from **~51 min cold to ~15 min
 warm**. `build.sh` prints `sccache --show-stats` at the end of every run so the hit table stays visible.
@@ -818,7 +821,7 @@ Windows-specific wiring (the rest is the natives-jar wiring, see "Natives jars" 
    (`OpenCL.lib`), then delegates to `build.bat` with `-DOpenCL_INCLUDE_DIR`/`-DOpenCL_LIBRARY`
    (the Windows analogue of `build_opencl_android.sh`).
 3. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
-   sccache v0.18.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
+   sccache v0.19.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
    - `build-windows-x86_64` — **modular CPU, plain clang** (`-DJLLAMA_BACKEND_DL=ON
      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`; no `-DBUILD_TESTING` --
      `test-cpp-windows-x86_64` builds the static library with the tests, same compiler).
@@ -847,7 +850,7 @@ ignores compiler launchers.
 
 **The plain-clang jobs cache because of `llama/cmake/msvc-runtime-gnu-clang.cmake`.** sccache refuses
 any TU carrying an `-Xclang` argument it does not know (`Can't handle UnknownFlag arguments with
--Xclang`; 0.18.0, and `main` on 2026-10-22), and CMake's `Platform/Windows-Clang.cmake` implements
+-Xclang`; 0.18.0 and 0.19.0), and CMake's `Platform/Windows-Clang.cmake` implements
 `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` (the hybrid CRT every Windows job sets) for clang with the
 GNU front end as `-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt` -- and
 `-flto-visibility-public-std` is the one sccache does not know (`--dependent-lib` and llama.cpp's own
@@ -1342,16 +1345,21 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    -Bbuild` now also passes `-DGGML_CCACHE=OFF`, so a genuinely uncached build is guaranteed
    regardless of what's left on `PATH`. This fallback now falls back to a real, green `-O3` build
    like every other sccache/nvcc incompatibility instead of redding the job. **CUDA 13.4 with sccache 0.18.0: a third
-   failure shape, and the reason nvcc wrapping is opt-in now (`SCCACHE_WRAP_NVCC=true`).**
+   failure shape, and why nvcc wrapping was opt-in from 2026-10-09 to 2026-10-25.**
    `sccache: caused by: Missing "cubin" file output` followed by `sccache: Compiler killed by signal
    126`, on the first `.cu` TUs ten seconds into the build, in **every** CUDA job log examined since
    the 13.4 bump of 2026-09-27 -- runs 37643964068 and 37831180985 (2026-10-07/08), 37680715063 (the
    b11476 bump) and 37925157175 (#492, 2026-10-09). Each fell back to the uncached retry, which took
    47 to 80 minutes depending on the runner (job totals of 54 to 93 min; none came near the warm
    ~15 min), so the launcher never paid anything back and the retry threw the gcc cache away with it.
-   `build.sh` therefore wraps nvcc only when `SCCACHE_WRAP_NVCC=true` (the CUDA job does not set it)
-   and keeps the gcc TUs cached. To re-test: bump `SCCACHE_DL_VERSION`, set the variable on the CUDA
-   job for one PR run, and flip the default back once a warm run shows CUDA hits in the stats table.
+   `build.sh` then wrapped nvcc only with `SCCACHE_WRAP_NVCC=true`. **Resolved 2026-10-25:** the
+   failure needs a PTX-only `compute_90`/`compute_120` target (ggml's default list, `90-virtual`; the
+   cause is mozilla/sccache#2862, fix PR #2809), which this project's own list (since 2026-10-11, see
+   "Upgrading CUDA Version") no longer has -- measured locally: 108/108 hits warm with sccache 0.18.0.
+   The "signal 126" was an exit code printed as a signal (mozilla/sccache#2932, fixed in 0.19.0, as is
+   the same misreport for every ordinary nvcc compile error, which used to trigger this retry too). So
+   nvcc is wrapped by default again with sccache 0.19.0; `SCCACHE_WRAP_NVCC=false` opts out. The first
+   warm run's stats table is the check that it pays back.
 3. `crosscompile-linux-aarch64` — ✅ **enabled**, a **native `ubuntu-24.04-arm` build** inside the
    pypa manylinux_2_28 aarch64 image (`MANYLINUX_ARGS` forwards the env like `DOCKCROSS_ARGS`):
    `build.sh` self-fetches the aarch64 static-musl sccache in the container (the fetch block in
@@ -1368,7 +1376,7 @@ kept per job on purpose, since at workflow level the token would reach every job
 running third-party actions — and, for dockcross,
 `DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` — the
 dockcross wrapper only forwards host env it is explicitly told to via `-e`. The fetched sccache
-version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.18.0**; overridable per-job
+version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.19.0**; overridable per-job
 to try a different build against a container that crashed another). **Windows** is handled
 separately (the Visual Studio generator ignores `CMAKE_*_COMPILER_LAUNCHER`): see
 "Windows native classifiers" below — the **default** Windows CPU JAR now uses the **Ninja

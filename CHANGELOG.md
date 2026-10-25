@@ -696,6 +696,14 @@ the first two items break every existing consumer at upgrade.
   backend filter had changed loaded a second copy of the library, or extracted a second module set, and
   replaced the build info while the JVM kept using the first library. A further call now loads nothing
   and names a property changed since the load once on stderr; a failed attempt is retried.
+- **CI: sccache 0.19.0, and the Linux CUDA job caches nvcc again.** `SCCACHE_DL_VERSION` and the Windows
+  install action move to 0.19.0 (SHA-256 pins as mozilla publishes them, checked against the downloads),
+  which reports a failing compiler's exit code instead of "Compiler killed by signal <n>" -- a fix this
+  project contributed (mozilla/sccache#2932). nvcc goes through sccache by default again
+  (`SCCACHE_WRAP_NVCC=false` opts out): the CUDA 13.4 failures that made it opt-in on 2026-10-09 came from
+  ggml's default arch list (`90-virtual`, mozilla/sccache#2862), which this project stopped building on
+  2026-10-11; measured with that list, sccache caches the device passes (108/108 hits warm). `build.sh`'s
+  uncached-retry pattern matches `fatbinary fatal` instead of relying on the old signal line.
 - **CI: both ROCm jobs and the Windows plain-clang CPU job compile through sccache again.** On Windows,
   CMake's runtime-library flags for plain clang carry `-Xclang -flto-visibility-public-std`, which
   sccache refuses, so every TU of `build-windows-x86_64` and of the ROCm module (TheRock's clang, ~150
