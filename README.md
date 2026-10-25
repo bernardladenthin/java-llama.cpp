@@ -7,11 +7,12 @@
 
 **AI:**  
 [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#)  
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/bernardladenthin/java-llama.cpp?utm_source=oss&utm_medium=github&utm_campaign=bernardladenthin%2Fjava-llama.cpp&labelColor=171717&color=FF570A&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11827](https://img.shields.io/badge/llama.cpp-%23b11827-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11827)  
+[![llama.cpp b11881](https://img.shields.io/badge/llama.cpp-%23b11881-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11881)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1332,6 +1333,9 @@ server, and this library's `RpcServer` works for any llama.cpp client.
 > opt-in for another interface and logs a warning. Across machines, use a trusted network or a
 > tunnel (SSH, WireGuard).
 
+Peer listeners used by tensor-split RPC inherit that same bind address. Stopping the server
+also interrupts peer setup when the other server is absent or has not completed its handshake.
+
 What to know:
 
 - **An unreachable server fails the load** with a `LlamaException` naming it, instead of reaching
@@ -1819,12 +1823,13 @@ files flat next to it, if you use one) and start the JVM with
 desktop platform.) A signed DLL is also what lets such a policy allow the files by publisher
 instead of by hash.
 
-### Contributors: build with Temurin 21, not Oracle JDK 21
+### Contributors: build with Temurin 25
 
-`llama/pom.xml` passes `-XDaddTypeAnnotationsToSymbol=true` to `javac` (NullAway's JSpecify mode
-needs it below JDK 22). **Oracle JDK 21 rejects that flag**: `mvn compile` dies in an Error Prone
-`IllegalStateException` naming it (measured on 21.0.9). Eclipse Temurin 21, which CI uses, compiles
-the same tree; `mvn -version` shows which JDK Maven runs on.
+CI and `.java-version` use Temurin 25. This is the build JDK, not the runtime floor:
+the core still compiles with `--release 8`, and other modules retain their declared targets.
+`mvn -version` shows the JDK Maven actually uses. Historically, Oracle JDK 21 rejected the
+`-XDaddTypeAnnotationsToSymbol=true` flag required by NullAway below JDK 22; Temurin 21
+accepted it. That older-JDK incident does not require raising any bytecode target.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 

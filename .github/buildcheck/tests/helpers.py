@@ -1,31 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Shared fixtures of the buildcheck tests."""
+"""Fixtures of this repository's build-check tests; the workflow fixtures come from actionlib."""
 
 import os
 
+import buildcheck  # noqa: F401 -- finds actionlib (see buildcheck/__init__.py)
+from actionlib.testing import upload, workflow_text  # noqa: F401 -- re-exported for the tests
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-
-def workflow_text(jobs):
-    """A workflow with the given jobs, each (name, needs, body lines)."""
-    lines = ["name: t", "on:", "  push:", "jobs:"]
-    for name, needs, body in jobs:
-        lines.append(f"  {name}:")
-        if needs is not None:
-            lines.append(f"    needs: {needs}")
-        lines.append("    runs-on: ubuntu-latest")
-        lines.append("    steps:")
-        lines += body
-    return "\n".join(lines) + "\n"
-
-
-def upload(artifact, path="x/", overwrite=False, if_no_files_found=None):
-    lines = ["      - uses: actions/upload-artifact@v7", "        with:", f"          name: {artifact}",
-             f"          path: {path}"]
-    if overwrite:
-        lines.append("          overwrite: true")
-    if if_no_files_found:
-        lines.append(f"          if-no-files-found: {if_no_files_found}")
-    return lines

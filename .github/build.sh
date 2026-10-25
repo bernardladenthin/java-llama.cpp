@@ -32,9 +32,9 @@ fi
 #
 # SCCACHE_DL_VERSION is overridable per-job, so a container that crashes one sccache build can
 # try another without editing this script (the in-container panic that stalled phase 2 was on
-# v0.8.2; v0.18.0 is the latest release and the default). A wrong/unavailable version just fails
+# v0.8.2; v0.19.0 is the default). A wrong/unavailable version just fails
 # the `curl -f` and falls back to an uncached build, so bumping it can never red a build.
-SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.18.0}"
+SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.19.0}"
 case "$(uname -m)" in
   x86_64)        SCCACHE_DL_ARCH="x86_64" ;;
   aarch64|arm64) SCCACHE_DL_ARCH="aarch64" ;;
@@ -49,6 +49,8 @@ if [ "${USE_CACHE:-true}" = "true" ] && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE
   # publishes next to the release assets); another SCCACHE_DL_VERSION brings its own through
   # SCCACHE_DL_SHA256, and without a known hash the fetch is refused rather than trusted.
   case "${SCCACHE_DL_VERSION}-${SCCACHE_DL_ARCH}" in
+    0.19.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-aa73c7270c997894038c0d8f0d297865f57569e1687883322bc431713d4bb9dd}" ;;
+    0.19.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-3e47fc4a71b1ddd1b4294a0de9d34498922fdf41e3cd0bda5df3954e3d6deb9d}" ;;
     0.18.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89}" ;;
     0.18.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a}" ;;
     *)              SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-}" ;;
@@ -127,28 +129,28 @@ if [ "${USE_CACHE:-true}" = "true" ] && command -v sccache >/dev/null 2>&1 \
    && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE_GHA_ENABLED:-}" ] \
    && sccache_can_wrap_compiler; then
   LAUNCH="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
-  # CUDA builds: nvcc through sccache is OPT-IN (SCCACHE_WRAP_NVCC=true), off by default.
-  # Wrapping nvcc cached the per-arch .cu device passes too, which are the dominant cost of the
-  # full-arch CUDA job (measured: ~51 min cold -> ~15 min warm with CUDA 13.2). Since the CUDA
-  # 13.4 toolkit (2026-09-27), sccache 0.18.0 fails on the very first .cu TUs, ten seconds into
-  # the build, in every job log examined (four of four: runs 37643964068, 37680715063,
-  # 37831180985, 37925157175): `Missing "cubin" file output` / `Compiler killed by signal 126`
-  # -- sccache's nvcc command-line parsing, not a compile error. The retry below then rebuilt
-  # EVERYTHING without a launcher, gcc TUs included (47-80 min depending on the runner). Not
-  # wrapping nvcc keeps the ~280 gcc objects cached and runs nvcc directly from the start, with
-  # no wasted first attempt. Re-try the opt-in on a PR run after bumping SCCACHE_DL_VERSION (or
-  # a CUDA bump); flip the default back once a warm run shows CUDA hits in the stats table.
+  # CUDA builds: nvcc goes through sccache too (SCCACHE_WRAP_NVCC=false opts out). That caches the
+  # per-arch .cu device passes, the dominant cost of the full-arch CUDA job (measured: ~51 min cold
+  # -> ~15 min warm with CUDA 13.2). It was off from 2026-10-09 to 2026-10-25: with CUDA 13.4 and
+  # sccache 0.18.0 every job failed on the first .cu TUs with `Missing "cubin" file output` /
+  # `Compiler killed by signal 126`, and the uncached retry rebuilt everything. The cause was ggml's
+  # default arch list, whose PTX-only `90-virtual` target makes nvcc run a ptxas check pass without
+  # `-o` (mozilla/sccache#2862, fix PR #2809). The list this project passes since 2026-10-11
+  # (`build_cuda_linux.sh`: every arch `-real`, only `121-virtual` PTX-only) does not trigger it:
+  # measured in nvidia/cuda:13.4.3 with llama.cpp b11815, sccache 0.18.0 builds six ggml-cuda TUs
+  # with 108/108 hits warm (19 s vs. 243 s), and ggml's list fails exactly as CI did. The "signal
+  # 126" was sccache reporting an exit code as a signal, fixed in 0.19.0 (mozilla/sccache#2932).
   # Scoped to CUDA builds (GGML_CUDA in the cmake args): CMAKE_CUDA_COMPILER_LAUNCHER is inert
   # when CUDA is not an enabled language, but keeping it scoped leaves the CPU/Android jobs'
   # configure output clean. ggml does not wrap nvcc on its own here: its GGML_CCACHE block only
   # fires when neither CMAKE_C_COMPILER_LAUNCHER nor CMAKE_CXX_COMPILER_LAUNCHER is set.
   case " $* " in
     *" -DGGML_CUDA=1 "* | *" -DGGML_CUDA=ON "* | *" -DGGML_CUDA=on "*)
-      if [ "${SCCACHE_WRAP_NVCC:-false}" = "true" ]; then
+      if [ "${SCCACHE_WRAP_NVCC:-true}" = "true" ]; then
         LAUNCH="$LAUNCH -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache"
-        echo "build.sh: sccache will also wrap nvcc (CUDA build detected, SCCACHE_WRAP_NVCC=true)"
+        echo "build.sh: sccache will also wrap nvcc (CUDA build detected; SCCACHE_WRAP_NVCC=false opts out)"
       else
-        echo "build.sh: nvcc runs uncached (CUDA build detected, SCCACHE_WRAP_NVCC is not 'true'); sccache wraps the C/C++ TUs only"
+        echo "build.sh: nvcc runs uncached (CUDA build detected, SCCACHE_WRAP_NVCC=${SCCACHE_WRAP_NVCC}); sccache wraps the C/C++ TUs only"
       fi ;;
   esac
   # ROCm builds: on Linux ggml compiles its ~150 HIP TUs as the CMake language HIP, which the
@@ -188,16 +190,22 @@ cmake -Bbuild $LAUNCH $REQUIRE_COMMIT $@ || exit 1
 # still fails fast (and is reported) instead of triggering a wasteful uncached rebuild. The
 # "Compiler not supported" signature additionally covers the CUDA case: if wrapping nvcc breaks
 # (sccache declining/erroring on the nvcc driver), the retry rebuilds the full-arch CUDA job
-# without any launcher rather than redding it. "Compiler killed by signal" covers a second CUDA
-# failure mode seen with CUDA 13.3's nvcc: sccache's nvcc wrapping loses an intermediate .ptx file
-# for a "-virtual" architecture target (e.g. 75-virtual), so fatbinary aborts with "Could not open
-# input file '*.ptx'" and sccache reports the underlying nvcc invocation as killed — an sccache/nvcc
-# incompatibility, not a real compile error, so it gets the same uncached-retry treatment.
+# without any launcher rather than redding it. "fatbinary fatal" covers a second CUDA failure mode
+# seen with CUDA 13.3's nvcc: sccache's nvcc wrapping loses an intermediate .ptx file for a
+# "-virtual" architecture target (e.g. 75-virtual), so fatbinary aborts with "Could not open input
+# file '*.ptx'" -- an sccache/nvcc incompatibility, not a real compile error, so it gets the same
+# uncached-retry treatment. Up to sccache 0.18 that case (and every ordinary nvcc compile error)
+# also printed "Compiler killed by signal <n>", an exit code misreported as a signal; 0.19.0 reports
+# the exit code (mozilla/sccache#2932), so a genuine CUDA compile error no longer matches here and
+# fails fast instead of costing an uncached rebuild. The pattern stays for an older SCCACHE_DL_VERSION.
+# 'Missing "cubin"' is sccache's own error when nvcc's ptxas check pass writes no output
+# (mozilla/sccache#2862, a PTX-only target such as ggml's default 90-virtual): with 0.18 it came
+# with the "killed by signal" line, with 0.19.0 that line is gone, so it is matched by itself.
 build_log="$(mktemp 2>/dev/null || echo "/tmp/jllama-build.$$.log")"
 cmake --build build --config Release -j"${JOBS}" 2>&1 | tee "$build_log"
 build_rc=${PIPESTATUS[0]}
 if [ "$build_rc" -ne 0 ]; then
-  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported|Compiler killed by signal' "$build_log"; then
+  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported|Compiler killed by signal|fatbinary fatal|Missing "cubin"' "$build_log"; then
     echo "build.sh: build failed via an sccache cache error — retrying WITHOUT cache (clean reconfigure)."
     rm -f "$build_log"
     rm -rf build && mkdir -p build

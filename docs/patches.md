@@ -25,11 +25,11 @@ match a binary to this page.
 | 0001 | [`0001-win32-arg-parse-embed-guard.patch`](#0001-win32-arg-parse-embed-guardpatch) | common: parse exactly the argv an embedding caller passes (no GetCommandLineW override) | 35 | 36 |
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 6 |
-| 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 4 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 8 |
+| 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 30 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
@@ -121,6 +121,13 @@ hijack the JVM's), common_params_parse instead of common_params_parse_main for t
 it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
 over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
 Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+
+Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
+server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
+server_run_opts::install_signal_handlers (upstream's own switch, which llama-cli uses) instead of
+guarding the sigaction block, and each role function that installs a shutdown handler declares the
+reset after the last local its handler captures: models_routes in the router, ctx_http in the
+instance.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -135,18 +142,18 @@ server: let an embedding host attach the HTTP frontend to an already-loaded serv
 Adds llama_server_attach(argc, argv, server_context &, server_routes &), which serves a model the
 host has already loaded over the upstream HTTP frontend: no second model load, no start_loop() --
 the host's worker keeps driving the shared server_context and the HTTP routes post tasks to its
-queue. The stable route table is factored out of llama_server() into
-llama_server_register_common_routes(), byte-identical to the block it replaces (the invariant to
-re-check on every bump); the attach entry point registers it plus the non-router resumable-streaming
-handlers and the GCP shim, answers /cors-proxy and /tools with 403 (the MCP/tools host belongs to a
-full llama-server), marks ready immediately and blocks in ctx_http.join() until
+queue. The attach entry point registers upstream's own server_register_routes() (the route table and
+the GCP shim) plus the instance (non-router) resumable-streaming handlers through
+server_register_stream_routes(), exactly what server_run_instance() registers, so the two entry
+points cannot drift on the endpoint set; it answers /cors-proxy and /tools with 403 (the MCP/tools
+host belongs to a full llama-server), marks ready immediately and blocks in ctx_http.join() until
 llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
 server_routes' constructor registers a sleeping-state callback on the model's task queue that
 outlives the attach call. Applies after 0001 and 0006.
 
-Refreshed at b11799: POST /tts (b11781, #26603) and the WebSocket /v1/realtime (b11780, #30636) joined
-the route table between the transcription and the Anthropic routes; both are in the removed block and
-in the helper, so attach mode serves them too.
+Refreshed at b11881: #31113 factored the route table out of llama_server() itself
+(server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
+it -- the helper this patch used to add, and the "verbatim copy" invariant it had to keep, are gone.
 ```
 
 ## 0008-server-models-worker-cmd-override.patch
@@ -232,20 +239,34 @@ JVM) cannot use ggml-rpc as it is:
 
 3. ggml_backend_rpc_start_server() cannot be stopped: while(true) around accept(). Two new
    entry points, both also exposed through get_proc_address:
-   - ggml_backend_rpc_stop_server() disconnects the client being served and wakes accept()
-     with a loopback connection (the one portable way to interrupt it). The loop then
-     releases its backends; it used to never reach that code.
+   - ggml_backend_rpc_stop_server() disconnects the client and every live peer socket.
+     Listener accept and outgoing peer connect poll cancellation at 50 ms intervals; no
+     wake-up connection can fill the listen backlog and block the stopping thread. The
+     loop releases its backends when it ends.
    - ggml_backend_rpc_server_listening() tells the host whether the socket was bound.
    The transport stays initialised on the way out, because WSACleanup() would invalidate
    every other RPC socket in the process.
 
 4. transport: no SIGPIPE when the peer went away (MSG_NOSIGNAL / SO_NOSIGPIPE), a
-   socket_t::shutdown(), and the file descriptors that connect()/create_server()/accept()
+   socket_t::shutdown() (on Windows also CancelIoEx: shutdown alone does not wake a recv
+   blocked in another thread there), and the file descriptors that connect()/create_server()/accept()
    leaked on their error paths are closed.
 
 Upstream-submittable; not filed upstream yet. The runnable guard is
 src/test/cpp/test_rpc.cpp: it links both new functions and exercises the registration and
-stop paths over loopback.
+stop paths over loopback. test_rpc_comm.cpp drives protocol-v8 COMM_INIT through the C
+API: loopback/network binding, missing peer, stalled caps handshakes in both ranks,
+normal peer setup, socket cleanup and restart. Subprocess deadlines bound failures.
+
+5. COMM_INIT preserves the configured server bind address instead of opening a wildcard
+   listener for a loopback-only server. Peer sockets are weakly registered before any
+   caps I/O, under the same mutex as stop; stop also catches a peer accepted/connected
+   concurrently. Normal COMM_FREE/disconnect still frees them immediately. The rank-1
+   retry loop checks cancellation too. The former main-listener wake-up connection is
+   removed: repeated C-API stops while the peer was absent filled its backlog.
+
+Drop-check on each upstream bump: inspect comm_init, the stoppable accept/connect
+paths and stop_server. Drop upstream-fixed hunks instead of mechanically refreshing them.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch

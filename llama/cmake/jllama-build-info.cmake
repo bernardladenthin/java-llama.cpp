@@ -15,7 +15,7 @@
 #                      `patches.sha256` (one hash over the patch set: "<name> <sha256>\n" per patch,
 #                      in name order -- the same lines the patch applier's stamp carries), `compiler`
 #                      and `toolkit` (the vendor SDK a GPU module was built against), and `signed`
-#                      (`no` until the signing step exists -- TODO.md, delivery roadmap, item 9).
+#                      (`no` unless the signing job ran -- TODO.md, delivery roadmap, item 11).
 #   jllama-sbom.json   a CycloneDX 1.5 bill of materials of the same facts: the natives jar as the
 #                      component, llama.cpp with every carried patch as its pedigree, BoringSSL,
 #                      CCCL and the vendor toolkit as components.

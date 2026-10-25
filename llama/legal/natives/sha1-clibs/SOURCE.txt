@@ -1,0 +1,1 @@
+sha1.c-header.txt: verbatim lines 1-4 of https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/hash/sha1/sha1.c

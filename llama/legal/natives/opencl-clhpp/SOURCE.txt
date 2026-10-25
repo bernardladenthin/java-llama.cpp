@@ -1,0 +1,1 @@
+LICENSE.txt: https://github.com/KhronosGroup/OpenCL-CLHPP/blob/v2026.05.29/LICENSE.txt

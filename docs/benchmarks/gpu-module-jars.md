@@ -139,9 +139,10 @@ driver 595.91.07 could not.
   module does not open); a *present but too old* driver aborts the process. For a library that is
   loaded inside someone else's JVM this is the worst possible outcome, and it cannot be caught
   downstream.
-* **Two candidate fixes**, both for the owner to weigh (`TODO.md`): document a minimum driver version
-  for the `cuda13` jars, and/or pass an explicit arch list adding `75-real 80-real 90-real` so the
-  common datacenter GPUs do not depend on JIT at all. The second costs binary size — the module is
+* **Two candidate fixes** were weighed: document a minimum driver version for the `cuda13` jars,
+  and/or pass an explicit arch list adding `75-real 80-real 90-real` so the common datacenter GPUs
+  do not depend on JIT at all. The second was taken: both CUDA builds pass such a list (CLAUDE.md,
+  "Upgrading CUDA Version"). The second costs binary size — the module is
   already 154 MB — and is exactly the trade-off upstream made the other way.
 
 ## 2 · `openvino` on a CPU-only host: it loads, takes over, and is 172× slower
@@ -208,11 +209,11 @@ Two things this settles that the earlier run could not:
 ### What to do about it
 
 
-Recorded in `TODO.md` as the owner's call, with a recommendation: **make the OpenVINO module opt-in**
-rather than additive. The premise of additive module jars is "a module that cannot help is skipped,
-one that can help is used" — OpenVINO satisfies neither on a CPU-only host. Failing that, the README
-needs to say that the jar requires an Intel GPU/NPU *and* an OpenCL ICD loader, and that it must not
-be on the classpath otherwise.
+Decided as recommended: **the OpenVINO module is opt-in** rather than additive
+(`LlamaLoader.OPT_IN_BACKENDS`, the `optin` column of `natives.csv`). The premise of additive module
+jars is "a module that cannot help is skipped, one that can help is used" — OpenVINO satisfies
+neither on a CPU-only host. The README says that the jar needs an Intel GPU/NPU *and* an OpenCL ICD
+loader.
 
 ## What these runs did *not* test
 

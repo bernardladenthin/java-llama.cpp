@@ -9,6 +9,8 @@ plugins {
 // Injected by CI (-PjllamaVersion=<reactor version>) so the fixture always tests
 // the AAR that was just built and published to mavenLocal.
 val jllamaVersion: String = providers.gradleProperty("jllamaVersion").get()
+val jllamaBackend = providers.gradleProperty("jllamaBackend").orElse("cpu").get()
+require(jllamaBackend in listOf("cpu", "opencl")) { "Unknown jllamaBackend: $jllamaBackend" }
 
 android {
     namespace = "net.ladenthin.llama.consumertest"
@@ -48,7 +50,9 @@ android {
 }
 
 dependencies {
-    implementation("net.ladenthin:llama-android:$jllamaVersion")
+    // The OpenCL case resolves the CPU AAR transitively, exactly as a consumer does.
+    val artifact = if (jllamaBackend == "opencl") "llama-android-opencl" else "llama-android"
+    implementation("net.ladenthin:$artifact:$jllamaVersion")
 
     // On-emulator instrumentation (test-android-emulator CI job).
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

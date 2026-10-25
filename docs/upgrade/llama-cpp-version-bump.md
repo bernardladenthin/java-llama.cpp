@@ -146,6 +146,19 @@ for each:
 
 ---
 
+## License texts on a bump
+
+`llama/legal/natives/` holds the license texts of everything compiled into the natives, taken from
+the pinned commit. On a bump: regenerate the WebUI's npm texts (`build-webui` warns on a changed
+`tools/ui/package-lock.json` and fails on a release tag),
+
+```bash
+python3 .github/webui-licenses.py generate <llama.cpp at the new pin>/tools/ui llama/legal/natives/webui-npm
+```
+
+and compare `LICENSE`, `licenses/` and `vendor/` of the new pin with the folders there (a new
+vendored library needs its text and a row in `NOTICE.md`).
+
 ## Applying a bump
 
 Once you have the `b<cur> -> b<next>` step, apply it exactly as

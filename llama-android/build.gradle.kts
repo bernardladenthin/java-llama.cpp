@@ -142,6 +142,21 @@ val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
         exclude("module-info.class")
         exclude("META-INF/maven/**")
     }
+    // The license texts of the code compiled into the .so files under jni/ (llama/legal/natives/,
+    // NOTICE.md there). A path of this artifact's own: AGP merges the java resources of every
+    // classes.jar into the APK and fails on two equal paths, and the OpenCL AAR carries the same set.
+    from("../llama/legal/natives") { into("META-INF/third-party/llama-android/natives") }
+}
+
+// The additive OpenCL AAR gets its Java API through the CPU AAR dependency. A second copy
+// of these classes would make D8/R8 reject that dependency graph as duplicate definitions.
+val moduleClassesJar = tasks.register<Jar>("moduleClassesJar") {
+    description = "Class-free classes.jar for the native-only OpenCL add-on (its license texts only)."
+    archiveBaseName.set("module-classes-payload")
+    destinationDirectory.set(layout.buildDirectory.dir("intermediates"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from("../llama/legal/natives") { into("META-INF/third-party/llama-android-opencl/natives") }
 }
 
 // AGP-built AARs always carry an R.txt (empty for resource-less libraries).
@@ -181,12 +196,14 @@ val javadocJar = tasks.register<Jar>("javadocJar") {
 fun registerAarTask(
     taskName: String,
     artifactBase: String,
+    manifestPackage: String,
     nativesSubdir: String,
     requiredAbis: List<String>,
-    requiredLibrary: String
+    requiredLibrary: String,
+    classesJar: TaskProvider<Jar>
 ) =
     tasks.register<Zip>(taskName) {
-        description = "Assembles $artifactBase-$reactorVersion.aar from the core classes and natives/$nativesSubdir."
+        description = "Assembles $artifactBase-$reactorVersion.aar with natives/$nativesSubdir."
         archiveBaseName.set(artifactBase)
         archiveVersion.set(reactorVersion)
         archiveExtension.set("aar")
@@ -194,6 +211,7 @@ fun registerAarTask(
         isPreserveFileTimestamps = false
         isReproducibleFileOrder = true
         val nativesDir = file("natives/$nativesSubdir")
+        inputs.property("manifestPackage", manifestPackage)
         doFirst {
             // Fail-loud per ABI: a missing staging copy must never silently produce an
             // AAR that lacks an advertised ABI (emulator/x86_64 consumers would crash
@@ -209,8 +227,13 @@ fun registerAarTask(
                 }
             }
         }
-        from("src/main/AndroidManifest.xml")
-        from(coreClassesJar) { rename { "classes.jar" } }
+        // Plain-Gradle AARs declare their namespace through the manifest package.
+        // CPU and additive OpenCL are consumed together, so AGP requires distinct
+        // packages even though OpenCL has no Java classes or Android resources.
+        from("src/main/AndroidManifest.xml") {
+            expand(mapOf("aarPackage" to manifestPackage))
+        }
+        from(classesJar) { rename { "classes.jar" } }
         from("consumer-proguard.txt") { rename { "proguard.txt" } }
         from(generateRTxt)
         // Only the libraries: the jllama-build.txt / jllama-files.txt lists a natives artifact
@@ -226,8 +249,8 @@ fun registerAarTask(
 // The OpenCL flavor stays arm64-only (Adreno = Qualcomm ARM hardware) and holds the
 // OpenCL backend module alone -- libjllama.so and the CPU modules come from the CPU AAR
 // it depends on, so an app's jni/arm64-v8a/ ends up with both sets side by side.
-val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so")
-val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so")
+val aarCpu = registerAarTask("aarCpu", "llama-android", "net.ladenthin.llama.android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so", coreClassesJar)
+val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "net.ladenthin.llama.android.opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so", moduleClassesJar)
 
 // ---------------------------------------------------------------------------
 // Publishing: POM <packaging>aar</packaging> + mirrored core dependencies.

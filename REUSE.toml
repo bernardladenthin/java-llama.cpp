@@ -140,8 +140,205 @@ path = [
 SPDX-FileCopyrightText = "1996-2023 Oracle and/or its affiliates"
 SPDX-License-Identifier = "GPL-2.0-only WITH Classpath-exception-2.0"
 
-# The issue/PR templates are kept byte-identical in java-llama.cpp, BitcoinAddressFinder, srcmorph
-# and streambuffer (.github/shared-files.sha256) and carry the license of the other shared files.
+# The license texts of the third-party code compiled into the natives (llama/legal/natives/,
+# copied into every natives jar; NOTICE.md there is the index). Each folder holds texts taken byte
+# for byte from its upstream, which its SOURCE.txt names.
+
+[[annotations]]
+path = "llama/legal/natives/java-llama.cpp/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/llama.cpp/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2023-2026 The ggml authors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/nlohmann-json/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2013-2025 Niels Lohmann"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/cpp-httplib/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 yhirose"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/boringssl/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The BoringSSL Authors"
+SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause"
+
+[[annotations]]
+path = "llama/legal/natives/xxhash/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Yann Collet"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "llama/legal/natives/sha256-jb55/**"
+precedence = "override"
+SPDX-FileCopyrightText = "William Casarin"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/rotate-bits/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 William Casarin <jb55@jb55.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/sha1-clibs/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Steve Reid"
+SPDX-License-Identifier = "LicenseRef-public-domain"
+
+[[annotations]]
+path = "llama/legal/natives/stb_image/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 Sean Barrett"
+SPDX-License-Identifier = "MIT OR Unlicense"
+
+[[annotations]]
+path = "llama/legal/natives/miniaudio/**"
+precedence = "override"
+SPDX-FileCopyrightText = "David Reid"
+SPDX-License-Identifier = "Unlicense OR MIT-0"
+
+[[annotations]]
+path = "llama/legal/natives/sheredom-subprocess/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Neil Henning"
+SPDX-License-Identifier = "Unlicense"
+
+[[annotations]]
+path = "llama/legal/natives/base64-hpp/**"
+precedence = "override"
+SPDX-FileCopyrightText = "base64.hpp authors"
+SPDX-License-Identifier = "Unlicense"
+
+[[annotations]]
+path = "llama/legal/natives/llamafile-sgemm/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2023 Mozilla Foundation"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/arm-optimized-routines/**"
+precedence = "override"
+SPDX-FileCopyrightText = "1999-2022 Arm Limited"
+SPDX-License-Identifier = "MIT OR Apache-2.0 WITH LLVM-exception"
+
+[[annotations]]
+path = "llama/legal/natives/yarn/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The YaRN authors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/ggllm.cpp/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2023 cmp-nct"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/pillow/**"
+precedence = "override"
+SPDX-FileCopyrightText = "1997-2011 Secret Labs AB; 1995-2011 Fredrik Lundh and contributors"
+SPDX-License-Identifier = "MIT-CMU"
+
+[[annotations]]
+path = "llama/legal/natives/openvino/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Intel Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "llama/legal/natives/unicode/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Unicode, Inc."
+SPDX-License-Identifier = "Unicode-3.0"
+
+[[annotations]]
+path = "llama/legal/natives/webui-big-integer/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Peter Olson"
+SPDX-License-Identifier = "Unlicense"
+
+[[annotations]]
+path = "llama/legal/natives/webui-decimal.js/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Michael Mclaughlin"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/webui-nerdamer-prime/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The nerdamer authors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/cccl/**"
+precedence = "override"
+SPDX-FileCopyrightText = "NVIDIA Corporation"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND BSD-3-Clause"
+
+[[annotations]]
+path = "llama/legal/natives/hip/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Advanced Micro Devices, Inc."
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "llama/legal/natives/onednn/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016-2025 Intel Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "llama/legal/natives/vulkan-headers/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Khronos Group Inc."
+SPDX-License-Identifier = "Apache-2.0 OR MIT"
+
+[[annotations]]
+path = "llama/legal/natives/spirv-headers/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2015-2024 The Khronos Group Inc."
+SPDX-License-Identifier = "MIT AND MIT-Khronos-old"
+
+[[annotations]]
+path = "llama/legal/natives/opencl-headers/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Khronos Group Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "llama/legal/natives/opencl-clhpp/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Khronos Group Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "llama/legal/natives/webui-npm/THIRD-PARTY-LICENSES.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "The authors of the npm packages it names"
+SPDX-License-Identifier = "MIT AND ISC AND BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND Unlicense AND MPL-2.0"
+
+# Generated or written here: provenance notes, the package list and the lockfile digest.
+[[annotations]]
+path = ["llama/legal/natives/**/SOURCE.txt", "llama/legal/natives/webui-npm/packages.csv", "llama/legal/natives/webui-npm/LOCKFILE.sha256"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The issue/PR templates are templates of bernardladenthin/actions (templates/common), checked by
+# its check-templates action, and carry the license of the other template files.
 # Last in this file on purpose: of several matching annotations the last one applies.
 [[annotations]]
 path = [

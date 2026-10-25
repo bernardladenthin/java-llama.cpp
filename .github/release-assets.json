@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "maven": {
+    "standalone": [
+      "llama-atmosphere-agent"
+    ],
+    "cyclonedx": true
+  },
+  "files": [
+    {
+      "source": "llama/target/llama-{version}-{classifier}.jar",
+      "classifiers": {
+        "csv": ".github/natives.csv",
+        "column": "classifier"
+      },
+      "central": true
+    },
+    {
+      "source": "llama-source-archive/llama.cpp-*-jllama-{version}-src.tar.gz"
+    },
+    {
+      "source": "llama-android/build/aar/llama-android-{version}.aar",
+      "central": true
+    },
+    {
+      "source": "llama-android/build/publications/llamaAndroid/pom-default.xml",
+      "name": "llama-android-{version}.pom",
+      "central": true
+    },
+    {
+      "source": "llama-android/build/distributions/llama-android-{version}-{classifier}.jar",
+      "name": "llama-android-{version}-{classifier}.jar",
+      "classifiers": [
+        "sources",
+        "javadoc"
+      ],
+      "central": true
+    },
+    {
+      "source": "llama-android/build/aar/llama-android-opencl-{version}.aar",
+      "central": true
+    },
+    {
+      "source": "llama-android/build/publications/llamaAndroidOpencl/pom-default.xml",
+      "name": "llama-android-opencl-{version}.pom",
+      "central": true
+    },
+    {
+      "source": "llama-android/build/distributions/llama-android-{version}-{classifier}.jar",
+      "name": "llama-android-opencl-{version}-{classifier}.jar",
+      "classifiers": [
+        "sources",
+        "javadoc"
+      ],
+      "central": true
+    }
+  ],
+  "publication": {
+    "central_roots": [
+      "target/{staging}",
+      "llama-atmosphere-agent/target/{staging}",
+      "llama-android/build/staging-repo"
+    ]
+  }
+}

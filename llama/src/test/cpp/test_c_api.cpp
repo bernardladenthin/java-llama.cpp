@@ -1565,9 +1565,10 @@ TEST(CApiRpc, TheRpcServerServesTheCpuOverLoopbackAndStops) {
     // server returns at once when it cannot bind, which `listening` tells apart.
     bool served = false;
     for (int attempt = 0; attempt < 50 && !served; ++attempt) {
+        // Below every default ephemeral range (Linux from 32768, Windows and macOS from 49152).
         const int port =
-            42000 + static_cast<int>(
-                        (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+            20000 + static_cast<int>(
+                        (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 12000);
         auto done = std::make_shared<std::atomic<bool>>(false);
         auto status = std::make_shared<jllama_status>(JLLAMA_STATUS_OK);
         std::thread worker([port, done, status]() {
@@ -1594,9 +1595,12 @@ TEST(CApiRpc, TheRpcServerServesTheCpuOverLoopbackAndStops) {
 namespace {
 
 // A port of the range the serve test above uses (a fixed port would collide with parallel jobs).
+// Below every default ephemeral range (Linux from 32768, Windows and macOS from 49152): a port out
+// of 42000-62000 was once taken by an outgoing connection on the aarch64 runner, and the serve failed
+// to bind ("Failed to create server socket", run 40195444689).
 int rpc_test_port(int attempt) {
-    return 42000 + static_cast<int>(
-                       (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+    return 20000 + static_cast<int>(
+                       (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 12000);
 }
 
 // jllama_rpc_server_serve() on a thread of its own, with a way to wait for it to return.

@@ -11,11 +11,18 @@ it captures are destroyed -- a request landing after llama_server() returned use
 over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
 Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
 
+Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
+server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
+server_run_opts::install_signal_handlers (upstream's own switch, which llama-cli uses) instead of
+guarding the sigaction block, and each role function that installs a shutdown handler declares the
+reset after the last local its handler captures: models_routes in the router, ctx_http in the
+instance.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index deac18f61..6a1dc82db 100644
+index cf9a4045b..2fa87673c 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -15,6 +15,7 @@
+@@ -16,6 +16,7 @@
  #include <atomic>
  #include <clocale>
  #include <exception>
@@ -23,14 +30,14 @@ index deac18f61..6a1dc82db 100644
  #include <signal.h>
  #include <thread> // for std::thread::hardware_concurrency
  
-@@ -25,6 +26,53 @@
+@@ -26,6 +27,53 @@
  static std::function<void(int)> shutdown_handler;
  static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
  
 +// [jllama] Embedded-mode support: when llama_server() is hosted inside libjllama and driven over
 +// JNI (net.ladenthin.llama.server.NativeServer), it must NOT install process-wide signal handlers
 +// (that would hijack the JVM's SIGINT/SIGTERM), and it must be stoppable out-of-band because
-+// ctx_server is local to llama_server(). It also parses exactly the forwarded argv rather than
++// ctx_server is local to the role function. It also parses exactly the forwarded argv rather than
 +// re-deriving it from the process command line (which would be java.exe's — the Windows bug the
 +// 0001 patch fixes for the embedded path). These symbols are declared in
 +// src/main/cpp/native_server_bridge.h and called by native_server.cpp.
@@ -40,12 +47,12 @@ index deac18f61..6a1dc82db 100644
 +    g_llama_server_embedded.store(embedded);
 +}
 +
-+// [jllama] shutdown_handler captures llama_server()'s locals by reference and upstream never
++// [jllama] shutdown_handler captures the role function's locals by reference and upstream never
 +// clears it, so a request that lands after llama_server() returned ran it over destroyed objects
 +// (SIGSEGV in server_http_context::stop(), seen in RouterModeIntegrationTest's tearDown). The JNI
 +// caller signals repeatedly until the server has returned, so that window is routinely hit. Two
-+// guards close it: every read and write of the handler holds this mutex (the caller runs on another
-+// thread), and a llama_server_shutdown_handler_reset declared after the captured locals clears the
++// guards close it: every write of the handler and every invocation from another thread holds this
++// mutex, and a llama_server_shutdown_handler_reset declared after the captured locals clears the
 +// handler before any of them is destroyed. The handler is invoked under the lock, so the reset --
 +// and therefore the destruction of what it captures -- waits for an invocation in progress.
 +static std::mutex g_shutdown_handler_mutex;
@@ -66,8 +73,8 @@ index deac18f61..6a1dc82db 100644
 +
 +void llama_server_request_shutdown() {
 +    // Mirrors the SIGTERM path: invoke the installed shutdown_handler, which unblocks
-+    // ctx_server.start_loop() (single-model) / ctx_http.stop() (router). No-op if the server has
-+    // not finished starting (handler not yet installed) or has already returned (handler reset).
++    // ctx_server.start_loop() (instance) / ctx_http.stop() (router). No-op if the server has not
++    // finished starting (handler not yet installed) or has already returned (handler reset).
 +    std::lock_guard<std::mutex> lock(g_shutdown_handler_mutex);
 +    if (shutdown_handler) {
 +        shutdown_handler(SIGTERM);
@@ -77,7 +84,58 @@ index deac18f61..6a1dc82db 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -102,7 +150,13 @@ int llama_server(int argc, char ** argv) {
+@@ -447,6 +495,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+ 
+     // setup server instances manager
+     std::optional<server_models_routes> models_routes;
++    // [jllama] declared after every local the shutdown handler captures (models_routes, ctx_http,
++    // mcp_mgr), so it clears the handler before any of them is destroyed
++    llama_server_shutdown_handler_reset shutdown_handler_reset;
+     try {
+         models_routes.emplace(params, argc, argv);
+     } catch (const std::exception & e) {
+@@ -522,14 +573,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+     }
+     ctx_http.is_ready.store(true);
+ 
+-    shutdown_handler = [&](int) {
++    llama_server_set_shutdown_handler([&](int) {
+         if (models_routes.has_value()) {
+             // important to disconnect any SSE clients
+             models_routes->stopping.store(true);
+         }
+         mcp_mgr.shutdown();
+         ctx_http.stop();
+-    };
++    });
+ 
+     try {
+         models_routes->models.load_startup_models();
+@@ -590,6 +641,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
+     server_tools   tools;
+ 
+     server_http_context ctx_http;
++    // [jllama] declared after every local the shutdown handler captures (ctx_server, mcp_mgr), so
++    // it clears the handler before any of them is destroyed
++    llama_server_shutdown_handler_reset shutdown_handler_reset;
+     if (!ctx_http.init(params)) {
+         SRV_ERR("%s", "failed to initialize HTTP server\n");
+         return 1;
+@@ -642,11 +696,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
+ 
+     SRV_INF("%s", "model loaded\n");
+ 
+-    shutdown_handler = [&](int) {
++    llama_server_set_shutdown_handler([&](int) {
+         mcp_mgr.shutdown();
+         // this will unblock start_loop()
+         ctx_server.terminate();
+-    };
++    });
+ 
+     if (opts.install_signal_handlers) {
+         server_install_signal_handlers();
+@@ -743,7 +797,14 @@ int llama_server(int argc, char ** argv) {
      // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
      server_stream_session_manager_start();
  
@@ -85,59 +143,24 @@ index deac18f61..6a1dc82db 100644
 +    // [jllama] embedded (JNI) callers forward a clean UTF-8 argv, so honor it exactly via
 +    // common_params_parse; only the standalone tool needs common_params_parse_main's
 +    // process-command-line (GetCommandLineW) UTF-8 recovery.
-+    const bool parsed_ok = g_llama_server_embedded.load()
++    const bool embedded = g_llama_server_embedded.load();
++    const bool parsed_ok = embedded
 +        ? common_params_parse(argc, argv, params, LLAMA_EXAMPLE_SERVER)
 +        : common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_SERVER);
 +    if (!parsed_ok) {
          return 1;
      }
  
-@@ -197,6 +251,9 @@ int llama_server(common_params & params, int argc, char ** argv) {
-     std::optional<server_models_routes> models_routes{};
+@@ -752,7 +813,11 @@ int llama_server(int argc, char ** argv) {
+     llama_backend_init();
+     llama_numa_init(params.numa);
  
-     server_http_context ctx_http;
-+    // [jllama] declared after every local the shutdown handler captures, so it clears the handler
-+    // before any of them is destroyed (see llama_server_request_shutdown)
-+    llama_server_shutdown_handler_reset shutdown_handler_reset;
-     if (!ctx_http.init(params)) {
-         SRV_ERR("%s", "failed to initialize HTTP server\n");
-         return 1;
-@@ -427,14 +484,14 @@ int llama_server(common_params & params, int argc, char ** argv) {
-         }
-         ctx_http.is_ready.store(true);
- 
--        shutdown_handler = [&](int) {
-+        llama_server_set_shutdown_handler([&](int) {
-             if (models_routes.has_value()) {
-                 // important to disconnect any SSE clients
-                 models_routes->stopping.store(true);
-             }
-             mcp_mgr.shutdown();
-             ctx_http.stop();
--        };
-+        });
- 
-         try {
-             models_routes->models.load_startup_models();
-@@ -484,15 +541,18 @@ int llama_server(common_params & params, int argc, char ** argv) {
- 
-         SRV_INF("%s", "model loaded\n");
- 
--        shutdown_handler = [&](int) {
-+        llama_server_set_shutdown_handler([&](int) {
-             mcp_mgr.shutdown();
-             // this will unblock start_loop()
-             ctx_server.terminate();
--        };
-+        });
-     }
- 
-     // register signal handler if not running by CLI
--    if (!is_run_by_cli) {
-+    // [jllama] also skip when embedded in the JVM (they would hijack the JVM's own
-+    // SIGINT/SIGTERM). NativeServer stops the embedded server via
-+    // llama_server_request_shutdown() instead.
-+    if (!is_run_by_cli && !g_llama_server_embedded.load()) {
- #if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
-         struct sigaction sigint_action;
-         sigint_action.sa_handler = signal_handler;
+-    const int result = server_run(params, argc, argv, role, server_run_opts{});
++    server_run_opts opts;
++    // [jllama] no process-wide SIGINT/SIGTERM handlers when embedded in the JVM (they would hijack
++    // the JVM's own); NativeServer stops the embedded server via llama_server_request_shutdown()
++    opts.install_signal_handlers = !embedded;
++    const int result = server_run(params, argc, argv, role, opts);
+     common_log_flush(common_log_main());
+     return result;
+ }

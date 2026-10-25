@@ -14,7 +14,7 @@ inputs:
   version:
     description: sccache release to install.
     required: false
-    default: '0.18.0'
+    default: '0.19.0'
 runs:
   using: composite
   steps:
@@ -30,6 +30,8 @@ runs:
         # version and arch; a version without a pinned hash is refused (the caller's
         # continue-on-error then builds without the cache, which is the safe side).
         $sha256 = @{
+          '0.19.0-x86_64'  = '28be8c61f6b2c89b9eb2869f6af7f78e6f992e78a8abae0ce855fcc129cbeac1'
+          '0.19.0-aarch64' = '66d20f1ea5e29f4f309136323635b864e1d8f0a8b587abbc22271bc22d439a5a'
           '0.18.0-x86_64'  = '8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d'
           '0.18.0-aarch64' = '205d613fa74a9a0525e41a5ace77b1c71907d5bd4a5e668bad79111776829290'
         }["$env:SCCACHE_VERSION-$arch"]

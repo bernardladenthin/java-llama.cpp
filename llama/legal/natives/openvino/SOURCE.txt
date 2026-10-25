@@ -1,0 +1,1 @@
+LICENSE: https://github.com/openvinotoolkit/openvino/blob/2026.4.1/LICENSE

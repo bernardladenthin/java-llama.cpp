@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11827)
-set(JLLAMA_GIT_COMMIT "970b51ce7c9ba5fff0726c5e9994f1c2f0e4eedc")   # the commit b11827 names; kept after the tag exists
+set(JLLAMA_GIT_TAG    b11881)
+set(JLLAMA_GIT_COMMIT "fa3645feb5f47cbb30df5e6d031c22543d43d240")   # the commit b11881 names (not tagged upstream yet); kept after the tag exists
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -551,8 +551,8 @@ if(JLLAMA_BACKEND_DL)
     # `set(GGML_*_DEFAULT ...)` there ("change the default for these ggml options") must be
     # repeated here, because adding ggml first skips that block entirely. Re-check on every bump
     # with `grep -n _DEFAULT CMakeLists.txt` at the new tag. Missing GGML_CUDA_GRAPHS_DEFAULT cost a
-    # CUDA module built this way two thirds of its token generation (measured, TODO.md "GPU
-    # backends as modules"): ggml's own default is OFF, llama.cpp turns it ON for itself.
+    # CUDA module built this way two thirds of its token generation (measured,
+    # docs/handover/local-agent-report-b11538-windows.md, finding B): ggml's own default is OFF, llama.cpp turns it ON for itself.
     set(GGML_LLAMAFILE_DEFAULT   ON)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
     add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)
@@ -1367,6 +1367,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
         src/test/cpp/test_rpc.cpp
+        src/test/cpp/test_rpc_comm.cpp
         src/test/cpp/test_gallocr_leafs.cpp
         src/test/cpp/test_lora_cache.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp

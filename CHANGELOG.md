@@ -136,7 +136,7 @@ the first two items break every existing consumer at upgrade.
     fails the stream through `onError`.
 
 ### Added
-- **llama.cpp b11827** (from b11639, in ten steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827). What the
+- **llama.cpp b11881** (from b11639, in eleven steps: b11760, b11761, b11799, b11800, b11803, b11809, b11814, b11815, b11820, b11827, b11881). What the
   range brings to a consumer: `POST /tts` (llama.cpp b11781, #26603, speech from a TTS-capable model through the
   embedded server) and the realtime transcription WebSocket `/v1/realtime` (b11780, #30636), both served by
   `NativeServer` -- classic and attach mode -- and not by the Java transport or `LlamaModel` yet; a
@@ -167,7 +167,18 @@ the first two items break every existing consumer at upgrade.
   mat-vec kernels on the Intel XMX engines for short batches (#29864, `GGML_SYCL_ENABLE_XMX_ESIMD`), an
   OpenCL depthwise `CONV_2D_DW` (#30900), the MiniCPM-OCR 1.0 projector (#30979), a DFlash drafter
   fix for qwen4exp (#30927) and fewer graph inputs for glm5-next (#30932) -- nothing here changed.
-  Two patches dropped (`0016`, `0019`), `0007` refreshed.
+  The b11881 step (2026-10-25, 54 commits; upstream had not tagged the number yet, so the pin names the
+  commit `fa3645feb`): llama.cpp's server entry point is one function per role now (#31113), which
+  `NativeServer` does not show -- `0006` and `0007` were rewritten onto it, and attach mode registers
+  upstream's own route table instead of a copy; JSON nested more than 128 levels deep (tools, tool-call
+  arguments, `chat_template_kwargs`, `json_schema`, the `/v1/systemone` body) is refused as an invalid
+  request instead of overflowing the stack of the thread that walks it (#30242); `-hf` downloads of one file
+  from several processes are serialized by a lock shared with the hf CLI (#29312); DeepSeek V4.1 Flash
+  (#31086), Soprano TTS in mtmd (#28607, not tried with `TextToSpeech` here), a `MUL_MAT_ID` index of -1
+  that skips the slot (#26631), `-sm tensor` refused for architectures with MoE amax rescaling (#31081),
+  jinja's `select`/`selectattr` arguments (#31059), Nemotron-3.5-Embed tokenization (#30974) and an
+  overflow in `ggml_time_us` (#30969).
+  Two patches dropped (`0016`, `0019`), `0006` rewritten, `0007` refreshed and rewritten.
 - **`RouterModel.Status.INCOMPLETE`** (llama.cpp b11714): a router download that never finished is listed
   as `"incomplete"` without a worker; it was `UNKNOWN` here.
 - **`/v1/messages` passes `id_slot` through and merges `extra_params`** like upstream (llama.cpp b11756 and
@@ -414,6 +425,14 @@ the first two items break every existing consumer at upgrade.
   translation.
 
 ### Changed
+- **The shared CI code moved to [bernardladenthin/actions](https://github.com/bernardladenthin/actions).**
+  The build-check library, the publication gate and its consumers, the signing-key checks and the
+  shared scripts and workflows are actions and reusable workflows there, pinned by commit; the
+  `shared-files` job and `.github/shared-files.sha256` are replaced by the `repository-checks` job,
+  configured in `.github/actions-config.json`: the files this repository must carry are compared with
+  the templates there, and the publication wiring and a dry run of the release asset contract are
+  checked in every pull request. This repository's own checks (`.github/buildcheck/`: natives,
+  patches, native dependencies, HIP offload, WebUI licenses) stay here and build on its library.
 - **README corrected against the code** (an audit of every section, 63 findings): no 32-bit Windows
   natives; the snapshot channel is a manual Publish run, not every push; OpenVINO is opt-in wherever
   the loader's additive rule is described; the static library jars (macOS, s390x) and the single
@@ -696,6 +715,36 @@ the first two items break every existing consumer at upgrade.
   backend filter had changed loaded a second copy of the library, or extracted a second module set, and
   replaced the build info while the JVM kept using the first library. A further call now loads nothing
   and names a property changed since the load once on stderr; a failed attempt is retried.
+- **CI: sccache 0.19.0, and the Linux CUDA job caches nvcc again.** `SCCACHE_DL_VERSION` and the Windows
+  install action move to 0.19.0 (SHA-256 pins as mozilla publishes them, checked against the downloads),
+  which reports a failing compiler's exit code instead of "Compiler killed by signal <n>" -- a fix this
+  project contributed (mozilla/sccache#2932). nvcc goes through sccache by default again
+  (`SCCACHE_WRAP_NVCC=false` opts out): the CUDA 13.4 failures that made it opt-in on 2026-10-09 came from
+  ggml's default arch list (`90-virtual`, mozilla/sccache#2862), which this project stopped building on
+  2026-10-11; measured with that list, sccache caches the device passes (108/108 hits warm). `build.sh`'s
+  uncached-retry pattern matches `fatbinary fatal` and `Missing "cubin"` instead of relying on the old
+  signal line, and the CUDA job forwards `SCCACHE_WRAP_NVCC` into its container, so the opt-out works.
+- **The natives jars and the Android AARs carry the license texts of the code compiled into them.**
+  `llama/legal/natives/` (index `NOTICE.md`): java-llama.cpp's own license, llama.cpp/ggml and every
+  library it vendors or derives code from, BoringSSL, the GPU vendors' header libraries (CCCL, HIP,
+  oneDNN, Vulkan/SPIR-V, OpenCL, OpenVINO) and the npm packages of the embedded WebUI, each taken
+  from its upstream byte for byte. Every natives jar has them under `META-INF/third-party/natives/`,
+  the AARs inside `classes.jar`; before, none of the 23 natives jars carried any license text.
+  `build-webui` checks the WebUI list against the pinned `package-lock.json`. The agent folder
+  carries its own `LICENSE` and `THIRD_PARTY.md` (it is copied out and run on its own).
+- **CI: the Windows C++ test jobs run their tests.** `ctest` ran without `-C Release` against the
+  multi-config build trees of `test-cpp-windows-x86_64`, `test-cpp-windows-arm64` and the MSVC
+  build-and-test job, found no test and exited 0, so none of the C++ suite ever ran on Windows. Every
+  `ctest` step also passes `--no-tests=error` now.
+- **CI: a publication is checked against its tag and staged exactly before anything is uploaded.**
+  `check-tag` refuses a release whose version is not the tag's (`v<version>`, no `-SNAPSHOT`),
+  `check-snapshot` a snapshot dispatch of a release version, and the gate repeats both. Unknown files
+  in a Central staging directory fail the gate instead of being left out, signatures pair by name,
+  and the Android AARs' snapshot names, which Gradle writes timestamped even into a local repository,
+  are mapped back to `-SNAPSHOT` (without that the first snapshot after the merge would have failed
+  the gate). Central snapshot transfers are serialized and skip a commit another run already
+  superseded. The `windows-aarch64` smoke row runs on Microsoft's build of JDK 25, since Temurin
+  publishes none for Windows on arm64.
 - **CI: both ROCm jobs and the Windows plain-clang CPU job compile through sccache again.** On Windows,
   CMake's runtime-library flags for plain clang carry `-Xclang -flto-visibility-public-std`, which
   sccache refuses, so every TU of `build-windows-x86_64` and of the ROCm module (TheRock's clang, ~150
@@ -953,6 +1002,22 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+
+- **Embedded RPC peer setup respects loopback binding and can be stopped.** A protocol-v8
+  `COMM_INIT` request no longer opens a wildcard listener behind `RpcServer.startLocal`.
+  Stop interrupts a missing peer or an incomplete capability handshake in either rank and frees
+  the sockets for restart. Listener/connection waits observe cancellation; stop no longer opens
+  repeated wake-up connections that can themselves block behind a full accept backlog.
+  Six model-free C-API regression scenarios cover binding, shutdown, normal setup and port reuse.
+- **The Android OpenCL AAR no longer duplicates its CPU AAR dependency's Java classes.**
+  Its `classes.jar` is empty; the CPU AAR supplies the API. Both dependency graphs now pass
+  through the CI R8 consumer build, including the OpenCL POM's transitive CPU dependency.
+- **GitHub snapshot and release downloads include `llama-ffm` and the reactor's CycloneDX JSONs.**
+  Artifact collection follows the reactor POMs and native classifier list, reports missing outputs
+  and signatures, and includes the JSONs in provenance attestations.
+- **The rolling snapshot's source tag and notes follow the uploaded build.** Updates are serialized;
+  older commits/runs cannot overwrite a newer snapshot, and an incomplete artifact collection changes
+  nothing: no upload, no prune, no move of the source tag.
 - **`jllama_rpc_server_stop()` (C API, `llama-ffm`) is for the serve calls in progress when it is made.**
   It waited for the count of serves to reach zero and reset the stop request only then, so a serve
   that took over right after the one it targeted had ended (a restart from another thread, which

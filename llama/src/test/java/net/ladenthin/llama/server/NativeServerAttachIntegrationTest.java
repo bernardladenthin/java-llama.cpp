@@ -124,7 +124,8 @@ public class NativeServerAttachIntegrationTest extends OpenAiServerTestSupport {
      * {@code server-context.cpp} and unreachable from {@code jllama_test}, and the
      * {@code CommonJsonEnumTrap} C++ tests build their own JSON — they document the trap but call no
      * project code, so they stay green if the cast is reverted or the patch dropped. This test drives
-     * the real route, which {@code patches/0007}'s common route table registers in attach mode too.
+     * the real route, which upstream's {@code server_register_routes()} registers in attach mode too
+     * ({@code patches/0007}).
      *
      * <p>It is also the signal for <em>dropping</em> the patch: if upstream casts the value
      * themselves, this keeps passing while the patch becomes a redundant carry — which the fail-loud

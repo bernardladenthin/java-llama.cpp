@@ -1,0 +1,2 @@
+LICENSE: https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/hash/sha256/LICENSE (jb55/sha256.c@5e637272c13f200872d55ff579f7e2ab6c3f252f)
+sha256.c-header.txt: verbatim lines 1-3 of https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/hash/sha256/sha256.c
