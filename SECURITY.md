@@ -2,11 +2,12 @@
 
 ## Supported versions
 
-Security fixes target the most recent release of the `5.x` series. The `5.x` series is the first to be published under the `net.ladenthin:llama` Maven coordinates; releases `1.x` through `4.2.0` were authored by the pre-fork upstream (`kherud/java-llama.cpp`) and are not maintained here.
+Security fixes target the most recent release of the `6.x` series. The `5.x` series was the first to be published under the `net.ladenthin:llama` Maven coordinates; releases `1.x` through `4.2.0` were authored by the pre-fork upstream (`kherud/java-llama.cpp`) and are not maintained here.
 
 | Version | Supported |
 |---------|-----------|
-| 5.x (latest published on Maven Central) | Yes |
+| 6.x (latest published on Maven Central) | Yes |
+| 5.x | No (upgrade to 6.x, see the CHANGELOG's "Upgrading from 5.1") |
 | < 5.0 | No (see upstream `kherud/java-llama.cpp`) |
 
 ## Reporting a vulnerability — primary channel
