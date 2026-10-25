@@ -551,8 +551,8 @@ if(JLLAMA_BACKEND_DL)
     # `set(GGML_*_DEFAULT ...)` there ("change the default for these ggml options") must be
     # repeated here, because adding ggml first skips that block entirely. Re-check on every bump
     # with `grep -n _DEFAULT CMakeLists.txt` at the new tag. Missing GGML_CUDA_GRAPHS_DEFAULT cost a
-    # CUDA module built this way two thirds of its token generation (measured, TODO.md "GPU
-    # backends as modules"): ggml's own default is OFF, llama.cpp turns it ON for itself.
+    # CUDA module built this way two thirds of its token generation (measured,
+    # docs/handover/local-agent-report-b11538-windows.md, finding B): ggml's own default is OFF, llama.cpp turns it ON for itself.
     set(GGML_LLAMAFILE_DEFAULT   ON)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
     add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)

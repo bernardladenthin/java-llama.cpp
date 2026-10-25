@@ -448,8 +448,8 @@ jobs:
   # llama-ffm: the C API of libjllama (jllama_api.h) through the Java 22+ Foreign Function and
   # Memory API, no JNI. Reuses the Linux x86_64 natives artifact and the cached models like the
   # langchain4j integration job (lib.path, no second loading path); Maven runs on the JDK of
-  # .java-version and compiles, tests and documents this module with the JDK 25 toolchain the first
-  # setup-java step registers. Gates both publish jobs: the module ships on Maven Central.
+  # .java-version (25), which compiles, tests and documents the module for its Java 22 target.
+  # Gates both publish jobs: the module ships on Maven Central.
   # ---------------------------------------------------------------------------
 
   test-java-llama-ffm:
@@ -736,10 +736,11 @@ jobs:
     # knob, but CI no longer sets it. The first-run sccache debug diagnostics (SCCACHE_LOG /
     # SCCACHE_ERROR_LOG / RUST_BACKTRACE) were dropped now that caching is confirmed; build.sh still
     # prints the `sccache --show-stats` hit table at the end of every run. Inert without DEPOT_TOKEN
-    # (fork PRs) or use_cache=false.
+    # (fork PRs) or use_cache=false. SCCACHE_WRAP_NVCC=false in this env keeps nvcc uncached (build.sh);
+    # the wrapper forwards it into the container only because DOCKCROSS_ARGS names it.
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
-      DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
+      DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE -e SCCACHE_WRAP_NVCC"
     steps:
       - name: Free up disk space
         # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
@@ -3347,7 +3348,9 @@ jobs:
           - { target: linux-x86-64, runner: ubuntu-latest }
           - { target: linux-aarch64, runner: ubuntu-24.04-arm }
           - { target: windows-x86-64, runner: windows-2025-vs2026 }
-          - { target: windows-aarch64, runner: windows-11-arm }
+          # Temurin publishes no JDK 25 for Windows on arm64 (its 21 is the newest there), so this
+          # row takes Microsoft's build of the same .java-version. JDK 21 only if that one goes too.
+          - { target: windows-aarch64, runner: windows-11-arm, jdk: microsoft }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -3363,7 +3366,7 @@ jobs:
       - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
-          distribution: 'temurin'
+          distribution: ${{ matrix.jdk || 'temurin' }}
           java-version-file: .java-version
       # The Java 8 floor, re-checked on the jars a consumer downloads: the set holds the jars the
       # `package` job checked plus the runtime dependencies a consumer resolves with them. The
@@ -3522,19 +3525,16 @@ jobs:
     needs: [package]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with: { java-version-file: .java-version, distribution: temurin }
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { name: jacoco-report, path: target/site/jacoco/ }
         continue-on-error: true
-      # Submits the dependency graph to GitHub. Informational: it says nothing about whether the
-      # artifacts are correct, but it sits in the `report` job, which the release path needs -- so
-      # without this flag a third-party action having a bad day can block a publish.
-      - uses: advanced-security/maven-dependency-submission-action@a64327a7329c9939cf675e458452febe1894a70c # v6
-        continue-on-error: true
+      # The dependency graph is submitted by dependency-submission.yml (on pushes to main, with the
+      # JDK of .java-version), not here: this job gates the release path and needs no write access.
       - name: Coveralls
         uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2
         with:
@@ -3557,8 +3557,15 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v'))
     steps:
-      - name: Confirm snapshot ref
-        run: echo "Confirmed on snapshot ref ${{ github.ref }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Every project version ends in -SNAPSHOT before anything is published to the snapshot channel.
+      # Only then: a push publishes nothing, and main carries the release version for the commit
+      # a release is tagged on.
+      - name: Require a SNAPSHOT version
+        if: inputs.publish_to_central
+        run: python3 .github/publication.py check-ref --channel snapshot
 
   check-tag:
     name: "Check: v* tag"
@@ -3566,8 +3573,12 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Confirm tag ref
-        run: echo "Confirmed on tag ${{ github.ref }}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The tag names exactly the project version (v1.2.3 for 1.2.3), which is no SNAPSHOT.
+      - name: Require the release version the tag names
+        run: python3 .github/publication.py check-ref --channel release
 
   publish-snapshot:
     name: Prepare and verify signed snapshot artifacts
@@ -3597,8 +3608,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
@@ -3611,7 +3622,7 @@ jobs:
         run: |
           python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -3620,7 +3631,7 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3654,7 +3665,7 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Stage signed Android AARs locally
@@ -3687,10 +3698,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
           path: publication-package/
@@ -3731,8 +3742,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
@@ -3748,7 +3759,7 @@ jobs:
         if: env.SIGN_WINDOWS != 'true'
         run: echo "::warning::This release is deployed without the sign_windows switch -- its Windows DLLs carry no Authenticode signature (jllama-build.txt says signed=no)."
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -3757,7 +3768,7 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3782,7 +3793,7 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true -DskipUpload=true deploy
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Stage signed Android AARs locally
@@ -3814,10 +3825,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
           path: publication-package/
@@ -3825,7 +3836,7 @@ jobs:
       - name: Verify transport integrity and export checked GitHub files
         run: python3 .github/publication.py verify publication-package --export-github release-assets
       - name: Upload release assets
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: release-assets/*
 
@@ -3884,27 +3895,33 @@ jobs:
     if: ${{ !cancelled() && needs.publish-snapshot.outputs.assets_complete == 'true' }}
     runs-on: ubuntu-latest
     environment: maven-central
+    # One transfer at a time; an older commit finishing late is skipped (publication.py superseded).
+    concurrency:
+      group: central-snapshot-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
           path: publication-package/
           digest-mismatch: error
       - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
-        run: python3 .github/publication.py upload publication-package
+        run: python3 .github/publication.py upload publication-package --skip-superseded
         env:
+          GH_TOKEN: ${{ github.token }}
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
 
@@ -3918,17 +3935,17 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
           path: publication-package/
@@ -3950,10 +3967,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
           path: publication-package/
@@ -3961,7 +3978,7 @@ jobs:
       - name: Verify the secured package before attesting
         run: python3 .github/publication.py verify publication-package
       - name: Attest the frozen artifacts and detached signatures
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: publication-package/github/*
 
@@ -3977,10 +3994,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
           path: publication-package/
@@ -3988,6 +4005,6 @@ jobs:
       - name: Verify the secured package before attesting
         run: python3 .github/publication.py verify publication-package
       - name: Attest the frozen artifacts and detached signatures
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: publication-package/github/*

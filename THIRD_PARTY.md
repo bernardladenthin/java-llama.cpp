@@ -22,10 +22,9 @@ For unchanged Maven components, source is available from
 as `<artifactId>-<version>-sources.jar`; POMs and upstream source repositories provide provenance.
 Preserve copyright, license and NOTICE files when redistributing dependencies.
 
-Runnable BAF/srcmorph CLI packaging uses Python 3.8+ to collect original dependency
-legal files before the project JAR and fat JAR are assembled. Override `-Dlicense.python=python`
-if that is the Python command on the build host. Legal files are under
-`META-INF/third-party/dependencies/<original-jar-name>-<content-hash>/`.
-`inventory.json` maps exact JAR hashes/classifiers to preserved files and also lists JARs
-without embedded legal material, which require review or supplemental notices.
+java-llama.cpp ships no fat JAR. Each published JAR carries its own classes (a natives JAR its
+native libraries) and, under `META-INF/third-party/net.ladenthin/<artifactId>/`, this file and
+`LICENSE`; Maven resolves every dependency as an artifact of its own, with its own legal files.
+`.github/collect-third-party-licenses.py`, which collects dependency legal files into the runnable
+fat JARs of BitcoinAddressFinder and srcmorph, is kept here byte-identical with them but not run.
 This source-location statement does not clear unknown proprietary or historical Git findings.

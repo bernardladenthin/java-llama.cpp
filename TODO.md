@@ -39,6 +39,12 @@ so entries below describe remaining work or an explicit deferral policy.
 ## Delivery roadmap — remaining work
 
 The remaining items retain the numbering of the 2026-10-15 roadmap referenced by `CLAUDE.md`.
+Done and therefore deleted here, while comments in the code still name them by number: **1** the
+provenance record (`jllama-build.txt` keys, `jllama-sbom.json`, `docs/patches.md`; CLAUDE.md,
+"Modular natives"), **2** the natives directory as a tested contract (`lib.path`; CLAUDE.md, "Native
+Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Natives jars"), **7** layer
+B, the `jllama_*` C API (CLAUDE.md, "The C API"; `docs/c-api.md`), **9** the decision for 6.0.0
+(section "Release 6.0.0" above) and **10** `llama-ffm` (CLAUDE.md, "Java 22+ without JNI").
 Windows code signing stays deferred by the owner's decision. Vendor hash pinning and the
 measurements below remain open hardening/coverage work; they do not establish a runtime defect.
 
@@ -222,6 +228,14 @@ Kept as a list because each entry names the machine it needs -- the harness is
   tunnel. Only worth doing if it lands upstream.
 - **RDMA transport** (`GGML_RPC_RDMA`) as its own classifier, since it needs `libibverbs` at runtime.
 - **Several clients at once.** Upstream's server serves one connection at a time.
+- **Edges of `0015`'s stoppable server, from the review of 2026-10-25 (none seen in CI).**
+  `wait_socket()` waits with `WSAPoll`, which before Windows 10 2004 does not report a refused
+  non-blocking connect, so a peer connect there waits for the stop instead of failing; checking
+  `SO_ERROR` while the wait times out would close that. An `accept()` error other than "would block"
+  ends the serve loop, as it does upstream (a retry on `ECONNABORTED`/`EMFILE` would keep it alive).
+  `test_rpc_comm.cpp` takes ports from `free_port()` (bind to 0, close, reuse), which another process
+  can take in between; a bind failure there is a flaky test, not a defect. Each needs a Windows
+  build to verify and belongs into the upstream submission of `0015`.
 
 ### Atmosphere coding agent (`llama-atmosphere-agent/`) — follow-ups
 
@@ -278,10 +292,11 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
 
 ### License compliance gate (owner's decision)
 
-The FSFE REUSE check is green on every run. A FOSSA-style *dependency-license* gate (the scanner
-whose "17 issues found" status once posted on PRs #248/#298; it posts nothing on `main` today) was
-never set up deliberately. Whether the project wants one, with which policy, is the owner's call;
-nothing here blocks on it.
+The FSFE REUSE check is green on every run. FOSSA analyses the dependencies against the policy the
+four Maven repositories share (`.fossa.yml`; rules and the version-specific decisions in
+[`docs/dependency-license-review.md`](docs/dependency-license-review.md)), and its "License
+Compliance" check reports open findings as review requests, not approvals. Which of them block a
+release, and which get a documented component decision in FOSSA, is the owner's call.
 
 ### Upstream submissions -- not before the release (policy)
 

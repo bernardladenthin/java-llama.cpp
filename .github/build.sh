@@ -198,11 +198,14 @@ cmake -Bbuild $LAUNCH $REQUIRE_COMMIT $@ || exit 1
 # also printed "Compiler killed by signal <n>", an exit code misreported as a signal; 0.19.0 reports
 # the exit code (mozilla/sccache#2932), so a genuine CUDA compile error no longer matches here and
 # fails fast instead of costing an uncached rebuild. The pattern stays for an older SCCACHE_DL_VERSION.
+# 'Missing "cubin"' is sccache's own error when nvcc's ptxas check pass writes no output
+# (mozilla/sccache#2862, a PTX-only target such as ggml's default 90-virtual): with 0.18 it came
+# with the "killed by signal" line, with 0.19.0 that line is gone, so it is matched by itself.
 build_log="$(mktemp 2>/dev/null || echo "/tmp/jllama-build.$$.log")"
 cmake --build build --config Release -j"${JOBS}" 2>&1 | tee "$build_log"
 build_rc=${PIPESTATUS[0]}
 if [ "$build_rc" -ne 0 ]; then
-  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported|Compiler killed by signal|fatbinary fatal' "$build_log"; then
+  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported|Compiler killed by signal|fatbinary fatal|Missing "cubin"' "$build_log"; then
     echo "build.sh: build failed via an sccache cache error — retrying WITHOUT cache (clean reconfigure)."
     rm -f "$build_log"
     rm -rf build && mkdir -p build

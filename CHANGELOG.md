@@ -703,7 +703,17 @@ the first two items break every existing consumer at upgrade.
   (`SCCACHE_WRAP_NVCC=false` opts out): the CUDA 13.4 failures that made it opt-in on 2026-10-09 came from
   ggml's default arch list (`90-virtual`, mozilla/sccache#2862), which this project stopped building on
   2026-10-11; measured with that list, sccache caches the device passes (108/108 hits warm). `build.sh`'s
-  uncached-retry pattern matches `fatbinary fatal` instead of relying on the old signal line.
+  uncached-retry pattern matches `fatbinary fatal` and `Missing "cubin"` instead of relying on the old
+  signal line, and the CUDA job forwards `SCCACHE_WRAP_NVCC` into its container, so the opt-out works.
+- **CI: a publication is checked against its tag and staged exactly before anything is uploaded.**
+  `check-tag` refuses a release whose version is not the tag's (`v<version>`, no `-SNAPSHOT`),
+  `check-snapshot` a snapshot dispatch of a release version, and the gate repeats both. Unknown files
+  in a Central staging directory fail the gate instead of being left out, signatures pair by name,
+  and the Android AARs' snapshot names, which Gradle writes timestamped even into a local repository,
+  are mapped back to `-SNAPSHOT` (without that the first snapshot after the merge would have failed
+  the gate). Central snapshot transfers are serialized and skip a commit another run already
+  superseded. The `windows-aarch64` smoke row runs on Microsoft's build of JDK 25, since Temurin
+  publishes none for Windows on arm64.
 - **CI: both ROCm jobs and the Windows plain-clang CPU job compile through sccache again.** On Windows,
   CMake's runtime-library flags for plain clang carry `-Xclang -flto-visibility-public-std`, which
   sccache refuses, so every TU of `build-windows-x86_64` and of the ROCm module (TheRock's clang, ~150
@@ -975,8 +985,8 @@ the first two items break every existing consumer at upgrade.
   Artifact collection follows the reactor POMs and native classifier list, reports missing outputs
   and signatures, and includes the JSONs in provenance attestations.
 - **The rolling snapshot's source tag and notes follow the uploaded build.** Updates are serialized;
-  older commits/runs cannot overwrite a newer snapshot, and an incomplete artifact collection
-  uploads available files without pruning existing assets or advancing an existing source tag.
+  older commits/runs cannot overwrite a newer snapshot, and an incomplete artifact collection changes
+  nothing: no upload, no prune, no move of the source tag.
 - **`jllama_rpc_server_stop()` (C API, `llama-ffm`) is for the serve calls in progress when it is made.**
   It waited for the count of serves to reach zero and reset the stop request only then, so a serve
   that took over right after the one it targeted had ended (a restart from another thread, which
