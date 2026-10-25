@@ -1168,7 +1168,8 @@ versioned release (`v<digit>...`) is refused as a rolling tag, so it is never pr
 collection never reaches the job (the gate fails first), and `update-snapshot.py` itself refuses one
 before any change. The whole snapshot update is serialized; `update-snapshot.py` rejects late older
 commits/runs, and updates the source tag and notes to the uploaded commit and run after a complete
-upload. Why it prunes asset by asset instead of
+upload; the first snapshot of a repository is a draft until then, so a failed first upload leaves
+neither a public pre-release nor a tag. Why it prunes asset by asset instead of
 deleting and recreating the release -- the job's first form, which failed in every burst of main
 pushes in May 2026 -- is recorded in `workspace/policies/fat-jar-release-assets.md`, "The `snapshot`
 pre-release holds exactly the current upload".
