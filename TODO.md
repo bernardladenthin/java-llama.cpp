@@ -63,9 +63,8 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       contribution by its author; KoboldCpp, where it came from, is AGPL-3.0); the third-party logos
       the WebUI embeds (trademarks, no license text). The WebUI package list is an upper bound
       (imports + lockfile); an exact list from the bundle would need a plugin in upstream's build.
-- [ ] After publication: bump `main` to the next `-SNAPSHOT` in all seven poms and the README's
-      snapshot line (it stays `6.0.0-SNAPSHOT` in the release commit), and carry out the upstream
-      submissions queued below.
+- [ ] After publication: carry out the upstream submissions queued below (`main` is at
+      `6.1.0-SNAPSHOT` since the post-release bump).
 - [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
       plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
       build stops at its license collector against a llama snapshot older than the natives license

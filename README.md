@@ -188,7 +188,7 @@ To use the latest snapshot, add the repository and dependency to your `pom.xml`:
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama-platform</artifactId>
-    <version>6.0.0-SNAPSHOT</version>
+    <version>6.1.0-SNAPSHOT</version>
     <type>pom</type>
 </dependency>
 ```
