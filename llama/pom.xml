@@ -63,7 +63,7 @@ SPDX-License-Identifier: MIT
 		     this tracks the newest release. -->
 		<checker.version>4.3.1</checker.version>
 		<!-- jackson.version is inherited from the parent pom (one source for every module) -->
-		<reactor.version>3.8.7</reactor.version>
+		<reactor.version>3.8.8</reactor.version>
 		<slf4j.version>2.0.20</slf4j.version>
 		<logback.version>1.6.5</logback.version>
 		<animal-sniffer.version>1.28</animal-sniffer.version>
