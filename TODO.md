@@ -22,7 +22,23 @@ so entries below describe remaining work or an explicit deferral policy.
       macOS smokes, Android CPU + additive OpenCL consumers, FFM, source-archive and integration
       jobs. The latest completed snapshot run,
       [39922567350](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/39922567350),
-      is green on `fb6b693a`; it predates this branch's packaging and Git-credential fixes.
+      is green on `fb6b693a`; it predates this branch's packaging and Git-credential fixes. Every
+      Publish run of the branch before `e49411d0` was cancelled by the next push; run
+      [40195444689](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40195444689) was
+      the first to run the Windows C++ suites at all (`ctest -C Release`, before 0 tests) and found the
+      Windows RPC stop hanging (fixed in `0015`) and a port collision on the aarch64 runner (fixed in
+      the tests); the rest of that run has to be read once it completes. Merge PR #559 together with
+      its siblings (BitcoinAddressFinder #397, streambuffer #191, srcmorph #238; workspace #61 before
+      BroomCabinet #88, whose links point into it).
+- [ ] **Owner:** turn off GitHub's "Automatic dependency submission" (repository settings, Code
+      security) after the merge. The generated run fails on every push (it has no JDK 22+ toolchain);
+      `dependency-submission.yml` (JDK 25, `push` on `main`) replaces it. A bot token cannot change
+      the setting (403).
+- [ ] **After the merge, before the tag: read the first snapshot dispatch on `main`** with
+      `publish_to_central`. What only a real run shows: `update-snapshot.py` moving the `snapshot` tag
+      through the REST API with the workflow token, the Android AARs' timestamped Gradle names mapped
+      back to `-SNAPSHOT` by the gate, `central-snapshot` skipping itself for a superseded commit, and
+      the transfer of the frozen publication. The unit tests drive all of it against fakes only.
 - [ ] Strip `-SNAPSHOT` from **all six reactor poms and the standalone agent pom** in one release
       commit. Follow [docs/RELEASE.md](docs/RELEASE.md) for dependency snippets, JBang and the server
       example; keep the existing "Upgrading from 5.1" list current for any further breaking change.
@@ -42,6 +58,12 @@ so entries below describe remaining work or an explicit deferral policy.
       polling remains deliberately outside the build gate (see `docs/RELEASE.md`).
 - [ ] After publication: bump `main` to the next `-SNAPSHOT` in all seven poms and carry out the
       upstream submissions queued below.
+- [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
+      plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
+      build stops at its license collector against a llama snapshot older than the natives license
+      texts. Re-run its checks once the release is on Central.
+- [ ] At the tag: read `check-tag` (`publication.py check-ref` on `v6.0.0`) and `central-release`
+      (one Portal bundle, `AUTOMATIC`) in the release run; neither has run on a real tag yet.
 
 ## Delivery roadmap — remaining work
 
@@ -205,6 +227,11 @@ Kept as a list because each entry names the machine it needs -- the harness is
   ~100 min today. If it fails or does not hit, `SCCACHE_WRAP_NVCC=false` on the job switches it off
   again. The Windows CUDA job does not wrap nvcc at all (`build.bat`); whether 0.19.0 parses its
   command line (#2470, fixed by #2811 since 0.18.0) is a separate, untested question.
+- **Windows CPU jobs hit the cache only partly** (about 54 % in the last warm runs read), while the
+  Linux jobs are near 100 %. Not investigated: compare the cache keys of two runs of the same commit
+  (`SCCACHE_LOG=debug` on one job) before assuming a non-deterministic flag.
+- **Upstream sccache, open on their side:** mozilla/sccache#2809 (the `-virtual` arch fix, not ours)
+  and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
 
 ### RPC backend — follow-ups
 
@@ -515,6 +542,9 @@ measurements and is not evidence that GPU testing is currently blocked.
   `install`, `deploy`, `compiler`, `jar`) are pinned in this reactor. Still open across the four
   repositories: an explicit `site` version where that lifecycle is used and an enforcer
   `requirePluginVersions` rule, initially warnings-only while aligning the repositories.
+- **"Claude Code Review" fails on every pull request run** in all four Java repositories
+  (`is_error: true` in the action's result, the review is never posted). Not investigated: the
+  token/secret, the account's quota and the pinned action version are the candidates.
 - **Unread SonarCloud finding:** inspect the "1 new issue" reported on #486. The quality gate
   subsequently passed, but that does not identify or explain the finding; the sandbox proxy
   previously blocked access to sonarcloud.io.
