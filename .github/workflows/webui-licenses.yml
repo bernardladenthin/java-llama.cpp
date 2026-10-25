@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: WebUI license texts
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# The license texts of the WebUI's npm packages (llama/legal/natives/webui-npm/, in every natives
+# jar) must have been generated from the package-lock.json of the pinned llama.cpp. publish.yml's
+# build-webui checks the same, but the Publish runs of pull requests and pushes are usually
+# cancelled at the start gate, so a stale list surfaced only in the release run of v6.0.0
+# (40238595195) -- hours after the cause, the llama.cpp bump that changed the lockfile. This job
+# needs no npm and no build: a sparse checkout and the stdlib-only check, under a minute.
+permissions:
+  contents: read
+
+jobs:
+  webui-licenses:
+    name: WebUI license texts match the pinned package-lock.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve the pinned llama.cpp commit from CMakeLists.txt
+        id: tag
+        run: |
+          # The rule of publish.yml's build-webui: JLLAMA_GIT_TAG is the number, JLLAMA_GIT_COMMIT
+          # the commit it names; the checkout takes the commit when it is set.
+          TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
+          if [ -z "$TAG" ]; then
+            echo "could not resolve llama.cpp JLLAMA_GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
+            exit 1
+          fi
+          COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
+          echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
+          echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
+      - name: Checkout llama.cpp tools/ui at the pinned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          repository: ggml-org/llama.cpp
+          ref: ${{ steps.tag.outputs.ref }}
+          path: llamacpp-ui
+          sparse-checkout: tools/ui
+          sparse-checkout-cone-mode: true
+      - name: Check the WebUI license texts against this package-lock.json
+        run: python3 .github/webui-licenses.py check llamacpp-ui/tools/ui llama/legal/natives/webui-npm

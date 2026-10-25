@@ -149,8 +149,10 @@ for each:
 ## License texts on a bump
 
 `llama/legal/natives/` holds the license texts of everything compiled into the natives, taken from
-the pinned commit. On a bump: regenerate the WebUI's npm texts (`build-webui` warns on a changed
-`tools/ui/package-lock.json` and fails on a release tag),
+the pinned commit. On a bump: regenerate the WebUI's npm texts whenever
+`tools/ui/package-lock.json` changed (the `WebUI license texts` workflow fails the pull request
+otherwise, and so does `build-webui`; the digest is taken over LF line ends, so a Windows checkout
+records the same one as CI),
 
 ```bash
 python3 .github/webui-licenses.py generate <llama.cpp at the new pin>/tools/ui llama/legal/natives/webui-npm
