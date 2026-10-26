@@ -194,6 +194,18 @@ Kept as a list because each entry names the machine it needs -- the harness is
    Also check whether CUDA, Vulkan and OpenCL deduplicate the same NVIDIA GPU by `device_id`
    and which backend wins. Linux CUDA on a Tesla T4 has already been measured; see
    [the GPU module measurements](docs/benchmarks/gpu-module-jars.md).
+   **Partly measured on the published 6.0.0 jars** (post-release check, `docs/post-release-check.md`
+   check 12; RTX 3070 Laptop + AMD iGPU, the three Windows x86-64 jars resolved from Central): the
+   loader line names both modules (`with GPU module(s) cuda13, vulkan`), ggml registers
+   `[CUDA, RPC, Vulkan, CPU]`, and the registry then lists **4 devices -- `CUDA0`, `Vulkan0`,
+   `Vulkan1`, `CPU`** -- with Vulkan's own enumeration naming device 0 as the same RTX 3070 that CUDA
+   reports. So the discrete GPU is registered **twice**, once per backend, and whatever `device_id`
+   dedup llama.cpp does happens in device *selection* rather than in registration. That selection
+   half is still open, and so is the tg128 comparison above: at the default verbosity threshold the
+   `load_tensors` / per-buffer lines are filtered out of the log (CLAUDE.md, patch `0014` -- llama
+   INFO maps to TRACE), so a run that answers it has to pass `-lv 4`. The earlier throughput pair on
+   this host (4 devices 92.0 t/s against cuda13-only 94.3 t/s, within noise) suggests the iGPU is not
+   drafted in, which is consistent with selection-time dedup but does not establish it.
 2. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has
@@ -586,3 +598,21 @@ measurements and is not evidence that GPU testing is currently blocked.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.
+- **The two AAR poms ship `checker-qual` at `compile` scope, which the core deliberately does not**
+  (found by the post-release check of 6.0.0, `docs/post-release-check.md` check 14/16). Both
+  `llama-android-6.0.0.pom` and `llama-android-opencl-6.0.0.pom` carry
+  `org.checkerframework:checker-qual:4.3.1` with an explicit `<scope>compile</scope>`, so it is in
+  every Android consumer's dependency graph. In `llama/pom.xml` the same dependency is `provided`, and
+  the property's own comment says why: "neither ships (checker-qual is provided scope)" — its 417
+  classes are all class-file major 55 with `@Retention(RUNTIME)`, which is exactly the
+  `UnsupportedClassVersionError` that #411 put on `main` (CLAUDE.md, "Java 8 bytecode floor").
+  **Not a release blocker and not the Java 8 failure on Android**: D8/AGP consume major 55 fine, so
+  this is an avoidable dependency rather than a crash, which is why it ships in 6.0.0 unfixed. Two
+  parts to it, and the second is the reason it was never noticed: the scopes in those poms are
+  `llama-android/build.gradle.kts`'s own (only the *versions* are parsed out of the Maven poms), and
+  CLAUDE.md's "Android AAR + Kotlin façade" section describes the AAR pom as mirroring "the core's
+  compile-scope deps (jackson/slf4j-api/jspecify/checker-qual)" — but checker-qual is not a
+  compile-scope dep of the core. Fix the Gradle build (drop it, or mirror it as `provided`) and
+  correct that sentence in the same commit; `jspecify` is the one of the four that is genuinely
+  compile scope and stays. A cheap guard would be to assert the published AAR poms' scopes against
+  the core pom's, the way the versions are already derived from it.
