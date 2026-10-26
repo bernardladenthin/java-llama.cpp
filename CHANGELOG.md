@@ -9,6 +9,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Changed
+- **`bernardladenthin/actions` pinned at v1.1.0.** v1.1.0 adds `java/audit-publication`, which
+  `post-release.yml` uses (see Added); nothing changes for the actions already in use.
+
 ### Fixed
 - **`cpu-linux-s390x` loads on glibc 2.28, like the other Linux CPU jars** (RHEL 8, Ubuntu 20.04,
   Debian 10 and later, z13 or newer). The 6.0.0 jar was cross-compiled against the

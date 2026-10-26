@@ -41,12 +41,12 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
         token was refused (`Resource not accessible by integration`, 403), so the `snapshot` tag and
         notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
         not move a ref across commits that change `.github/workflows/` (12 files between the two);
-        not verified. actions v1.0.3 (pinned) deletes and re-creates the tag on that 403 and points
+        not verified. actions v1.0.3 (and later; v1.1.0 is pinned) deletes and re-creates the tag on that 403 and points
         the release at it; whether GitHub accepts that shows only the next snapshot dispatch.
         `github-release` does not move a tag (the owner's `v6.0.0` exists already).
       - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
         run, in the re-run too: with 100 per page GitHub fails that listing for large runs, with 50
-        it answered every try. actions v1.0.3 (pinned) lists 50 per page and repeats GitHub reads on
+        it answered every try. actions v1.0.3 (and later) lists 50 per page and repeats GitHub reads on
         5xx. `central-release` does not call it.
 - [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
       (pull request required, no force push, no deletion), Dependabot alerts and security updates,
@@ -73,8 +73,8 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       (patches.sha256 recomputed), source and cache (73 logs, 68 show the cache off, none on) and
       fails android on exactly the known checker-qual finding; the consumer resolution, the server
       smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
-      - [ ] Move the `java/audit-publication` pin from the actions branch commit to the actions
-            release that carries it, before this branch is merged.
+      - [x] The `java/audit-publication` pin is the actions release that carries it: v1.1.0
+            (`44390bd4`), like every other pin of the workflows.
       - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0` (expected: one android
             finding) and the first `workflow_run` after 6.1.0. Unverified on a runner: the Java 8
             rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
@@ -85,7 +85,7 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       build stops at its license collector against a llama snapshot older than the natives license
       texts. Re-run its checks once the release is on Central.
 - [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
-      actions v1.0.3 (none has run on `main` since the pin bumps), and the next one of this
+      actions v1.0.3 or later (none has run on `main` since the pin bumps), and the next one of this
       repository, which shows whether the re-created `snapshot` tag is accepted.
 
 ## Delivery roadmap — remaining work
