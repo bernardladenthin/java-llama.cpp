@@ -209,18 +209,22 @@ Kept as a list because each entry names the machine it needs -- the harness is
    Also check whether CUDA, Vulkan and OpenCL deduplicate the same NVIDIA GPU by `device_id`
    and which backend wins. Linux CUDA on a Tesla T4 has already been measured; see
    [the GPU module measurements](docs/benchmarks/gpu-module-jars.md).
-   **Partly measured on the published 6.0.0 jars** (post-release check, `docs/post-release-check.md`
-   check 12; RTX 3070 Laptop + AMD iGPU, the three Windows x86-64 jars resolved from Central): the
-   loader line names both modules (`with GPU module(s) cuda13, vulkan`), ggml registers
-   `[CUDA, RPC, Vulkan, CPU]`, and the registry then lists **4 devices -- `CUDA0`, `Vulkan0`,
-   `Vulkan1`, `CPU`** -- with Vulkan's own enumeration naming device 0 as the same RTX 3070 that CUDA
-   reports. So the discrete GPU is registered **twice**, once per backend, and whatever `device_id`
-   dedup llama.cpp does happens in device *selection* rather than in registration. That selection
-   half is still open, and so is the tg128 comparison above: at the default verbosity threshold the
-   `load_tensors` / per-buffer lines are filtered out of the log (CLAUDE.md, patch `0014` -- llama
-   INFO maps to TRACE), so a run that answers it has to pass `-lv 4`. The earlier throughput pair on
-   this host (4 devices 92.0 t/s against cuda13-only 94.3 t/s, within noise) suggests the iGPU is not
-   drafted in, which is consistent with selection-time dedup but does not establish it.
+   **Measured 2026-10-26 on the published 6.0.0 jars**
+   ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md), section 3; RTX 3070
+   Laptop + AMD iGPU, `-lv 4`):
+   - [x] Registration lists the discrete GPU twice (`CUDA0`, a `Vulkan` device). llama.cpp
+         **deduplicates it in device selection by PCI id** ("skipping device Vulkan0 … already using
+         device CUDA0 … with the same id"). The first registered backend wins (CUDA), and all 29
+         layers go to `CUDA0`.
+   - [x] The iGPU is not drafted in, with Vulkan alone or with both modules.
+   - [x] OpenCL drops the NVIDIA GPU as unsupported (no device), so it takes no part.
+   - [x] CUDA, Vulkan and both are equal on Qwen2.5-1.5B Q4_K_M: ~190 t/s generation, ~2100–2500
+         t/s prompt.
+   - [x] README sentence added next to the module list. The device numbering depends on the module
+         set (Vulkan alone: RTX = `Vulkan1`; with CUDA: RTX = `Vulkan0`), so a device name is valid
+         only for the set it was read from.
+   - [ ] Still open: the tg128 of the CUDA module against the static build's 265.6 t/s. That
+         figure used another model, so it needs the same model, `llama-bench`-style, in both builds.
 2. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has

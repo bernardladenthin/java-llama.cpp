@@ -297,6 +297,19 @@ iGPU, the example being a Core Ultra 7 165U).
 > classpath; unset, every GPU module jar on the classpath is used except the opt-in `openvino` one
 > (see below).
 
+> [!NOTE]
+> **Two GPU modules that see the same GPU use it once.** With `cuda13-windows-x86-64` and
+> `vulkan-windows-x86-64` on the classpath, ggml registers an NVIDIA GPU twice, as `CUDA0` and as a
+> `Vulkan` device. llama.cpp then skips the second entry by its PCI id ("skipping device Vulkan0 …
+> already using device CUDA0 … with the same id"). The first registered backend wins, which is CUDA,
+> and the whole model goes to `CUDA0`. An integrated GPU next to a discrete one is not used either
+> way. Measured on a published 6.0.0 set (an RTX 3070 Laptop GPU and an AMD iGPU), the three sets
+> perform the same: [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md),
+> section 3. **The device numbering is not stable across module sets:** with only the Vulkan module,
+> the RTX is `Vulkan1` and the iGPU `Vulkan0`; with CUDA loaded as well, Vulkan lists the RTX as
+> `Vulkan0`. A `--device` / `setDevices(...)` name is only valid for the set of modules it was read
+> from, so re-read the device list in the log after adding or removing a GPU jar.
+
 > [!IMPORTANT]
 > **Two GPU jars need more than their runtime, and both were found by measurement rather than by
 > reading the code** ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)).
