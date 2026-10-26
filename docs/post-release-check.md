@@ -22,6 +22,27 @@ artifacts merely claim.
 **Run it on the published artifacts, every release.** A check that can only say "CI was green" does
 not belong in this file.
 
+## Automated: `.github/workflows/post-release.yml`
+
+Every check below that a GitHub runner can answer runs by itself after the release: the workflow
+starts when a Publish run dispatched on a `v*` tag succeeds (a release created with the workflow
+token starts no `release:` workflow), and by hand with `workflow_dispatch` and the tag. The tools and
+the settings come from the default branch, the release's own facts (contract, `natives.csv`,
+patches, poms) from a second checkout of the tag, so an older release is audited with today's checks
+too. Run against 6.0.0 it reports exactly the one finding recorded below, the AAR poms' checker-qual.
+
+| Check | Where it runs |
+|---|---|
+| 1 ref/run/tag, 2 jobs, 4 completeness, 5 Central, 6 signatures, 7 provenance, 10 bytecode, 16 next version | `audit` job: `java/audit-publication` of [bernardladenthin/actions](https://github.com/bernardladenthin/actions) (shared by every repository there; settings in the `post-release` section of `.github/actions-config.json`) |
+| 3 cache-free build, 8 natives jars, 9 provenance recomputed, 13 source archive, 14 Android | `audit` job: `.github/post-release-check.py` (`buildcheck/postrelease.py`), on the files the action downloaded |
+| 11 consumer resolution | `consumer` matrix: `.github/post-release-consumer.sh` -- `llama-platform` plus a GPU classifier into an empty local repository |
+| 12 runs on the floor JDK | `consumer` matrix on Java 8 (Linux x86-64 and aarch64, Windows x86-64, macOS arm64): the server smoke of the natives jars on the resolved set -- inference, TLS, an `https://` model download, the natives directory |
+| 15 server and WebUI | `consumer`, Linux x86-64: `.github/post-release-webui.sh` |
+
+**Still by hand:** the GPU half of check 12 (no GPU runner: a real driver loading a shipped module,
+the device list, the throughput baseline) and reading check 16's standing gaps. The automated checks
+are what to read first; the sections below say what each one proves and how to run it locally.
+
 ## Conventions
 
 Each check states **what it proves** (the failure class it would catch), **how** to run it, and the

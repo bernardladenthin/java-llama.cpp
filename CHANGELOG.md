@@ -27,6 +27,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **The post-release check runs by itself** (`.github/workflows/post-release.yml`, after the Publish
+  run of a `v*` tag, or by hand with a tag). It audits the published release from the outside:
+  - through bernardladenthin/actions' new `java/audit-publication`: the run and its jobs, the files
+    against the contract, Maven Central, the signatures, every file's provenance, the bytecode
+    floors and the next version;
+  - through `.github/post-release-check.py`: the natives jars, their provenance with the patch hash
+    recomputed from the tag, the source archive, the AARs and the cache-free tag build;
+  - through a consumer on Java 8 per platform: `llama-platform` resolved from Central into an empty
+    local repository, the server smoke and the embedded WebUI.
+
+  Run against 6.0.0 it reports exactly the one known finding, checker-qual in the AAR poms.
 - **`verify-aar-poms.py`: the published AAR poms are checked against the core pom** in
   `package-android-aar` -- exactly the core's compile-scope dependencies, at its versions and at
   `compile`.

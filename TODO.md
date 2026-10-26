@@ -65,6 +65,21 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       (imports + lockfile); an exact list from the bundle would need a plugin in upstream's build.
 - [ ] After publication: carry out the upstream submissions queued below (`main` is at
       `6.1.0-SNAPSHOT` since the post-release bump).
+- [ ] **The automated post-release check** (`.github/workflows/post-release.yml`,
+      docs/post-release-check.md "Automated"). Run locally against 6.0.0 before the first CI run:
+      the 8 checks of `java/audit-publication` pass (60 files + 60 signatures from one subkey, 118
+      Central files with the release's bytes, 120 files attested by run 40239731871; `next` warns,
+      `main` was still at 6.0.0), `post-release-check.py` passes natives (23/23), provenance
+      (patches.sha256 recomputed), source and cache (73 logs, 68 show the cache off, none on) and
+      fails android on exactly the known checker-qual finding; the consumer resolution, the server
+      smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
+      - [ ] Move the `java/audit-publication` pin from the actions branch commit to the actions
+            release that carries it, before this branch is merged.
+      - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0` (expected: one android
+            finding) and the first `workflow_run` after 6.1.0. Unverified on a runner: the Java 8
+            rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
+            and `smoke-test-natives.ps1` on Java 8, `gh attestation verify` with the workflow token
+            (`attestations: read`), and the keyserver fetch from a runner.
 - [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
       plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
       build stops at its license collector against a llama snapshot older than the natives license

@@ -371,6 +371,7 @@ rejects anything else loudly.
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `aarpoms.py` | `verify-aar-poms.py` (`package-android-aar`, on the poms in mavenLocal) | both AAR poms carry exactly the core's compile-scope dependencies, at its versions and at `compile` (plus the CPU AAR, `type aar`, in the OpenCL one) |
+| `postrelease.py` | `post-release-check.py` (`post-release.yml`, after the release) | the published natives jars against `natives.csv`, their provenance with `patches.sha256` recomputed from the tag, the source archive's stamp and reproducible pack, the AAR invariants and poms, the cache-free tag build (docs/post-release-check.md, checks 3, 8, 9, 13, 14) |
 | `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
@@ -381,6 +382,15 @@ rejects anything else loudly.
 | `java/check-maven-versions` | `repository-checks` | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
 | `java/check-publication` | `repository-checks` | the publication jobs are wired as documented; a dry run of `.github/release-assets.json` collects what it promises |
 | `java/check-release-ref`, `java/finalize-publication`, `java/publish-central`, `java/publish-github`, `java/attest-publication` | `check-snapshot` / `check-tag`, the publish jobs, the six consumers | the signed publication (see "Signed publication") |
+| `java/audit-publication` | `audit` of `post-release.yml` | the published release from the outside: the run and its jobs, the files against the contract, Maven Central (polled), the signatures with the release key from a keyserver, every file's provenance, the bytecode floors, the next version (`post-release` in `.github/actions-config.json`) |
+
+**The post-release check (`post-release.yml`).** Runs after a successful Publish run dispatched on a
+`v*` tag, and by hand with a tag: `audit` (the action above, then `post-release-check.py` on the
+downloaded files) and `consumer` (per platform: `post-release-consumer.sh` resolves `llama-platform`
+from Central into an empty local repository, then the server smoke on Java 8, and on Linux x86-64
+`post-release-webui.sh`). Tools from the default branch, the release's facts from a checkout of the
+tag in `release/`. It is not in the release gate -- it runs after the publication, on what was
+published (docs/post-release-check.md).
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
