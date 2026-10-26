@@ -22,7 +22,9 @@
  * SUBALIGN(2) sets the alignment of every input section of this output section to 2. Only typeinfo
  * name strings are matched; they are char arrays read byte-wise, and 2 is all the ABI promises
  * for them (GCC emits them with 2). INSERT BEFORE .rodata puts the statement ahead of the default
- * .rodata pattern (.rodata.*), so it is the first to match these sections.
+ * .rodata pattern (.rodata.*), so it is the first to match these sections. -fdata-sections (in the
+ * toolchain) gives every typeinfo name such a section, those of classes with a key function and of
+ * internal types included, and verify-native-deps.py fails a library with one at an odd address.
  */
 SECTIONS
 {

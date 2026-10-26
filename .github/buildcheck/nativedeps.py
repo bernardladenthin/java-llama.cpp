@@ -35,7 +35,9 @@ where a library carries no run path at all and only a build-tree path fails (see
 and the directories in GLIBC_CEILING, built in a manylinux image or against its sysroot, may not
 reference a glibc symbol version above the floor they promise, nor a libstdc++ one (GLIBCXX_*,
 CXXABI_*) above LIBSTDCXX_CEILING. Android libraries must also have every LOAD segment 16 KB
-aligned.
+aligned, and on s390x every typeinfo name (_ZTS*) of the static symbol table must sit at the even
+address the ABI promises (TYPEINFO_NAME_ALIGNMENT; a jllama library without any is not examined,
+which fails too).
 That every listed build arrived is merge-native-artifacts.sh's check.
 
 Exit codes: 0 clean, 1 violation, 2 nothing found to check.
@@ -260,6 +262,72 @@ def elf_exports(data):
             if name:
                 out.append(name)
     return out
+
+
+SHT_SYMTAB = 2
+SHN_LORESERVE = 0xFF00
+
+
+def elf_symbols(data):
+    """(name, address) of every defined symbol of the static symbol table (.symtab), whatever its
+    binding: the export list and -fvisibility=hidden make almost every symbol of a shipped library
+    local there. A stripped library has no .symtab, and the list is empty."""
+    is64, end, sections = _elf_sections(data)
+    out = []
+    for sh_type, sh_offset, sh_size, sh_link, _ in sections:
+        if sh_type != SHT_SYMTAB:
+            continue
+        strtab = sections[sh_link][1]
+        entry = 24 if is64 else 16
+        for off in range(sh_offset, sh_offset + sh_size, entry):
+            if is64:
+                st_name, _, _, st_shndx, st_value = struct.unpack_from(end + "IBBHQ", data, off)
+            else:
+                st_name, st_value, _, _, _, st_shndx = struct.unpack_from(end + "IIIBBH", data, off)
+            if st_name == 0 or st_shndx == 0 or st_shndx >= SHN_LORESERVE:
+                continue
+            out.append((_cstring(data, strtab + st_name), st_value))
+    return out
+
+
+# The s390x ELF ABI gives every global symbol an even address, and GCC relies on it: it loads an
+# address with LARL, whose R_390_PC32DBL relocation counts in halfwords. clang emits typeinfo name
+# strings (_ZTS*) with the alignment of char (ItaniumCXXABI.cpp, GetAddrOfTypeName), and the
+# s390x build mixes clang's objects with GCC's -- gcc-toolset-14's libstdc++_nonshared.a, which
+# loads _ZTSSt19_Sp_make_shared_tag with LARL. Whether a link then fails ("misaligned symbol")
+# depends on where the copy it keeps lands: green on main, red in the next PR's jllama_test link
+# (#577). .github/manylinux/s390x-typeinfo-names.ld (SUBALIGN(2) over every .rodata._ZTS*
+# section) and -fdata-sections (which gives every typeinfo name such a section, the ones of
+# classes with a key function included) make it hold for all of them; this check is what notices
+# when they stop being in effect, in every build rather than in the one whose layout comes out odd.
+TYPEINFO_NAME_ALIGNMENT = {"s390x": 2}
+
+
+def typeinfo_name_alignment(rel):
+    """The alignment the ABI of the directory of `rel` (.../<OS>/<ARCH>/<backend>/<library>)
+    requires for typeinfo names, or None."""
+    parts = rel.split("/")
+    return TYPEINFO_NAME_ALIGNMENT.get(parts[-3]) if len(parts) >= 4 else None
+
+
+def typeinfo_name_violations(rel, symbols, alignment, required=True):
+    """Typeinfo names (_ZTS*) among `symbols` ((name, address) pairs) at an address that is not a
+    multiple of `alignment`. A library that must carry them (`required`) and carries none was not
+    examined -- stripped, or its table unreadable -- which is never a pass."""
+    names = [(n, v) for n, v in symbols if n.startswith("_ZTS")]
+    if not names:
+        if not required:
+            return []
+        return [f"{rel}: no typeinfo name (_ZTS*) in its symbol table ({len(symbols)} symbols) -- stripped, or the "
+                f"table could not be read, so their {alignment}-byte alignment cannot be checked"]
+    odd = [n for n, v in names if v % alignment]
+    if not odd:
+        return []
+    shown = ", ".join(odd[:8]) + (f", ... ({len(odd)} in all)" if len(odd) > 8 else "")
+    return [f"{rel}: {len(odd)} of {len(names)} typeinfo names (_ZTS*) are not {alignment}-byte aligned: {shown} -- "
+            f"GCC code (gcc-toolset's libstdc++_nonshared.a) loads them with LARL, so a link that keeps such a "
+            f"copy fails with 'misaligned symbol'; .github/manylinux/s390x-typeinfo-names.ld or -fdata-sections "
+            f"(s390x-toolchain.cmake) is not in effect"]
 
 
 def elf_load_alignments(data):
@@ -611,6 +679,7 @@ def main(argv):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         siblings = {n for n in os.listdir(os.path.dirname(path)) if n != os.path.basename(path)}
         alignments, runpath, glibc, glibcxx, cxxabi, note = (), None, None, None, None, ""
+        typeinfo = []
         try:
             if path.endswith(".so"):
                 with open(path, "rb") as f:
@@ -620,6 +689,10 @@ def main(argv):
                 glibcxx, cxxabi = info["glibcxx"], info["cxxabi"]
                 if "/Linux-Android/" in "/" + rel:
                     alignments = elf_load_alignments(data)
+                symbol_alignment = typeinfo_name_alignment(rel)
+                if symbol_alignment:
+                    typeinfo = typeinfo_name_violations(rel, elf_symbols(data), symbol_alignment,
+                                                        required=os.path.basename(path) in JLLAMA_LIBRARIES)
                 note = (f" [runpath={runpath}]" if runpath else "") + "".join(
                     f" [{glibc_name(v, family)}]" for family, v in (("GLIBC", glibc), ("GLIBCXX", glibcxx),
                                                                      ("CXXABI", cxxabi)) if v)
@@ -630,6 +703,7 @@ def main(argv):
             continue
         print(f"{rel}: {' '.join(deps)}{note}")
         failures += violations(rel, deps, alignments, siblings, runpath, glibc, glibcxx, cxxabi)
+        failures += typeinfo
         if os.path.basename(path) in JLLAMA_LIBRARIES:
             try:
                 names = exports(path)

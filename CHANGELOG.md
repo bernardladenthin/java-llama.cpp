@@ -45,7 +45,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   the toolset's GCC-built `libstdc++_nonshared.a` needs one linker script
   (`.github/manylinux/s390x-typeinfo-names.ld`): clang aligns typeinfo name strings like `char`,
   GCC loads them with `LARL`, which needs an even address, and the link failed whenever the layout put
-  the one it kept on an odd one (`misaligned symbol _ZTSSt19_Sp_make_shared_tag`).
+  the one it kept on an odd one (`misaligned symbol _ZTSSt19_Sp_make_shared_tag`). `-fdata-sections`
+  puts every typeinfo name within the script's reach, and `verify-native-deps.py` fails an s390x
+  library with a typeinfo name at an odd address -- in every build, not only in the one whose layout
+  happens to come out odd.
 - **The Android AAR poms no longer carry `checker-qual`.** The 6.0.0 `llama-android` and
   `llama-android-opencl` poms listed `org.checkerframework:checker-qual:4.3.1` at `compile` scope,
   which the core keeps `provided`, so it was in every Android consumer's dependency graph. Not a crash

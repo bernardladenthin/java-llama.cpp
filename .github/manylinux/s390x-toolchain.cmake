@@ -60,10 +60,14 @@ set(CMAKE_C_COMPILER_TARGET s390x-linux-gnu)
 set(CMAKE_CXX_COMPILER_TARGET s390x-linux-gnu)
 
 set(_jllama_s390x_gcc "${JLLAMA_S390X_SYSROOT}/opt/rh/gcc-toolset-14/root/usr/lib/gcc/s390x-redhat-linux/14")
-set(CMAKE_C_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13")
-set(CMAKE_CXX_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13")
+# -fdata-sections: every typeinfo name gets a .rodata._ZTS* section of its own, so the linker
+# script below reaches all of them -- without it the names of classes with a key function and of
+# internal types (lambdas) stay in plain .rodata, 444 of 1833 of them at an odd address (measured).
+set(CMAKE_C_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13 -fdata-sections")
+set(CMAKE_CXX_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13 -fdata-sections")
 # s390x-typeinfo-names.ld: clang aligns typeinfo name strings like char, the GCC code of
-# libstdc++_nonshared.a loads them with LARL, which needs an even address (see the script).
+# libstdc++_nonshared.a loads them with LARL, which needs an even address (see the script);
+# verify-native-deps.py holds every typeinfo name of the library to it.
 foreach(_kind EXE SHARED MODULE)
     set(CMAKE_${_kind}_LINKER_FLAGS_INIT
         "--ld-path=/usr/bin/s390x-linux-gnu-ld -Wl,-T,${CMAKE_CURRENT_LIST_DIR}/s390x-typeinfo-names.ld")

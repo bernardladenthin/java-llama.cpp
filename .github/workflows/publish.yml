@@ -947,8 +947,10 @@ jobs:
       - name: Run C++ unit tests under qemu-s390x (big-endian gate)
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       # The same check `package` runs over the merged tree, here so a lost floor fails in this job:
-      # GLIBC_2.28, GLIBCXX_3.4.25, CXXABI_1.3.11 and the exact dependency list.
-      - name: Check the dependencies and the glibc floor
+      # GLIBC_2.28, GLIBCXX_3.4.25, CXXABI_1.3.11, the exact dependency list, and every typeinfo name
+      # at an even address (s390x-typeinfo-names.ld + -fdata-sections; the link alone fails only when
+      # GCC code happens to reference an odd one).
+      - name: Check the dependencies, the glibc floor and the typeinfo name alignment
         run: python3 .github/verify-native-deps.py llama/src/main/natives/net/ladenthin/llama/
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
