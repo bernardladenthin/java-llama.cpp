@@ -252,18 +252,43 @@ and exits, `--plain` switches to a line-oriented console for piping or logging.
 > `--ngl`/`--gpu-layers`. Passing the server's `-m` to the agent fails with `unknown argument: -m`
 > followed by its usage block. Flags it does not know are never ignored, which is deliberate.
 
-For **Atmosphere's web console on its own port** instead of the terminal, add `--web`; it listens on
-`127.0.0.1:8787` and prints a URL with a fresh access token on every start:
+**Atmosphere's web console** is `--web`. It is not an addition to the terminal but a replacement for
+it: `--web`, `--acp` and `--prompt` exclude each other, so one agent process serves exactly one
+front end. To have both, start a **second** agent process against the same server — the model stays
+loaded once, in the server, and each agent is only an HTTP client of it. A third window, the JDK 21
+again:
 
 ```bat
-mvn -o -q exec:java -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell --web --web-port 8787 --web-token my-own-access-token-123"
+set "JAVA_HOME=C:\Program Files\Java\openjdk21.0.11"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+
+cd /d C:\llama\agent
+mvn -o -q exec:java -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell --web --web-port 8787"
 ```
 
-`--web-port 0` takes any free port, and `--web-host 0.0.0.0` exists but warns loudly — tunnel over
-SSH rather than binding to the network. One conversation is served: every tab holding the token
-shares it. For an IDE, `--acp` speaks the [Agent Client
-Protocol](https://agentclientprotocol.com) on stdin/stdout instead; `--web`, `--acp` and `--prompt`
-exclude each other.
+It prints `Open in a browser: http://127.0.0.1:8787/?token=<token>`. **The token is part of the
+URL** and is a new random one on every start, unless `--web-token` pins it (16 or more characters of
+`A-Z a-z 0-9 _ -`) — which is what makes the address worth bookmarking. `--web-port 0` takes any
+free port. Binding is loopback only, and `--web-host 0.0.0.0` exists but warns loudly: tunnel with
+`ssh -L 8787:127.0.0.1:8787 <user>@<this-host>` and open the same address on the other machine
+instead. One conversation per process — every tab holding the token shares it, and a message sent
+while another is running replaces it, as typing over a running turn does on the console.
+`/mode auto` in the browser stops the approval prompts for the session. The console agent in the
+other window keeps its **own** history: the two share the model, not the conversation.
+
+The console's pages come from `atmosphere-spring-boot-starter`, which the agent pom carries for
+those resources alone (every transitive Spring dependency excluded), so Step 2 already cached them
+and `--web` works offline. If they were missing, the agent says so on stderr and still serves the
+endpoint.
+
+> [!NOTE]
+> The server of Step 3 runs with one slot, so two agents **serialise**: the second waits for the
+> first to finish its turn. `--parallel 2` on the server gives each its own slot, and that splits
+> `-c 16384` into 8192 per slot — so it is not free. (`--kv-unified` makes the slots share one pool
+> at the full size instead, which trades the guarantee for the capacity.)
+
+For an IDE, `--acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) on
+stdin/stdout instead.
 
 Without a running server the agent can load the GGUF itself (`--model` instead of `--base-url`),
 which is what the two natives dependencies in its pom are for:
