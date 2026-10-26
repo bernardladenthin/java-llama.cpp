@@ -80,10 +80,10 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
             rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
             and `smoke-test-natives.ps1` on Java 8, `gh attestation verify` with the workflow token
             (`attestations: read`), and the keyserver fetch from a runner.
-- [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
-      plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
-      build stops at its license collector against a llama snapshot older than the natives license
-      texts. Re-run its checks once the release is on Central.
+- [ ] After publication: srcmorph builds against `llama:6.0.0` from Central -- locally verified
+      2026-10-26 from an empty local repository (668 + 39 + 32 tests, BUILD SUCCESS); its TODO item
+      is closed in srcmorph#243. Open: that PR's CI, the first run of its Build, plugin IT, code
+      style, CodeQL and SonarQube jobs that can resolve the release.
 - [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
       actions v1.0.3 or later (none has run on `main` since the pin bumps), and the next one of this
       repository, which shows whether the re-created `snapshot` tag is accepted.
