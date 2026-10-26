@@ -15,22 +15,11 @@ cross-cutting initiative.
 `crossrepostatus.md`; a finished item is deleted from this file rather than annotated,
 so entries below describe remaining work or an explicit deferral policy.
 
-## Release 6.0.0 — prerequisites
+## After the 6.0.0 release — open
 
-The release commit (version 6.0.0 in the six reactor poms and the agent pom, the CHANGELOG heading
-and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
+6.0.0 is published (Central, GitHub Release, attestations; Publish run 40239731871); `main` is at
+`6.1.0-SNAPSHOT`. What the release left open:
 
-- [ ] **Owner:** tag/dispatch `v6.0.0` on the merged release commit using the
-      [workspace release procedure](../workspace/workflows/release-process.md):
-      Publish by `workflow_dispatch` on the tag with `publish_to_central=true`. The tag push starts a
-      Publish run of its own that builds everything and publishes nothing (no dispatch input); it is
-      not cancelled by the dispatch (the concurrency group carries the run id). A tag build is
-      uncached (`USE_CACHE` is false on `refs/tags/v*`): expect 4-5 h, the Windows ROCm and CUDA
-      jobs on the critical path, no job above GitHub's 6 h default.
-- [ ] At the tag: read `check-tag` (`java/check-release-ref` on `v6.0.0`), `central-release` (one
-      Portal bundle, `AUTOMATIC`), `github-release` and `attest-release`; none has run on a real tag
-      yet. Check the reactor, the standalone agent and both Android publications on Central after
-      the upload. Android Central validation polling stays outside the build gate (`docs/RELEASE.md`).
 - [ ] **The snapshot path of bernardladenthin/actions, read in dispatch
       [40227501358](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40227501358)**
       (`081457f0`, b11887, actions v1.0.1, `publish_to_central`): every build, test and smoke job
@@ -42,16 +31,16 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
         notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
         not move a ref across commits that change `.github/workflows/` (12 files between the two);
         not verified. actions v1.0.3 (and later; v1.1.0 is pinned) deletes and re-creates the tag on that 403 and points
-        the release at it; whether GitHub accepts that shows only the next snapshot dispatch.
+        the release at it; whether GitHub accepts that shows only the next snapshot dispatch --
+        [40367798517](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40367798517)
+        (`efc279c8`, dispatched 2026-10-26; the push run before it was cancelled by the concurrency
+        group). Done when `github-snapshot` has moved the `snapshot` tag to `efc279c8` and
+        `central-snapshot` has passed `superseded()` without a 502.
         `github-release` does not move a tag (the owner's `v6.0.0` exists already).
       - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
         run, in the re-run too: with 100 per page GitHub fails that listing for large runs, with 50
         it answered every try. actions v1.0.3 (and later) lists 50 per page and repeats GitHub reads on
         5xx. `central-release` does not call it.
-- [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
-      (pull request required, no force push, no deletion), Dependabot alerts and security updates,
-      secret scanning; tags `v*` protected. Its releases are what every repository's Dependabot
-      proposes.
 - [ ] **Owner:** turn off GitHub's "Automatic dependency submission" (repository settings, Code
       security). The generated run fails on every push (it has no JDK 22+ toolchain);
       `dependency-submission.yml` (JDK 25, `push` on `main`) replaces it. A bot token cannot change
@@ -75,18 +64,17 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
       - [x] The `java/audit-publication` pin is the actions release that carries it: v1.1.0
             (`44390bd4`), like every other pin of the workflows.
-      - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0` (expected: one android
-            finding) and the first `workflow_run` after 6.1.0. Unverified on a runner: the Java 8
+      - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0`
+            (`gh workflow run post-release.yml -f tag=v6.0.0`; expected: one android finding) and
+            the first `workflow_run` after 6.1.0. The two `workflow_run` runs after #573
+            (40367736958, 40367890447) ended `skipped`, correctly: no `v*` tag is behind those
+            Publish runs. Unverified on a runner: the Java 8
             rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
             and `smoke-test-natives.ps1` on Java 8, `gh attestation verify` with the workflow token
             (`attestations: read`), and the keyserver fetch from a runner.
-- [ ] After publication: srcmorph builds against `llama:6.0.0` from Central -- locally verified
-      2026-10-26 from an empty local repository (668 + 39 + 32 tests, BUILD SUCCESS); its TODO item
-      is closed in srcmorph#243. Open: that PR's CI, the first run of its Build, plugin IT, code
-      style, CodeQL and SonarQube jobs that can resolve the release.
-- [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
-      actions v1.0.3 or later (none has run on `main` since the pin bumps), and the next one of this
-      repository, which shows whether the re-created `snapshot` tag is accepted.
+      - [ ] Repeat the `LocalCheck` (Java 8) and `FfmCheck` acceptances against the 6.0.0 jars from
+            Central, as far as the run above does not cover them; the earlier acceptances were made
+            on b11827 artifacts.
 
 ## Delivery roadmap — remaining work
 
@@ -98,7 +86,7 @@ Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Native
 signed source archive of a release (CLAUDE.md, "Source archive"; the push of the pinned commit to a
 fork was removed again on 2026-10-25, the owner maintains that fork), **7** layer B, the `jllama_*`
 C API (CLAUDE.md, "The C API"; `docs/c-api.md`), **9** the decision for 6.0.0
-(section "Release 6.0.0" above) and **10** `llama-ffm` (CLAUDE.md, "Java 22+ without JNI").
+(6.0.0 is released; CHANGELOG) and **10** `llama-ffm` (CLAUDE.md, "Java 22+ without JNI").
 Windows code signing stays deferred by the owner's decision. Vendor hash pinning and the
 measurements below remain open hardening/coverage work; they do not establish a runtime defect.
 
@@ -162,6 +150,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 |---|---|---|
 | **OpenVINO on an Intel GPU/NPU** | suitable Intel device, unavailable to these sessions | the 21.7x/336x figures are CPU-plugin fallback only; they do not prove GPU/NPU execution |
 | the two **SME** aarch64 modules | Linux aarch64 with SME, absent from current CI/cloud machines | macOS's static Metal library does not exercise these modules |
+| [`docs/local-test-plan.md`](docs/local-test-plan.md) parts A–D on the **Core Ultra 7 165U** | the laptop the Windows guide (#575) is written for | part A -- which CPU module ggml picks there and what it gains -- is what CI cannot measure; the only report so far is the Zen 3 one (`docs/handover/local-agent-report-b11538-windows.md`). One result file per machine, unmeasured values marked as such |
 
 ## Open — jllama-specific
 
@@ -558,9 +547,6 @@ loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 j
       build with those variants would keep the z13 floor (a scalar baseline variant) and use the
       vector unit where it exists. To check first: whether clang 18 builds the z15–z17 variants, and
       what they gain on cfarm191.
-- [ ] **Owner:** cfarm192 refused the connection with "Host key verification failed" on 2026-10-26
-      (cfarm191 worked): its host key changed. Compare the new fingerprint with the farm's published
-      one before accepting it; nothing was changed in `known_hosts`.
 - **Ruled out:** `ubuntu-22.04` as the runner (glibc 2.35 still misses RHEL 8/9, and its cross GCC 11
   cannot build llama.cpp, which needs GCC >= 12). `-static-libstdc++` alone is ruled out too: it
   fixes GLIBCXX but not GLIBC.
@@ -629,6 +615,16 @@ measurements and is not evidence that GPU testing is currently blocked.
 - **Unread SonarCloud finding:** inspect the "1 new issue" reported on #486. The quality gate
   subsequently passed, but that does not identify or explain the finding; the sandbox proxy
   previously blocked access to sonarcloud.io.
+- **SonarCloud quality gate red: Reliability E on new code** (not a release gate). Checked and false
+  positives: S2095 `BatchDispatch.java:126` and S2142 `BatchDispatch.java:146`. Not yet looked at:
+  S3077 `LlamaLoader.java:262` and the two S8786 findings. Fix them or mark them in SonarCloud with
+  the reason.
+- **Three buildcheck unit tests fail on Windows** (green on the Linux runners, also on `main`):
+  `test_smokelib.NativesDirectoryTest.test_absolute_set_directory` and `test_relative_set_directory`
+  compare a path with `/` against one with `\` (the expectation is built with the OS separator), and
+  `test_patches.RenderTest.test_doc_is_current_compares_the_committed_page_with_the_render` fails
+  with a bare `False is not true` (cause not found; `docs/patches.md` is LF in the work tree). Fix
+  them, or document that the suite is Linux-only.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.
