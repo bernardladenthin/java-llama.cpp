@@ -18,8 +18,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`.github/manylinux/manylinux_2_28-s390x-sysroot`, `s390x-toolchain.cmake`: glibc 2.28,
   gcc-toolset-14's libstdc++ treatment); the library references `GLIBC_2.27`, `GLIBCXX_3.4.25` and
   `CXXABI_1.3.11`, and its C++ suite runs under qemu against that runtime.
+- **The Android AAR poms no longer carry `checker-qual`.** The 6.0.0 `llama-android` and
+  `llama-android-opencl` poms listed `org.checkerframework:checker-qual:4.3.1` at `compile` scope,
+  which the core keeps `provided`, so it was in every Android consumer's dependency graph. Not a crash
+  on Android (D8 consumes its major 55 classes), an avoidable dependency. The AAR poms now take their
+  dependency list from `llama/pom.xml`, scopes included, instead of a hand-kept one, and the consumer
+  R8 rules gain `-dontwarn org.checkerframework.**` for the checker's qualifiers in the class files.
+  An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **`verify-aar-poms.py`: the published AAR poms are checked against the core pom** in
+  `package-android-aar` -- exactly the core's compile-scope dependencies, at its versions and at
+  `compile`.
 - **`smoke-glibc-floor`: every Linux CPU jar is loaded on RHEL 8.10 in CI**, on its own architecture
   (x86-64 and aarch64 natively, s390x under qemu), from the published jars, in Red Hat's UBI 8 OpenJDK
   21 runtime image (glibc 2.28, GCC 8's libstdc++). The set is derived from the glibc floors

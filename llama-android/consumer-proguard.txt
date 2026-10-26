@@ -34,6 +34,12 @@
 #   Android entry points never touch them).
 # - lombok / animal-sniffer: CLASS-retention build-time annotations referenced
 #   from the bytecode; they exist on no runtime classpath anywhere.
+# - org.checkerframework: the Nullness Checker writes its qualifiers (@NonNull,
+#   @Initialized, @Pure, ...) into the class files it checks. They are RUNTIME
+#   retention, but checker-qual is provided scope in the core and not in the AAR
+#   pom (major 55 classes), so no app has it; a runtime that reflects over an
+#   annotated element skips an annotation type it cannot resolve.
 -dontwarn com.sun.net.httpserver.**
 -dontwarn lombok.**
 -dontwarn org.codehaus.mojo.animal_sniffer.**
+-dontwarn org.checkerframework.**

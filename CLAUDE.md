@@ -370,6 +370,7 @@ rejects anything else loudly.
 | `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
+| `aarpoms.py` | `verify-aar-poms.py` (`package-android-aar`, on the poms in mavenLocal) | both AAR poms carry exactly the core's compile-scope dependencies, at its versions and at `compile` (plus the CPU AAR, `type aar`, in the OpenCL one) |
 | `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
@@ -2950,7 +2951,12 @@ easy to undo by accident:
   own `jar-with-dependencies`, which takes scope `runtime`), so no checker-qual class of any version
   ships.
   `<optional>true</optional>` would not have been enough on its own — that descriptor filters on
-  scope only. Safe because no source imports `org.checkerframework`.
+  scope only. Safe because no source imports `org.checkerframework` — but the **class files do
+  reference it**: the Nullness Checker writes its qualifiers (`@NonNull`, `@UnknownKeyFor`,
+  `@Initialized`, `@Pure`, `@SideEffectFree`, …) into the classes it checks, 133 of the core's 146
+  (measured on the 6.0.0-SNAPSHOT jar). Harmless where checker-qual is absent: a JVM or ART that
+  reflects over an annotated element skips an annotation type it cannot resolve. R8 does not skip it —
+  it reports the missing class — hence `-dontwarn org.checkerframework.**` in the AAR's consumer rules.
 
 **The gate: the `java/verify-bytecode` action of [bernardladenthin/actions](https://github.com/bernardladenthin/actions)** (its `verify-bytecode-version.sh`).
 It opens every `.class` in every jar it is given and fails on any whose class-file major version
@@ -3406,8 +3412,15 @@ the recommended path (README "Importing in Android", Option 1):
   full set. The additive OpenCL AAR has an empty `classes.jar`: its CPU AAR dependency already
   supplies the Java API, and duplicating it breaks D8/R8. Built by the **standalone plain-Gradle build** in `llama-android/`
   (see "Repository layout" for why it is not a Maven module); the POM mirrors the core's
-  compile-scope deps (jackson/slf4j-api/jspecify/checker-qual, versions parsed from
-  `llama/pom.xml` — deliberately NOT the SLF4J binding, which is the JVM-only runtime dependency).
+  compile-scope deps — the list itself, versions **and scopes**, is read from `llama/pom.xml`
+  (`coreCompileDependencies`: no `<scope>` or `compile`, not optional; today jackson-databind,
+  slf4j-api, jspecify). Not mirrored: the `provided` ones (checker-qual, lombok, animal-sniffer) and the
+  SLF4J binding, which is the JVM-only runtime dependency. The 6.0.0 AAR poms were written from a
+  hand-kept list that also carried checker-qual at `compile`, which the core keeps `provided` (major
+  55, see "Java 8 bytecode floor"); the versions were derived and stayed right, the scopes drifted.
+  `.github/verify-aar-poms.py` checks the poms `publishToMavenLocal` wrote against the core pom in
+  `package-android-aar`. The consumer rules carry `-dontwarn org.checkerframework.**`: the classes
+  reference the checker's qualifiers (below), which no Android app has.
 - **`net.ladenthin:llama-kotlin`** — Maven reactor module; pure-Kotlin (2.4, jvmTarget 1.8)
   coroutines façade: `generateFlow`/`generateChatFlow` (cold `Flow`, source closed on
   completion/error/cancellation) and `completeSuspend`/`chatSuspend`/`chatCompleteTextSuspend`/

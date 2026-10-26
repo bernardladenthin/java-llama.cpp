@@ -1185,6 +1185,17 @@ jobs:
           ls -la llama-android/natives/*/*
       - name: Assemble AARs + publish to mavenLocal
         run: gradle -p llama-android aarCpu aarOpencl publishToMavenLocal
+      # The AAR's classes are the core's, so its pom must carry exactly the core's compile-scope
+      # dependencies (versions AND scopes, read from llama/pom.xml): the 6.0.0 poms shipped
+      # checker-qual at compile scope, which the core keeps provided. Checks the published files.
+      - name: AAR poms mirror the core's compile-scope dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
+          python3 .github/verify-aar-poms.py . \
+            "$HOME/.m2/repository/net/ladenthin/llama-android/${VERSION}/llama-android-${VERSION}.pom" \
+            "$HOME/.m2/repository/net/ladenthin/llama-android-opencl/${VERSION}/llama-android-opencl-${VERSION}.pom"
       - name: Validate AAR structure
         shell: bash
         run: |

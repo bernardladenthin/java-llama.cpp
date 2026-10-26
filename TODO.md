@@ -616,3 +616,22 @@ measurements and is not evidence that GPU testing is currently blocked.
   correct that sentence in the same commit; `jspecify` is the one of the four that is genuinely
   compile scope and stays. A cheap guard would be to assert the published AAR poms' scopes against
   the core pom's, the way the versions are already derived from it.
+  **Fixed on `fix/s390x-glibc-floor` (2026-10-26)**, CLAUDE.md "Android AAR + Kotlin façade":
+  - [x] Dropped, not mirrored as `provided` (a Gradle consumer ignores `provided` in a pom, so it
+        would document nothing). The AAR build no longer keeps a list at all: `coreCompileDependencies`
+        reads the core's compile-scope, non-optional dependencies from `llama/pom.xml`, versions and
+        scopes -- jackson-databind, slf4j-api **and** jspecify are compile scope there (all three
+        stay; the sentence above undercounts). The Gradle-generated poms (Docker, `gradle:9.8.2`) list
+        exactly those three, plus the CPU AAR in the OpenCL one.
+  - [x] The guard: `.github/verify-aar-poms.py` (`buildcheck/aarpoms.py`, `test_aarpoms.py`) checks
+        the poms `publishToMavenLocal` wrote in `package-android-aar`. Run on the two 6.0.0 poms from
+        Central it reports checker-qual and nothing else.
+  - [x] The CLAUDE.md sentence corrected; the "provided" bullet there now also says what the TODO did
+        not: **the classes do reference checker-qual** -- the Nullness Checker writes its qualifiers
+        into 133 of the core's 146 class files (RUNTIME retention). So dropping the dependency needs
+        `-dontwarn org.checkerframework.**` in `consumer-proguard.txt`, or a minified app fails R8 on
+        "Missing class"; added, like lombok and animal-sniffer.
+  - [ ] **Read the first Publish run:** `package-android-aar`'s new step, the consumer fixture's R8
+        `assembleRelease` (cpu and opencl) now that checker-qual is off its classpath, and the
+        emulator instrumentation test (Jackson reflecting over the annotated classes without
+        checker-qual -- ART is expected to skip the unresolvable annotation types, as the JVM does).

@@ -342,7 +342,12 @@ behind it lands.
   git show origin/main:pom.xml | grep -m1 -A1 llama-parent
   git branch -r --contains <the bump commit>
   ```
-- **Scope drift between the reactor poms and the Gradle-built AAR poms.** The AAR poms take their
-  dependency *versions* from the core pom, but their *scopes* are the Gradle build's own. Compare them
-  every release: a dependency the core deliberately keeps out of the consumer graph at `provided` must
-  not reappear at `compile` in an AAR pom.
+- **Scope drift between the reactor poms and the Gradle-built AAR poms.** Up to 6.0.0 the AAR poms
+  took their dependency *versions* from the core pom, but their *list and scopes* were the Gradle
+  build's own, and 6.0.0 shipped checker-qual at `compile` that way. Since 6.1.0 the list is read
+  from the core pom as well and `package-android-aar` checks the result
+  (`.github/verify-aar-poms.py`), so this is now a confirmation, not a hunt: run the same check on the
+  poms resolved from Central —
+  `python3 .github/verify-aar-poms.py . llama-android-<v>.pom llama-android-opencl-<v>.pom` (at the
+  tag) — and a dependency the core keeps out of the consumer graph at `provided` must not appear in
+  either.

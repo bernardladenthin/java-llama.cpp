@@ -115,6 +115,43 @@ fun coreProperty(name: String): String {
     )
 }
 
+// The core's compile-scope dependencies (no <scope> or <scope>compile</scope>, not optional) as
+// (groupId, artifactId, version) -- exactly what a Maven consumer of net.ladenthin:llama gets, and
+// therefore what the AAR pom mirrors. Scopes are read here as well as versions: the 6.0.0 AAR poms
+// were written from a hand-kept list and shipped checker-qual at compile scope although the core
+// keeps it provided (its classes are major 55, CLAUDE.md "Java 8 bytecode floor"); the versions were
+// derived and stayed right, the scopes were not and drifted. Provided (lombok, checker-qual,
+// animal-sniffer), runtime (the JVM-only slf4j-simple binding: Android consumers pick their own,
+// e.g. slf4j-android, or run with the no-op one) and test dependencies are not mirrored. The
+// published poms are checked against the core pom in CI (.github/verify-aar-poms.py).
+fun coreCompileDependencies(): List<Triple<String, String, String>> {
+    val coreDependencies = directChildElement(corePom.documentElement, "dependencies")
+        ?: error("No <dependencies> found in ../llama/pom.xml")
+    val result = mutableListOf<Triple<String, String, String>>()
+    val children = coreDependencies.childNodes
+    for (i in 0 until children.length) {
+        val node = children.item(i)
+        if (node.nodeType != Node.ELEMENT_NODE || node.nodeName != "dependency") {
+            continue
+        }
+        val dependency = node as Element
+        val scope = directChildText(dependency, "scope") ?: "compile"
+        if (scope != "compile" || directChildText(dependency, "optional") == "true") {
+            continue
+        }
+        val groupId = directChildText(dependency, "groupId") ?: error("A core dependency has no <groupId>")
+        val artifactId = directChildText(dependency, "artifactId") ?: error("$groupId: no <artifactId>")
+        val version = directChildText(dependency, "version")
+            ?: error("$groupId:$artifactId has no <version> in ../llama/pom.xml -- the AAR pom needs an explicit one")
+        val property = Regex("""\$\{([^}]+)}""").matchEntire(version)?.groupValues?.get(1)
+        result += Triple(groupId, artifactId, if (property != null) coreProperty(property) else version)
+    }
+    if (result.isEmpty()) {
+        error("No compile-scope dependency found in ../llama/pom.xml -- the parsing is broken, not the pom")
+    }
+    return result
+}
+
 group = "net.ladenthin"
 version = reactorVersion
 
@@ -289,23 +326,17 @@ fun org.gradle.api.publish.maven.MavenPom.commonMetadata(
         url.set("https://github.com/bernardladenthin/java-llama.cpp")
     }
     // Mirror the core's compile-scope dependencies (the AAR repackages those
-    // classes, so their imports must resolve on the consumer classpath).
-    // logback-classic is deliberately NOT mirrored: it is the core's JVM-only
-    // runtime SLF4J binding and does not run on Android — Android consumers
-    // pick their own binding (e.g. slf4j-android) or run with the no-op one.
+    // classes, so their imports must resolve on the consumer classpath). The list
+    // is read from llama/pom.xml, scopes included -- see coreCompileDependencies.
     withXml {
         val dependencies = asNode().appendNode("dependencies")
-        fun dependency(groupId: String, artifactId: String, versionProperty: String) {
+        for ((groupId, artifactId, version) in coreCompileDependencies()) {
             val node = dependencies.appendNode("dependency")
             node.appendNode("groupId", groupId)
             node.appendNode("artifactId", artifactId)
-            node.appendNode("version", coreProperty(versionProperty))
+            node.appendNode("version", version)
             node.appendNode("scope", "compile")
         }
-        dependency("com.fasterxml.jackson.core", "jackson-databind", "jackson.version")
-        dependency("org.slf4j", "slf4j-api", "slf4j.version")
-        dependency("org.jspecify", "jspecify", "jspecify.version")
-        dependency("org.checkerframework", "checker-qual", "checker.version")
         if (dependsOnCpuAar) {
             // The OpenCL AAR is one backend module; the library it plugs into is the CPU AAR
             // of the same version (type aar, so AGP merges both jni/ trees into the APK).
