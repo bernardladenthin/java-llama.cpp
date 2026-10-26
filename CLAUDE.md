@@ -101,7 +101,8 @@ it or is checked against it:
 | `examples/jbang/Chat.java`, `examples/server/pom.xml` | the JBang `//DEPS` lines name the classes jar and every `platform=yes` jar; the server example's `<llama.version>` and profiles follow the list — both held to the README's install version |
 | `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, the provenance keys and the row's classifier, next to a `jllama-sbom.json` naming the same classifier, a module directory holding nothing but its module, the `jllama-*.txt` lists and the BOM, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
-| `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built |
+| `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built; also writes the glibc-floor set (`floor-set`) |
+| the glibc-floor set | **derived**: the library rows whose directory promises a glibc floor (`nativedeps.GLIBC_CEILING`: the three Linux CPU jars) — `check-natives.py floor-set` prints them; `package` uploads them with the classes jar and its dependencies as `llama-glibc-floor`, and `smoke-glibc-floor` loads each on RHEL 8.10 (glibc 2.28, GCC 8's libstdc++) on its own architecture, s390x under qemu (`smoke-glibc-floor.sh`, `NativeLoadSmoke.java` in the UBI 8 OpenJDK 21 runtime image); `check-natives.py` holds the job's matrix rows to the set |
 | `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it; **the export set of every `jllama` library** (`JNI_OnLoad`, `JNI_OnUnload`, `Java_*`, `jllama_*` and nothing else -- `cmake/jllama-exports.map` on ELF and `cmake/jllama-exports-macos.txt` on macOS keep the statically linked llama/ggml/mtmd/BoringSSL symbols local, Windows exports only `dllexport`; before the lists the Linux library exported 14,220 symbols, 47 of them JNI), and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; it passes `net.ladenthin.llama.backend` naming **every** module of the runner's platform, opt-in ones included, and the loader line must then name each -- so a module jar the loader skipped fails here, and this is also the only place in CI that loads an opt-in module at all |
 | `.github/smoke-lib.sh` / `smoke-test-natives.ps1` | the model-backed smoke rows expect every module of the set **except** the opt-in ones (`optin` column), because the loader deliberately leaves those out -- it is the same list, read with one more condition |
@@ -299,11 +300,15 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   build.
 - **Built in manylinux_2_28** (AlmaLinux 8, gcc-toolset-14, glibc 2.28): x86-64 in the dockcross
   image the CUDA job already used, aarch64 natively on `ubuntu-24.04-arm` inside the pypa image
-  (`.github/manylinux/manylinux_2_28-aarch64`, see "Linux aarch64"). manylinux2014's GCC 10 lacked
-  `-mavxvnni` and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check). The glibc floors
-  meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39. `verify-native-deps.py` reads
-  every library's version-needs table and holds both directories (and CUDA) to `GLIBC_2.28`; the
-  modules themselves reference `GLIBC_2.27` at most (measured in the image).
+  (`.github/manylinux/manylinux_2_28-aarch64`, see "Linux aarch64"); the static s390x library is
+  cross-compiled against the pypa s390x image as a sysroot (see "Linux s390x"). manylinux2014's GCC 10
+  lacked `-mavxvnni` and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check). The glibc
+  floors meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39, s390x from 2.38.
+  `verify-native-deps.py` reads every library's version-needs table and holds these directories (and
+  CUDA) to `GLIBC_2.28`, `GLIBCXX_3.4.25` and `CXXABI_1.3.11` (the system libstdc++ of manylinux_2_28
+  is GCC 8's; gcc-toolset links the rest from `libstdc++_nonshared.a`); the modules themselves
+  reference `GLIBC_2.27` at most (measured in the image). `smoke-glibc-floor` loads each of the three
+  CPU jars on RHEL 8.10.
 - **One `ctest` in a modular build job, `c_abi`, and no `jllama_test`**: `jllama_test` calls the
   CPU/RPC backends directly, so the option refuses `BUILD_TESTING`; what a library-jar build does
   run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling) is `src/test/c/test_c_abi.c`
@@ -365,6 +370,8 @@ rejects anything else loudly.
 | `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
+| `aarpoms.py` | `verify-aar-poms.py` (`package-android-aar`, on the poms in mavenLocal) | both AAR poms carry exactly the core's compile-scope dependencies, at its versions and at `compile` (plus the CPU AAR, `type aar`, in the OpenCL one) |
+| `postrelease.py` | `post-release-check.py` (`post-release.yml`, after the release) | the published natives jars against `natives.csv`, their provenance with `patches.sha256` recomputed from the tag, the source archive's stamp and reproducible pack, the AAR invariants and poms, the cache-free tag build (docs/post-release-check.md, checks 3, 8, 9, 13, 14) |
 | `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
@@ -375,6 +382,15 @@ rejects anything else loudly.
 | `java/check-maven-versions` | `repository-checks` | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
 | `java/check-publication` | `repository-checks` | the publication jobs are wired as documented; a dry run of `.github/release-assets.json` collects what it promises |
 | `java/check-release-ref`, `java/finalize-publication`, `java/publish-central`, `java/publish-github`, `java/attest-publication` | `check-snapshot` / `check-tag`, the publish jobs, the six consumers | the signed publication (see "Signed publication") |
+| `java/audit-publication` | `audit` of `post-release.yml` | the published release from the outside: the run and its jobs, the files against the contract, Maven Central (polled), the signatures with the release key from a keyserver, every file's provenance, the bytecode floors, the next version (`post-release` in `.github/actions-config.json`) |
+
+**The post-release check (`post-release.yml`).** Runs after a successful Publish run dispatched on a
+`v*` tag, and by hand with a tag: `audit` (the action above, then `post-release-check.py` on the
+downloaded files) and `consumer` (per platform: `post-release-consumer.sh` resolves `llama-platform`
+from Central into an empty local repository, then the server smoke on Java 8, and on Linux x86-64
+`post-release-webui.sh`). Tools from the default branch, the release's facts from a checkout of the
+tag in `release/`. It is not in the release gate -- it runs after the publication, on what was
+published (docs/post-release-check.md).
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
@@ -2549,9 +2565,37 @@ Wiring:
 ### Linux s390x: big-endian cross-build + qemu test gate
 
 `build-linux-s390x` adds **IBM Z (s390x, big-endian)** — the one target whose
-byte order differs from every other platform. It **cross-compiles** with the GCC s390x toolchain
-(`g++-s390x-linux-gnu`, native x86 speed — no emulated build) and then runs the **full C++ unit suite
-under `qemu-user`** (`CMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/qemu-s390x-static`, `QEMU_LD_PREFIX=/usr/s390x-linux-gnu`).
+byte order differs from every other platform. It **cross-compiles** at native x86 speed — no emulated
+build — and then runs the **full C++ unit suite under `qemu-user`**.
+
+**The toolchain gives it the manylinux_2_28 floor** (glibc 2.28, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`),
+like the other two Linux CPU jars, without an s390x runner:
+`.github/manylinux/manylinux_2_28-s390x-sysroot` unpacks the pypa `manylinux_2_28_s390x` image
+(pinned by digest; nothing of it is executed) as a sysroot, and `.github/manylinux/s390x-toolchain.cmake`
+compiles with Ubuntu 24.04's `clang-18` (`--target=s390x-linux-gnu --sysroot=…
+--gcc-install-dir=<gcc-toolset-14 in the sysroot> -march=z13`) and links with `binutils-s390x-linux-gnu`
+(`--ld-path`). clang takes the toolset's crt files, libgcc and libstdc++ exactly as a native
+gcc-toolset build would — the system `libstdc++.so.6` of GCC 8 plus `libstdc++_nonshared.a` through
+the toolset's linker script, whose absolute paths ld resolves inside the sysroot. No packaged x86 GCC
+targets s390x with glibc 2.28, and running the toolset's own s390x gcc under qemu would take hours per
+(uncached) tag build. `-march=z13` is the arch11 baseline the former GCC cross build defaulted to (and
+RHEL 8's). The toolchain's emulator is `env QEMU_LD_PREFIX=<sysroot> qemu-s390x-static`, so `ctest`
+runs against glibc 2.28 and GCC 8's libstdc++ -- the oldest runtime the jar promises; the prefix must
+be an environment variable, not qemu's `-L`, because googletest's death tests re-execute the binary
+through binfmt_misc without arguments (with `-L` the six `RpcComm` death tests failed on
+`Could not open '/lib/ld64.so.1'`). The sysroot path is a cache variable, so a reconfigure without
+`JLLAMA_S390X_SYSROOT` in the environment still finds it. The job then runs `verify-native-deps.py` on
+its own tree, and `smoke-glibc-floor` loads the jar on RHEL 8.10 s390x under qemu.
+
+Until 2026-10-25 the job used the runner's `g++-s390x-linux-gnu` (GCC 13) with its glibc 2.39
+sysroot: the 6.0.0 jar referenced `GLIBC_2.38` (`__isoc23_strtol` & co., `fmod`), `GLIBCXX_3.4.32`
+and `CXXABI_1.3.13`, and failed to load on RHEL 8/9 and Ubuntu 22.04 while every job was green --
+`GLIBC_CEILING` held only the manylinux directories, and the qemu `ctest` ran against the same new
+sysroot. Measured after the move (b11887): `GLIBC_2.27`, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`, new
+dependencies `libpthread.so.0` and `libdl.so.2` (glibc 2.28 has not merged them yet), 694/694 C++
+tests under qemu against the sysroot and natively on a LinuxONE z16 (cfarm191, Debian 13), and the
+jar loads on RHEL 8.10 s390x where the 6.0.0 one fails with `GLIBC_2.38 not found`.
+
 That `ctest` run is a **real big-endian correctness gate** for the byte-order-sensitive surface — the
 little-endian WAV writer (`tts_wav.hpp`), the JSON/token/embedding transforms, and the JNI helpers —
 which is where an endian bug in *our* code could hide. Model-backed **Java** tests are deliberately
@@ -2917,7 +2961,12 @@ easy to undo by accident:
   own `jar-with-dependencies`, which takes scope `runtime`), so no checker-qual class of any version
   ships.
   `<optional>true</optional>` would not have been enough on its own — that descriptor filters on
-  scope only. Safe because no source imports `org.checkerframework`.
+  scope only. Safe because no source imports `org.checkerframework` — but the **class files do
+  reference it**: the Nullness Checker writes its qualifiers (`@NonNull`, `@UnknownKeyFor`,
+  `@Initialized`, `@Pure`, `@SideEffectFree`, …) into the classes it checks, 133 of the core's 146
+  (measured on the 6.0.0-SNAPSHOT jar). Harmless where checker-qual is absent: a JVM or ART that
+  reflects over an annotated element skips an annotation type it cannot resolve. R8 does not skip it —
+  it reports the missing class — hence `-dontwarn org.checkerframework.**` in the AAR's consumer rules.
 
 **The gate: the `java/verify-bytecode` action of [bernardladenthin/actions](https://github.com/bernardladenthin/actions)** (its `verify-bytecode-version.sh`).
 It opens every `.class` in every jar it is given and fails on any whose class-file major version
@@ -3373,8 +3422,15 @@ the recommended path (README "Importing in Android", Option 1):
   full set. The additive OpenCL AAR has an empty `classes.jar`: its CPU AAR dependency already
   supplies the Java API, and duplicating it breaks D8/R8. Built by the **standalone plain-Gradle build** in `llama-android/`
   (see "Repository layout" for why it is not a Maven module); the POM mirrors the core's
-  compile-scope deps (jackson/slf4j-api/jspecify/checker-qual, versions parsed from
-  `llama/pom.xml` — deliberately NOT the SLF4J binding, which is the JVM-only runtime dependency).
+  compile-scope deps — the list itself, versions **and scopes**, is read from `llama/pom.xml`
+  (`coreCompileDependencies`: no `<scope>` or `compile`, not optional; today jackson-databind,
+  slf4j-api, jspecify). Not mirrored: the `provided` ones (checker-qual, lombok, animal-sniffer) and the
+  SLF4J binding, which is the JVM-only runtime dependency. The 6.0.0 AAR poms were written from a
+  hand-kept list that also carried checker-qual at `compile`, which the core keeps `provided` (major
+  55, see "Java 8 bytecode floor"); the versions were derived and stayed right, the scopes drifted.
+  `.github/verify-aar-poms.py` checks the poms `publishToMavenLocal` wrote against the core pom in
+  `package-android-aar`. The consumer rules carry `-dontwarn org.checkerframework.**`: the classes
+  reference the checker's qualifiers (below), which no Android app has.
 - **`net.ladenthin:llama-kotlin`** — Maven reactor module; pure-Kotlin (2.4, jvmTarget 1.8)
   coroutines façade: `generateFlow`/`generateChatFlow` (cold `Flow`, source closed on
   completion/error/cancellation) and `completeSuspend`/`chatSuspend`/`chatCompleteTextSuspend`/

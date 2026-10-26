@@ -215,6 +215,55 @@ jars is "a module that cannot help is skipped, one that can help is used" — Op
 neither on a CPU-only host. The README says that the jar needs an Intel GPU/NPU *and* an OpenCL ICD
 loader.
 
+## 3 · `cuda13` and `vulkan` together on one NVIDIA GPU: deduplicated, CUDA wins
+
+Measured **2026-10-26** on a Windows laptop with an NVIDIA RTX 3070 Laptop GPU (8 GB, driver 581.83,
+CUDA 13.3 toolkit on `PATH`) and an AMD Radeon iGPU. The jars were the **published 6.0.0** set:
+`llama`, `cpu-windows-x86-64`, `cuda13-windows-x86-64` and `vulkan-windows-x86-64`. The test ran the
+embedded server on JDK 21, with `Qwen2.5-1.5B-Instruct-Q4_K_M` at `-c 4096 -ngl 99 -lv 4` and three
+identical chat requests of 128 tokens each (`cache_prompt: false`). `-Dnet.ladenthin.llama.backend`
+selected the set without swapping jars.
+
+The question came from the post-release check of 6.0.0. The registry lists the discrete GPU twice,
+as `CUDA0` and as a Vulkan device. Does llama.cpp use it twice, or once, and through which backend?
+At the default verbosity the answer was filtered out of the log; at `-lv 4` it is printed:
+
+```
+load_backends_next_to_this_library: 4 backend(s) registered [CUDA, RPC, Vulkan, CPU], 4 device(s): CUDA0 (CUDA), Vulkan0 (Vulkan), Vulkan1 (Vulkan), CPU (CPU)
+llama_prepare_model_devices: skipping device Vulkan0 (NVIDIA GeForce RTX 3070 Laptop GPU) with id 0000:01:00.0 - already using device CUDA0 (NVIDIA GeForce RTX 3070 Laptop GPU) with the same id
+llama_prepare_model_devices: using device CUDA0 (NVIDIA GeForce RTX 3070 Laptop GPU) (0000:01:00.0) - 7116 MiB free
+load_tensors: offloaded 29/29 layers to GPU
+load_tensors:        CUDA0 model buffer size =   934.70 MiB
+```
+
+| Set (`-Dnet.ladenthin.llama.backend`) | Device used | Prompt t/s (requests 2, 3) | Generation t/s (requests 1–3) |
+|---|---|--:|--:|
+| `cuda13` | `CUDA0` | 2357, 2370 | 186.5, 193.5, 187.7 |
+| `vulkan` | `Vulkan1` (the RTX) | 2134, 2120 | 193.6, 189.3, 188.7 |
+| both (unset) | `CUDA0`; `Vulkan0` skipped | 2571, 2426 / 2231, 2013 | 185.9, 194.6, 190.9 / 179.7, 190.8, 192.6 |
+
+The first request of each server is left out of the prompt column: it includes warm-up (950–1400 t/s).
+The two "both" rows are two separate server runs.
+
+- **Deduplication happens in device selection, by PCI id, and the first registered backend wins.**
+  CUDA registers before Vulkan, so the model goes to `CUDA0`. No VRAM is spent twice, and nothing is
+  split between two handles of the same GPU.
+- **The iGPU is not drafted in.** Only the discrete GPU is used, with Vulkan alone as well as with
+  both modules. That agrees with the earlier throughput pair on this host: 4 devices at 92.0 t/s
+  against cuda13 alone at 94.3 t/s.
+- **CUDA and Vulkan are equal on this model** (~190 t/s generation, within noise). The 1.5B model is
+  small; a larger one may separate them. The tg128 comparison against the static build's 265.6 t/s
+  in TODO.md used a different model and is not answered by this table.
+- **OpenCL does not take the NVIDIA GPU at all.** With `opencl-windows-x86-64` added as a third
+  module, ggml's OpenCL backend selects the "NVIDIA CUDA" platform, then logs `unsupported GPU
+  'NVIDIA GeForce RTX 3070 Laptop GPU'` and `drop unsupported device`. It registers as a backend with
+  no device: 5 backends, still 4 devices. The model goes to `CUDA0` as before (generation 182–190
+  t/s), because ggml's OpenCL backend targets Qualcomm Adreno and Intel GPUs.
+- **Vulkan's device order depends on the modules loaded.** With Vulkan alone, `ggml_vulkan: 0` is the
+  AMD iGPU and `1` the RTX. With CUDA loaded as well, `0` is the RTX and `1` the iGPU. A device name
+  such as `Vulkan1` therefore names a different GPU depending on which module jars are on the
+  classpath; the README says so next to the module list.
+
 ## What these runs did *not* test
 
 * **No Intel GPU or NPU was available**, so nothing here says what OpenVINO does on the hardware it

@@ -188,7 +188,7 @@ To use the latest snapshot, add the repository and dependency to your `pom.xml`:
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama-platform</artifactId>
-    <version>6.0.0-SNAPSHOT</version>
+    <version>6.1.0-SNAPSHOT</version>
     <type>pom</type>
 </dependency>
 ```
@@ -265,7 +265,7 @@ iGPU, the example being a Core Ultra 7 165U).
 |---|---|---|---|
 | `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
 | `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
-| `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM; **glibc ≥ 2.38 and the libstdc++ of GCC 13** (`GLIBCXX_3.4.32`): Ubuntu 24.04, SLES 15 SP6, Debian 13 and later. **Not RHEL 8 or 9, not Ubuntu 22.04** -- the load fails there with `GLIBC_2.38 not found`. Cross-compiled on `ubuntu-latest`, not in a manylinux image, so the 2.28 floor of the other Linux CPU jars does not apply. |
+| `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM; glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10 and later) on z13 or newer — cross-compiled against the manylinux_2_28 s390x image, so the floor of the other Linux CPU jars applies; CI loads it on RHEL 8.10. (The 6.0.0 jar needed glibc 2.38 and did not load on RHEL 8/9 or Ubuntu 22.04.) |
 | `cpu-windows-x86-64` | CPU | Windows x86-64 | A JDK 8+ JVM; **Windows 10 or newer**. Ships one CPU backend module per instruction-set level (as the Linux x86-64 jar: x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up. Built with clang, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
@@ -296,6 +296,19 @@ iGPU, the example being a Core Ultra 7 165U).
 > place to the named ones (`cpu` for none) and fails loud when a named jar is not on the
 > classpath; unset, every GPU module jar on the classpath is used except the opt-in `openvino` one
 > (see below).
+
+> [!NOTE]
+> **Two GPU modules that see the same GPU use it once.** With `cuda13-windows-x86-64` and
+> `vulkan-windows-x86-64` on the classpath, ggml registers an NVIDIA GPU twice, as `CUDA0` and as a
+> `Vulkan` device. llama.cpp then skips the second entry by its PCI id ("skipping device Vulkan0 …
+> already using device CUDA0 … with the same id"). The first registered backend wins, which is CUDA,
+> and the whole model goes to `CUDA0`. An integrated GPU next to a discrete one is not used either
+> way. Measured on a published 6.0.0 set (an RTX 3070 Laptop GPU and an AMD iGPU), the three sets
+> perform the same: [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md),
+> section 3. **The device numbering is not stable across module sets:** with only the Vulkan module,
+> the RTX is `Vulkan1` and the iGPU `Vulkan0`; with CUDA loaded as well, Vulkan lists the RTX as
+> `Vulkan0`. A `--device` / `setDevices(...)` name is only valid for the set of modules it was read
+> from, so re-read the device list in the log after adding or removing a GPU jar.
 
 > [!IMPORTANT]
 > **Two GPU jars need more than their runtime, and both were found by measurement rather than by

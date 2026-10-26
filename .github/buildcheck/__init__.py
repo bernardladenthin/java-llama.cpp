@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """This repository's own build checks: the natives list, the patches, the native dependencies, the
-HIP offload bundles, the WebUI license texts. Standard library only.
+HIP offload bundles, the WebUI license texts, the AAR poms. Standard library only.
 
 The checks it shares with its sibling repositories live in bernardladenthin/actions (actionlib),
 and some of the modules here build on it (natives.py reads the job graph with its workflow parser).

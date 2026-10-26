@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Post-release check
+on:
+  workflow_run:
+    workflows: [Publish]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to audit (v<version>), e.g. to re-audit an older release"
+        required: true
+
+# docs/post-release-check.md, automated: the published release, checked from the outside after the
+# Publish run that made it -- against the GitHub release, Maven Central and a real JVM, not against
+# the build tree. A green pipeline is evidence about the build; every failure class CLAUDE.md
+# records as having reached a user reached them through one.
+#
+# Triggered by the end of a successful Publish run dispatched on a v* tag (a release created with
+# the workflow token starts no `release:` workflow), or by hand with the tag. The tools and the
+# configuration are this checkout (the default branch); the release's own facts (its contract,
+# natives.csv, patches, poms) come from a second checkout of the tag in release/, so an older
+# release is audited with today's checks.
+#
+#   audit     bernardladenthin/actions' java/audit-publication (checks 1, 2, 4-7, 10, 16: the run,
+#             its jobs, the files, Maven Central -- polled while it still publishes --, the
+#             signatures, the provenance, the bytecode floors, the next version), then this
+#             repository's own: natives jars, provenance recomputed, source archive, AARs, the
+#             cache-free build (checks 3, 8, 9, 13, 14; .github/post-release-check.py)
+#   consumer  per platform, a consumer resolves llama-platform from Central into an empty local
+#             repository (check 11, .github/post-release-consumer.sh) and runs it on Java 8, the
+#             floor (check 12): the server smoke of the natives jars -- inference, TLS, an https://
+#             model download, the natives directory -- and, on Linux x86-64, the embedded WebUI of
+#             the released library (check 15, .github/post-release-webui.sh)
+# What stays by hand: GPU inference (no GPU runner) -- docs/post-release-check.md, check 12.
+permissions:
+  contents: read
+
+concurrency:
+  group: post-release-${{ inputs.tag || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+
+jobs:
+  audit:
+    name: Audit the published release
+    # Only a successful run dispatched on a v* tag published a release: pull request runs never
+    # publish, and their head branch is not ours to check out.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'workflow_dispatch' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          path: release
+          persist-credentials: false
+      - name: Audit the release (run, jobs, files, Maven Central, signatures, provenance, bytecode)
+        uses: bernardladenthin/actions/java/audit-publication@44390bd464395f560f4170d2c4bfb7a6348541b3 # v1.1.0
+        with:
+          tag: ${{ env.TAG }}
+          root: release
+          assets: release-assets
+          wait-minutes: '180'
+      - name: This repository's own artifacts (natives jars, provenance, source archive, AARs, cache-free build)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 .github/post-release-check.py --root release --tag "$TAG" --assets release-assets ${RUN_ID:+--run "$RUN_ID"}
+
+  consumer:
+    name: A consumer on Java 8 (${{ matrix.target }})
+    needs: audit
+    # After the audit, which waited for Maven Central; a finding there does not hide this one.
+    if: ${{ !cancelled() && needs.audit.result != 'skipped' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x86-64, runner: ubuntu-latest, jdk: temurin, extra: vulkan-linux-x86-64 }
+          - { target: linux-aarch64, runner: ubuntu-24.04-arm, jdk: temurin, extra: vulkan-linux-aarch64 }
+          - { target: windows-x86-64, runner: windows-latest, jdk: temurin, extra: vulkan-windows-x86-64 }
+          # Temurin publishes no Java 8 for macOS on arm64; Zulu does.
+          - { target: macos-aarch64, runner: macos-latest, jdk: zulu, extra: '' }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check out the tag's natives list
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          path: release
+          sparse-checkout: .github/natives.csv
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: ${{ matrix.jdk }}
+          java-version: '8'
+      - name: Resolve the release from Maven Central into an empty local repository (check 11)
+        shell: bash
+        run: |
+          java -version
+          .github/post-release-consumer.sh "${TAG#v}" release/.github/natives.csv consumer "${{ matrix.target }}" ${{ matrix.extra }}
+      - name: Download the 1 MB test model
+        shell: bash
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o models/stories260K.gguf "$(grep '^stories260K\.gguf,' .github/models.csv | cut -d, -f2-)"
+      - name: The server smoke on the resolved jars, Java 8 (check 12)
+        if: runner.os == 'Linux'
+        run: .github/smoke-test-natives.sh consumer models/stories260K.gguf
+      - name: The server smoke on the resolved jars, Java 8 (check 12)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/smoke-test-natives.ps1 -SetDir consumer -Model models/stories260K.gguf
+      - name: The macOS smoke on the resolved jars, Java 8 (check 12)
+        if: runner.os == 'macOS'
+        run: .github/smoke-native-macos.sh consumer
+      - name: The embedded WebUI of the released library (check 15)
+        if: matrix.target == 'linux-x86-64'
+        run: .github/post-release-webui.sh consumer models/stories260K.gguf
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: post-release-${{ matrix.target }}-logs
+          path: |
+            *.log
+            webui-headers.txt
+          if-no-files-found: warn

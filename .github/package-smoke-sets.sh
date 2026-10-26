@@ -11,6 +11,11 @@
 # plus the GPU classifiers), with no fat jar in between. The sets are the only thing the smoke jobs
 # download: the natives jars of the other platforms (ROCm alone is hundreds of MB) stay behind.
 #
+# One more set, <out-dir>/glibc-floor/: the classes jar, its dependencies and every library jar whose
+# directory promises a glibc floor (check-natives.py floor-set: today the three Linux CPU jars), which
+# the smoke-glibc-floor job loads on RHEL 8, on each jar's own architecture (smoke-glibc-floor.sh).
+# Its name is no <os>-<arch>, so it never collides with a smoke target.
+#
 # Fail-loud: a natives jar the list names that is not in <llama/target> aborts (the package job's
 # natives profile builds one per row; a missing one means a row without a build), and so does a
 # target without any jar.
@@ -18,7 +23,7 @@
 # Usage: package-smoke-sets.sh <llama/target> <deps-dir> <out-dir>
 #   <llama/target>  directory holding llama-<v>.jar and the llama-<v>-<classifier>.jar natives jars
 #   <deps-dir>      the classes jar's runtime dependencies as jars (mvn dependency:copy-dependencies)
-#   <out-dir>       output directory; one subdirectory per smoke target
+#   <out-dir>       output directory; one subdirectory per smoke target, plus glibc-floor/
 set -euo pipefail
 
 TARGET_DIR="${1:?usage: package-smoke-sets.sh <llama/target> <deps-dir> <out-dir>}"
@@ -55,3 +60,17 @@ for target in $targets; do
     find "$set_dir" -maxdepth 1 -name 'llama-*.jar' -exec basename {} \; | sort | sed 's/^/  /'
 done
 echo "$(wc -w <<< "$targets") smoke set(s) in $OUT_DIR"
+
+floor="$(python3 "$CHECK" floor-set)"
+[ -n "$floor" ] || fail "check-natives.py floor-set printed no classifier"
+floor_dir="$OUT_DIR/glibc-floor"
+mkdir -p "$floor_dir"
+cp "$classes" "$floor_dir/"
+cp "$DEPS_DIR"/*.jar "$floor_dir/"
+for classifier in $floor; do
+    jar="$TARGET_DIR/llama-$version-$classifier.jar"
+    [ -f "$jar" ] || fail "natives jar missing for the glibc-floor set: $jar"
+    cp "$jar" "$floor_dir/"
+done
+echo "glibc-floor set ($(du -sh "$floor_dir" | cut -f1)):"
+find "$floor_dir" -maxdepth 1 -name 'llama-*.jar' -exec basename {} \; | sort | sed 's/^/  /'

@@ -5,6 +5,12 @@ The maintainer-facing release procedure is **centralized in the workspace repo**
 
 java-llama.cpp is a **Maven reactor**, so two repo-specific points extend the canonical procedure.
 
+Once a release is published, audit it from the outside with
+[`post-release-check.md`](post-release-check.md): that file checks the artifacts on the GitHub
+release, on Maven Central and in a real JVM, deliberately without trusting the run that built them.
+`.github/workflows/post-release.yml` runs every check a runner can answer by itself after the
+Publish run of the tag; read its result before announcing the release.
+
 ## Reactor version bump (all six poms)
 
 The root `pom.xml` is the parent (`net.ladenthin:llama-parent`); the `llama/`,

@@ -41,12 +41,12 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
         token was refused (`Resource not accessible by integration`, 403), so the `snapshot` tag and
         notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
         not move a ref across commits that change `.github/workflows/` (12 files between the two);
-        not verified. actions v1.0.3 (pinned) deletes and re-creates the tag on that 403 and points
+        not verified. actions v1.0.3 (and later; v1.1.0 is pinned) deletes and re-creates the tag on that 403 and points
         the release at it; whether GitHub accepts that shows only the next snapshot dispatch.
         `github-release` does not move a tag (the owner's `v6.0.0` exists already).
       - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
         run, in the re-run too: with 100 per page GitHub fails that listing for large runs, with 50
-        it answered every try. actions v1.0.3 (pinned) lists 50 per page and repeats GitHub reads on
+        it answered every try. actions v1.0.3 (and later) lists 50 per page and repeats GitHub reads on
         5xx. `central-release` does not call it.
 - [ ] **Owner: settings of bernardladenthin/actions** like the four repositories: a ruleset on `main`
       (pull request required, no force push, no deletion), Dependabot alerts and security updates,
@@ -63,15 +63,29 @@ and footer, `SECURITY.md` on `6.x`) is the pull request `release/6.0.0`.
       contribution by its author; KoboldCpp, where it came from, is AGPL-3.0); the third-party logos
       the WebUI embeds (trademarks, no license text). The WebUI package list is an upper bound
       (imports + lockfile); an exact list from the bundle would need a plugin in upstream's build.
-- [ ] After publication: bump `main` to the next `-SNAPSHOT` in all seven poms and the README's
-      snapshot line (it stays `6.0.0-SNAPSHOT` in the release commit), and carry out the upstream
-      submissions queued below.
-- [ ] After publication: srcmorph (#238) builds against `llama:6.0.0` from Central; its Build,
-      plugin IT, code style, CodeQL and SonarQube jobs are red until then, and a local srcmorph
-      build stops at its license collector against a llama snapshot older than the natives license
-      texts. Re-run its checks once the release is on Central.
+- [ ] After publication: carry out the upstream submissions queued below (`main` is at
+      `6.1.0-SNAPSHOT` since the post-release bump).
+- [ ] **The automated post-release check** (`.github/workflows/post-release.yml`,
+      docs/post-release-check.md "Automated"). Run locally against 6.0.0 before the first CI run:
+      the 8 checks of `java/audit-publication` pass (60 files + 60 signatures from one subkey, 118
+      Central files with the release's bytes, 120 files attested by run 40239731871; `next` warns,
+      `main` was still at 6.0.0), `post-release-check.py` passes natives (23/23), provenance
+      (patches.sha256 recomputed), source and cache (73 logs, 68 show the cache off, none on) and
+      fails android on exactly the known checker-qual finding; the consumer resolution, the server
+      smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
+      - [x] The `java/audit-publication` pin is the actions release that carries it: v1.1.0
+            (`44390bd4`), like every other pin of the workflows.
+      - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0` (expected: one android
+            finding) and the first `workflow_run` after 6.1.0. Unverified on a runner: the Java 8
+            rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
+            and `smoke-test-natives.ps1` on Java 8, `gh attestation verify` with the workflow token
+            (`attestations: read`), and the keyserver fetch from a runner.
+- [ ] After publication: srcmorph builds against `llama:6.0.0` from Central -- locally verified
+      2026-10-26 from an empty local repository (668 + 39 + 32 tests, BUILD SUCCESS); its TODO item
+      is closed in srcmorph#243. Open: that PR's CI, the first run of its Build, plugin IT, code
+      style, CodeQL and SonarQube jobs that can resolve the release.
 - [ ] After publication: the first snapshot dispatches of BitcoinAddressFinder and streambuffer on
-      actions v1.0.3 (none has run on `main` since the pin bumps), and the next one of this
+      actions v1.0.3 or later (none has run on `main` since the pin bumps), and the next one of this
       repository, which shows whether the re-created `snapshot` tag is accepted.
 
 ## Delivery roadmap — remaining work
@@ -195,6 +209,22 @@ Kept as a list because each entry names the machine it needs -- the harness is
    Also check whether CUDA, Vulkan and OpenCL deduplicate the same NVIDIA GPU by `device_id`
    and which backend wins. Linux CUDA on a Tesla T4 has already been measured; see
    [the GPU module measurements](docs/benchmarks/gpu-module-jars.md).
+   **Measured 2026-10-26 on the published 6.0.0 jars**
+   ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md), section 3; RTX 3070
+   Laptop + AMD iGPU, `-lv 4`):
+   - [x] Registration lists the discrete GPU twice (`CUDA0`, a `Vulkan` device). llama.cpp
+         **deduplicates it in device selection by PCI id** ("skipping device Vulkan0 … already using
+         device CUDA0 … with the same id"). The first registered backend wins (CUDA), and all 29
+         layers go to `CUDA0`.
+   - [x] The iGPU is not drafted in, with Vulkan alone or with both modules.
+   - [x] OpenCL drops the NVIDIA GPU as unsupported (no device), so it takes no part.
+   - [x] CUDA, Vulkan and both are equal on Qwen2.5-1.5B Q4_K_M: ~190 t/s generation, ~2100–2500
+         t/s prompt.
+   - [x] README sentence added next to the module list. The device numbering depends on the module
+         set (Vulkan alone: RTX = `Vulkan1`; with CUDA: RTX = `Vulkan0`), so a device name is valid
+         only for the set it was read from.
+   - [ ] Still open: the tg128 of the CUDA module against the static build's 265.6 t/s. That
+         figure used another model, so it needs the same model, `llama-bench`-style, in both builds.
 2. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has
@@ -473,58 +503,64 @@ ROCm anyway. So this needs a real Radeon machine, or a deliberate decision to sh
 of a green link plus `verify-native-deps.py`'s dependency allowlist. Do not quietly treat "the job is
 green" as the measurement.
 
-### Linux s390x: glibc 2.38 floor (after the release)
+### Linux s390x: the glibc floor is 2.28 (fixed on `fix/s390x-glibc-floor`, 2026-10-26)
 
-**Measured 2026-10-25** on the CI artifacts of Publish runs 40217818548 and 40227501358.
+**The defect, measured 2026-10-25** on the CI artifacts of Publish runs 40217818548 and 40227501358:
+the 6.0.0 `cpu-linux-s390x` jar referenced `GLIBC_2.38` (`__isoc23_strtol` / `strtoul` / `sscanf`
+and relatives, `fmod`), `GLIBCXX_3.4.32` and `CXXABI_1.3.13` -- only the newest symbol versions of
+the ubuntu runner's cross sysroot (glibc 2.39, GCC 13.3.0), no code needed them. Loaded as a consumer
+does it (`llama` + `cpu-linux-s390x`, `LlamaLoader.initialize()`, s390x under qemu in Docker) it
+failed on RHEL 8.10 (`UnsatisfiedLinkError … GLIBC_2.38 not found`), RHEL 9 and Ubuntu 22.04, and
+loaded on Ubuntu 24.04; x86-64 and aarch64 (2.27 / 3.4.25, manylinux_2_28) loaded on RHEL 8. Not a
+decision but a side effect: `GLIBC_CEILING` held only the manylinux directories, and the qemu `ctest`
+ran against the same new sysroot.
 
-What each Linux CPU jar references:
+**The fix** (CLAUDE.md, "Linux s390x"): clang-18 cross-compiles against the pypa
+`manylinux_2_28_s390x` image unpacked as a sysroot, with gcc-toolset-14's libstdc++ treatment, on a
+runner pinned to `ubuntu-24.04`. Measured locally (b11887): `GLIBC_2.27`, `GLIBCXX_3.4.25`,
+`CXXABI_1.3.11`, new dependencies `libpthread.so.0` and `libdl.so.2`; 694/694 C++ tests under qemu
+against the sysroot's glibc 2.28 and natively on cfarm191 (LinuxONE z16, Debian 13, 2.7 s); the jar
+loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 jar still fails with
+`GLIBC_2.38 not found` -- the same script, so the check really catches it.
 
-| jar | GLIBC | GLIBCXX | built with |
-|---|---|---|---|
-| `cpu-linux-x86-64` | 2.27 | 3.4.25 | GCC 14.2.1, manylinux_2_28 |
-| `cpu-linux-aarch64` | 2.27 | 3.4.25 | GCC 14.2.1, manylinux_2_28 |
-| `cpu-linux-s390x` | **2.38** | **3.4.32** | GCC 13.3.0, Ubuntu 24.04 cross toolchain |
-
-The 2.38 symbols are `__isoc23_strtol` / `strtoul` / `sscanf` and their relatives, and `fmod`. The
-2.34 symbols are `pthread_*` and `dl*`. All of them are only the newest symbol versions of the
-cross sysroot (glibc 2.39); no code needs them.
-
-The load was tested as a consumer does it: `llama` + `cpu-linux-s390x` from `llama-jars` on the
-classpath, then `LlamaLoader.initialize()`, in Docker with s390x emulated by qemu.
-
-- **Fails** on RHEL 8.10 (glibc 2.28) with `UnsatisfiedLinkError … GLIBC_2.38 not found`. `ldd`
-  also lists `GLIBCXX_3.4.26`..`3.4.32` and `CXXABI_1.3.13`, so libstdc++ blocks it as well.
-- **Fails** on RHEL 9 (2.34) and Ubuntu 22.04 (2.35).
-- **Loads** on Ubuntu 24.04.
-- **`ldd` clean** on SLES 15 SP6 (BCI, glibc 2.38), Debian 13 and Ubuntu 25.04.
-- **Control:** `cpu-linux-x86-64` and `cpu-linux-aarch64` load on RHEL 8.
-
-**Not a decision but a side effect.** `GLIBC_CEILING` in `.github/buildcheck/nativedeps.py` holds
-only the manylinux directories. Every other Linux build "inherits the floor of the ubuntu runner";
-CLAUDE.md justifies that for GPU modules only. `1559fe4c` never mentions s390x. The CI test cannot
-see the gap: its `ctest` runs under qemu against the same 2.39 sysroot. The README and the
-CHANGELOG now state the real floor.
-
-Follow-ups, none of them before the release (no build change now):
-
-- [ ] **Pin `build-linux-s390x` to `runs-on: ubuntu-24.04`** instead of `ubuntu-latest`. The output
-      stays identical (24.04 is `ubuntu-latest` today), but a runner image change can no longer
-      raise the floor to ~2.42 without anyone noticing.
-- [ ] **`"Linux/s390x/cpu": (2, 38)` in `GLIBC_CEILING`.** This freezes today's floor, so
-      `verify-native-deps.py` fails loudly on any further rise instead of passing it. Extend
-      `test_nativedeps.py` with it. Optionally add a GLIBCXX ceiling too; the check reads GLIBC
-      only today.
-- [ ] **The real fix: floor 2.28 like the other Linux jars.** Then set `(2, 28)`, and put back the
-      README row and CHANGELOG item 5.
-      - **Candidates** (measure them, do not guess):
-        - (a) build in `quay.io/pypa/manylinux_2_28_s390x` (gcc-toolset-14) as aarch64 does. No
-          GitHub s390x runner exists: either emulate (slow) or check whether IBM's runner offer for
-          open-source projects applies;
-        - (b) cross-compile against a glibc 2.28 s390x sysroot (AlmaLinux 8) with a newer cross GCC.
-      - **libstdc++:** either way it needs the gcc-toolset treatment (newer parts linked statically,
-        `GLIBCXX` ≤ 3.4.25).
-      - **Acceptance:** on real LinuxONE hardware, cfarm191/192 (`workspacePrivate/cfarm`), with
-        RHEL 8 in Docker as the quick check.
+- [x] `build-linux-s390x` pinned to `ubuntu-24.04` (the toolchain names `clang-18`).
+- [x] `"Linux/s390x/cpu": (2, 28)` in `GLIBC_CEILING`, plus a libstdc++ ceiling for every floor
+      directory (`LIBSTDCXX_CEILING`: `GLIBCXX_3.4.25`, `CXXABI_1.3.11`, which x86-64, aarch64 and
+      the CUDA module already met); `test_nativedeps.py` covers both, and the job runs
+      `verify-native-deps.py` on its own tree.
+- [x] The floor 2.28 itself: candidate (b) of this list, with clang instead of a cross GCC (none is
+      packaged for glibc 2.28). Candidate (a), the image's own gcc under qemu, would take hours per
+      uncached tag build. README row back to 2.28; the 6.0.0 CHANGELOG item 5 stays as it was (it is
+      what 6.0.0 shipped), [Unreleased] records the fix.
+- [x] `smoke-glibc-floor`: the three Linux CPU jars are loaded on RHEL 8.10 in every run, s390x under
+      qemu; `check-natives.py` holds the rows to `floor-set` (derived from `GLIBC_CEILING`).
+- [x] **The first Publish run of this branch** (40309665294, `c454baa5`) is green on every s390x job,
+      after the sysroot permission fix:
+      - `build-linux-s390x`: the sysroot came out at 289 MB with glibc 2.28; sccache wrapped clang
+        (260 requests, 99.62 % hits on the second run); the C++ suite passed 694/694 under qemu;
+        `verify-native-deps.py` reads `GLIBC_2.27`, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`.
+      - All three `smoke-glibc-floor` rows passed, including s390x under qemu (the runner's binfmt
+        entry reached Docker).
+- [x] **The CI-built jar on real IBM Z** (cfarm191, z16, Debian 13; 2026-10-26):
+      - `NativeLoadSmoke` loads `llama-6.1.0-SNAPSHOT-cpu-linux-s390x.jar` from that run: linked
+        b11887, `compiler=Clang 18.1.3`, the same patch hash as 6.0.0.
+      - **Real big-endian inference**, which no CI job does: Qwen3-0.6B Q4_K_M, converted with
+        llama.cpp's `gguf_convert_endian.py`, served by `ServerLauncher` on JDK 21, answers "Paris."
+        with `system_fingerprint` b11887-6050b467c.
+      - **Speed against the 6.0.0 GCC 13 jar**, same model, prompt and `-t 8`, three alternating
+        rounds on the shared host: generation 0.62–1.87 t/s (clang) against 0.31–0.93 t/s (GCC),
+        prompt 2.0–6.5 against 1.9–2.8 t/s. Clang was ahead in every round. Absolute numbers are
+        noisy and low.
+- [ ] **s390x runs scalar.** Both the GCC and the clang build have `GGML_NATIVE=OFF`, so `GGML_VXE` is
+      off: no vector code for any IBM Z. ggml's `GGML_CPU_ALL_VARIANTS` has s390x variants for
+      z15–z17 (`-march=z15/z16/arch15` with VXE2, NNPA on z16+) that a `GGML_BACKEND_DL` build picks
+      at run time, as the x86 jars do. Moving s390x from the static single library to the modular
+      build with those variants would keep the z13 floor (a scalar baseline variant) and use the
+      vector unit where it exists. To check first: whether clang 18 builds the z15–z17 variants, and
+      what they gain on cfarm191.
+- [ ] **Owner:** cfarm192 refused the connection with "Host key verification failed" on 2026-10-26
+      (cfarm191 worked): its host key changed. Compare the new fingerprint with the farm's published
+      one before accepting it; nothing was changed in `known_hosts`.
 - **Ruled out:** `ubuntu-22.04` as the runner (glibc 2.35 still misses RHEL 8/9, and its cross GCC 11
   cannot build llama.cpp, which needs GCC >= 12). `-static-libstdc++` alone is ruled out too: it
   fixes GLIBCXX but not GLIBC.
@@ -596,3 +632,40 @@ measurements and is not evidence that GPU testing is currently blocked.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.
+- **The two AAR poms ship `checker-qual` at `compile` scope, which the core deliberately does not**
+  (found by the post-release check of 6.0.0, `docs/post-release-check.md` check 14/16). Both
+  `llama-android-6.0.0.pom` and `llama-android-opencl-6.0.0.pom` carry
+  `org.checkerframework:checker-qual:4.3.1` with an explicit `<scope>compile</scope>`, so it is in
+  every Android consumer's dependency graph. In `llama/pom.xml` the same dependency is `provided`, and
+  the property's own comment says why: "neither ships (checker-qual is provided scope)" — its 417
+  classes are all class-file major 55 with `@Retention(RUNTIME)`, which is exactly the
+  `UnsupportedClassVersionError` that #411 put on `main` (CLAUDE.md, "Java 8 bytecode floor").
+  **Not a release blocker and not the Java 8 failure on Android**: D8/AGP consume major 55 fine, so
+  this is an avoidable dependency rather than a crash, which is why it ships in 6.0.0 unfixed. Two
+  parts to it, and the second is the reason it was never noticed: the scopes in those poms are
+  `llama-android/build.gradle.kts`'s own (only the *versions* are parsed out of the Maven poms), and
+  CLAUDE.md's "Android AAR + Kotlin façade" section describes the AAR pom as mirroring "the core's
+  compile-scope deps (jackson/slf4j-api/jspecify/checker-qual)" — but checker-qual is not a
+  compile-scope dep of the core. Fix the Gradle build (drop it, or mirror it as `provided`) and
+  correct that sentence in the same commit; `jspecify` is the one of the four that is genuinely
+  compile scope and stays. A cheap guard would be to assert the published AAR poms' scopes against
+  the core pom's, the way the versions are already derived from it.
+  **Fixed on `fix/s390x-glibc-floor` (2026-10-26)**, CLAUDE.md "Android AAR + Kotlin façade":
+  - [x] Dropped, not mirrored as `provided` (a Gradle consumer ignores `provided` in a pom, so it
+        would document nothing). The AAR build no longer keeps a list at all: `coreCompileDependencies`
+        reads the core's compile-scope, non-optional dependencies from `llama/pom.xml`, versions and
+        scopes -- jackson-databind, slf4j-api **and** jspecify are compile scope there (all three
+        stay; the sentence above undercounts). The Gradle-generated poms (Docker, `gradle:9.8.2`) list
+        exactly those three, plus the CPU AAR in the OpenCL one.
+  - [x] The guard: `.github/verify-aar-poms.py` (`buildcheck/aarpoms.py`, `test_aarpoms.py`) checks
+        the poms `publishToMavenLocal` wrote in `package-android-aar`. Run on the two 6.0.0 poms from
+        Central it reports checker-qual and nothing else.
+  - [x] The CLAUDE.md sentence corrected; the "provided" bullet there now also says what the TODO did
+        not: **the classes do reference checker-qual** -- the Nullness Checker writes its qualifiers
+        into 133 of the core's 146 class files (RUNTIME retention). So dropping the dependency needs
+        `-dontwarn org.checkerframework.**` in `consumer-proguard.txt`, or a minified app fails R8 on
+        "Missing class"; added, like lombok and animal-sniffer.
+  - [ ] **Read the first Publish run:** `package-android-aar`'s new step, the consumer fixture's R8
+        `assembleRelease` (cpu and opencl) now that checker-qual is off its classpath, and the
+        emulator instrumentation test (Jackson reflecting over the annotated classes without
+        checker-qual -- ART is expected to skip the unresolvable annotation types, as the JVM does).

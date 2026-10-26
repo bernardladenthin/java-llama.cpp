@@ -29,5 +29,27 @@
     "ignore-groups": [
       "net.ladenthin"
     ]
+  },
+  "post-release": {
+    "$comment": "bernardladenthin/actions java/audit-publication (.github/workflows/post-release.yml): the release key's primary fingerprint, and the class-file floor of each artifact (CLAUDE.md, \"Java 8 bytecode floor\"; first match wins).",
+    "signing-key": "EA6E1AC27DB005538E971E85ED0D9440BF148ED2",
+    "bytecode": [
+      {
+        "files": "llama-ffm-*.jar",
+        "major": 66
+      },
+      {
+        "files": "llama-langchain4j-*.jar",
+        "major": 61
+      },
+      {
+        "files": "llama-atmosphere-agent-*.jar",
+        "major": 65
+      },
+      {
+        "files": "*",
+        "major": 52
+      }
+    ]
   }
 }

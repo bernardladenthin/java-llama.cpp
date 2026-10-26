@@ -79,6 +79,15 @@ def matrix_jobs(targets, download_name="llama-smoke-${{ matrix.target }}"):
                                          ("smoke-macos", "package", download("llama-smoke-macos-aarch64"))]))
 
 
+def floor_jobs(targets, upload_set=True, download_name="llama-glibc-floor"):
+    """`package` uploading the glibc-floor set (unless `upload_set` is false) and the floor job as a
+    matrix over `targets`, downloading `download_name`."""
+    rows = "\n".join(f"          - {{ target: {t}, runner: ubuntu-24.04 }}" for t in targets)
+    body = ["    strategy:", "      matrix:", "        include:", rows, "    steps:"] + download(download_name)
+    sets = upload("llama-glibc-floor", "smoke-sets/glibc-floor/") if upload_set else []
+    return workflow.parse(workflow_text([("package", None, sets), ("smoke-glibc-floor", "package", body)]))
+
+
 class ListTest(unittest.TestCase):
 
     def test_rows_skip_comments(self):
@@ -242,6 +251,34 @@ class ConsumerTest(unittest.TestCase):
         # a matrix that downloads one fixed set launches that set, not its rows
         self.assertEqual(natives.check_workflow(ROWS, matrix_jobs(["windows-aarch64"], "llama-smoke-linux-x86-64")),
                          ["publish.yml smoke runs (a job downloading llama-smoke-<target>): missing windows-aarch64"])
+
+    def test_the_floor_set_is_the_library_jars_with_a_glibc_ceiling(self):
+        # cuda13-linux-x86-64 has a ceiling too, but is a module (it needs a CUDA runtime); the
+        # library jars of Windows, macOS and Android promise no glibc floor
+        self.assertEqual([r["classifier"] for r in natives.floor_set(ROWS)], ["cpu-linux-x86-64", "cpu-linux-s390x"])
+        self.assertEqual(natives.floor_targets(ROWS), ["linux-s390x", "linux-x86-64"])
+
+    def test_every_floor_jar_is_loaded_on_rhel8(self):
+        self.assertEqual(natives.check_floor(ROWS, floor_jobs(["linux-x86-64", "linux-s390x"])), [])
+        self.assertEqual(natives.check_floor(ROWS, floor_jobs(["linux-x86-64"])),
+                         ["publish.yml smoke-glibc-floor: no matrix row for linux-s390x, whose jar promises the "
+                          "glibc floor of nativedeps.GLIBC_CEILING"])
+        self.assertEqual(natives.check_floor(ROWS, floor_jobs(["linux-x86-64", "linux-s390x", "windows-aarch64"])),
+                         ["publish.yml smoke-glibc-floor: the matrix row windows-aarch64 is no library jar with a "
+                          "glibc floor (nativedeps.GLIBC_CEILING)"])
+        self.assertEqual(natives.check_floor(ROWS, floor_jobs(["linux-x86-64", "linux-s390x"], upload_set=False)),
+                         ["publish.yml: package does not upload llama-glibc-floor, the set smoke-glibc-floor loads "
+                          "(package-smoke-sets.sh writes it)"])
+        self.assertEqual(natives.check_floor(ROWS, floor_jobs(["linux-x86-64", "linux-s390x"],
+                                                              download_name="llama-smoke-linux-x86-64")),
+                         ["publish.yml smoke-glibc-floor does not download llama-glibc-floor"])
+        self.assertEqual(natives.check_floor(ROWS, jobs()),
+                         ["publish.yml: package does not upload llama-glibc-floor, the set smoke-glibc-floor loads "
+                          "(package-smoke-sets.sh writes it)",
+                          "publish.yml has no `smoke-glibc-floor` job, which loads linux-s390x, linux-x86-64 on RHEL 8"])
+        # a list without a floor jar needs no such job
+        macos = [r for r in ROWS if r["directory"].startswith("Mac/")]
+        self.assertEqual(natives.check_floor(macos, jobs()), [])
 
     def test_a_module_jar_without_a_smoke_target_is_refused(self):
         rows = natives.rows(CSV + "vulkan-linux-s390x,Linux/s390x/vulkan,libggml-vulkan.so,no,module,no\n")

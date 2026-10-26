@@ -12,6 +12,8 @@ Usage:
   check-natives.py pom              print the natives jar executions for llama/pom.xml
   check-natives.py smoke-targets    print the smoke targets (<os>-<arch>), one per line
   check-natives.py smoke-set <t>    print the natives jar classifiers of smoke target <t>, one per line
+  check-natives.py floor-set        print the classifiers of the library jars with a glibc floor (the
+                                    set smoke-glibc-floor loads on RHEL 8), one per line
 """
 
 import os
@@ -36,6 +38,9 @@ def main(argv):
             print(f"{argv[2]} is not a smoke target: {natives.smoke_targets(rows)}", file=sys.stderr)
             return 2
         print("\n".join(r["classifier"] for r in natives.smoke_set(rows, argv[2])))
+        return 0
+    if argv[1:] == ["floor-set"]:
+        print("\n".join(r["classifier"] for r in natives.floor_set(rows)))
         return 0
     if argv[1:]:
         print(__doc__, file=sys.stderr)

@@ -51,16 +51,19 @@ you need.
 
 The agent is Java 21 bytecode; on a JDK 8 it fails in the compiler with `invalid target release: 21`
 and no flag helps. So the server runs on the 8, the agent on the 21, and `JAVA_HOME` decides which —
-per window, because `exec:java` runs in Maven's own JVM:
+set per window, because `exec:java` runs in Maven's own JVM. Both steps below open with exactly these
+two lines, naming the JDK that step needs:
 
-```powershell
-# the window that starts the agent
-$env:JAVA_HOME = 'C:\Program Files\Java\openjdk21.0.11'
-mvn -v    # must report: Java version: 21...
+```bat
+set "JAVA_HOME=C:\Program Files\Java\openjdk1.8.0_491"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+mvn -v
 ```
 
-Leave the machine-wide `JAVA_HOME` on the JDK 8 so the server keeps working in every other window.
-Nothing else needs setting: Maven resolves the classpath from `~\.m2\repository` itself.
+`mvn -v` must then report that JDK (`Java version: 1.8.0_491`, or `21.0.11` for the agent) — that
+number decides, not `java -version`. The two `set` lines live and die with the window, so the
+machine-wide `JAVA_HOME` can stay wherever it is. Nothing else needs setting: Maven resolves the
+classpath from `%USERPROFILE%\.m2\repository` itself.
 
 ## Step 1 — two poms
 
@@ -143,8 +146,8 @@ excluded because the agent's published pom pulls the library jars of all six des
                 </exclusion>
             </exclusions>
         </dependency>
-        <!-- only needed for --model (the agent loading a GGUF itself);
-             with --base-url against the server it loads no natives at all -->
+        <!-- needed only when the agent loads a GGUF itself (its "model" option);
+             driving a running server instead, it loads no natives at all -->
         <dependency>
             <groupId>net.ladenthin</groupId>
             <artifactId>llama</artifactId>
@@ -176,11 +179,14 @@ excluded because the agent's published pom pulls the library jars of all six des
 ## Step 2 — pre-load everything, once
 
 Once per pom, with network. This downloads every artifact, every transitive dependency **and the
-plugins** into `~\.m2\repository`:
+plugins** into `%USERPROFILE%\.m2\repository`:
 
-```powershell
-cd C:\llama\server ; mvn dependency:go-offline
-cd C:\llama\agent  ; mvn dependency:go-offline
+```bat
+cd /d C:\llama\server
+mvn dependency:go-offline
+
+cd /d C:\llama\agent
+mvn dependency:go-offline
 ```
 
 Either JDK does this — Maven only downloads here, it neither compiles nor loads the jars, so the
@@ -197,9 +203,12 @@ what runs — the effective classpath still honours the exclusion.
 Put the GGUF anywhere, e.g. `C:\models\`. Any tool-capable instruct model works; a reasonable
 default here is Qwen3-4B-Instruct-2507-Q4_K_M (2.3 GB).
 
-```powershell
-cd C:\llama\server
-mvn -o exec:java "-Dexec.args=-m C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 127.0.0.1 --port 9931 -c 16384 -ngl 99 -t 8 -tb 10 --jinja"
+```bat
+set "JAVA_HOME=C:\Program Files\Java\openjdk1.8.0_491"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+
+cd /d C:\llama\server
+mvn -o exec:java -Dexec.args="-m C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 127.0.0.1 --port 9931 -c 16384 -ngl 99 -t 8 -tb 10 --jinja"
 ```
 
 This is the **real upstream `llama_server` running inside `libjllama`** over JNI, so every
@@ -207,11 +216,13 @@ llama-server flag works verbatim and the bundled WebUI is served. `--jinja` enab
 template, which is what makes tool calling work — the agent in step 4 needs it. `-ngl 99` offloads
 to the iGPU through Vulkan; drop it to compare against the CPU.
 
-Test the port from another window:
+Test the port from another window (`curl.exe`, not `curl` — in PowerShell 5.1 `curl` is an alias for
+`Invoke-WebRequest`):
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:9931/health
-Invoke-RestMethod -Method Post http://127.0.0.1:9931/v1/chat/completions -ContentType application/json -Body '{"messages":[{"role":"user","content":"2+2=?"}],"max_tokens":16}'
+```bat
+curl.exe http://127.0.0.1:9931/health
+
+curl.exe http://127.0.0.1:9931/v1/chat/completions -H "Content-Type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"2+2=?\"}],\"max_tokens\":16}"
 ```
 
 and open <http://127.0.0.1:9931/> in a browser for the WebUI. The OpenAI-compatible API lives on the
@@ -220,36 +231,70 @@ same port under `/v1/…`. (To embed the server in your own Java 8 code instead,
 
 ## Step 4 — the Atmosphere agent on the JDK 21
 
-Leave the server running. In a new window, point `JAVA_HOME` at the 21 and start the agent against
-that server — the model stays loaded once, in the server, and the agent drives it over HTTP:
+Leave the server running. In a **new** window — this is where the other JDK goes — start the agent
+against that server, so the model stays loaded once, in the server, and the agent drives it over
+HTTP:
 
-```powershell
-$env:JAVA_HOME = 'C:\Program Files\Java\openjdk21.0.11'
-cd C:\llama\agent
-mvn -o -q exec:java "-Dexec.args=--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell"
+```bat
+set "JAVA_HOME=C:\Program Files\Java\openjdk21.0.11"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+
+cd /d C:\llama\agent
+mvn -o -q exec:java -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell"
 ```
 
 A `you>` prompt appears. `/clear` drops the history, `/exit` quits, `--prompt "…"` runs a single turn
 and exits, `--plain` switches to a line-oriented console for piping or logging.
 
-For **Atmosphere's web console on its own port** instead of the terminal, add `--web`; it listens on
-`127.0.0.1:8787` and prints a URL with a fresh access token on every start:
+> [!IMPORTANT]
+> **The agent's flags are not the server's.** The server takes llama.cpp's argv verbatim (`-m`, `-c`,
+> `-ngl`), the agent has its own parser and accepts only the long forms — `--model`, `--ctx-size`,
+> `--ngl`/`--gpu-layers`. Passing the server's `-m` to the agent fails with `unknown argument: -m`
+> followed by its usage block. Flags it does not know are never ignored, which is deliberate.
 
-```powershell
-mvn -o -q exec:java "-Dexec.args=--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell --web --web-port 8787 --web-token my-own-access-token-123"
+**Atmosphere's web console** is `--web`. It is not an addition to the terminal but a replacement for
+it: `--web`, `--acp` and `--prompt` exclude each other, so one agent process serves exactly one
+front end. To have both, start a **second** agent process against the same server — the model stays
+loaded once, in the server, and each agent is only an HTTP client of it. A third window, the JDK 21
+again:
+
+```bat
+set "JAVA_HOME=C:\Program Files\Java\openjdk21.0.11"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+
+cd /d C:\llama\agent
+mvn -o -q exec:java -Dexec.args="--base-url http://127.0.0.1:9931/v1 --workspace C:\path\to\project --allow-shell --web --web-port 8787"
 ```
 
-`--web-port 0` takes any free port, and `--web-host 0.0.0.0` exists but warns loudly — tunnel over
-SSH rather than binding to the network. One conversation is served: every tab holding the token
-shares it. For an IDE, `--acp` speaks the [Agent Client
-Protocol](https://agentclientprotocol.com) on stdin/stdout instead; `--web`, `--acp` and `--prompt`
-exclude each other.
+It prints `Open in a browser: http://127.0.0.1:8787/?token=<token>`. **The token is part of the
+URL** and is a new random one on every start, unless `--web-token` pins it (16 or more characters of
+`A-Z a-z 0-9 _ -`) — which is what makes the address worth bookmarking. `--web-port 0` takes any
+free port. Binding is loopback only, and `--web-host 0.0.0.0` exists but warns loudly: tunnel with
+`ssh -L 8787:127.0.0.1:8787 <user>@<this-host>` and open the same address on the other machine
+instead. One conversation per process — every tab holding the token shares it, and a message sent
+while another is running replaces it, as typing over a running turn does on the console.
+`/mode auto` in the browser stops the approval prompts for the session. The console agent in the
+other window keeps its **own** history: the two share the model, not the conversation.
+
+The console's pages come from `atmosphere-spring-boot-starter`, which the agent pom carries for
+those resources alone (every transitive Spring dependency excluded), so Step 2 already cached them
+and `--web` works offline. If they were missing, the agent says so on stderr and still serves the
+endpoint.
+
+> [!NOTE]
+> The server of Step 3 runs with one slot, so two agents **serialise**: the second waits for the
+> first to finish its turn. `--parallel 2` on the server gives each its own slot, and that splits
+> `-c 16384` into 8192 per slot — so it is not free. (`--kv-unified` makes the slots share one pool
+> at the full size instead, which trades the guarantee for the capacity.)
+
+For an IDE, `--acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) on
+stdin/stdout instead.
 
 Without a running server the agent can load the GGUF itself (`--model` instead of `--base-url`),
 which is what the two natives dependencies in its pom are for:
 
-```powershell
-mvn -o -q exec:java "-Dexec.args=--model C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace C:\path\to\project --allow-shell"
+```bat
+mvn -o -q exec:java -Dexec.args="--model C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace C:\path\to\project --allow-shell"
 ```
 
 > [!WARNING]
@@ -282,8 +327,8 @@ load_backends_next_to_this_library: 3 backend(s) registered [RPC, Vulkan, CPU], 
 The `ggml-cpu-<variant>.dll` line is the one that tells you whether this CPU got `alderlake`. A
 one-line build stamp per natives directory (llama.cpp tag, commit, patches, compiler) comes from:
 
-```powershell
-cd C:\llama\server
+```bat
+cd /d C:\llama\server
 mvn -o exec:java -Dexec.mainClass=net.ladenthin.llama.Diagnose
 ```
 
@@ -312,8 +357,8 @@ measured here**, the device choice is OpenVINO's own, and it needs the Intel Ope
 on `PATH`. To try it: add a fourth dependency with classifier `openvino-windows-x86-64` to the server
 pom, re-run `go-offline`, and name both modules explicitly.
 
-```powershell
-mvn -o exec:java "-Dexec.args=-m C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --port 9931 -c 16384 -ngl 99 -lv 4" "-Dnet.ladenthin.llama.backend=vulkan,openvino"
+```bat
+mvn -o exec:java -Dnet.ladenthin.llama.backend=vulkan,openvino -Dexec.args="-m C:\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --port 9931 -c 16384 -ngl 99 -lv 4"
 ```
 
 Read the device list in the log before trusting any number: if a device named like OpenVINO's CPU

@@ -36,7 +36,7 @@ import org.jline.terminal.TerminalBuilder;
  * terminal library the agent uses:
  *
  * <pre>
- * mvn -q test-compile exec:java -Dexec.classpathScope=test  *     -Dexec.mainClass=net.ladenthin.llama.atmosphere.probe.ReflowProbe  *     "-Dllama.version=6.0.0-SNAPSHOT" "-Djline.version=4.4.6-atmosphere"
+ * mvn -q test-compile exec:java -Dexec.classpathScope=test  *     -Dexec.mainClass=net.ladenthin.llama.atmosphere.probe.ReflowProbe  *     "-Dllama.version=6.1.0-SNAPSHOT" "-Djline.version=4.4.6-atmosphere"
  * </pre>
  *
  * <p>What its answers were used for, and the numbers they produced, is in
