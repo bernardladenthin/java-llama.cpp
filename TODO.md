@@ -534,15 +534,30 @@ loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 j
       what 6.0.0 shipped), [Unreleased] records the fix.
 - [x] `smoke-glibc-floor`: the three Linux CPU jars are loaded on RHEL 8.10 in every run, s390x under
       qemu; `check-natives.py` holds the rows to `floor-set` (derived from `GLIBC_CEILING`).
-- [ ] **Read the first Publish run of this branch** -- none has run yet: `build-linux-s390x` (apt
-      `clang-18` / `binutils-s390x-linux-gnu`, the `docker pull` of the s390x image on the runner,
-      sccache wrapping clang: hit rate on the second run), its `verify-native-deps.py` step,
-      `package` (the `llama-glibc-floor` upload) and the three `smoke-glibc-floor` rows -- the s390x
-      row needs qemu-user-static's binfmt entry to reach Docker on the runner (it did locally, with
-      Docker Desktop's own entry), the aarch64 row runs natively on `ubuntu-24.04-arm`.
-- [ ] Unmeasured: the speed of the clang build against the former GCC 13 build on real s390x (both
-      scalar, `-march=z13`). No model-backed check runs on s390x at all (a GGUF would have to be
-      big-endian), so only `llama-bench` on cfarm191 with a converted model could say.
+- [x] **The first Publish run of this branch** (40309665294, `c454baa5`) is green on every s390x job,
+      after the sysroot permission fix:
+      - `build-linux-s390x`: the sysroot came out at 289 MB with glibc 2.28; sccache wrapped clang
+        (260 requests, 99.62 % hits on the second run); the C++ suite passed 694/694 under qemu;
+        `verify-native-deps.py` reads `GLIBC_2.27`, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`.
+      - All three `smoke-glibc-floor` rows passed, including s390x under qemu (the runner's binfmt
+        entry reached Docker).
+- [x] **The CI-built jar on real IBM Z** (cfarm191, z16, Debian 13; 2026-10-26):
+      - `NativeLoadSmoke` loads `llama-6.1.0-SNAPSHOT-cpu-linux-s390x.jar` from that run: linked
+        b11887, `compiler=Clang 18.1.3`, the same patch hash as 6.0.0.
+      - **Real big-endian inference**, which no CI job does: Qwen3-0.6B Q4_K_M, converted with
+        llama.cpp's `gguf_convert_endian.py`, served by `ServerLauncher` on JDK 21, answers "Paris."
+        with `system_fingerprint` b11887-6050b467c.
+      - **Speed against the 6.0.0 GCC 13 jar**, same model, prompt and `-t 8`, three alternating
+        rounds on the shared host: generation 0.62–1.87 t/s (clang) against 0.31–0.93 t/s (GCC),
+        prompt 2.0–6.5 against 1.9–2.8 t/s. Clang was ahead in every round. Absolute numbers are
+        noisy and low.
+- [ ] **s390x runs scalar.** Both the GCC and the clang build have `GGML_NATIVE=OFF`, so `GGML_VXE` is
+      off: no vector code for any IBM Z. ggml's `GGML_CPU_ALL_VARIANTS` has s390x variants for
+      z15–z17 (`-march=z15/z16/arch15` with VXE2, NNPA on z16+) that a `GGML_BACKEND_DL` build picks
+      at run time, as the x86 jars do. Moving s390x from the static single library to the modular
+      build with those variants would keep the z13 floor (a scalar baseline variant) and use the
+      vector unit where it exists. To check first: whether clang 18 builds the z15–z17 variants, and
+      what they gain on cfarm191.
 - [ ] **Owner:** cfarm192 refused the connection with "Host key verification failed" on 2026-10-26
       (cfarm191 worked): its host key changed. Compare the new fingerprint with the farm's published
       one before accepting it; nothing was changed in `known_hosts`.
