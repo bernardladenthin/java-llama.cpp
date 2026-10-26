@@ -10,6 +10,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **llama.cpp b11901** (from b11887, 14 upstream commits, tagged). Nothing new to call from Java;
+  what changes is robustness. Input nested deeper than upstream's new limits is refused instead of
+  overflowing the native stack, which ended the JVM (#31153): a JSON schema (`response_format`, tool
+  parameters) nested more than 128 levels deep -- or, with `additionalProperties`, a property name of
+  128 characters or more -- is an invalid request (`InvalidRequestException`); a chat template nested
+  more than 128 levels deep, or with macro calls nested that deep, is an error of its own; model output
+  the chat parser would have to follow more than 64 levels deep (a tool call's arguments) fails the
+  request with a `LlamaException`. Long
+  tokens of a GGUF no longer recurse in the tokenizer or the grammar sampler, which upstream also
+  measures as faster grammar sampling. Metal no longer overflows the output offset of very large
+  matrix multiplications (#30072), the SYCL module bounds its reorder buffer to 32 MiB (#31062),
+  DeepSeek-V4.1 review fixes (#31137), WebUI layout work (#31030, #31119). No patch changed.
 - **`bernardladenthin/actions` pinned at v1.1.0.** v1.1.0 adds `java/audit-publication`, which
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
