@@ -1856,7 +1856,12 @@ engine owns semantic-token sampling via a `common_sampler`, feeding each sampled
 backbone's hidden state into `step_gen()` and receiving the next hidden state back — the same pattern
 upstream's own `tools/tts/tts.cpp` `main()` uses) → `get_output()` for raw PCM, which the engine
 encodes to WAV itself via `tts_wav.hpp` (not upstream's own WAV writer) so that already-tested code
-stays in the loop.
+stays in the loop. **The engine clears sequence 0 of the KV cache before `set_input()`**: the Qwen3-TTS
+pipeline numbers every prompt from position 0 and leaves the cache to the caller (upstream's server
+calls `prompt_clear()` right before `set_input()`; `tools/tts/tts.cpp` synthesizes once per process and
+never needs to). Without it every synthesis after the first on one `TextToSpeech` failed with "prompt
+processing failed" -- unseen until `TtsIntegrationTest` shared one instance across its tests;
+`synthesizesAgainOnTheSameInstance` pins it.
 
 **Why this replaced OuteTTS, not extended it.** Upstream #26254 ("mtmd: support Qwen3-TTS") deleted
 the entire OuteTTS implementation from `tools/tts/tts.cpp` (it shrank from ~1450 to 205 lines) and
@@ -2586,6 +2591,20 @@ through binfmt_misc without arguments (with `-L` the six `RpcComm` death tests f
 `Could not open '/lib/ld64.so.1'`). The sysroot path is a cache variable, so a reconfigure without
 `JLLAMA_S390X_SYSROOT` in the environment still finds it. The job then runs `verify-native-deps.py` on
 its own tree, and `smoke-glibc-floor` loads the jar on RHEL 8.10 s390x under qemu.
+
+**Mixing clang's objects with GCC's needs `s390x-typeinfo-names.ld`** (next to the toolchain, passed as
+`-Wl,-T` with `INSERT`, so it only augments ld's default script). The s390x ABI promises every global
+symbol an even address and GCC relies on it, loading addresses with `LARL` (`R_390_PC32DBL`, counted in
+halfwords); clang emits typeinfo name strings (`_ZTS*`, COMDAT) with the alignment of `char`
+(`GetAddrOfTypeName` in `ItaniumCXXABI.cpp`, unchanged on LLVM main in 2026-10), and the copy a link
+keeps is clang's, from our objects. gcc-toolset-14's `libstdc++_nonshared.a` is GCC code
+(`fs_path80.o`'s `_M_get_deleter` loads `_ZTSSt19_Sp_make_shared_tag`), so the link failed with
+`misaligned symbol ... for relocation R_390_PC32DBL` whenever the strings before it added up to an odd
+size: green on main, red in the next PR's `jllama_test` link (#577). The script puts every
+`.rodata._ZTS*` into one output section with `SUBALIGN(2)`. Measured with Ubuntu's s390x cross GCC
+standing in for the toolset (a GCC archive whose `_M_get_deleter` uses `LARL`, clang objects in front
+of it, the real toolchain file over a sysroot in the RHEL layout): the link fails without the script
+and succeeds with it, for an executable, a PIE and a shared object, and the program runs under qemu.
 
 Until 2026-10-25 the job used the runner's `g++-s390x-linux-gnu` (GCC 13) with its glibc 2.39
 sysroot: the 6.0.0 jar referenced `GLIBC_2.38` (`__isoc23_strtol` & co., `fmod`), `GLIBCXX_3.4.32`

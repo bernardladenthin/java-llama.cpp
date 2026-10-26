@@ -152,6 +152,12 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;
 
+    // The pipeline numbers the prompt from position 0 and leaves the KV cache to the caller: upstream's
+    // server clears the slot (prompt_clear) right before set_input. Without this the previous
+    // synthesis is still in the cache and the second one on the same engine fails in step_prompt
+    // ("inconsistent sequence positions", X = <last position> > Y = 0).
+    llama_memory_seq_rm(llama_get_memory(engine->ctx), inp.seq_id, -1, -1);
+
     if (gen.set_input(&inp) != 0) {
         common_sampler_free(smpl);
         err = "failed to set TTS input (prompt/speaker-reference/lang rejected)";

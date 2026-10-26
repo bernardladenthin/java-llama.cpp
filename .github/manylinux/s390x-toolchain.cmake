@@ -62,8 +62,11 @@ set(CMAKE_CXX_COMPILER_TARGET s390x-linux-gnu)
 set(_jllama_s390x_gcc "${JLLAMA_S390X_SYSROOT}/opt/rh/gcc-toolset-14/root/usr/lib/gcc/s390x-redhat-linux/14")
 set(CMAKE_C_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13")
 set(CMAKE_CXX_FLAGS_INIT "--gcc-install-dir=${_jllama_s390x_gcc} -march=z13")
+# s390x-typeinfo-names.ld: clang aligns typeinfo name strings like char, the GCC code of
+# libstdc++_nonshared.a loads them with LARL, which needs an even address (see the script).
 foreach(_kind EXE SHARED MODULE)
-    set(CMAKE_${_kind}_LINKER_FLAGS_INIT "--ld-path=/usr/bin/s390x-linux-gnu-ld")
+    set(CMAKE_${_kind}_LINKER_FLAGS_INIT
+        "--ld-path=/usr/bin/s390x-linux-gnu-ld -Wl,-T,${CMAKE_CURRENT_LIST_DIR}/s390x-typeinfo-names.ld")
 endforeach()
 
 set(CMAKE_CROSSCOMPILING_EMULATOR /usr/bin/env "QEMU_LD_PREFIX=${JLLAMA_S390X_SYSROOT}" /usr/bin/qemu-s390x-static)

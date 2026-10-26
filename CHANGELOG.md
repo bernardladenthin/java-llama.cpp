@@ -26,6 +26,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
+  with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
+  pipeline numbers each prompt from position 0 and leaves the KV cache to the caller, and the engine
+  never cleared it, so the previous synthesis was still there. It now clears the sequence before each
+  synthesis, as upstream's server does (`prompt_clear` before `set_input`); `FfmTextToSpeech` and the
+  C function `jllama_tts_synthesize` share the fix. Unseen until now because the integration test
+  loaded a fresh instance for its one synthesis; `TtsIntegrationTest` now shares one instance and
+  synthesizes on it repeatedly.
 - **`cpu-linux-s390x` loads on glibc 2.28, like the other Linux CPU jars** (RHEL 8, Ubuntu 20.04,
   Debian 10 and later, z13 or newer). The 6.0.0 jar was cross-compiled against the
   ubuntu runner's glibc 2.39 sysroot and needed `GLIBC_2.38`, `GLIBCXX_3.4.32` and `CXXABI_1.3.13`, so
@@ -33,7 +41,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   cross-compiles with clang against the manylinux_2_28 s390x image unpacked as a sysroot
   (`.github/manylinux/manylinux_2_28-s390x-sysroot`, `s390x-toolchain.cmake`: glibc 2.28,
   gcc-toolset-14's libstdc++ treatment); the library references `GLIBC_2.27`, `GLIBCXX_3.4.25` and
-  `CXXABI_1.3.11`, and its C++ suite runs under qemu against that runtime.
+  `CXXABI_1.3.11`, and its C++ suite runs under qemu against that runtime. Mixing clang's objects with
+  the toolset's GCC-built `libstdc++_nonshared.a` needs one linker script
+  (`.github/manylinux/s390x-typeinfo-names.ld`): clang aligns typeinfo name strings like `char`,
+  GCC loads them with `LARL`, which needs an even address, and the link failed whenever the layout put
+  the one it kept on an odd one (`misaligned symbol _ZTSSt19_Sp_make_shared_tag`).
 - **The Android AAR poms no longer carry `checker-qual`.** The 6.0.0 `llama-android` and
   `llama-android-opencl` poms listed `org.checkerframework:checker-qual:4.3.1` at `compile` scope,
   which the core keeps `provided`, so it was in every Android consumer's dependency graph. Not a crash

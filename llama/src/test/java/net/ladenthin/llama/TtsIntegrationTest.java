@@ -26,6 +26,11 @@ import org.junit.jupiter.api.Timeout;
  * synthesizes short clips, with the model's default voice and with a voice cloned from the committed
  * {@link TestConstants#DEFAULT_AUDIO_INPUT_PATH} clip, checking the WAV container is well-formed.
  *
+ * <p>Every test shares the one instance on purpose: a synthesis must leave the engine ready for the
+ * next. Until the engine cleared the KV cache before each synthesis, the second call on an instance
+ * failed with "prompt processing failed" ({@link #synthesizesAgainOnTheSameInstance} pins it, in
+ * whatever order the tests run).
+ *
  * <p>Uses CI's Qwen3-TTS backbone + mmproj ({@link TestConstants#DEFAULT_TTS_MODEL_PATH},
  * {@link TestConstants#DEFAULT_TTS_MMPROJ_PATH}) unless {@link TestConstants#PROP_TTS_MODEL} /
  * {@link TestConstants#PROP_TTS_MMPROJ} name others, and self-skips when a file is missing.
@@ -36,11 +41,11 @@ public class TtsIntegrationTest {
     private static final int WAV_HEADER_BYTES = 44;
 
     /**
-     * Frame cap of the cloned-voice synthesis. Qwen3-TTS runs at 12 frames per second, so this is
-     * about four seconds of audio at most: enough to prove the reference clip was encoded and used,
-     * short enough to keep the CPU-only CI job quick.
+     * Frame cap of the capped syntheses. Qwen3-TTS runs at 12 frames per second, so this is under a
+     * second of audio: enough to prove the clip was generated, short enough for the CPU-only CI
+     * runners (macOS arm64 without Metal took over 300 s for 48 frames with a speaker reference).
      */
-    private static final int CLONED_MAX_FRAMES = 48;
+    private static final int MAX_FRAMES = 8;
 
     private static TextToSpeech tts;
 
@@ -98,7 +103,17 @@ public class TtsIntegrationTest {
         Assumptions.assumeTrue(new File(reference).exists(), "speaker reference clip missing: " + reference);
 
         // The committed clip is 2.6 s of 48 kHz stereo; llama.cpp decodes it at the projector's rate.
-        assertWellFormedWav(tts().synthesize("hello from llama", reference, "english", CLONED_MAX_FRAMES, 4, 0));
+        assertWellFormedWav(tts().synthesize("hello from llama", reference, "english", MAX_FRAMES, 4, 0));
+    }
+
+    @Test
+    @DisplayName("synthesize() works again on the same instance")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void synthesizesAgainOnTheSameInstance() {
+        // The Qwen3-TTS pipeline starts every prompt at position 0 and leaves the KV cache to the
+        // caller; without the engine clearing it, the second synthesis failed in prompt processing.
+        assertWellFormedWav(tts().synthesize("first", MAX_FRAMES, 4, 0));
+        assertWellFormedWav(tts().synthesize("second", MAX_FRAMES, 4, 0));
     }
 
     private static void assertWellFormedWav(byte[] wav) {
