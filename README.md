@@ -255,6 +255,12 @@ acceleration, add the module jar for your GPU next to it:
 To ship less, depend on `net.ladenthin:llama` (the classes) plus only the natives jars of the
 platforms you target, e.g. `cpu-linux-x86-64`.
 
+For one concrete machine worked through end to end -- which classifiers to take and which to skip,
+how to point Maven at the right JDK first, and ready-to-run command lines for the built-in C++
+server with its WebUI and for the agent in the terminal and the browser -- see
+[`docs/windows-intel-core-ultra.md`](docs/windows-intel-core-ultra.md) (Windows x86-64 with an Intel
+iGPU, the example being a Core Ultra 7 165U).
+
 | Classifier | Backend | Target platform | Runtime requirement |
 |---|---|---|---|
 | `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
