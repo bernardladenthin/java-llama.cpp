@@ -43,6 +43,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **`TextToSpeech.supportsSpeakerReference()`** (and `FfmTextToSpeech.supportsSpeakerReference()`,
+  C API `jllama_tts_supports_speaker_reference()`): whether the loaded pair clones a voice from a
+  speaker reference clip, llama.cpp's `mtmd_helper_cap::audio_gen_spk_ref` (b11901, #31183) --
+  Qwen3-TTS and Pocket TTS do, Soprano does not. A pair that does not now refuses a reference clip
+  with a `LlamaException` naming it, instead of the generic "TTS input rejected" it failed with.
+- **Capabilities in `getModelMeta()`**: `ModelMeta.supportsChat()` (false only for a
+  text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
+  `POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`), from a new
+  `capabilities` object of the meta JSON (`chat`, `audio_gen`, `audio_stream`) that llama.cpp's
+  server derives from the loaded projector. Absent, and therefore `false`, for a vocab-only load.
 - **The post-release check runs by itself** (`.github/workflows/post-release.yml`, after the Publish
   run of a `v*` tag, or by hand with a tag). It audits the published release from the outside:
   - through bernardladenthin/actions' new `java/audit-publication`: the run and its jobs, the files

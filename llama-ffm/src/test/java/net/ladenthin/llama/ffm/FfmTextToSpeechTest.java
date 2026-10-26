@@ -39,6 +39,7 @@ class FfmTextToSpeechTest {
         final List<String> events = new CopyOnWriteArrayList<>();
         final CountDownLatch insideSynthesize = new CountDownLatch(1);
         final CountDownLatch releaseSynthesize = new CountDownLatch(1);
+        volatile boolean speakerReference;
 
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
@@ -52,6 +53,12 @@ class FfmTextToSpeechTest {
             }
             events.add("synthesize returned");
             return WAV;
+        }
+
+        @Override
+        public boolean supportsSpeakerReference(MemorySegment handle) {
+            events.add("supportsSpeakerReference");
+            return speakerReference;
         }
 
         @Override
@@ -112,6 +119,27 @@ class FfmTextToSpeechTest {
         FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
 
         assertThat(tts.synthesize("hi", null, null, 10, 1, 1), is(WAV));
+    }
+
+    @Test
+    void supportsSpeakerReferenceReturnsTheBackendsAnswer() {
+        GatedBackend backend = new GatedBackend();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+
+        assertThat(tts.supportsSpeakerReference(), is(false));
+        backend.speakerReference = true;
+        assertThat(tts.supportsSpeakerReference(), is(true));
+    }
+
+    @Test
+    void supportsSpeakerReferenceAfterCloseIsRefusedWithoutTouchingTheHandle() {
+        GatedBackend backend = new GatedBackend();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+
+        tts.close();
+
+        assertThrows(IllegalStateException.class, tts::supportsSpeakerReference);
+        assertThat(backend.events, contains("free (deletes the engine)"));
     }
 
     @Test

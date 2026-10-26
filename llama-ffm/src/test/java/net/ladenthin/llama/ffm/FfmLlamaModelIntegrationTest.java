@@ -76,6 +76,11 @@ class FfmLlamaModelIntegrationTest {
         JsonNode meta = JSON.readTree(model.meta());
         assertThat(meta.path("n_vocab").asInt(), greaterThan(0));
         assertTrue(meta.has("metadata"));
+        // a model without a projector chats and neither generates nor streams audio (b11901)
+        JsonNode capabilities = meta.path("capabilities");
+        assertTrue(capabilities.path("chat").asBoolean(false), capabilities.toString());
+        assertFalse(capabilities.path("audio_gen").asBoolean(true), capabilities.toString());
+        assertFalse(capabilities.path("audio_stream").asBoolean(true), capabilities.toString());
     }
 
     @Test

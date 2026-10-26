@@ -1517,6 +1517,12 @@ public class LlamaModelTest {
         assertEquals(Collections.singletonList("text"), meta.getOutputModalities(), "output_modalities");
         assertFalse(meta.isDecisionModel(), "CodeLlama is not a decision model");
 
+        // Capabilities (llama.cpp b11901, mtmd_helper_get_capabilities): a model without a projector
+        // chats and neither generates nor streams audio.
+        assertTrue(meta.supportsChat(), "a text model must report the chat capability");
+        assertFalse(meta.supportsAudioGeneration(), "a text model must not report audio generation");
+        assertFalse(meta.supportsAudioStream(), "a text model must not report realtime transcription");
+
         // Dynamic access via the underlying JsonNode
         assertTrue(meta.asJson().has("modalities"), "modalities field must be present");
         assertTrue(meta.asJson().has("vocab_type"), "vocab_type field must be present");
@@ -1551,6 +1557,7 @@ public class LlamaModelTest {
         assertTrue(json.contains("\"audio\""));
         assertTrue(json.contains("\"architecture\""));
         assertTrue(json.contains("\"name\""));
+        assertTrue(json.contains("\"capabilities\""));
     }
 
     /**

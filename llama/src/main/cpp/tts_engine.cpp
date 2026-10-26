@@ -29,6 +29,8 @@ struct tts_engine {
     mtmd::context_ptr mctx;
     int n_threads = 4;
     int n_batch = 2048;
+    // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
+    bool speaker_reference = false;
     // Serializes engine_synthesize: it drives llama_decode (via mtmd_helper::gen_audio) on the
     // shared ctx/mctx, so two threads on one engine would race.
     std::mutex synthesize_mutex;
@@ -74,8 +76,13 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         engine_free(engine);
         return nullptr;
     }
+    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref;
 
     return engine;
+}
+
+bool engine_supports_speaker_reference(const tts_engine *engine) {
+    return engine != nullptr && engine->speaker_reference;
 }
 
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
@@ -87,6 +94,14 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     }
     // Serialize against concurrent calls on the same engine.
     std::lock_guard<std::mutex> engine_lock(engine->synthesize_mutex);
+
+    // Before anything is loaded: a pair without a voice encoder would only reject the reference in
+    // set_input, with a message that does not say why.
+    const std::string refusal = speaker_reference_refusal(engine->speaker_reference, speaker_reference_path);
+    if (!refusal.empty()) {
+        err = refusal;
+        return false;
+    }
 
     common_params_sampling sparams;
     sparams.top_k = top_k > 0 ? top_k : 4;

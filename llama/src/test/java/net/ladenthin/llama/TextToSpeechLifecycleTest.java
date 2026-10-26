@@ -17,7 +17,8 @@ import org.junit.jupiter.api.Test;
 @ClaudeGenerated(
         purpose = "Pin that TextToSpeech.close() never frees the native engine while synthesize() is "
                 + "still inside it: the engine's own mutex is part of the freed memory, so a close() "
-                + "during a synthesis was a use-after-free. Driven through the Backend seam with a "
+                + "during a synthesis was a use-after-free; and that supportsSpeakerReference() asks the "
+                + "open engine and never a closed one. Driven through the Backend seam with a "
                 + "fake, so no made-up handle reaches libjllama.")
 public class TextToSpeechLifecycleTest {
 
@@ -33,6 +34,8 @@ public class TextToSpeechLifecycleTest {
         final CountDownLatch releaseSynthesize = new CountDownLatch(1);
         final AtomicInteger insideSynthesize = new AtomicInteger();
         final AtomicInteger deletes = new AtomicInteger();
+        final AtomicInteger speakerReferenceQueries = new AtomicInteger();
+        volatile boolean speakerReference;
         volatile boolean holdSynthesize;
         volatile boolean deletedDuringSynthesize;
 
@@ -64,6 +67,12 @@ public class TextToSpeechLifecycleTest {
             } finally {
                 insideSynthesize.decrementAndGet();
             }
+        }
+
+        @Override
+        public boolean supportsSpeakerReference(long handle) {
+            speakerReferenceQueries.incrementAndGet();
+            return speakerReference;
         }
 
         @Override
@@ -127,6 +136,25 @@ public class TextToSpeechLifecycleTest {
         try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
             assertThat(tts.synthesize("hello"), is(WAV));
         }
+    }
+
+    @Test
+    public void supportsSpeakerReference_whileOpen_returnsTheBackendsAnswer() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            assertThat(tts.supportsSpeakerReference(), is(false));
+            backend.speakerReference = true;
+            assertThat(tts.supportsSpeakerReference(), is(true));
+        }
+    }
+
+    @Test
+    public void supportsSpeakerReference_afterClose_throwsWithoutAskingTheFreedEngine() {
+        FakeBackend backend = new FakeBackend();
+        TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0);
+        tts.close();
+        assertThrows(IllegalStateException.class, tts::supportsSpeakerReference);
+        assertThat(backend.speakerReferenceQueries.get(), is(0));
     }
 
     /** Waits until the thread waits for a lock or has finished, whichever comes first. */

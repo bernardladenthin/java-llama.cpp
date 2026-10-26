@@ -691,8 +691,8 @@ SPDX-License-Identifier: MIT
         `long handle` to the native OuteTTS engine. A generated toString would emit just that pointer
         value (no meaningful state), exactly the IMC_IMMATURE_CLASS_NO_TOSTRING / java/default-tostring
         case suppressed for LlamaModelBackend above, so toString is intentionally omitted. And
-        synthesize() guards the closed handle with a fixed, descriptive precondition message
-        ("TextToSpeech is closed") — the value is closed-or-not by definition at that throw, with no
+        requireOpen() (behind synthesize() and supportsSpeakerReference()) guards the closed handle
+        with a fixed, descriptive precondition message ("TextToSpeech is closed") — the value is closed-or-not by definition at that throw, with no
         extra state worth adding (same rationale as the server request-parser WEM suppressions above).
     -->
     <Match>
@@ -702,7 +702,7 @@ SPDX-License-Identifier: MIT
     <Match>
         <Class name="net.ladenthin.llama.TextToSpeech"/>
         <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
-        <Method name="synthesize"/>
+        <Method name="requireOpen"/>
     </Match>
 
     <!--

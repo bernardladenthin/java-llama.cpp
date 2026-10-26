@@ -57,6 +57,27 @@ TEST(TtsParams, CarriesTheEngineSettings) {
 }
 
 // ---------------------------------------------------------------------------
+// The speaker-reference rule engine_synthesize applies before it touches the model: a pair without a
+// voice encoder (mtmd_helper_cap::audio_gen_spk_ref false) refuses a reference by name; no reference,
+// or a pair that clones voices, goes on. The pair itself needs a TTS GGUF, which TtsIntegrationTest
+// loads; this pins the rule and the message without one.
+// ---------------------------------------------------------------------------
+TEST(TtsSpeakerReference, NoReferenceIsAlwaysAccepted) {
+    EXPECT_EQ(jllama_tts::speaker_reference_refusal(false, ""), "");
+    EXPECT_EQ(jllama_tts::speaker_reference_refusal(true, ""), "");
+}
+
+TEST(TtsSpeakerReference, APairThatClonesVoicesAcceptsAReference) {
+    EXPECT_EQ(jllama_tts::speaker_reference_refusal(true, "voice.wav"), "");
+}
+
+TEST(TtsSpeakerReference, APairWithoutAVoiceEncoderRefusesTheReferenceByName) {
+    const std::string refusal = jllama_tts::speaker_reference_refusal(false, "clips/voice.wav");
+    EXPECT_NE(refusal.find("does not accept a speaker reference"), std::string::npos) << refusal;
+    EXPECT_NE(refusal.find("clips/voice.wav"), std::string::npos) << refusal;
+}
+
+// ---------------------------------------------------------------------------
 // Pins the upstream trap the builder works around, in the same spirit as the CommonJsonEnumTrap
 // pair in test_json_helpers.cpp. If upstream ever gives common_cpu_params a sane default, this
 // test flips to red and tells us the workaround can be dropped -- which no other signal would.

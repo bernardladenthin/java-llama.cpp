@@ -130,6 +130,48 @@ public final class ModelMeta {
     }
 
     /**
+     * Returns true if the model can chat, i.e. answer a chat or completion request with text.
+     *
+     * <p>{@code false} only for a text-to-speech-only model: a projector that generates audio and no
+     * chat template, which llama.cpp's server refuses chat requests for. Every other loaded model
+     * reports {@code true}, with or without a chat template of its own. From the native
+     * {@code capabilities.chat} key (llama.cpp b11901, {@code mtmd_helper_get_capabilities}); absent,
+     * and therefore {@code false}, for metadata from a vocab-only load or from an older build.</p>
+     *
+     * @return {@code true} if the model accepts chat requests
+     */
+    public boolean supportsChat() {
+        return node.at("/capabilities/chat").asBoolean(false);
+    }
+
+    /**
+     * Returns true if the model generates speech: a text-to-speech projector is loaded, which the
+     * embedded server's {@code POST /tts} uses ({@link net.ladenthin.llama.server.NativeServer}).
+     * {@link #getOutputModalities()} then contains {@code "audio"}.
+     *
+     * <p>From the native {@code capabilities.audio_gen} key; {@code false} for metadata from a
+     * vocab-only load or from a build before llama.cpp b11901.</p>
+     *
+     * @return {@code true} if the model can generate audio
+     */
+    public boolean supportsAudioGeneration() {
+        return node.at("/capabilities/audio_gen").asBoolean(false);
+    }
+
+    /**
+     * Returns true if the model transcribes audio in real time, which the embedded server's
+     * {@code /v1/realtime} WebSocket uses ({@link net.ladenthin.llama.server.NativeServer}).
+     *
+     * <p>From the native {@code capabilities.audio_stream} key; {@code false} for metadata from a
+     * vocab-only load or from a build before llama.cpp b11901.</p>
+     *
+     * @return {@code true} if the model supports realtime transcription
+     */
+    public boolean supportsAudioStream() {
+        return node.at("/capabilities/audio_stream").asBoolean(false);
+    }
+
+    /**
      * What the model can read, as upstream's {@code GET /models} reports it in
      * {@code architecture.input_modalities}: always {@code "text"}, plus {@code "image"},
      * {@code "audio"} and {@code "video"} for each media type the loaded projector supports.

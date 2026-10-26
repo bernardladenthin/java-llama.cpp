@@ -66,6 +66,14 @@ public final class TextToSpeech implements AutoCloseable {
                 int seed);
 
         /**
+         * Whether the loaded pair clones a voice from a speaker reference.
+         *
+         * @param handle a handle returned by {@link #load}
+         * @return {@code true} if a speaker reference is accepted
+         */
+        boolean supportsSpeakerReference(long handle);
+
+        /**
          * Frees the pipeline.
          *
          * @param handle a handle returned by {@link #load}
@@ -91,6 +99,11 @@ public final class TextToSpeech implements AutoCloseable {
                 int topK,
                 int seed) {
             return synthesizeNative(handle, text, speakerReferenceAudioPath, language, maxFrames, topK, seed);
+        }
+
+        @Override
+        public boolean supportsSpeakerReference(long handle) {
+            return supportsSpeakerReferenceNative(handle);
         }
 
         @Override
@@ -172,11 +185,33 @@ public final class TextToSpeech implements AutoCloseable {
     }
 
     /**
+     * Whether this model pair clones a voice from a speaker reference clip, i.e. whether
+     * {@link #synthesize(String, String, String, int, int, int)} accepts a
+     * {@code speakerReferenceAudioPath}. llama.cpp decides it per pipeline
+     * ({@code mtmd_helper_cap::audio_gen_spk_ref}, b11901): Qwen3-TTS and Pocket TTS do, a pipeline
+     * without a voice encoder such as Soprano does not.
+     *
+     * @return {@code true} if a speaker reference is accepted
+     * @throws IllegalStateException if this instance is closed
+     */
+    public boolean supportsSpeakerReference() {
+        lifecycleLock.readLock().lock();
+        try {
+            requireOpen();
+            return backend.supportsSpeakerReference(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
      * Synthesize speech with an optional cloned voice and language.
      *
      * @param text the text to speak
      * @param speakerReferenceAudioPath path to a reference audio clip (wav/mp3) whose voice is
-     *     cloned, or {@code null}/empty for the model's default voice
+     *     cloned, or {@code null}/empty for the model's default voice; a model pair that cannot clone
+     *     a voice ({@link #supportsSpeakerReference()} is {@code false}) refuses it with a
+     *     {@link net.ladenthin.llama.exception.LlamaException}
      * @param language ISO 639-1-ish language name understood by the model (e.g. {@code "english"},
      *     {@code "chinese"} — see the model's own documentation for the supported set), or
      *     {@code null}/empty for the model's default
@@ -194,12 +229,17 @@ public final class TextToSpeech implements AutoCloseable {
             int seed) {
         lifecycleLock.readLock().lock();
         try {
-            if (handle == 0L) {
-                throw new IllegalStateException("TextToSpeech is closed");
-            }
+            requireOpen();
             return backend.synthesize(handle, text, speakerReferenceAudioPath, language, maxFrames, topK, seed);
         } finally {
             lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /** Throws when {@link #close()} has freed the engine; called with the read lock held. */
+    private void requireOpen() {
+        if (handle == 0L) {
+            throw new IllegalStateException("TextToSpeech is closed");
         }
     }
 
@@ -226,6 +266,8 @@ public final class TextToSpeech implements AutoCloseable {
             int maxFrames,
             int topK,
             int seed);
+
+    private static native boolean supportsSpeakerReferenceNative(long handle);
 
     private static native void deleteNative(long handle);
 }

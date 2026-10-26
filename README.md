@@ -756,6 +756,9 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 ```
 
 `LlamaModel.supportsVision()` / `supportsAudio()` report which modalities the loaded projector enables.
+`getModelMeta()` adds what llama.cpp derives from it: `supportsChat()` (false only for a
+text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
+`POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`).
 
 ### Tool Calling
 
@@ -913,7 +916,9 @@ try (TextToSpeech tts = new TextToSpeech(
 Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
-voice cloning from a reference clip. As with `LlamaModel`, native memory is not GC-managed — use
+voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
+clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
+`LlamaException`). As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream

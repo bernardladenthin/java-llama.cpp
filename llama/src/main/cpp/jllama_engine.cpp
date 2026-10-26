@@ -652,6 +652,12 @@ std::string model_meta(jllama_context *jctx) {
         // "multimodal_data": [...]}). Random per process unless LLAMA_MEDIA_MARKER pins it, so a caller
         // reads it here, as upstream's /props publishes it.
         {"media_marker", get_media_marker()},
+        // What the loaded pair can do beyond reading the modalities above, as upstream's server
+        // decides it from mtmd_helper_get_capabilities() (b11901, #31183): chat is false only for a
+        // TTS-only model (an audio-generating projector and no chat template), audio_gen is speech
+        // output (the embedded server's POST /tts), audio_stream realtime transcription (/v1/realtime).
+        {"capabilities",
+         {{"chat", m.has_cap_chat}, {"audio_gen", m.has_cap_tts}, {"audio_stream", m.has_audio_stream}}},
     };
     // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
     // flattened to the top level because "architecture" above already names the GGUF architecture

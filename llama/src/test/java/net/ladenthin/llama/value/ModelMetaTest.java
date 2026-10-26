@@ -89,6 +89,39 @@ public class ModelMetaTest {
     }
 
     @Test
+    public void eachCapabilityGetterReadsItsOwnKey() throws Exception {
+        // One key true at a time, so a getter wired to a sibling key fails here.
+        assertThat(parse(capabilities("true", "false", "false")).supportsChat(), is(true));
+        assertThat(parse(capabilities("true", "false", "false")).supportsAudioGeneration(), is(false));
+        assertThat(parse(capabilities("true", "false", "false")).supportsAudioStream(), is(false));
+
+        assertThat(parse(capabilities("false", "true", "false")).supportsChat(), is(false));
+        assertThat(parse(capabilities("false", "true", "false")).supportsAudioGeneration(), is(true));
+        assertThat(parse(capabilities("false", "true", "false")).supportsAudioStream(), is(false));
+
+        assertThat(parse(capabilities("false", "false", "true")).supportsChat(), is(false));
+        assertThat(parse(capabilities("false", "false", "true")).supportsAudioGeneration(), is(false));
+        assertThat(parse(capabilities("false", "false", "true")).supportsAudioStream(), is(true));
+    }
+
+    @Test
+    public void capabilityGettersDefaultToFalseWithoutTheKey() throws Exception {
+        // A vocab-only load and builds before llama.cpp b11901 emit no "capabilities" object: every
+        // accessor answers false rather than throw, and the modalities are unaffected.
+        ModelMeta legacy = parse(modalities("true", "false", "false"));
+        assertThat(legacy.supportsChat(), is(false));
+        assertThat(legacy.supportsAudioGeneration(), is(false));
+        assertThat(legacy.supportsAudioStream(), is(false));
+        assertThat(legacy.supportsVision(), is(true));
+    }
+
+    private static String capabilities(String chat, String audioGen, String audioStream) {
+        return "{\"n_vocab\":100,\"modalities\":{\"vision\":false,\"audio\":false,\"video\":false},"
+                + "\"capabilities\":{\"chat\":" + chat + ",\"audio_gen\":" + audioGen + ",\"audio_stream\":"
+                + audioStream + "}}";
+    }
+
+    @Test
     public void modalityGettersDefaultToFalseOnOlderMetadata() throws Exception {
         // Metadata captured from a build that predates the `video` key: every accessor must answer
         // false rather than throw, so feature detection degrades instead of breaking.

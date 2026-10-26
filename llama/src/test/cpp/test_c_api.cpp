@@ -241,6 +241,21 @@ TEST_F(CApi, ModelMetaDescribesTheModel) {
     EXPECT_EQ(jllama_model_meta(model_, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
 }
 
+TEST_F(CApi, ModelMetaReportsTheCapabilities) {
+    // From upstream's server meta, which takes them from mtmd_helper_get_capabilities() (b11901): a
+    // model without a projector chats (with or without a template of its own) and neither generates
+    // audio nor transcribes it in real time.
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(meta.str());
+    ASSERT_TRUE(j.contains("capabilities")) << meta.str();
+    const json caps = j.at("capabilities");
+    EXPECT_TRUE(caps.at("chat").get<bool>());
+    EXPECT_FALSE(caps.at("audio_gen").get<bool>());
+    EXPECT_FALSE(caps.at("audio_stream").get<bool>());
+    EXPECT_EQ(caps.size(), 3u) << caps.dump();
+}
+
 TEST_F(CApi, RawCompletionsReturnTheResultObject) {
     Owned response;
     ASSERT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &response.s),
@@ -675,6 +690,8 @@ TEST_F(CApiVocabOnly, TheTokenizerOperationsAnswer) {
     Owned meta;
     ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(json::parse(meta.str()).at("n_vocab").get<int>(), N_VOCAB);
+    // Without a server context the model can do nothing but tokenize, so the meta claims no capability.
+    EXPECT_FALSE(json::parse(meta.str()).contains("capabilities")) << meta.str();
     int *tokens = nullptr;
     size_t count = 0;
     ASSERT_EQ(jllama_tokenize(model_, "Hello", false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
@@ -978,6 +995,17 @@ TEST_F(CApiVision, ModelMetaNamesTheMediaMarker) {
     EXPECT_TRUE(j.at("modalities").at("vision").get<bool>());
     ASSERT_TRUE(j.contains("media_marker")) << meta.str();
     EXPECT_FALSE(j.at("media_marker").get<std::string>().empty());
+}
+
+TEST_F(CApiVision, ModelMetaReportsChatButNoAudioCapabilities) {
+    // A vision projector reads images; it neither generates speech nor turns the model into a
+    // TTS-only one, so chat stays on (the capabilities are computed with the projector loaded).
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json caps = json::parse(meta.str()).at("capabilities");
+    EXPECT_TRUE(caps.at("chat").get<bool>());
+    EXPECT_FALSE(caps.at("audio_gen").get<bool>());
+    EXPECT_FALSE(caps.at("audio_stream").get<bool>());
 }
 
 TEST_F(CApiVision, ARawCompletionTakesUpstreamsMultimodalPromptObject) {
@@ -1831,6 +1859,15 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     EXPECT_EQ(jllama_tts_synthesize(nullptr, "Hi", nullptr, nullptr, 10, 1, 1, &wav, &length),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    bool supported = true;
+    EXPECT_EQ(jllama_tts_supports_speaker_reference(nullptr, &supported), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    EXPECT_TRUE(supported) << "a refused call must not write the out-parameter";
+    // The out-parameter is checked before the handle is used, so any non-null pointer reaches it.
+    int not_a_model = 0;
+    EXPECT_EQ(jllama_tts_supports_speaker_reference(reinterpret_cast<const jllama_tts_model *>(&not_a_model), nullptr),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "supported must not be null");
     jllama_tts_free(nullptr);
     jllama_bytes_free(nullptr);
 }

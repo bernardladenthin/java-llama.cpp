@@ -50,6 +50,19 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
     return params;
 }
 
+// ---------------------------------------------------------------------------
+// The refusal for a speaker reference the loaded pair cannot use, or "" when the request may go on.
+// `supported` is llama.cpp's mtmd_helper_cap::audio_gen_spk_ref (b11901, #31183): true for Qwen3-TTS
+// and Pocket TTS, false for a pipeline without a voice encoder (Soprano), whose set_input rejects any
+// speaker reference -- before this check that surfaced as the generic "TTS input rejected" error.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::string speaker_reference_refusal(bool supported, const std::string &speaker_reference_path) {
+    if (speaker_reference_path.empty() || supported) {
+        return std::string();
+    }
+    return "this TTS model does not accept a speaker reference (no voice cloning): " + speaker_reference_path;
+}
+
 } // namespace jllama_tts
 
 #endif // JLLAMA_TTS_PARAMS_HPP
