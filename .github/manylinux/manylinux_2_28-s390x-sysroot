@@ -51,6 +51,10 @@ trap 'docker rm "$cid" >/dev/null' EXIT
 docker export "$cid" | tar -x --no-same-owner -C "$SYSROOT" \
   lib lib64 usr/lib/ld64.so.1 usr/lib64 usr/include \
   opt/rh/gcc-toolset-14/root/usr/include "$GCC_DIR"
+# RHEL ships /usr/lib64 read-only (dr-xr-xr-x). Unpacked by a non-root user (the runner), the
+# symlink rewrite below could not write into it ("Permission denied" in the first CI run; a root
+# shell ignores the mode) and the job's cleanup could not delete it.
+chmod -R u+w "$SYSROOT"
 
 # Absolute symlinks -> relative ones inside the sysroot. A target outside the unpacked set stays
 # dangling, as it would be at an absolute path; only those the build reads matter, checked below.
