@@ -119,7 +119,7 @@ option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / util
 # (libggml-cuda.so, ggml-vulkan.dll, ...), built against the same ggml with GGML_CPU=OFF, and
 # LlamaLoader puts it next to the CPU jar's libraries, where ggml finds it. Exactly upstream's
 # Windows release layout (win-cpu + win-cuda holding one ggml-cuda.dll). Both OFF by default: a plain
-# `cmake -B build` is the static single-library build (macOS/Metal and s390x ship that way).
+# `cmake -B build` is the static single-library build (macOS/Metal ships that way).
 option(JLLAMA_BACKEND_DL "Build ggml as shared libraries and the backends as modules ggml loads at run time (GGML_BACKEND_DL)" OFF)
 option(JLLAMA_MODULE_ONLY "Build only the GPU backend module of the one GGML_<backend> flag set, for a GPU natives jar (implies JLLAMA_BACKEND_DL)" OFF)
 if(JLLAMA_MODULE_ONLY)
@@ -485,15 +485,20 @@ if(NOT EXISTS "${llama.cpp_SOURCE_DIR}/vendor/nlohmann/json.hpp")
             "back on the include path.")
 endif()
 if(JLLAMA_BACKEND_DL)
-    # Where ggml can be loaded as modules here (CLAUDE.md "Modular natives"): Linux x86-64 / aarch64
-    # (the dockcross Android toolchain reports Linux too, see the Android block above) and Windows
-    # x86-64 / arm64. CPU variants wherever ggml has a list for the OS/arch: x86-64 everywhere, ARM on
-    # Linux/Android (ggml-cpu/CMakeLists.txt has no ARM list for Windows, so Windows arm64 gets the
-    # one ggml-cpu module upstream ships there too). macOS stays static (Metal is compiled in, one
-    # CPU generation per Metal build), s390x has no variants upstream and no GPU.
+    # Where ggml can be loaded as modules here (CLAUDE.md "Modular natives"): Linux x86-64 / aarch64 /
+    # s390x (the dockcross Android toolchain reports Linux too, see the Android block above) and
+    # Windows x86-64 / arm64. CPU variants wherever ggml has a list for the OS/arch: x86-64
+    # everywhere, ARM on Linux/Android (ggml-cpu/CMakeLists.txt has no ARM list for Windows, so
+    # Windows arm64 gets the one ggml-cpu module upstream ships there too), and IBM Z on Linux: z13
+    # (scalar, the baseline patches/0023 adds), z15 (VXE2) and z16 (VXE2 + NNPA). s390x has no GPU;
+    # its variants are the reason it is modular. macOS stays static (Metal is compiled in, one CPU
+    # generation per Metal build).
     set(_jllama_dl_ok OFF)
     set(_jllama_all_variants OFF)
     if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$")
+        set(_jllama_dl_ok ON)
+        set(_jllama_all_variants ON)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "s390x")
         set(_jllama_dl_ok ON)
         set(_jllama_all_variants ON)
     elseif(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
@@ -503,7 +508,7 @@ if(JLLAMA_BACKEND_DL)
         set(_jllama_dl_ok ON)
     endif()
     if(NOT _jllama_dl_ok)
-        message(FATAL_ERROR "JLLAMA_BACKEND_DL is supported on Linux/Android x86-64 and aarch64 and on Windows x86-64 and arm64 only")
+        message(FATAL_ERROR "JLLAMA_BACKEND_DL is supported on Linux/Android x86-64 and aarch64, Linux s390x and on Windows x86-64 and arm64 only")
     endif()
     if(BUILD_TESTING)
         # jllama_test calls the CPU and RPC backends directly (ggml_backend_cpu_init, ...), which are
@@ -1188,7 +1193,7 @@ if(JLLAMA_BACKEND_DL)
     # file below is meant to be byte-identical to what that script writes, which is LF.
     file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}" NEWLINE_STYLE LF)
 else()
-    # The static build (macOS, s390x, a plain local build) ships one library and the C API header;
+    # The static build (macOS, a plain local build) ships one library and the C API header;
     # the list exists so the header is extracted and not loaded (see the C API block above). A
     # static Windows build (the MSVC build-and-test job, the test-cpp jobs; nothing ships from them)
     # gets its import library listed like the modular one.
@@ -1258,10 +1263,13 @@ endif()
 # libjllama (layer A) and against libjllama itself (layer B: jllama_api.h must compile as C and the
 # jllama_* symbols must be exported) and registers it as the ctest `c_abi` -- the first and only test of the modular build
 # jobs, which refuse BUILD_TESTING (jllama_test needs the CPU backend statically). build.sh and
-# build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling (the Android jobs
-# cannot run the executable). Also useful locally: `ctest --test-dir build -R c_abi -V`.
+# build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling without an emulator
+# (the Android jobs cannot run the executable); s390x runs it through its toolchain's qemu, which
+# also makes ggml score the IBM Z variants against qemu's CPU model. Also useful locally:
+# `ctest --test-dir build -R c_abi -V`.
 option(JLLAMA_C_ABI_TEST "Build and run the plain-C test of the shared upstream libraries of a modular build" ON)
-if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST AND NOT CMAKE_CROSSCOMPILING)
+if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
+   AND (NOT CMAKE_CROSSCOMPILING OR CMAKE_CROSSCOMPILING_EMULATOR))
     enable_language(C)
     add_executable(jllama_c_abi src/test/c/test_c_abi.c)
     target_compile_features(jllama_c_abi PRIVATE c_std_11)

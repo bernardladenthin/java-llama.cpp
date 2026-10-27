@@ -886,24 +886,25 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-linux-s390x:
-    name: Build and Test Linux s390x (big-endian, qemu)
+    name: Build Linux s390x (big-endian, CPU variants)
     needs: [startgate, build-webui]
-    # Cross-compile for IBM Z (s390x, BIG-ENDIAN), then run the full C++ unit suite under qemu-user --
-    # a real big-endian correctness gate for our helpers and serializers (esp. the little-endian WAV
-    # writer, JSON/token/embedding transforms). The BUILD is native speed: clang on the x86-64 runner
-    # against the manylinux_2_28 s390x image unpacked as the sysroot (.github/manylinux/
+    # Cross-compile the cpu-linux-s390x library jar for IBM Z (s390x, BIG-ENDIAN) as a modular build
+    # (JLLAMA_BACKEND_DL, CLAUDE.md "Linux s390x"): libjllama, libllama, libmtmd, ggml and one CPU
+    # module per IBM Z level -- ggml-cpu-z13 (scalar, the baseline patches/0023 adds), -z15 (VXE2)
+    # and -z16 (VXE2 + NNPA) -- of which ggml loads the best for the running machine. Up to 6.0.x
+    # the jar was one static, scalar library: 4.5x slower prompt processing and 4x slower generation
+    # on a z16 (measured on cfarm191, patches/0023). The BUILD is native speed: clang on the x86-64
+    # runner against the manylinux_2_28 s390x image unpacked as the sysroot (.github/manylinux/
     # manylinux_2_28-s390x-sysroot and s390x-toolchain.cmake), linked by binutils-s390x-linux-gnu, so
     # the jar has the floor of the other Linux CPU jars -- glibc 2.28, GLIBCXX_3.4.25 -- which
     # verify-native-deps.py holds and smoke-glibc-floor proves on RHEL 8. (Until 2026-10-25 the job
     # used the runner's GCC 13 cross toolchain and its glibc 2.39 sysroot: the 6.0.0 jar needed glibc
-    # 2.38 and GCC 13's libstdc++, CLAUDE.md "Linux s390x".) Only the test binary is emulated, and it
-    # runs against the sysroot's glibc 2.28 and GCC 8 libstdc++.so.6, the oldest runtime the jar
-    # promises. s390x is a CPU platform like aarch64 and ships as the cpu-linux-s390x natives jar.
-    # Model-backed Java tests are NOT run under emulation (a JVM + GGUF inference under qemu-user is
-    # slow/flaky); the C++ gate covers the actual byte-order risk since the Java<->JNI boundary uses
-    # host-native array copies. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml uses its own
-    # std::thread pool). The toolchain's CMAKE_CROSSCOMPILING_EMULATOR runs the s390x executables
-    # through qemu with QEMU_LD_PREFIX pointing at the sysroot.
+    # 2.38 and GCC 13's libstdc++, CLAUDE.md "Linux s390x".) build.sh runs the plain-C test c_abi
+    # through the toolchain's qemu (CMAKE_CROSSCOMPILING_EMULATOR, QEMU_LD_PREFIX at the sysroot):
+    # upstream's C API out of the shipped directory, with ggml scoring the IBM Z modules against
+    # qemu's CPU model. The C++ unit suite cannot link against a modular build; it runs in
+    # test-cpp-linux-s390x, under qemu as well. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml
+    # uses its own std::thread pool).
     # Pinned to ubuntu-24.04: the toolchain names its clang-18.
     runs-on: ubuntu-24.04
     env:
@@ -930,22 +931,26 @@ jobs:
           .github/manylinux/manylinux_2_28-s390x-sysroot "$RUNNER_TEMP/s390x-sysroot"
           echo "JLLAMA_S390X_SYSROOT=$RUNNER_TEMP/s390x-sysroot" >> "$GITHUB_ENV"
       # NOTE: GGML_NATIVE=OFF is required here (an x86 build host must not bake -march=native into an
-      # s390x artifact), and it has a non-obvious second effect: ggml declares
-      # `option(GGML_VXE "ggml: enable vxe" ${GGML_NATIVE})`, so VXE is off too. No `-mvx -mzvector` is
-      # passed, `__VEC__` stays undefined, and ggml-cpu-impl.h's `#if defined(__s390x__) && defined(__VEC__)`
-      # never self-defines `__VXE__`/`__VXE2__`. This job therefore builds a SCALAR s390x binary -- which is
-      # exactly right for what it is (a big-endian correctness gate for our own layer, not a perf target).
-      # Do NOT "fix" a VXE-related compile error by adding -DGGML_VXE=ON: that define sets __VXE__ and
-      # __VXE2__ together while -march stays at z13 (arch11, s390x-toolchain.cmake), so every z14+
-      # builtin is rejected. See the `0013` note in docs/history/dropped-llama-patches.md for the measured
-      # comparison (the patch itself is gone -- upstream merged it as ggml-org/llama.cpp#28775).
+      # s390x artifact). The vector code comes from GGML_CPU_ALL_VARIANTS instead (set by
+      # JLLAMA_BACKEND_DL): each variant module carries its own -march=z15/z16 -mvx -mzvector, while
+      # ggml-base, libllama and libjllama stay at the toolchain's -march=z13. Do NOT pass
+      # -DGGML_VXE=ON: ggml-cpu/CMakeLists.txt adds VXE2 to every variant when it is set, so the z13
+      # module would become a VXE2 one, score 0 without VXE2, and leave a z13/z14 without any CPU
+      # backend.
       - name: Build libraries (cross-compile s390x)
         shell: bash
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/.github/manylinux/s390x-toolchain.cmake -DOS_NAME=Linux -DOS_ARCH=s390x"
-      - name: Run C++ unit tests under qemu-s390x (big-endian gate)
-        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
+          .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DJLLAMA_BACKEND_DL=ON -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/.github/manylinux/s390x-toolchain.cmake -DOS_NAME=Linux -DOS_ARCH=s390x"
+      # A module ggml could not build is a missing file, not a failure ggml reports: the configure
+      # skips a variant whose flag the compiler rejects (as it does z17 with clang 18). z13 is the
+      # only one every IBM Z the jar supports can load, and comes from patches/0023.
+      - name: Check the IBM Z CPU modules
+        run: |
+          d=llama/src/main/natives/net/ladenthin/llama/Linux/s390x/cpu
+          for v in z13 z15 z16; do
+            test -f "$d/libggml-cpu-$v.so" || { echo "::error::$d has no libggml-cpu-$v.so"; ls -la "$d"; exit 1; }
+          done
       # The same check `package` runs over the merged tree, here so a lost floor fails in this job:
       # GLIBC_2.28, GLIBCXX_3.4.25, CXXABI_1.3.11, the exact dependency list, and every typeinfo name
       # at an even address (s390x-typeinfo-names.ld + -fdata-sections; the link alone fails only when
@@ -2706,6 +2711,48 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
+  test-cpp-linux-s390x:
+    name: C++ Tests Linux s390x (big-endian, qemu)
+    needs: startgate
+    # The full C++ unit suite on IBM Z (BIG-ENDIAN) under qemu-user -- the big-endian correctness
+    # gate for our helpers and serializers (the little-endian WAV writer, the JSON/token/embedding
+    # transforms, the JNI helpers). Same toolchain as build-linux-s390x (clang-18 against the
+    # manylinux_2_28 sysroot, s390x-toolchain.cmake), but the default static build: the shipped CPU
+    # variants configuration cannot host jllama_test (its CPU and RPC backends are modules), the
+    # same split as test-cpp-linux-x86_64 / -aarch64. The test binary runs against the sysroot's
+    # glibc 2.28 and GCC 8 libstdc++.so.6, the oldest runtime the jar promises. Model-backed Java
+    # tests are NOT run under emulation (a JVM + GGUF inference under qemu-user is slow and flaky);
+    # the Java<->JNI boundary uses host-native array copies, so this gate covers the byte-order risk.
+    # Until 6.1.0 the suite rode along in build-linux-s390x, whose library was static then.
+    runs-on: ubuntu-24.04
+    env:
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Display CPU Info
+        uses: bernardladenthin/actions/common/print-host-info@44390bd464395f560f4170d2c4bfb7a6348541b3 # v1.1.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - name: Install clang, the s390x binutils and qemu-user
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 binutils-s390x-linux-gnu qemu-user-static
+      - name: Unpack the manylinux_2_28 s390x sysroot
+        run: |
+          .github/manylinux/manylinux_2_28-s390x-sysroot "$RUNNER_TEMP/s390x-sysroot"
+          echo "JLLAMA_S390X_SYSROOT=$RUNNER_TEMP/s390x-sysroot" >> "$GITHUB_ENV"
+      - name: Build libraries (cross-compile s390x)
+        shell: bash
+        run: |
+          mvn --no-transfer-progress -f llama/pom.xml compile
+          .github/build.sh "-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/.github/manylinux/s390x-toolchain.cmake -DOS_NAME=Linux -DOS_ARCH=s390x"
+      - name: Verify llama.cpp patches are applied
+        run: .github/verify-patches-applied.sh
+      - name: Run C++ unit tests under qemu-s390x (big-endian gate)
+        run: ctest --test-dir llama/build --no-tests=error --output-on-failure
+
   test-cpp-windows-x86_64:
     name: C++ Tests Windows 2025 x86_64 (clang)
     needs: startgate
@@ -3140,6 +3187,7 @@ jobs:
       - build-windows-x86_64-openvino
       - test-cpp-linux-x86_64
       - test-cpp-linux-aarch64
+      - test-cpp-linux-s390x
       - test-cpp-windows-x86_64
       - test-cpp-windows-arm64
       - build-macos-arm64-metal-15

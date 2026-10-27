@@ -112,7 +112,7 @@ measurements below remain open hardening/coverage work; they do not establish a 
 
 - [ ] Set `JLLAMA_C_ABI_MODEL` in a suitable CI job and exercise the model-backed half of
       `c_abi`. The existing plain-C compile/smoke runs without a model; Java/C++/FFM inference
-      coverage does not exercise this particular consumer. macOS and s390x remain static builds.
+      coverage does not exercise this particular consumer. macOS remains a static build.
 
 ### 8. Cached/uncached reproducibility measurement (C.3)
 
@@ -151,7 +151,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 | **OpenVINO on an Intel GPU/NPU** | suitable Intel device, unavailable to these sessions | the 21.7x/336x figures are CPU-plugin fallback only; they do not prove GPU/NPU execution |
 | the two **SME** aarch64 modules | Linux aarch64 with SME, absent from current CI/cloud machines | macOS's static Metal library does not exercise these modules |
 | **gpt-oss-20b on both MoE paths of `llama/patches/0022`**, on the **Core Ultra 7 165U** (`-t 6/8/10`) | the laptop; switch with `LlamaModel.setCpuMoeBatched` or `GGML_CPU_REPACK_MMID_BATCHED=0` ([`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md)) | upstream's static work split meets real P-, E- and LP-E-cores only there; the sandbox could emulate one slow core for prompt processing (−49 % upstream's path, −24 % batched) but not for generation |
-| **`llama/patches/0022` with real weights on every CPU family whose repack path it changes**: gpt-oss-20b (MXFP4) and a Q4_K MoE (e.g. Qwen3-30B-A3B Q4_K_M), both switch positions -- `llama-perplexity --kl-divergence` of the batched path against upstream's, `llama-bench` pp/tg at several thread counts, and once through the jar (`LlamaModel.setCpuMoeBatched`) | x86-64 with AVX-512/AMX and Zen 4 (EC2 or Vultr: the `sapphirerapids` and `zen4` modules); aarch64 with dotprod (cfarm424, Neoverse-N1, 64 cores) and with i8mm/SVE (Graviton 3/4); s390x with VXE (cfarm191, z16 -- ggml repacks only Q4_0 there, so a Q4_0 MoE converted to big-endian, and only once s390x ships CPU variants, see "Linux s390x") | #578 measured random weights in the real shapes, on the `alderlake` module of an AVX-512 host. KLD 0 there shows the batched path is right for that gemm kernel, not for the NEON, i8mm or VXE kernels it calls elsewhere, and random weights route tokens to experts more evenly than a trained model does |
+| **`llama/patches/0022` with real weights on every CPU family whose repack path it changes**: gpt-oss-20b (MXFP4) and a Q4_K MoE (e.g. Qwen3-30B-A3B Q4_K_M), both switch positions -- `llama-perplexity --kl-divergence` of the batched path against upstream's, `llama-bench` pp/tg at several thread counts, and once through the jar (`LlamaModel.setCpuMoeBatched`) | x86-64 with AVX-512/AMX and Zen 4 (EC2 or Vultr: the `sapphirerapids` and `zen4` modules); aarch64 with dotprod (cfarm424, Neoverse-N1, 64 cores) and with i8mm/SVE (Graviton 3/4); s390x with VXE (cfarm191, z16 -- ggml repacks only Q4_0 there, so a Q4_0 MoE converted to big-endian, on the vector modules `z15`/`z16`, see "Linux s390x" in CLAUDE.md) | #578 measured random weights in the real shapes, on the `alderlake` module of an AVX-512 host. KLD 0 there shows the batched path is right for that gemm kernel, not for the NEON, i8mm or VXE kernels it calls elsewhere, and random weights route tokens to experts more evenly than a trained model does |
 | [`docs/local-test-plan.md`](docs/local-test-plan.md) parts A–D on the **Core Ultra 7 165U** | the laptop the Windows guide (#575) is written for | part A -- which CPU module ggml picks there and what it gains -- is what CI cannot measure; the only report so far is the Zen 3 one (`docs/handover/local-agent-report-b11538-windows.md`). One result file per machine, unmeasured values marked as such |
 
 ## Open — jllama-specific
@@ -370,8 +370,8 @@ because each is a design decision in code this project does not own. And say pla
 downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
 maintainer can see what a merged change would let this project delete.
 
-There are **thirteen** patches today (`0001`–`0003`, `0006`–`0008`, `0014`, `0015`,
-`0017`, `0018`, `0020`, `0021`, `0022`). Each
+There are **fourteen** patches today (`0001`–`0003`, `0006`–`0008`, `0014`, `0015`,
+`0017`, `0018`, `0020`–`0023`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
@@ -388,7 +388,9 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   change; both hunks have independent drop-checks in `CLAUDE.md`), `0022` (batch an expert's tokens
   through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
   its switch, which exists for measurements here; the evidence is
-  `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`).
+  `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`), `0023` (IBM Z: drop the duplicate `<vecintrin.h>`
+  include that breaks clang, and a scalar `z13` variant below upstream's `z15` -- two questions,
+  since upstream documents GCC for s390x and may prefer its own baseline name).
 - **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
 - **Two upstream-only defects worth an issue on that day, no patch here:** a lost RPC server
   mid-inference still aborts the process (the ggml backend interface has no error return for a lost
@@ -545,13 +547,22 @@ loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 j
         rounds on the shared host: generation 0.62–1.87 t/s (clang) against 0.31–0.93 t/s (GCC),
         prompt 2.0–6.5 against 1.9–2.8 t/s. Clang was ahead in every round. Absolute numbers are
         noisy and low.
-- [ ] **s390x runs scalar.** Both the GCC and the clang build have `GGML_NATIVE=OFF`, so `GGML_VXE` is
-      off: no vector code for any IBM Z. ggml's `GGML_CPU_ALL_VARIANTS` has s390x variants for
-      z15–z17 (`-march=z15/z16/arch15` with VXE2, NNPA on z16+) that a `GGML_BACKEND_DL` build picks
-      at run time, as the x86 jars do. Moving s390x from the static single library to the modular
-      build with those variants would keep the z13 floor (a scalar baseline variant) and use the
-      vector unit where it exists. To check first: whether clang 18 builds the z15–z17 variants, and
-      what they gain on cfarm191.
+- [x] **s390x ran scalar** (fixed on `feat/s390x-cpu-variants`, 2026-10-27; CLAUDE.md "Linux s390x").
+      `build-linux-s390x` is a modular build now with the CPU modules `z13` (scalar), `z15` (VXE2) and
+      `z16` (VXE2 + NNPA); `llama/patches/0023` makes clang build the vector modules (a duplicate
+      `<vecintrin.h>` include that only GCC's header guard hid) and adds the `z13` baseline, which
+      upstream's list lacks. On cfarm191 (b11901, Qwen3-0.6B Q4_K_M big-endian, 4 threads): `z13`
+      19.7 / 13.6 t/s, `z15` 90.0-95.5 / 57.3-58.3, `z16` 82.6-88.3 / 51.9-53.9 (prompt / generation).
+      The C++ suite moved to `test-cpp-linux-s390x` (a modular build cannot link `jllama_test`).
+- [ ] **The CI-built modular s390x jar on cfarm191**, once a Publish run of the branch is green:
+      `NativeLoadSmoke` and the `ServerLauncher` round on the big-endian Qwen3-0.6B as on 2026-10-26,
+      plus which module the loader line and `JNI_OnLoad`'s registry log name (`z16` expected), and the
+      speed against the 6.1.0-SNAPSHOT static jar of run 40400361809 (0.33 t/s generation at 8 threads
+      on the shared host, 13.6 t/s for the scalar build at 4). Only a real IBM Z runs the vector modules
+      at their own speed; qemu scores them against its CPU model.
+- [ ] **z17 (`-march=arch15`)** is skipped: clang 18 rejects the flag (clang 19 on cfarm191 too), and
+      ggml's configure drops the variant silently. Re-check when the toolchain's clang moves, and
+      measure on a z17 if the farm gets one.
 - **Ruled out:** `ubuntu-22.04` as the runner (glibc 2.35 still misses RHEL 8/9, and its cross GCC 11
   cannot build llama.cpp, which needs GCC >= 12). `-static-libstdc++` alone is ruled out too: it
   fixes GLIBCXX but not GLIBC.

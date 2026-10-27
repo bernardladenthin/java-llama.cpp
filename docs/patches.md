@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**14 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -35,6 +35,7 @@ match a binary to this page.
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
+| 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 
 ## 0001-win32-arg-parse-embed-guard.patch
 
@@ -576,4 +577,62 @@ get_proc_address, so a bump that drops the patch reds the test at once.
 Drop-check on every bump: read forward_mul_mat_id() in ggml/src/ggml-cpu/repack.cpp at the new tag
 -- once upstream calls gemm for an expert's batched rows and hands the work out through
 ggml_threadpool_chunk_add(), drop this patch (and with it the switch) rather than refreshing it.
+```
+
+## 0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch
+
+**Files (3):** `ggml/src/CMakeLists.txt`, `ggml/src/ggml-cpu/CMakeLists.txt`, `ggml/src/ggml-cpu/llamafile/sgemm.h`
+
+The patch's own header, verbatim:
+
+```text
+ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline
+
+GGML_CPU_ALL_VARIANTS builds the IBM Z modules ggml-cpu-z15 (VXE2) and ggml-cpu-z16 (VXE2 + NNPA)
+with -march=z15/z16 -mvx -mzvector. Two things stand between that list and a jar that runs on
+every machine the scalar library runs on today.
+
+1. With clang, every translation unit that includes both ggml-cpu-impl.h and llamafile/sgemm.h
+   fails: both include <vecintrin.h> under `defined(__VXE__) || defined(__VXE2__)`, and clang's
+   vecintrin.h has no include guard (GCC's has _VECINTRIN_H), so the second inclusion redefines
+   vec_extract, vec_insert and the rest ("redefinition of 'vec_extract'", first in ggml-cpu.c,
+   which includes ggml-cpu-impl.h at line 7 and llamafile/sgemm.h at line 51). Nothing in the
+   object code is duplicated; it is a compile error. The include in sgemm.h came with
+   ggml-org/llama.cpp#14273 ("llamafile : support s390x SIMD instruction set", 2025-06-19), and it
+   is not needed: sgemm.h declares no vector type, and both files that include it include
+   ggml-cpu-impl.h as well -- sgemm.cpp right after it (where __VXE__ is not defined yet, because
+   ggml-cpu-impl.h is what defines it from __VEC__, so the include there never fired), ggml-cpu.c
+   before it (where it is the duplicate). Upstream documents GCC as the s390x compiler
+   (docs/build-s390x.md), which is why it went unnoticed. This patch removes the include from
+   sgemm.h; ggml-cpu-impl.h keeps the one that is used.
+
+2. The list starts at z15, so a machine without VXE2 (z13, z14) would find no CPU backend at all,
+   where the scalar build ran. The patch adds ggml-cpu-z13: no VXE, -march=z13 (the range of the
+   cross-compile flags starts at 13 for it), score 1 in arch/s390/cpu-feats.cpp, so
+   ggml_backend_load_best() takes it only where z15 and z16 score 0. z13 is the oldest machine
+   RHEL 8, SLES 15 and Ubuntu support, and the floor java-llama.cpp's s390x jar has had.
+
+z17 (-march=arch15) stays as upstream has it: added only when the compiler accepts the flag
+(GCC 15.1, newer clang); clang 18 and 19 do not, and the configure skips it.
+
+Measured on cfarm191 (IBM z16, LinuxONE, machine 3932, 8 IFLs shared, Debian 13, clang 19.1.7)
+at b11901 with this patch, Qwen3-0.6B Q4_K_M converted to big-endian with gguf_convert_endian.py,
+`llama-bench -t 4 -p 64 -n 16 -r 2`, two interleaved rounds, t/s:
+
+    module                 pp64          tg16
+    z13 (scalar)           19.7 - 19.8   13.6 - 13.8
+    z15                    90.0 - 95.5   57.3 - 58.3
+    z16                    82.6 - 88.3   51.9 - 53.9
+    z16, GCC 14.2 (unpatched, for comparison)
+                           85.2 - 86.4   44.1 - 53.9
+
+With all three modules ggml loaded z16, without it z15, without both z13. Greedy output of
+llama-simple is byte-identical between z15 and z16. Against z13 (llama-perplexity --kl-divergence,
+9 chunks of 256 tokens) the vector modules differ by a mean KLD of 0.0087 (same top token 94.8 %) --
+rounding, not a defect: against a Q8_0 reference computed on z13, the Q4_K_M model lands at a mean
+KLD of 0.0777 on z13 and 0.0746 on z16 -- equally far from it, and the 0.0087 between them is about
+a tenth of what the quantization itself costs. Q8_0 itself, z16 against z13: mean KLD 0.0012, same
+top token 98.5 %.
+
+Not filed upstream yet (nothing is filed before the owner says so).
 ```

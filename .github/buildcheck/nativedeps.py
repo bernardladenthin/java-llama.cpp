@@ -86,8 +86,9 @@ WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/aarch64/cpu"}
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
 # builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately;
-# s390x is one of them since its build moved to the manylinux_2_28 sysroot (2026-10-25), and its
-# single static library needs libpthread and libdl, not librt (measured).
+# s390x is one of them since its build moved to the manylinux_2_28 sysroot (2026-10-25); its modular
+# directory (6.1.0) needs libpthread (libjllama, libmtmd, libggml-base) and libdl (libggml), not
+# librt (measured), as did the single static library before it.
 # libgomp.so.1 is deliberately absent from the three Linux cpu entries: llama/CMakeLists.txt forces
 # GGML_OPENMP=OFF there so the jar loads in slim and distroless images, which do not ship it, and
 # this list is what keeps it that way -- a build that regains the dependency fails `package` instead

@@ -103,7 +103,7 @@ it or is checked against it:
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, the provenance keys and the row's classifier, next to a `jllama-sbom.json` naming the same classifier, a module directory holding nothing but its module, the `jllama-*.txt` lists and the BOM, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
 | `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built; also writes the glibc-floor set (`floor-set`) |
 | the glibc-floor set | **derived**: the library rows whose directory promises a glibc floor (`nativedeps.GLIBC_CEILING`: the three Linux CPU jars) — `check-natives.py floor-set` prints them; `package` uploads them with the classes jar and its dependencies as `llama-glibc-floor`, and `smoke-glibc-floor` loads each on RHEL 8.10 (glibc 2.28, GCC 8's libstdc++) on its own architecture, s390x under qemu (`smoke-glibc-floor.sh`, `NativeLoadSmoke.java` in the UBI 8 OpenJDK 21 runtime image); `check-natives.py` holds the job's matrix rows to the set |
-| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it; **the export set of every `jllama` library** (`JNI_OnLoad`, `JNI_OnUnload`, `Java_*`, `jllama_*` and nothing else -- `cmake/jllama-exports.map` on ELF and `cmake/jllama-exports-macos.txt` on macOS keep the statically linked llama/ggml/mtmd/BoringSSL symbols local, Windows exports only `dllexport`; before the lists the Linux library exported 14,220 symbols, 47 of them JNI), and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play); every typeinfo name (`_ZTS*`) of the s390x library at an even address (see "Linux s390x"). Runs in `package` and on the staged AAR libraries |
+| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it; **the export set of every `jllama` library** (`JNI_OnLoad`, `JNI_OnUnload`, `Java_*`, `jllama_*` and nothing else -- `cmake/jllama-exports.map` on ELF and `cmake/jllama-exports-macos.txt` on macOS keep the statically linked llama/ggml/mtmd/BoringSSL symbols local, Windows exports only `dllexport`; before the lists the Linux library exported 14,220 symbols, 47 of them JNI), and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play); every typeinfo name (`_ZTS*`) of the s390x libraries at an even address (see "Linux s390x"). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; it passes `net.ladenthin.llama.backend` naming **every** module of the runner's platform, opt-in ones included, and the loader line must then name each -- so a module jar the loader skipped fails here, and this is also the only place in CI that loads an opt-in module at all |
 | `.github/smoke-lib.sh` / `smoke-test-natives.ps1` | the model-backed smoke rows expect every module of the set **except** the opt-in ones (`optin` column), because the loader deliberately leaves those out -- it is the same list, read with one more condition |
 
@@ -141,7 +141,7 @@ step, not by Maven.
 ## Modular natives: `JLLAMA_BACKEND_DL` (library jars) and `JLLAMA_MODULE_ONLY` (GPU module jars)
 
 Every platform a GPU backend can join is built **modular**, the way upstream builds its own release
-binaries (`GGML_BACKEND_DL`): ggml and ggml-base as shared libraries, every backend a module ggml
+binaries (`GGML_BACKEND_DL`), and so is s390x, for its CPU variants (see "Linux s390x"): ggml and ggml-base as shared libraries, every backend a module ggml
 loads at run time -- the CPU backend as one small `ggml-cpu-<level>` module per instruction-set
 level where ggml has a variant list (`GGML_CPU_ALL_VARIANTS`: Linux and Android x86-64 / aarch64,
 Windows x86-64), of which `ggml_backend_load_best` loads the best for the running CPU, and as one
@@ -162,9 +162,9 @@ Windows x86-64), of which `ggml_backend_load_best` loads the best for the runnin
   configure built, so its ABI is the library jar's of the same tag (what `jllama-build.txt` pins).
   Upstream's GPU zips do the same (`--target ggml-cuda` etc., Vulkan/OpenCL with `GGML_CPU=OFF`).
 
-**What stays static**: s390x (`BUILD_SHARED_LIBS OFF`, one `libjllama.so` with ggml linked in, no GPU
-can join it) and macOS (`metal-macos-aarch64`: Metal is compiled into the library, upstream ships
-macOS static too). There the loader extracts and loads a single file (plus `jllama-extras.txt` and a
+**What stays static**: macOS (`metal-macos-aarch64`: Metal is compiled into the library, upstream
+ships macOS static too). s390x was static until 6.1.0 (one scalar `libjllama.so`, no GPU can join
+it) and is modular now for its IBM Z CPU variants. There the loader extracts and loads a single file (plus `jllama-extras.txt` and a
 `ggml-metal.metal` a build does not embed).
 
 **Every directory carries `jllama-build.txt`** (`llama.cpp=<tag>`, the `JLLAMA_GIT_TAG` number of this
@@ -213,7 +213,7 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   its own block as before, shared in this build (`libmtmd.so`, `mtmd.h`). Both are unversioned like
   ggml and get the `$ORIGIN` run path; the configure refuses a `llama`/`mtmd` that came out static or
   a `llama-common`/`cpp-httplib` that came out shared (one more file to ship). On the static
-  platforms (macOS, s390x) all of it stays inside `libjllama`. **Every ggml default llama.cpp's own
+  platform (macOS) all of it stays inside `libjllama`. **Every ggml default llama.cpp's own
   CMakeLists changes before its `add_subdirectory(ggml)` is repeated** -- `GGML_LLAMAFILE_DEFAULT`
   and `GGML_CUDA_GRAPHS_DEFAULT` at b11901 (unchanged since b11639) -- because adding ggml first skips that block; re-check with
   `grep -n _DEFAULT CMakeLists.txt` at the new tag on every bump. The second one was missing once:
@@ -227,7 +227,8 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   `sse42`, `sandybridge`, `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`,
   `cascadelake`, `cooperlake`, `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and
   `libggml-rpc.so`; **14 on Linux aarch64** (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16,
-  SVE, i8mm, SVE2, SME); **13 on Android aarch64** (ggml's own Android list of 7, `android_armv8.0_1`
+  SVE, i8mm, SVE2, SME); **9 on Linux s390x** (3 modules: `z13`, scalar, `z15` with VXE2, `z16` with
+  VXE2 + NNPA; see "Linux s390x"); **13 on Android aarch64** (ggml's own Android list of 7, `android_armv8.0_1`
   to `android_armv9.2_2`); **7 on Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path
   `$ORIGIN` only, **except on Android,
   where the libraries carry no run path at all**: CMake's Android platform drops the flag
@@ -300,7 +301,7 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   build.
 - **Built in manylinux_2_28** (AlmaLinux 8, gcc-toolset-14, glibc 2.28): x86-64 in the dockcross
   image the CUDA job already used, aarch64 natively on `ubuntu-24.04-arm` inside the pypa image
-  (`.github/manylinux/manylinux_2_28-aarch64`, see "Linux aarch64"); the static s390x library is
+  (`.github/manylinux/manylinux_2_28-aarch64`, see "Linux aarch64"); the s390x libraries are
   cross-compiled against the pypa s390x image as a sysroot (see "Linux s390x"). manylinux2014's GCC 10
   lacked `-mavxvnni` and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check). The glibc
   floors meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39, s390x from 2.38.
@@ -491,11 +492,11 @@ new job:**
 > specific to a configuration the tests cannot run in are covered by the layers that *can* see
 > them -- the packaging check and the Java suite against the real artifact.**
 
-Today that means 2 jobs build a shipped artifact **and** run `ctest` (`build-linux-s390x`,
-`build-macos-arm64-metal-15` -- the two static platforms; every modular library-jar job additionally
-runs the one plain-C test `c_abi` against the shared `llama` it ships, see "Modular natives") and 7
+Today that means 1 job builds a shipped artifact **and** runs `ctest` (`build-macos-arm64-metal-15`
+-- the one static platform; every modular library-jar job additionally runs the one plain-C test
+`c_abi` against the shared `llama` it ships, see "Modular natives", the s390x one under qemu) and 8
 only test
-(`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`, `test-cpp-windows-x86_64`,
+(`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`, `test-cpp-linux-s390x`, `test-cpp-windows-x86_64`,
 `test-cpp-windows-arm64` -- forced, see below -- plus `build-windows-x86_64-msvc`, the MSVC
 toolchain build that ships no jar since the modular natives but still runs `ctest` and the Java
 suite, and `build-macos-arm64-metal` and `build-macos-arm64-no-metal`, whose artifacts are not
@@ -1531,6 +1532,7 @@ Current patches:
 | `0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch` | **An `--embedding` model that is asked to generate crashes the process in `ggml_gallocr_alloc_graph`** (SIGSEGV on Linux, 0xC0000005 with both Windows toolchains), since upstream #30445 (`cb55ffe6e`, "graph: skip the LM head for pooled embeddings", b11574..b11612). `ggml_gallocr_alloc_graph()` assigns every tensor by **position** from the graph it was reserved with, and `ggml_gallocr_needs_realloc()` validates every node and every node's sources but of the **leafs only the count**. Since #30445 the LM head is expanded by `build_logits()` *after* `build_pooling()`, so an embeddings context reserves a graph that expands `t_embd` first and `t_logits` second, while a generation step on it (the server calls `llama_set_embeddings(ctx, false)` for a slot that samples) expands only `t_logits`, whose first source is `output.weight`: same node and leaf counts, every leaf after it shifted by one. An input leaf then lands on the slot of a weight (`buffer_id -1`) and, with the asserts compiled out, `ggml_vbuffer_tensor_alloc()` indexes `galloc->buffers[-1]`; a leaf landing on another input's slot is not size-checked either. The patch validates the leafs exactly as the nodes are validated, so an invalid leaf makes the allocator reserve again (one buffer) or return false, on which `ggml_backend_sched` reserves the graph itself. **Found by** Publish run 38648257387 (2026-10-14, the first full run since b11558): `ErrorHandlingTest` loads its model with `enableEmbedding()` and posts an infill request to it -- its first test in JUnit's order -- and the fork died in all three Java test jobs (`ggml_gallocr_alloc_graph <- ggml_backend_sched_alloc_graph <- llama_context::process_ubatch <- decode <- server_context_impl::update_slots`). **Reproduced locally without a downloaded model** (a random 2-layer llama GGUF with FIM tokens, context 128): infill crashes with `--embedding` and works without; a debug print showed leaf 31 `out_ids` arriving at a slot with no allocation; reverting `cb55ffe6e` makes it pass, and so does this patch -- with greedy sampling the `--embedding` model then returns the same tokens as the model without, run after run. Upstream master (`a0e6dc738`) still lacks the check; **not yet filed upstream**. **Runnable guard: `src/test/cpp/test_gallocr_leafs.cpp`** (two graphs with the same counts and the leafs swapped). **Drop-check on every bump:** read `ggml_gallocr_needs_realloc()` in `ggml/src/ggml-alloc.c` at the new tag -- once it walks `graph->leafs` itself, drop this patch rather than refreshing it. |
 | `0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch` | **A slot's prompt cache survived a change of the LoRA adapters it was computed with.** `launch_slot_with_task()` (`tools/server/server-context.cpp`) clears the cache when a request names its own adapters and they differ from the slot's (`lora_should_clear_cache`, which keeps it only for aLoRA), but a request that names none takes `params_base.lora_adapters` in the `else` branch without that check. So the cache survived `SET_LORA` (`LlamaModel.setLoraAdapter(s)`, upstream's `POST /lora-adapters`) and the return to the server's adapters after a request with its own, and the slot answered like neither adapter set, silently. **Measured** (J9 of the bug-hunt brief, b11639, upstream's own LoRA test pair `stories15M_MOE-F16.gguf` + `moe_shakespeare15M.gguf`, greedy, one slot): after `setLoraAdapter(0, 0f)` the warm slot answered ". He saw a picture of a bird ..." where an emptied slot with the same scale answers " was a little girl ..."; only `eraseSlot(0)` restored it (F67). The patch applies the per-request rule in the `else` branch too; equal sets keep the cache as before. **A second hunk starts every slot with the server's adapters in `init()`** (`slot.lora = params_base.lora_adapters;`): `slot.lora` used to start empty, so a never-used slot of a server started with `--lora` read as "computed under no adapters", and its first task logged `0 loras -> 1 loras` and cleared a prompt it already held -- a state restored into it (`SLOT_RESTORE`) or loaded from the host-memory prompt cache by `get_available_slot()`, both computed under the server's adapters (F240). Upstream has the same defect on its HTTP route, so the patch is upstream-shaped; **not yet filed upstream**. Not covered, and said in `setLoraAdapters`' Javadoc: the host-memory prompt cache (`--cache-ram`, on by default) stores slot states without their adapters. **Runnable guard: `src/test/cpp/test_lora_cache.cpp`** (a random llama model and a random LoRA adapter on K, V and the FFN output, written by the test; five cases). **Drop-check on every bump, one per hunk:** read the `else` branch of the "process per-request lora adapters" block in `launch_slot_with_task()` at the new tag -- once it compares `params_base.lora_adapters` with `slot.lora` and clears the prompt (or `SET_LORA` clears the slots), drop that hunk rather than refreshing it; and read the slot loop of `init()` -- once it sets `slot.lora` from `params_base.lora_adapters`, drop that hunk. The patch goes when both have. |
 | `0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch` | **The expert matmuls of a MoE model over repacked CPU weights ran one token at a time on a static thread split.** `forward_mul_mat_id()` (`ggml/src/ggml-cpu/repack.cpp`) -- the path of every MoE model whose experts are repacked at load: MXFP4 (gpt-oss), Q4_0, IQ4_NL and Q4_K on AVX2, their interleaved forms on ARM -- multiplied each token routed to an expert with its own gemv, although the gemm kernel for the type exists, and gave thread `ith` a fixed row range of every expert, so each expert matmul waited for the slowest thread. Measured with a random-weight gpt-oss-20b in ggml-org's MXFP4 layout on the `alderlake` module (the Core Ultra's), 4 threads: 72 % of prompt time was that gemv loop, 13.9 % of generation time the barrier wait after it ([`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md)). The patch adds a batched path -- (expert, column chunk) units handed out through `ggml_threadpool_chunk_add`, every group of up to 16 of an expert's tokens quantized interleaved (`ggml_quantize_mat_t`, as `forward_mul_mat` does) and multiplied with `gemm`, a rest of fewer than four by gemv -- and **keeps upstream's path behind a process-wide switch**: `ggml_backend_cpu_set/get_repack_mmid_batched` (`ggml-cpu.h`, and in the CPU backend's `get_proc_address` table, which is how libjllama reaches it in a `GGML_BACKEND_DL` build), on by default, `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment starts it off. Thread 0 reads it once per op and publishes the choice in the work buffer, so a flip during a compute cannot split the threads; `work_size()` reserves the batched path's scratch either way (~420 KB per thread for gpt-oss). Exposed as `LlamaModel.setCpuMoeBatched` / `isCpuMoeBatched`, `jllama_set/get_cpu_moe_batched` and the FFM `Jllama`: the switch exists so a user can measure both paths on their own hardware -- the P-core/E-core effect the static split suggests is unmeasured (TODO.md). **Measured, one binary, the environment variable flipped:** prompt processing +47 % (42.63 -> 62.76 t/s), token generation +26 % (7.90 -> 9.97), logits equal to rounding (`llama-perplexity --kl-divergence`: mean KLD 0.000000, max 0.000002, same top token 100 %). **Runnable guard: `src/test/cpp/test_moe_repack.cpp`** (both paths against ggml's generic `MUL_MAT_ID` over the same weights; the switch resolved through `get_proc_address`). Upstream-shaped without the switch; **not yet filed upstream**. **Drop-check on every bump:** read `forward_mul_mat_id()` in `ggml/src/ggml-cpu/repack.cpp` at the new tag -- once it calls `gemm` for an expert's batched rows and hands its work out through `ggml_threadpool_chunk_add`, drop this patch rather than refreshing it; the switch goes with it, and `setCpuMoeBatched` then throws (`LlamaException`, no entry point), so the Java, C and FFM API needs the decision whether to remove it or keep it as a no-op. |
+| `0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch` | **The IBM Z CPU variants (`GGML_CPU_ALL_VARIANTS` on s390x) did not build with clang, and had no module below z15.** (1) `ggml-cpu-impl.h` and `llamafile/sgemm.h` both include `<vecintrin.h>` under `__VXE__ \|\| __VXE2__`; clang's header has no include guard (GCC's has `_VECINTRIN_H`), so `ggml-cpu.c`, which includes both, failed with "redefinition of 'vec_extract'". The include in `sgemm.h` came with ggml-org/llama.cpp#14273 and is not needed: the header declares no vector type, and both of its includers include `ggml-cpu-impl.h` -- `sgemm.cpp` after it, where `__VXE__` is not defined yet (`ggml-cpu-impl.h` defines it from `__VEC__`), so it never fired there. The patch removes it. (2) Upstream's list starts at `z15`, so a z13/z14 would have found no CPU backend at all; the patch adds `ggml-cpu-z13` (scalar, `-march=z13`, score 1), so the jar keeps the z13 floor the static library had. Measured on cfarm191 (z16, b11901, Qwen3-0.6B Q4_K_M big-endian, 4 threads): `z13` 19.7 / 13.6 t/s, `z15` 90.0-95.5 / 57.3-58.3, `z16` 82.6-88.3 / 51.9-53.9 (prompt / generation); Q4_K_M against a Q8_0 reference on z13: mean KLD 0.0777 on `z13`, 0.0746 on `z16`. **Guard:** `build-linux-s390x` builds the variants with clang 18 -- without part (1) the build fails -- and checks that `libggml-cpu-z13/z15/z16.so` all exist, which is what fails without part (2). Not yet filed upstream. **Drop-check on every bump:** `grep -n vecintrin ggml/src/ggml-cpu/llamafile/sgemm.h` (a hit: part 1 still needed) and the s390x block of `ggml_add_cpu_backend_variant` calls in `ggml/src/CMakeLists.txt` (no `z13`/scalar entry: part 2 still needed). Measured at b11901: both still needed. |
 
 **Dropped patches** (`0004`, `0005`, `0009`, `0010`, `0011`, `0012`, `0013`, `0016`, `0019` -- upstream fixed
 each defect itself, or for `0016` added the model; `0019` is this project's own fix, merged upstream as #30505) are recorded in [`docs/history/dropped-llama-patches.md`](docs/history/dropped-llama-patches.md):
@@ -2099,7 +2101,7 @@ folder name is produced on both ends.
 
 A plain `cmake -B build` is the **static** build: `CMakeLists.txt` forces `BUILD_SHARED_LIBS OFF`, so
 upstream `llama` and `ggml` are static libraries linked into one `jllama` library (what ships for
-s390x and macOS, and what every `test-cpp-*` job and the local test loop build). `LlamaLoader` then
+macOS, and what every `test-cpp-*` job and the local test loop build). `LlamaLoader` then
 extracts and loads that single file (plus the files in its `jllama-extras.txt`, and `ggml-metal.metal`
 from a Metal build that does not embed it). The shipped Linux / Windows / Android library jars are
 the **modular** build, `cmake -B build -DJLLAMA_BACKEND_DL=ON` (see "Modular natives"): ggml shared,
@@ -2568,11 +2570,37 @@ Wiring:
   ARM hardware, as this job did before.
 - Branch protection: a required check pinned to "Build and Test Linux aarch64" must be repointed.
 
-### Linux s390x: big-endian cross-build + qemu test gate
+### Linux s390x: big-endian cross-build, IBM Z CPU variants, qemu test gate
 
 `build-linux-s390x` adds **IBM Z (s390x, big-endian)** — the one target whose
 byte order differs from every other platform. It **cross-compiles** at native x86 speed — no emulated
-build — and then runs the **full C++ unit suite under `qemu-user`**.
+build — a **modular library jar with one CPU module per IBM Z level**, and `test-cpp-linux-s390x`
+runs the **full C++ unit suite under `qemu-user`** against the static build of the same toolchain.
+
+**The CPU variants (since 6.1.0).** `-DJLLAMA_BACKEND_DL=ON` with the toolchain below: `libjllama`,
+`libllama`, `libmtmd`, `libggml`, `libggml-base`, `libggml-rpc` and `libggml-cpu-z13` (scalar),
+`-z15` (VXE2) and `-z16` (VXE2 + NNPA), of which `ggml_backend_load_best` loads the best by the
+kernel's `AT_HWCAP` (`arch/s390/cpu-feats.cpp`: VXE2 bit 15, NNPA bit 20). Everything but the two
+vector modules is built at the toolchain's `-march=z13`, so the floor stays z13. **Two things in
+upstream's s390x variant list needed `llama/patches/0023`:** clang could not build the vector modules
+(`ggml-cpu-impl.h` and `llamafile/sgemm.h` both include `<vecintrin.h>`, and clang's copy has no
+include guard -- "redefinition of 'vec_extract'"; GCC's has one, and upstream documents GCC as the
+s390x compiler), and the list started at z15, so a z13/z14 would have had no CPU backend at all. The
+patch drops the include from `sgemm.h` (it declares no vector type, and both its includers include
+`ggml-cpu-impl.h` too; it came with ggml-org/llama.cpp#14273) and adds the scalar `z13` variant. z17
+(`-march=arch15`) is skipped by ggml's own compiler check: clang 18 does not accept the flag.
+**Measured on cfarm191** (z16, LinuxONE, Debian 13, clang 19.1.7, b11901 with the patch; Qwen3-0.6B
+Q4_K_M converted to big-endian, `llama-bench -t 4 -p 64 -n 16`, two interleaved rounds): `z13`
+19.7-19.8 / 13.6-13.8 t/s, `z15` 90.0-95.5 / 57.3-58.3, `z16` 82.6-88.3 / 51.9-53.9 (prompt /
+generation) -- 4.5x and 4x over the scalar library every jar up to 6.0.x shipped. Correctness, by
+`llama-perplexity --kl-divergence` against a Q8_0 reference computed on `z13`: the Q4_K_M model
+lands at a mean KLD of 0.0777 on `z13` and 0.0746 on `z16` -- equally far from it; the 0.0087
+between the two modules is about a tenth of what the quantization costs. **Under qemu** (the
+`c_abi` run of `build-linux-s390x`, the RHEL 8 row of `smoke-glibc-floor`) ggml loads `z15`:
+qemu-user's CPU model has VXE2 and no NNPA, so CI runs the vector code too, in emulation (measured
+locally with the job's toolchain: `c_abi` reports `CPU : VXE = 1`, and the library loads in the UBI 8
+OpenJDK 21 image on RHEL 8.10). `build-linux-s390x` checks that all three modules were built: a
+variant whose `-march` the compiler rejects is skipped by the configure, not reported.
 
 **The toolchain gives it the manylinux_2_28 floor** (glibc 2.28, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`),
 like the other two Linux CPU jars, without an s390x runner:
@@ -2610,10 +2638,11 @@ and succeeds with it, for an executable, a PIE and a shared object, and the prog
 to COMDAT names; those of classes with a key function and of internal types (lambdas) sat in plain
 `.rodata`, so the toolchain also passes **`-fdata-sections`**. **And the link is not the test:** it
 fails only where GCC code happens to reference an odd name, so `verify-native-deps.py` reads the
-static symbol table of the s390x `libjllama.so` and fails any `_ZTS*` at an odd address -- by every
-binding, because the export map makes all of them local (`TYPEINFO_NAME_ALIGNMENT` in
-`nativedeps.py`; a library without any typeinfo name fails too, since it would pass vacuously). It
-runs in `build-linux-s390x` after the build. Measured on two local builds of the library with the
+static symbol table of every s390x library and fails any `_ZTS*` at an odd address -- by every
+binding, because the export map makes all of `libjllama`'s local (`TYPEINFO_NAME_ALIGNMENT` in
+`nativedeps.py`; a `libjllama` without any typeinfo name fails too, since it would pass vacuously;
+the other libraries of the directory are checked when they carry any). It runs in
+`build-linux-s390x` after the build. Measured on two local builds of the library with the
 stand-in sysroot: script alone, 444 of 1833 typeinfo names odd; script plus `-fdata-sections`, 0.
 
 Until 2026-10-25 the job used the runner's `g++-s390x-linux-gnu` (GCC 13) with its glibc 2.39
@@ -2625,15 +2654,17 @@ dependencies `libpthread.so.0` and `libdl.so.2` (glibc 2.28 has not merged them 
 tests under qemu against the sysroot and natively on a LinuxONE z16 (cfarm191, Debian 13), and the
 jar loads on RHEL 8.10 s390x where the 6.0.0 one fails with `GLIBC_2.38 not found`.
 
-That `ctest` run is a **real big-endian correctness gate** for the byte-order-sensitive surface — the
+That `ctest` run (`test-cpp-linux-s390x`) is a **real big-endian correctness gate** for the byte-order-sensitive surface — the
 little-endian WAV writer (`tts_wav.hpp`), the JSON/token/embedding transforms, and the JNI helpers —
 which is where an endian bug in *our* code could hide. Model-backed **Java** tests are deliberately
 **not** run under emulation (a JVM + GGUF inference under `qemu-user` is slow and flaky); the Java↔JNI
 boundary uses host-native array copies (endian-transparent), so the C++ gate covers the actual risk.
 `-DGGML_OPENMP=OFF` sidesteps cross-libgomp issues (ggml uses its own `std::thread` pool).
-`-DGGML_NATIVE=OFF` also switches VXE off, so the binary is **scalar** on purpose; **do not "fix" a
-VXE-related compile error with `-DGGML_VXE=ON`** (it needs `-march=z15` too and raises the hardware
-floor) -- measured in the `0013` note of `docs/history/dropped-llama-patches.md`. s390x is a
+`-DGGML_NATIVE=OFF` switches VXE off for everything outside the variant modules, which carry their
+own `-march`; **do not pass `-DGGML_VXE=ON`**: ggml then adds VXE2 to every variant, the `z13` one
+included, which would score 0 without VXE2 and leave a z13/z14 without a CPU backend (the static
+build of the test job stays scalar; the `0013` note of `docs/history/dropped-llama-patches.md`
+measured what the flag does to it). s390x is a
 CPU platform like aarch64, so it ships as the natives jar `cpu-linux-s390x`, part of `llama-platform`
 (`OSInfo` maps `os.arch=s390x` → `Linux/s390x`).
 **Fail-loud** and in `package.needs` like every other build. (Upstream llama.cpp already supports s390x
