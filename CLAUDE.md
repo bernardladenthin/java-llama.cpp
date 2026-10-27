@@ -2595,7 +2595,10 @@ Q4_K_M converted to big-endian, `llama-bench -t 4 -p 64 -n 16`, two interleaved 
 generation) -- 4.5x and 4x over the scalar library every jar up to 6.0.x shipped. Correctness, by
 `llama-perplexity --kl-divergence` against a Q8_0 reference computed on `z13`: the Q4_K_M model
 lands at a mean KLD of 0.0777 on `z13` and 0.0746 on `z16` -- equally far from it; the 0.0087
-between the two modules is about a tenth of what the quantization costs. **Under qemu** (the
+between the two modules is about a tenth of what the quantization costs. The CI-built jar (run
+40475405391) loads `libggml-cpu-z16.so` there and serves the same model through `ServerLauncher` at
+29.9-35.6 t/s generation with 4 threads, against 9.9-10.0 for the static 6.1.0-SNAPSHOT jar before
+it (TODO.md, "Linux s390x"). **Under qemu** (the
 `c_abi` run of `build-linux-s390x`, the RHEL 8 row of `smoke-glibc-floor`) ggml loads `z15`:
 qemu-user's CPU model has VXE2 and no NNPA, so CI runs the vector code too, in emulation (measured
 locally with the job's toolchain: `c_abi` reports `CPU : VXE = 1`, and the library loads in the UBI 8
