@@ -2702,10 +2702,13 @@ jobs:
           echo "CXX=g++-14" >> "$GITHUB_ENV"
       - name: Display CPU Info
         uses: bernardladenthin/actions/common/print-host-info@44390bd464395f560f4170d2c4bfb7a6348541b3 # v1.1.0
+      # armv8.2-a+dotprod: the plain ARMv8 baseline has no repacked CPU weights at all, so all 24
+      # test_moe_repack cases (llama/patches/0022) skipped here; dotprod selects the q4_0_4x4 and
+      # q4_K_8x4 kernels, the ones an N1-class server runs (the shipped jar's armv8.2 modules)
       - name: Build libraries
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DGGML_NATIVE=OFF -DBUILD_TESTING=ON"
+          .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 -DBUILD_TESTING=ON"
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests

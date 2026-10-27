@@ -66,6 +66,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **Faster prompt processing for MoE models on the CPU** (`llama/patches/0022`): the expert matmuls
+  over repacked weights batch the tokens of an expert through `gemm` and hand their work out
+  dynamically, instead of one gemv per token on a fixed thread split. With trained weights
+  (gpt-oss-20b MXFP4, Qwen3-30B-A3B Q4_K_M, OLMoE-1B-7B Q4_0) prompt processing is +13 % to +66 %
+  on a Zen 3, a Neoverse-N1 and an IBM z16, generation unchanged
+  ([`docs/benchmarks/moe-repack-real-weights.md`](docs/benchmarks/moe-repack-real-weights.md)).
+  `LlamaModel.setCpuMoeBatched(false)` (or `GGML_CPU_REPACK_MMID_BATCHED=0`) restores upstream's
+  path for a comparison on one's own machine.
 - **`TextToSpeech.supportsSpeakerReference()`** (and `FfmTextToSpeech.supportsSpeakerReference()`,
   C API `jllama_tts_supports_speaker_reference()`): whether the loaded pair clones a voice from a
   speaker reference clip, llama.cpp's `mtmd_helper_cap::audio_gen_spk_ref` (b11901, #31183) --

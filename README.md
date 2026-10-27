@@ -1688,6 +1688,9 @@ core takes fewer of them. Upstream llama.cpp multiplies one token at a time and 
 fixed share. The results are the same up to rounding; measured on gpt-oss-20b in a sandbox, prompt
 processing was 47 % faster and token generation 26 %
 ([`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md)).
+With trained weights (gpt-oss-20b, Qwen3-30B-A3B, OLMoE) prompt processing was 13 % to 66 % faster
+on a Zen 3, a Neoverse-N1 and an IBM z16, token generation unchanged
+([`docs/benchmarks/moe-repack-real-weights.md`](docs/benchmarks/moe-repack-real-weights.md)).
 
 Both paths stay available, so the difference can be measured on your own machine:
 

@@ -46,11 +46,13 @@ fell from 13.9 % to 1.7 % of all thread time. llama-perplexity with --kl-diverge
 unchanged code: mean KLD 0.000000, max 0.000002, same top token 100 %.
 
 With real weights (b11901, llama-bench pp512, switch off -> on, t/s;
-docs/benchmarks/moe-repack-real-weights.md): a Ryzen 7 5800H (Zen 3, haswell module), 8 threads, gpt-oss-20b MXFP4
-41.7 -> 59.6, Qwen3-30B-A3B Q4_K_M 58.3 -> 84.7, OLMoE-1B-7B Q4_0 138.8 -> 190.0; a Neoverse-N1
-(dotprod, armv8.2_2 module), 32 threads, 177.0 -> 278.7, 190.7 -> 215.7 and 705.9 -> 990.0. Token
-generation is unchanged within noise. KLD against the unchanged code on wikitext-2: 0.000000 for
-MXFP4 and Q4_0 (same top token 100 %); 0.0075 for Q4_K, where the gemm and gemv kernels round
+docs/benchmarks/moe-repack-real-weights.md): a Ryzen 7 5800H (Zen 3, haswell module), 8 threads,
+gpt-oss-20b MXFP4 41.7 -> 59.6, Qwen3-30B-A3B Q4_K_M 58.3 -> 84.7, OLMoE-1B-7B Q4_0
+138.8 -> 190.0; a Neoverse-N1 (dotprod, armv8.2_2 module), 32 threads, 177.0 -> 278.7,
+190.7 -> 215.7 and 705.9 -> 990.0; an IBM z16 (z16 module, big-endian OLMoE Q4_0), 4 threads,
+45.8 -> 76.2. Token generation is unchanged within noise. KLD against the unchanged code on
+wikitext-2: 0.000000 for MXFP4 and Q4_0 (same top token 100 %, 99.98 % on the z16); 0.0075 for
+Q4_K, where the gemm and gemv kernels round
 differently and a router flips experts on near ties -- upstream's repack path is as far from
 --no-repack (0.0080 on the N1) as the batched one (0.0085).
 
