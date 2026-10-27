@@ -35,7 +35,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
 | `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |
 | `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`, which loads the tokenizer only: such a model answers the meta, tokenize and detokenize calls and refuses every other with `JLLAMA_STATUS_ERROR`), with an optional load-progress callback |
-| `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, the `media_marker` a raw multimodal prompt places, chat template, the GGUF key/value map) |
+| `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, the `capabilities` `chat` / `audio_gen` / `audio_stream` llama.cpp derives from the loaded projector, the `media_marker` a raw multimodal prompt places, chat template, the GGUF key/value map) |
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
 | `jllama_chat_completions_stream_request()` / `_receive()` / `jllama_task_release()` | a streamed one: a task id, then one `{"data": <chunk>, "stop": <bool>}` envelope per call until `stop` |
 | `jllama_chat_completions_request()` | a streamed chat completion whose results are llama.cpp's raw result objects (received with `jllama_completions_stream_receive`) |
@@ -57,7 +57,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_set_cpu_moe_batched()`, `jllama_get_cpu_moe_batched()` | how the CPU backend runs the expert matmuls of a MoE model over repacked weights: batched per expert with the work handed out dynamically (the default), or upstream's one gemv per token over a static split (`llama/patches/0022`); process-wide, `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment starts it off |
 | `jllama_server_start()`, `jllama_server_start_attached()`, `jllama_server_stop()`, `jllama_server_is_running()`, `jllama_server_set_worker_command()` | the embedded llama-server (`NativeServer`): the full upstream server from an argv, WebUI included, or the HTTP frontend attached to a loaded model; router mode's worker command. Not on Android (server.cpp does not build there) |
 | `jllama_rpc_server_serve()`, `jllama_rpc_server_stop()`, `jllama_rpc_server_listening()`, `jllama_rpc_server_devices()`, `jllama_strings_free()` | the RPC server (`RpcServer`): this process's devices served to llama.cpp RPC clients, one per process |
-| `jllama_tts_load()`, `jllama_tts_synthesize()`, `jllama_tts_free()`, `jllama_bytes_free()` | text to speech (`TextToSpeech`): a Qwen3-TTS backbone and mmproj, a WAV per call |
+| `jllama_tts_load()`, `jllama_tts_synthesize()`, `jllama_tts_supports_speaker_reference()`, `jllama_tts_free()`, `jllama_bytes_free()` | text to speech (`TextToSpeech`): a Qwen3-TTS backbone and mmproj, a WAV per call; whether the pair clones a voice from a speaker reference (a pair that does not refuses one) |
 | `jllama_finetune()` | fine-tuning (`LlamaTrainer`): one training run from its JSON configuration |
 
 That is every native entry point of the Java API: `LlamaModel`, `LlamaQuantizer`, `NativeServer`,

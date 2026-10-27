@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11887](https://img.shields.io/badge/llama.cpp-%23b11887-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11887)  
+[![llama.cpp b11901](https://img.shields.io/badge/llama.cpp-%23b11901-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11901)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -756,6 +756,9 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 ```
 
 `LlamaModel.supportsVision()` / `supportsAudio()` report which modalities the loaded projector enables.
+`getModelMeta()` adds what llama.cpp derives from it: `supportsChat()` (false only for a
+text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
+`POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`).
 
 ### Tool Calling
 
@@ -913,7 +916,9 @@ try (TextToSpeech tts = new TextToSpeech(
 Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
-voice cloning from a reference clip. As with `LlamaModel`, native memory is not GC-managed — use
+voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
+clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
+`LlamaException`). As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream

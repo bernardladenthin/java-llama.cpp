@@ -12,14 +12,15 @@ import unittest
 from buildcheck import nativedeps
 
 
-def elf64(needed, runpath=None, glibc=(), exports=(), undefined=()):
+def elf64(needed, runpath=None, glibc=(), exports=(), undefined=(), symtab=()):
     """A minimal little-endian ELF64 with a .dynstr and a .dynamic naming `needed` (and a
     DT_RUNPATH when given), plus a .gnu.version_r requiring the `glibc` symbol versions, plus a
-    .dynsym defining `exports` (global) and referencing `undefined`."""
+    .dynsym defining `exports` (global) and referencing `undefined`, plus a .symtab defining the
+    `symtab` (name, address) pairs as local objects."""
     strtab = b"\0"
     offsets = {}
     for name in (list(needed) + ([runpath] if runpath is not None else []) + (["libc.so.6"] if glibc else [])
-                 + list(glibc) + list(exports) + list(undefined)):
+                 + list(glibc) + list(exports) + list(undefined) + [n for n, _ in symtab]):
         offsets[name] = len(strtab)
         strtab += name.encode() + b"\0"
     dynamic = b"".join(struct.pack("<qQ", 1, offsets[n]) for n in needed)
@@ -36,16 +37,20 @@ def elf64(needed, runpath=None, glibc=(), exports=(), undefined=()):
         dynsym += struct.pack("<IBBHQQ", offsets[name], (1 << 4) | 2, 0, 1, 0x1000, 8)
     for name in undefined:  # SHN_UNDEF: a reference, not an export
         dynsym += struct.pack("<IBBHQQ", offsets[name], (1 << 4) | 2, 0, 0, 0, 0)
+    statics = bytes(24)  # the null symbol
+    for name, address in symtab:  # STB_LOCAL (0) << 4 | STT_OBJECT (1), defined in section 1
+        statics += struct.pack("<IBBHQQ", offsets[name], 1, 0, 1, address, 8)
     header_size, section_size = 64, 64
     strtab_off = header_size
     dynamic_off = strtab_off + len(strtab)
     verneed_off = dynamic_off + len(dynamic)
     dynsym_off = verneed_off + len(verneed)
-    shoff = dynsym_off + len(dynsym)
+    symtab_off = dynsym_off + len(dynsym)
+    shoff = symtab_off + (len(statics) if symtab else 0)
     header = bytearray(header_size)
     header[:6] = b"\x7fELF\x02\x01"
     struct.pack_into("<Q", header, 0x28, shoff)
-    nsections = 3 + (1 if glibc else 0) + (1 if exports or undefined else 0)
+    nsections = 3 + (1 if glibc else 0) + (1 if exports or undefined else 0) + (1 if symtab else 0)
     struct.pack_into("<HH", header, 0x3A, section_size, nsections)
     sections = bytes(section_size)  # SHT_NULL
     sections += struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, strtab_off, len(strtab), 0, 0, 1, 0)  # SHT_STRTAB
@@ -54,7 +59,47 @@ def elf64(needed, runpath=None, glibc=(), exports=(), undefined=()):
         sections += struct.pack("<IIQQQQIIQQ", 0, 0x6FFFFFFE, 0, 0, verneed_off, len(verneed), 1, 1, 4, 0)
     if exports or undefined:
         sections += struct.pack("<IIQQQQIIQQ", 0, 11, 0, 0, dynsym_off, len(dynsym), 1, 1, 8, 24)  # SHT_DYNSYM
-    return bytes(header) + strtab + dynamic + verneed + dynsym + sections
+    if symtab:
+        sections += struct.pack("<IIQQQQIIQQ", 0, 2, 0, 0, symtab_off, len(statics), 1, 1, 8, 24)  # SHT_SYMTAB
+    return (bytes(header) + strtab + dynamic + verneed + dynsym + (statics if symtab else b"") + sections)
+
+
+def elf_symtab(symbols, big_endian=False, is64=True):
+    """A minimal ELF with only a .strtab and a .symtab: the (name, address, shndx) triples as local
+    objects -- in either byte order and class, s390x being big-endian ELF64."""
+    end = ">" if big_endian else "<"
+    strtab = b"\0"
+    offsets = {}
+    for name, _, _ in symbols:
+        offsets[name] = len(strtab)
+        strtab += name.encode() + b"\0"
+    entry = 24 if is64 else 16
+    table = bytes(entry)
+    for name, address, shndx in symbols:
+        if is64:
+            table += struct.pack(end + "IBBHQQ", offsets[name], 1, 0, shndx, address, 1)
+        else:
+            table += struct.pack(end + "IIIBBH", offsets[name], address, 1, 1, 0, shndx)
+    header_size = 64 if is64 else 52
+    section_size = 64 if is64 else 40
+    strtab_off = header_size
+    table_off = strtab_off + len(strtab)
+    shoff = table_off + len(table)
+    header = bytearray(header_size)
+    header[:6] = b"\x7fELF" + bytes([2 if is64 else 1, 2 if big_endian else 1])
+    if is64:
+        struct.pack_into(end + "Q", header, 0x28, shoff)
+        struct.pack_into(end + "HH", header, 0x3A, section_size, 3)
+        sections = bytes(section_size)
+        sections += struct.pack(end + "IIQQQQIIQQ", 0, 3, 0, 0, strtab_off, len(strtab), 0, 0, 1, 0)
+        sections += struct.pack(end + "IIQQQQIIQQ", 0, 2, 0, 0, table_off, len(table), 1, 1, 8, entry)
+    else:
+        struct.pack_into(end + "I", header, 0x20, shoff)
+        struct.pack_into(end + "HH", header, 0x2E, section_size, 3)
+        sections = bytes(section_size)
+        sections += struct.pack(end + "IIIIIIIIII", 0, 3, 0, 0, strtab_off, len(strtab), 0, 0, 1, 0)
+        sections += struct.pack(end + "IIIIIIIIII", 0, 2, 0, 0, table_off, len(table), 1, 1, 4, entry)
+    return bytes(header) + strtab + table + sections
 
 
 def elf64_segments(alignments):
@@ -455,6 +500,68 @@ class OpenMpDependencyTest(unittest.TestCase):
             self.assertIn("libgcc_s.so.1", nativedeps.ALLOWED[directory], directory)
 
 
+class TypeinfoNameAlignmentTest(unittest.TestCase):
+    """s390x: every typeinfo name (_ZTS*) at an even address, the ABI's promise GCC's LARL relies on
+    (.github/manylinux/s390x-typeinfo-names.ld)."""
+
+    def test_elf_symbols_reads_the_static_table_in_both_byte_orders(self):
+        symbols = [("_ZTS1X", 0x2001, 5), ("undefined", 0, 0), ("absolute", 0x10, 0xFFF1), ("_ZTSSt9exception", 0x40, 7)]
+        for big_endian in (False, True):
+            for is64 in (True, False):
+                data = elf_symtab(symbols, big_endian, is64)
+                self.assertEqual(nativedeps.elf_symbols(data), [("_ZTS1X", 0x2001), ("_ZTSSt9exception", 0x40)],
+                                 (big_endian, is64))
+        # the dynamic table is not the static one, and a library without .symtab has no symbols
+        self.assertEqual(nativedeps.elf_symbols(elf64(["libc.so.6"], exports=["JNI_OnLoad"])), [])
+        self.assertEqual(nativedeps.elf_symbols(elf64(["libc.so.6"], symtab=[("_ZTS1K", 0x30)])), [("_ZTS1K", 0x30)])
+
+    def test_only_s390x_asks_for_it(self):
+        self.assertEqual(nativedeps.typeinfo_name_alignment("x/Linux/s390x/cpu/libjllama.so"), 2)
+        for rel in ("x/Linux/x86_64/cpu/libjllama.so", "x/Linux/aarch64/cpu/libjllama.so",
+                    "x/Linux-Android/aarch64/cpu/libjllama.so", "libjllama.so"):
+            self.assertIsNone(nativedeps.typeinfo_name_alignment(rel), rel)
+
+    def test_an_odd_typeinfo_name_is_named_and_an_even_one_passes(self):
+        rel = "x/Linux/s390x/cpu/libjllama.so"
+        self.assertEqual(nativedeps.typeinfo_name_violations(rel, [("_ZTS1X", 0x2000), ("odd_but_no_typeinfo", 0x3)], 2), [])
+        found = nativedeps.typeinfo_name_violations(
+            rel, [("_ZTSSt19_Sp_make_shared_tag", 0x12419CF), ("_ZTS1X", 0x2000), ("data", 0x1)], 2)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("1 of 2 typeinfo names", found[0])
+        self.assertIn("_ZTSSt19_Sp_make_shared_tag", found[0])
+        self.assertIn("s390x-typeinfo-names.ld", found[0])
+        many = [(f"_ZTS{i}X", 2 * i + 1) for i in range(10)]
+        self.assertIn("(10 in all)", nativedeps.typeinfo_name_violations(rel, many, 2)[0])
+
+    def test_a_library_without_typeinfo_names_is_never_a_pass_where_it_must_have_them(self):
+        found = nativedeps.typeinfo_name_violations("x/Linux/s390x/cpu/libjllama.so", [("JNI_OnLoad", 0x1000)], 2)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("no typeinfo name", found[0])
+        self.assertEqual(nativedeps.typeinfo_name_violations("x/Linux/s390x/cpu/libother.so", [], 2, required=False), [])
+
+    def _run(self, arch, symtab):
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "net/ladenthin/llama/Linux", arch, "cpu")
+            os.makedirs(d)
+            with open(os.path.join(d, "libjllama.so"), "wb") as f:
+                f.write(elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_a"], symtab=symtab))
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = nativedeps.main(["x", root])
+            return rc, err.getvalue()
+
+    def test_main_holds_the_s390x_library_to_it_and_no_other(self):
+        self.assertEqual(self._run("s390x", [("_ZTS1X", 0x2000), ("_ZTSSt9exception", 0x2010)])[0], 0)
+        rc, err = self._run("s390x", [("_ZTS1X", 0x2000), ("_ZTSSt19_Sp_make_shared_tag", 0x2011)])
+        self.assertEqual(rc, 1)
+        self.assertIn("_ZTSSt19_Sp_make_shared_tag", err)
+        rc, err = self._run("s390x", [])
+        self.assertEqual(rc, 1, "a stripped s390x library is not examined, which is never a pass")
+        self.assertIn("no typeinfo name", err)
+        # x86-64's ABI promises no such thing, and its library is not held to it
+        self.assertEqual(self._run("x86_64", [("_ZTS1X", 0x2001)])[0], 0)
+
+
 class MainTest(unittest.TestCase):
 
     def test_checks_a_tree_and_reports_violations(self):
@@ -464,7 +571,7 @@ class MainTest(unittest.TestCase):
             os.makedirs(ok)
             os.makedirs(bad)
             with open(os.path.join(ok, "libjllama.so"), "wb") as f:
-                f.write(elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_a"]))
+                f.write(elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_a"], symtab=[("_ZTS1X", 0x2000)]))
             self.assertEqual(nativedeps.main(["x", root]), 0)
             with open(os.path.join(bad, "jllama.dll"), "wb") as f:
                 f.write(pe64(["kernel32.dll", "libomp140.x86_64.dll"], exports=["JNI_OnLoad", "Java_a"]))

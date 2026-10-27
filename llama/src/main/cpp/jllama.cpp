@@ -1466,6 +1466,22 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
     });
 }
 
+JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_TextToSpeech_supportsSpeakerReferenceNative(JNIEnv *env,
+                                                                                                jclass clazz,
+                                                                                                jlong handle) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jboolean {
+        (void)clazz;
+        bool supported = false;
+        const jllama_status status =
+            jllama_tts_supports_speaker_reference(reinterpret_cast<const jllama_tts_model *>(handle), &supported);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return JNI_FALSE;
+        }
+        return supported ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_TextToSpeech_deleteNative(JNIEnv *env, jclass clazz, jlong handle) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         (void)env;

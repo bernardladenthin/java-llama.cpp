@@ -182,4 +182,19 @@ class JllamaNativeTest {
         LlamaException e = assertThrows(LlamaException.class, () -> FfmRpcServer.devices("NoSuchDevice9"));
         assertThat(e.getMessage(), containsString("CPU"));
     }
+
+    /**
+     * The speaker-reference query resolves and reaches the library without a TTS model: a null
+     * handle is the caller's mistake, refused before the out-slot is written. The answer for a real
+     * pair is FfmTextToSpeechIntegrationTest's.
+     */
+    @Test
+    void ttsSupportsSpeakerReferenceRefusesANullHandle() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment supported = JllamaNative.booleanSlot(arena);
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> JllamaNative.call(JllamaNative.TTS_SUPPORTS_SPEAKER_REFERENCE, MemorySegment.NULL, supported));
+            assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
+        }
+    }
 }

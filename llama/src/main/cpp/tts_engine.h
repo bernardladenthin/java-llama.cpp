@@ -35,8 +35,13 @@ struct tts_engine;
 tts_engine *engine_init(const std::string &model_path, const std::string &mmproj_path, int n_gpu_layers, int n_threads,
                         std::string &err);
 
+// Whether the loaded pair clones a voice from a speaker reference (llama.cpp's
+// mtmd_helper_cap::audio_gen_spk_ref, read once at load). False on nullptr.
+bool engine_supports_speaker_reference(const tts_engine *engine);
+
 // Synthesize `text` to a 24 kHz mono 16-bit WAV byte stream in `out_wav`. `speaker_reference_path`
-// may be empty (uses the model's default voice); `lang` selects the codec_language special token
+// may be empty (uses the model's default voice) and is refused for a pair that does not support one
+// (engine_supports_speaker_reference); `lang` selects the codec_language special token
 // (e.g. "english", "chinese" — see upstream tools/tts/README.md for the supported set) and may be
 // empty (defaults to "english"). Returns false and sets `err` on failure. Thread-compatible but not
 // re-entrant on the same engine instance.

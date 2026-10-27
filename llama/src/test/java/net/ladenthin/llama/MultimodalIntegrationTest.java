@@ -135,6 +135,10 @@ public class MultimodalIntegrationTest {
         for (String key : new String[] {"vision", "audio", "video"}) {
             assertTrue(modalities.has(key), "getModelMetaJson() must emit modalities." + key + ": " + modalities);
         }
+        // The capabilities are computed with the projector loaded: a vision projector neither makes
+        // the model TTS-only nor generates audio, so chat stays on (llama.cpp b11901).
+        assertTrue(model.getModelMeta().supportsChat(), "a vision model must report the chat capability");
+        assertFalse(model.getModelMeta().supportsAudioGeneration(), "a vision projector does not generate audio");
     }
 
     @AfterAll

@@ -449,13 +449,21 @@ JLLAMA_API jllama_status jllama_tts_load(const char *model_path, const char *mmp
 
 /**
  * Synthesises `text` to a 24 kHz mono 16-bit WAV in *wav (*length bytes, jllama_bytes_free).
- * `speaker_reference_path` (a WAV to clone the voice from) and `lang` ("english", "chinese", ...)
- * may be null; `max_frames` bounds the generation, `top_k` and `seed` the sampling. One synthesis
- * at a time per handle.
+ * `speaker_reference_path` (a WAV to clone the voice from, see
+ * jllama_tts_supports_speaker_reference) and `lang` ("english", "chinese", ...) may be null;
+ * `max_frames` bounds the generation, `top_k` and `seed` the sampling. One synthesis at a time per
+ * handle.
  */
 JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char *text,
                                                const char *speaker_reference_path, const char *lang, int max_frames,
                                                int top_k, unsigned int seed, unsigned char **wav, size_t *length);
+
+/**
+ * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
+ * mtmd_helper_cap::audio_gen_spk_ref, true for Qwen3-TTS and Pocket TTS. jllama_tts_synthesize
+ * refuses a `speaker_reference_path` for a pair that does not.
+ */
+JLLAMA_API jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts, bool *supported);
 
 /** Frees the model pair; null is ignored. */
 JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);
