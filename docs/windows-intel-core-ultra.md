@@ -313,6 +313,32 @@ Measure `-t 6`, `-t 8` and `-t 10` and take the best. `-tb` sets the prompt-proc
 separately and tolerates a higher value, since prompt processing has enough work per barrier to hide
 the synchronisation cost.
 
+## gpt-oss-20b
+
+ggml-org's `gpt-oss-20b-mxfp4.gguf` (12.1 GB: the experts in MXFP4, everything else Q8_0) runs on
+the CPU modules. It needs about 13 GB of RAM plus the KV cache, so a 32 GB machine holds it next to
+Windows. The notes below were **measured in a Linux sandbox with the `alderlake` module staged alone,
+not on this laptop**. [`benchmarks/moe-mxfp4-cpu-alderlake.md`](benchmarks/moe-mxfp4-cpu-alderlake.md)
+has the numbers and their limits:
+
+- **Leave the KV cache at f16**, i.e. no `-ctk`/`-ctv`. With `-ctk q8_0 -ctv q8_0`, prompt processing
+  at an 8k context fell to a quarter (30.8 → 7.5 t/s): ggml's fast flash-attention paths need an f16
+  cache with K and V of the same type. For an agent, which re-sends the whole conversation every
+  turn, that is the number that counts. The f16 cache costs 1.6 GB at `-c 65536`.
+- **Repack and flash attention stay at their defaults**, which were the fastest.
+- **Measure `-tb` for this model separately.** ggml 6.0.0 splits the expert matmuls statically
+  across threads, in prompt processing as well, so every thread waits for the slowest one. With one
+  core at half speed, prompt processing halved. The LP-E cores are exactly such cores, so the `-tb`
+  that suits a dense model may be too high here. A fix to that split is prototyped (+46 % prompt,
+  +23 % generation in the sandbox) but not in any released jar.
+
+```bat
+mvn -o exec:java -Dexec.args="-m C:\models\gpt-oss-20b-mxfp4.gguf --host 127.0.0.1 --port 9931 -c 32768 -ngl 0 -t 8 -tb 8 --jinja"
+```
+
+`-ngl 0` keeps it on the CPU modules, the configuration measured. Through Vulkan on the Arc iGPU
+(`-ngl 99`) it is unmeasured for this model.
+
 ## Verifying what loaded
 
 The start-up log names the library, the modules put in place and the devices ggml ended up with:
