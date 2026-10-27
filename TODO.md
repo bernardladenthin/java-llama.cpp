@@ -568,12 +568,20 @@ loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 j
       upstream's list lacks. On cfarm191 (b11901, Qwen3-0.6B Q4_K_M big-endian, 4 threads): `z13`
       19.7 / 13.6 t/s, `z15` 90.0-95.5 / 57.3-58.3, `z16` 82.6-88.3 / 51.9-53.9 (prompt / generation).
       The C++ suite moved to `test-cpp-linux-s390x` (a modular build cannot link `jllama_test`).
-- [ ] **The CI-built modular s390x jar on cfarm191**, once a Publish run of the branch is green:
-      `NativeLoadSmoke` and the `ServerLauncher` round on the big-endian Qwen3-0.6B as on 2026-10-26,
-      plus which module the loader line and `JNI_OnLoad`'s registry log name (`z16` expected), and the
-      speed against the 6.1.0-SNAPSHOT static jar of run 40400361809 (0.33 t/s generation at 8 threads
-      on the shared host, 13.6 t/s for the scalar build at 4). Only a real IBM Z runs the vector modules
-      at their own speed; qemu scores them against its CPU model.
+- [x] **The CI-built modular s390x jar on cfarm191** (2026-10-27, the `llama-glibc-floor` set of the
+      green PR run 40475405391 of #580, JDK 25 on Debian 13, z16):
+      - `NativeLoadSmoke`: linked b11901-5320c87ff, `compiler=Clang 18.1.3`, patches 0001-0023; all 9
+        files extracted, and `JNI_OnLoad` logs `loaded CPU backend from .../libggml-cpu-z16.so`,
+        `2 backend(s) registered ... [RPC, CPU]`.
+      - `ServerLauncher` on the big-endian Qwen3-0.6B Q4_K_M answers "Paris." (fingerprint
+        b11901-5320c87ff), the same text as the static jar of run 40400361809 at temperature 0.
+      - **Speed against that static jar**, three alternating rounds on a quiet host (load < 1 before,
+        26 prompt tokens, 64 generated, t/s): at 4 threads prompt 50.3-61.8 against 14.4-16.0 and
+        generation 29.9-35.6 against 9.9-10.0 (3.0-3.6x); at 8 threads prompt 35.3-81.4 against
+        13.8-25.2 and generation 24.1-49.5 against 14.8-15.4, noisy on the shared host. The 0.33 t/s of
+        the earlier check was the host's load, not the jar.
+      Only a real IBM Z runs the vector modules at their own speed; qemu scores them against its CPU
+      model.
 - [ ] **z17 (`-march=arch15`)** is skipped: clang 18 rejects the flag (clang 19 on cfarm191 too), and
       ggml's configure drops the variant silently. Re-check when the toolchain's clang moves, and
       measure on a z17 if the farm gets one.
@@ -691,7 +699,8 @@ measurements and is not evidence that GPU testing is currently blocked.
         into 133 of the core's 146 class files (RUNTIME retention). So dropping the dependency needs
         `-dontwarn org.checkerframework.**` in `consumer-proguard.txt`, or a minified app fails R8 on
         "Missing class"; added, like lombok and animal-sniffer.
-  - [ ] **Read the first Publish run:** `package-android-aar`'s new step, the consumer fixture's R8
-        `assembleRelease` (cpu and opencl) now that checker-qual is off its classpath, and the
-        emulator instrumentation test (Jackson reflecting over the annotated classes without
-        checker-qual -- ART is expected to skip the unresolvable annotation types, as the JVM does).
+  - [x] **Read the Publish run** (40475405391, #580, 2026-10-27): `verify-aar-poms.py` says both poms
+        "mirror the core" (jackson-databind, jspecify, slf4j-api); the consumer fixture's
+        `minifyReleaseWithR8` + `assembleRelease` pass for cpu and opencl without checker-qual; the
+        emulator job's `connectedDebugAndroidTest` passes (Jackson over the annotated classes, ART
+        skips the unresolvable annotation types as expected).
