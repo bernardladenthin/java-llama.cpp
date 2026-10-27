@@ -129,7 +129,9 @@ class JLineTerminalTest {
             assertThat(console.readLine("ignored").isBlank(), is(true));
             assertThat(console.readLine("ignored"), is("real"));
             // End of input is pending too, and has to be: a session whose console has closed must
-            // stop waiting rather than keep a turn running for nobody.
+            // stop waiting rather than keep a turn running for nobody. The reader thread queues it
+            // only after it has handed over "real", so wait for it as for the first line.
+            waitFor(console::hasPendingInput);
             assertThat(console.hasPendingInput(), is(true));
             assertThat("and it reads as no line at all", console.readLine("ignored"), is(nullValue()));
         }
