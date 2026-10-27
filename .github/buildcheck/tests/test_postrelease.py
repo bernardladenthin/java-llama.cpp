@@ -284,5 +284,49 @@ class CacheTest(unittest.TestCase):
                          ["no job log shows the cache off -- the evidence is missing, not the cache"])
 
 
+class JobLogTest(unittest.TestCase):
+    def run_with(self, results):
+        calls = []
+
+        def fake(cmd, capture_output):
+            calls.append(cmd)
+            code, out, err = results[len(calls) - 1]
+            return subprocess.CompletedProcess(cmd, code, out, err)
+        original = postrelease.subprocess.run
+        postrelease.subprocess.run = fake
+        try:
+            return postrelease.job_log("o/r", 7, attempts=3, pause=0), calls
+        finally:
+            postrelease.subprocess.run = original
+
+    def test_retries_a_failed_read(self):
+        log, calls = self.run_with([(1, b"", b"HTTP 502"), (0, b"the log", b"")])
+        self.assertEqual(log, b"the log")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], ["gh", "api", "repos/o/r/actions/jobs/7/logs"])
+
+    def test_passes_the_escape_flag(self):
+        calls = []
+
+        def fake(cmd, capture_output, text=False):
+            calls.append(cmd)
+            if cmd[-1] == "--help":
+                return subprocess.CompletedProcess(cmd, 0, "  --allow-escape-sequences   Allow ...\n", "")
+            return subprocess.CompletedProcess(cmd, 0, b"log", b"")
+        original = postrelease.subprocess.run
+        postrelease.subprocess.run = fake
+        try:
+            flags = postrelease.escape_flag()
+            postrelease.job_log("o/r", 7, flags, pause=0)
+        finally:
+            postrelease.subprocess.run = original
+        self.assertEqual(flags, ["--allow-escape-sequences"])
+        self.assertEqual(calls[-1], ["gh", "api", "--allow-escape-sequences", "repos/o/r/actions/jobs/7/logs"])
+
+    def test_names_what_gh_said(self):
+        with self.assertRaisesRegex(RuntimeError, r"job 7 could not be read \(3 attempts\): HTTP 403: Forbidden$"):
+            self.run_with([(1, b"", b"HTTP 403: Forbidden\n")] * 3)
+
+
 if __name__ == "__main__":
     unittest.main()

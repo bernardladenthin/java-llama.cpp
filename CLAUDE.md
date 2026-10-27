@@ -1099,7 +1099,9 @@ publish jobs) downloads the `llama-smoke-macos-aarch64` smoke set and runs
 **`metal-macos-aarch64` natives jar** of the set and asserts two things: `codesign --verify
 --strict` (re-hashes the code pages against the signature's stored hashes — the direct check for a
 dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
-(`java -cp '<set>/*' …`, the JDK single-file source launcher), which forces
+(compiled with `javac` first and run as `java -cp <classes>:'<set>/*' NativeLoadSmoke` -- not through
+the single-file source launcher, which Java 8 lacks and the post-release consumer runs this script
+on), which forces
 `LlamaLoader.initialize() → System.load() → JNI_OnLoad` and then crosses JNI for
 `getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin. A third check comes first:
 the dylib's `minos` (`otool -l`, `LC_BUILD_VERSION`) must not exceed **15.0**, the supported floor.
