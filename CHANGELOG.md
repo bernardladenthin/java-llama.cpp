@@ -22,6 +22,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   measures as faster grammar sampling. Metal no longer overflows the output offset of very large
   matrix multiplications (#30072), the SYCL module bounds its reorder buffer to 32 MiB (#31062),
   DeepSeek-V4.1 review fixes (#31137), WebUI layout work (#31030, #31119). No patch changed.
+- **`cpu-linux-s390x` uses the IBM Z vector unit.** The jar was one static, scalar library; it is a
+  modular one now, like the other Linux CPU jars, with three CPU modules of which the best for the
+  machine is loaded at start: `z13` (scalar, the floor stays z13), `z15` (VXE2) and `z16` (VXE2 +
+  NNPA). On a z16 (LinuxONE, Qwen3-0.6B Q4_K_M, 4 threads) prompt processing went from 19.7 to
+  82.6-95.5 tokens per second and generation from 13.6 to 51.9-58.3. New patch `0023`: clang could
+  not build ggml's IBM Z vector code (a duplicate `<vecintrin.h>` include that only GCC's header
+  guard hid), and upstream's variant list had no module for machines older than z15. The C++ test
+  suite for s390x runs in its own job (`test-cpp-linux-s390x`), still under qemu.
 - **`bernardladenthin/actions` pinned at v1.1.0.** v1.1.0 adds `java/audit-publication`, which
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 

@@ -212,10 +212,10 @@ If any of these match your platform, you can include the Maven dependency and ge
 same artifact, selected by a Maven `<classifier>` of the form `<backend>-<os>-<arch>`, of two kinds:
 
 - **One library jar per platform** (`cpu-<os>-<arch>`, `metal-macos-aarch64`): `libjllama` -- on
-  Linux x86-64 / aarch64, Windows and Android next to llama.cpp's and ggml's shared libraries
+  Linux x86-64 / aarch64 / s390x, Windows and Android next to llama.cpp's and ggml's shared libraries
   (`libllama`, `libmtmd`, `libggml*`) and the CPU backend modules (one per instruction-set level, of
   which the best for the running CPU is loaded at start; a single one on Windows arm64), on macOS
-  and s390x one static library with llama.cpp and ggml linked in. Exactly one is loaded, the one of
+  one static library with llama.cpp and ggml linked in. Exactly one is loaded, the one of
   the running platform; `llama-platform` collects them for every desktop platform.
 - **GPU module jars** (`cuda13-…`, `rocm-…`, `sycl-…`, `vulkan-…`, `opencl-…`, `openvino-…`): each
   holds only ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`, …). They are
@@ -265,7 +265,7 @@ iGPU, the example being a Core Ultra 7 165U).
 |---|---|---|---|
 | `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
 | `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
-| `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM; glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10 and later) on z13 or newer — cross-compiled against the manylinux_2_28 s390x image, so the floor of the other Linux CPU jars applies; CI loads it on RHEL 8.10. (The 6.0.0 jar needed glibc 2.38 and did not load on RHEL 8/9 or Ubuntu 22.04.) |
+| `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM; glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10 and later) on z13 or newer — cross-compiled against the manylinux_2_28 s390x image, so the floor of the other Linux CPU jars applies; CI loads it on RHEL 8.10. Three CPU modules, of which the best for the machine is loaded at start: `z13` (scalar), `z15` (vector, VXE2) and `z16` (VXE2 + NNPA); on a z16 the vector modules process prompts about 4.5x and generate about 4x faster than the scalar library of 6.0.x. (The 6.0.0 jar needed glibc 2.38 and did not load on RHEL 8/9 or Ubuntu 22.04.) |
 | `cpu-windows-x86-64` | CPU | Windows x86-64 | A JDK 8+ JVM; **Windows 10 or newer**. Ships one CPU backend module per instruction-set level (as the Linux x86-64 jar: x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up. Built with clang, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
