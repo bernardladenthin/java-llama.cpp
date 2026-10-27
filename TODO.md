@@ -64,17 +64,31 @@ so entries below describe remaining work or an explicit deferral policy.
       smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
       - [x] The `java/audit-publication` pin is the actions release that carries it: v1.1.0
             (`44390bd4`), like every other pin of the workflows.
-      - [ ] Read the first real run: a `workflow_dispatch` with `v6.0.0`
-            (`gh workflow run post-release.yml -f tag=v6.0.0`; expected: one android finding) and
-            the first `workflow_run` after 6.1.0. The two `workflow_run` runs after #573
-            (40367736958, 40367890447) ended `skipped`, correctly: no `v*` tag is behind those
-            Publish runs. Unverified on a runner: the Java 8
-            rows (Temurin 8 on Linux and Windows, Zulu 8 on macOS arm64), `smoke-native-macos.sh`
-            and `smoke-test-natives.ps1` on Java 8, `gh attestation verify` with the workflow token
-            (`attestations: read`), and the keyserver fetch from a runner.
-      - [ ] Repeat the `LocalCheck` (Java 8) and `FfmCheck` acceptances against the 6.0.0 jars from
-            Central, as far as the run above does not cover them; the earlier acceptances were made
-            on b11827 artifacts.
+      - [x] **The `workflow_dispatch` with `v6.0.0`** (2026-10-27). The first one (40373377002) found
+            two defects of the workflow itself: `smoke-native-macos.sh` launched
+            `NativeLoadSmoke.java` as a single source file, which Java 8 cannot ("Could not find or
+            load main class"), and `postrelease.run_logs` died on the first job log with a bare
+            `CalledProcessError` -- the runner's gh refuses a response with terminal escapes
+            unless given `--allow-escape-sequences`, which the gh 2.87 used locally does not know.
+            Both fixed (the smoke compiles the class first; `job_log` passes the flag where `gh api
+            --help` lists it, retries, and names what gh said). Run 40515663015 from the fix branch:
+            the 8 audit checks pass on the runner (signatures with the key from the keyserver,
+            provenance with the workflow token's `attestations: read`), `post-release-check.py` reads all 73
+            job logs (68 show the cache off, none on) and fails android on exactly the expected
+            checker-qual finding, and all four Java 8 consumers pass -- Temurin 8 on Linux x86-64,
+            Linux aarch64 and Windows, Zulu 8 on macOS arm64, including `smoke-native-macos.sh`
+            (load, HTTPS, lib.path) and `smoke-test-natives.ps1` on Java 8.
+      - [ ] The first `workflow_run` after 6.1.0. The `workflow_run` runs after #573 and since
+            (40367736958, 40367890447, ...) ended `skipped`, correctly: no `v*` tag is behind those
+            Publish runs.
+      - [x] **`LocalCheck` (Java 8) and `FfmCheck` against the 6.0.0 jars from Central**
+            (2026-10-27): `llama-platform` + `llama-ffm` 6.0.0 resolved into an empty local
+            repository (13 jars), Qwen3-0.6B Q4_K_M. `LocalCheck` -- `LlamaModel` chat ("Paris."),
+            an encode/decode round trip and `getJllamaBuildInfo()` (b11887, `jllama.version=6.0.0`)
+            -- passes on Temurin 8 in Docker (Linux x86-64, `cpu-linux-x86-64`, GNU 14.2.1, module
+            `haswell`) and on the Windows host with JDK 21 (`cpu-windows-x86-64`, Clang 20.1.8).
+            `FfmCheck` -- `Jllama.apiVersion()` 6.0.0, `FfmLlamaModel.chatCompletions` ("Paris.")
+            and a tokenize/detokenize round trip through FFM -- passes on Temurin 25 in Docker.
 
 ## Delivery roadmap — remaining work
 
