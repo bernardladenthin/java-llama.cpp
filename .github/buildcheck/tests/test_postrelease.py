@@ -305,6 +305,24 @@ class JobLogTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0], ["gh", "api", "repos/o/r/actions/jobs/7/logs"])
 
+    def test_passes_the_escape_flag(self):
+        calls = []
+
+        def fake(cmd, capture_output, text=False):
+            calls.append(cmd)
+            if cmd[-1] == "--help":
+                return subprocess.CompletedProcess(cmd, 0, "  --allow-escape-sequences   Allow ...\n", "")
+            return subprocess.CompletedProcess(cmd, 0, b"log", b"")
+        original = postrelease.subprocess.run
+        postrelease.subprocess.run = fake
+        try:
+            flags = postrelease.escape_flag()
+            postrelease.job_log("o/r", 7, flags, pause=0)
+        finally:
+            postrelease.subprocess.run = original
+        self.assertEqual(flags, ["--allow-escape-sequences"])
+        self.assertEqual(calls[-1], ["gh", "api", "--allow-escape-sequences", "repos/o/r/actions/jobs/7/logs"])
+
     def test_names_what_gh_said(self):
         with self.assertRaisesRegex(RuntimeError, r"job 7 could not be read \(3 attempts\): HTTP 403: Forbidden$"):
             self.run_with([(1, b"", b"HTTP 403: Forbidden\n")] * 3)

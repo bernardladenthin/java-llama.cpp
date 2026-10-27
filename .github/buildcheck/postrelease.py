@@ -347,18 +347,27 @@ def run_logs(repository, run_id):
             break
         page += 1
     logs = {}
+    flags = escape_flag()
     for job in jobs:
         if job["conclusion"] == "skipped":
             continue
-        logs[job["name"]] = job_log(repository, job["id"]).decode("utf-8", "replace")
+        logs[job["name"]] = job_log(repository, job["id"], flags).decode("utf-8", "replace")
     return logs
 
 
-def job_log(repository, job_id, attempts=3, pause=5):
+def escape_flag():
+    """`--allow-escape-sequences` where this gh has it: newer gh refuses a response with terminal
+    escapes (every job log has colour codes), older gh does not know the flag."""
+    help_text = subprocess.run(["gh", "api", "--help"], capture_output=True, text=True).stdout
+    return ["--allow-escape-sequences"] if "--allow-escape-sequences" in help_text else []
+
+
+def job_log(repository, job_id, flags=(), attempts=3, pause=5):
     """One job's log through `gh api`, retried; the error names what gh said, which check=True hid."""
     import time
     for attempt in range(1, attempts + 1):
-        proc = subprocess.run(["gh", "api", f"repos/{repository}/actions/jobs/{job_id}/logs"], capture_output=True)
+        proc = subprocess.run(["gh", "api", *flags, f"repos/{repository}/actions/jobs/{job_id}/logs"],
+                              capture_output=True)
         if proc.returncode == 0:
             return proc.stdout
         if attempt < attempts:
