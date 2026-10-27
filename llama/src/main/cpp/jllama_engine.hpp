@@ -156,6 +156,17 @@ void task_release(jllama_context *jctx, int id_task);
  */
 void set_log_sink(common_log_callback callback, void *user_data);
 
+/**
+ * The process-wide switch of patches/0022: whether ggml's CPU backend runs MUL_MAT_ID over repacked
+ * weights (the expert matmuls of a MoE model) batched -- each expert's tokens through gemm, the work
+ * handed out dynamically across threads -- or as upstream does, one gemv per token over a static row
+ * split. It lives in the CPU backend, a module of its own in a GGML_BACKEND_DL build, so it is
+ * resolved through the backend's proc-address table like rpc_proc<>; throws when the CPU backend is
+ * not loaded yet or lacks the entry points (a library built without the patch).
+ */
+void set_cpu_moe_batched(bool batched);
+[[nodiscard]] bool cpu_moe_batched();
+
 // ---------------------------------------------------------------------------
 // The rest of LlamaModel, operation by operation (TODO.md item 7, B.3). Every function takes and
 // returns JSON text or plain C++ values, wakes the server from idle sleep where it touches the

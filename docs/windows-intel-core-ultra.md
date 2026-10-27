@@ -326,11 +326,10 @@ has the numbers and their limits:
   cache with K and V of the same type. For an agent, which re-sends the whole conversation every
   turn, that is the number that counts. The f16 cache costs 1.6 GB at `-c 65536`.
 - **Repack and flash attention stay at their defaults**, which were the fastest.
-- **Measure `-tb` for this model separately.** ggml 6.0.0 splits the expert matmuls statically
-  across threads, in prompt processing as well, so every thread waits for the slowest one. With one
-  core at half speed, prompt processing halved. The LP-E cores are exactly such cores, so the `-tb`
-  that suits a dense model may be too high here. A fix to that split is prototyped (+46 % prompt,
-  +23 % generation in the sandbox) but not in any released jar.
+- **Measure `-tb` for this model separately.** Upstream llama.cpp (and the 6.0.0 jar) splits the
+  expert matmuls statically across threads, in prompt processing as well, so every thread waits for
+  the slowest one. With one core at half speed, prompt processing halved. The LP-E cores are exactly
+  such cores, so the `-tb` that suits a dense model may be too high here.
 
 ```bat
 mvn -o exec:java -Dexec.args="-m C:\models\gpt-oss-20b-mxfp4.gguf --host 127.0.0.1 --port 9931 -c 32768 -ngl 0 -t 8 -tb 8 --jinja"
@@ -338,6 +337,28 @@ mvn -o exec:java -Dexec.args="-m C:\models\gpt-oss-20b-mxfp4.gguf --host 127.0.0
 
 `-ngl 0` keeps it on the CPU modules, the configuration measured. Through Vulkan on the Arc iGPU
 (`-ngl 99`) it is unmeasured for this model.
+
+### Both expert paths, measured on this machine
+
+From the release after 6.0.0 on, the natives carry `llama/patches/0022` (6.0.0 itself runs upstream's
+path only): the tokens routed to one expert are multiplied
+together and the work goes to the threads in small units, so the E- and LP-E-cores take less of it.
+In the sandbox that gave +47 % prompt processing and +26 % token generation. Upstream's path stays
+switchable, so the difference can be measured here, where the cores really differ:
+`LlamaModel.setCpuMoeBatched(false)` in your own code, or for the server the environment variable,
+set in the window **before** `mvn` starts:
+
+```bat
+:: upstream's path; leave the line out (or open a new window) for the batched default
+set GGML_CPU_REPACK_MMID_BATCHED=0
+mvn -o exec:java -Dexec.args="-m C:\models\gpt-oss-20b-mxfp4.gguf --port 9931 -c 32768 -ngl 0 -t 8 -tb 8 --jinja"
+```
+
+Then send the same long prompt to each run and compare the `timings` of the response, e.g.
+`prompt_per_second` and `predicted_per_second` from
+`curl.exe http://127.0.0.1:9931/completion -d "{\"prompt\":\"...\",\"n_predict\":128,\"cache_prompt\":false}"`.
+A second request with the same prompt and `cache_prompt` on would take the prompt from the cache and
+measure nothing.
 
 ## Verifying what loaded
 

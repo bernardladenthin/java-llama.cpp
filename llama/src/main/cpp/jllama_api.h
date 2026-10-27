@@ -161,6 +161,20 @@ JLLAMA_API jllama_status jllama_task_release(jllama_model *model, int task_id);
  */
 JLLAMA_API jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data);
 
+/**
+ * Whether ggml's CPU backend runs the expert matmuls of a MoE model over repacked weights batched --
+ * each expert's tokens through one gemm, the work handed out dynamically across the threads (true,
+ * the default) -- or as upstream llama.cpp does, one gemv per token over a static split of the rows
+ * (false); llama/patches/0022. Process-wide, from the next graph computed on; the environment
+ * variable GGML_CPU_REPACK_MMID_BATCHED=0 makes false the initial value. It needs the CPU backend
+ * loaded, which a GGML_BACKEND_DL build does at its first model load (or, under Java, when the
+ * library is loaded); JLLAMA_STATUS_ERROR before that.
+ */
+JLLAMA_API jllama_status jllama_set_cpu_moe_batched(bool batched);
+
+/** Reads the switch of jllama_set_cpu_moe_batched into `*batched`. */
+JLLAMA_API jllama_status jllama_get_cpu_moe_batched(bool *batched);
+
 /* ------------------------------------------------------------------------------------------------
  * The rest of LlamaModel. Request and response bodies are the ones llama.cpp's HTTP server reads
  * and writes for the route of the same name; every out-string is released with jllama_string_free,

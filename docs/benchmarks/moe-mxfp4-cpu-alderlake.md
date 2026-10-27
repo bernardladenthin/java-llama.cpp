@@ -23,12 +23,13 @@ that module lose compute, on which models, and what would make gpt-oss-20b faste
    - **Its work is split statically**, one fixed row range per thread. Token generation therefore
      waits for the slowest thread after every expert matmul: 13.9 % of all thread time in token
      generation is that wait. Every other matmul hands out chunks dynamically and waits 1-2 %.
-3. **A prototype of both fixes** (dynamic work units plus GEMM for groups of ≥ 4 tokens per expert,
-   [`../../.github/scripts/bench/mmid-dynamic-gemm.diff`](../../.github/scripts/bench/mmid-dynamic-gemm.diff),
-   92 changed lines) gives **+46 % prompt processing and +23 % token generation** at 4 threads,
-   **+59 % prompt processing single-threaded**, with logits identical to rounding. With one core
-   emulated at half speed, prompt processing of the unchanged code halves (−49 %), the prototype's
-   loses 24 %. That emulation is the closest this machine gets to a P-core/E-core laptop.
+3. **A fix for both** (dynamic work units plus GEMM for groups of ≥ 4 tokens per expert), first as a
+   prototype ([`../../.github/scripts/bench/mmid-dynamic-gemm.diff`](../../.github/scripts/bench/mmid-dynamic-gemm.diff)),
+   then as [`llama/patches/0022`](../patches.md#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch),
+   gives **+46-47 % prompt processing and +23-26 % token generation** at 4 threads, **+59 % prompt
+   processing single-threaded**, with logits identical to rounding. With one core emulated at half
+   speed, prompt processing on upstream's path halves (−49 %), on the batched path it loses 24 %.
+   That emulation is the closest this machine gets to a P-core/E-core laptop.
 4. **No configuration knob makes it faster, and one makes it much slower.** Repack on and flash
    attention on (both defaults) are already the fastest settings, the sampler chain costs nothing
    measurable, and the server path (the code `NativeServer` runs) is within 3-5 % of `llama-bench`.
@@ -36,9 +37,10 @@ that module lose compute, on which models, and what would make gpt-oss-20b faste
    prompt processing at an 8k context to **a quarter** (30.76 → 7.45 t/s): ggml's fast
    flash-attention paths need an f16/f32 cache with K and V of one type.
 
-The prototype is **not** applied to any build of this project: a change to ggml is a patch in
-`llama/patches/` with a runnable guard and a refresh on every bump, so carrying it is a decision of
-its own (see [Next steps](#next-steps)).
+The patch keeps upstream's path behind a **process-wide switch**, on by default, so the comparison
+can be repeated on any machine without a second build: `LlamaModel.setCpuMoeBatched(boolean)` in
+Java, `jllama_set_cpu_moe_batched()` in C, or `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment
+of any process ([Patch 0022 and its switch](#patch-0022-and-its-switch)).
 
 ## What this run can and cannot show
 
@@ -260,10 +262,12 @@ Q4_K. The Core Ultra's module is `alderlake` and cannot be anything else: AVX-51
 Core Ultra series 1. The `sapphirerapids` row shows how much the 256-bit kernels leave on the table
 on a core that is not memory-starved: 50 % of gpt-oss's token generation.
 
-## The prototype
+## The fix, first as a prototype
 
 [`mmid-dynamic-gemm.diff`](../../.github/scripts/bench/mmid-dynamic-gemm.diff) changes only
-`forward_mul_mat_id` and its `work_size`, behind `-DJLLAMA_MMID_V2`:
+`forward_mul_mat_id` and its `work_size`, behind the compile-time `-DJLLAMA_MMID_V2`, so one tree built
+both sides of the A/B below. `llama/patches/0022` is the same code with the choice moved to run time
+(next section):
 
 - **Work units.** After the grouping barrier, thread 0 lists the experts that received tokens. The
   work becomes `n_active × nck` units of (expert, column chunk), with `nck` chosen for ~16 units per
@@ -332,16 +336,42 @@ At a long context the picture shifts. With 8,192 tokens already in the cache (`-
 attention on) the prototype measures pp512 **39.28** and tg32 **4.99**, against 64.10 and 9.63 at an
 empty context, and flash attention becomes the second-largest op.
 
+## Patch 0022 and its switch
+
+`llama/patches/0022` is the prototype with the `#ifdef` replaced by a run-time switch, reachable from
+every layer:
+
+| layer | how |
+|---|---|
+| ggml | `ggml_backend_cpu_set_repack_mmid_batched(bool)` / `..._get_...()` in `ggml-cpu.h`, and in the CPU backend's `get_proc_address` table -- in a `GGML_BACKEND_DL` build the CPU backend is a module loaded at run time, and that table is how anything outside it reaches the switch |
+| C API | `jllama_set_cpu_moe_batched(bool)`, `jllama_get_cpu_moe_batched(bool *)` |
+| Java | `LlamaModel.setCpuMoeBatched(boolean)`, `LlamaModel.isCpuMoeBatched()`; FFM: `Jllama.setCpuMoeBatched` / `isCpuMoeBatched` |
+| any process | `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment makes upstream's path the initial value -- also for `llama-bench` and a server started from the command line |
+
+It is process-wide. Thread 0 reads it once per `MUL_MAT_ID`, while it groups the tokens, and
+publishes the choice in the work buffer before the barrier, so a flip during a running computation
+cannot send the threads down different paths; the computation finishes on the path it started with.
+`work_size()` reserves the batched path's scratch whatever the switch says, since it may flip between
+planning a graph and running it.
+
+The same measurement as above, now **with one binary**, the switch flipped through the environment
+(b11887 + all patches, `alderlake`, gpt-oss, 4 threads, `-r 2` twice, n = 4):
+
+| | upstream's path (`=0`) | batched (default) | change |
+|---|--:|--:|--:|
+| pp512 | 42.63 ± 1.16 | 62.76 ± 2.76 | **+47 %** |
+| tg128 | 7.90 ± 0.07 | 9.97 ± 0.06 | **+26 %** |
+
+The guard is `llama/src/test/cpp/test_moe_repack.cpp`: both paths against ggml's generic
+`MUL_MAT_ID` over the same weights (MXFP4, Q4_0, IQ4_NL, Q4_K), on 1, 3 and 4 threads, with experts
+that get 0, 1, 3, 4, 15 and 17 tokens, an empty slot and a single token.
+
 ## Next steps
 
-1. **Decide whether to carry the fix.** As a patch it would be `llama/patches/0022` (one file,
-   `ggml/src/ggml-cpu/repack.cpp`, the prototype without the `#ifdef`), with a runnable guard in
-   `jllama_test`: a `MUL_MAT_ID` over a repacked MXFP4 tensor against the reference result, for 1, 3, 4
-   and 17 tokens per expert. Those counts reach the GEMV tail, a single GEMM group, and a GEMM group
-   plus a tail. The change is upstream-shaped and applies to every repacked type, not only MXFP4
-   (Q4_0, IQ4_NL and Q4_K experts take the same path). The release policy for upstream submissions
-   ("nothing before the release") no longer blocks it.
-2. **Measure on the Core Ultra 7 165U**, unchanged against patched, `-t 6/8/10`: that is where the
+1. **Upstream.** The change applies to every repacked expert type, not only MXFP4, and is
+   upstream-shaped without the switch. The release policy for upstream submissions ("nothing before
+   the release") no longer blocks it.
+2. **Measure on the Core Ultra 7 165U**, both paths through the switch, `-t 6/8/10`: that is where the
    static split meets real P-, E- and LP-E-cores, and the hybrid half of this report can only be
    settled there. The KV-cache table is worth repeating there too, at the context an agent session
    actually reaches.

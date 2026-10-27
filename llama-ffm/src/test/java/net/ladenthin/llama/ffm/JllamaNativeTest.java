@@ -103,6 +103,23 @@ class JllamaNativeTest {
         }
     }
 
+    /**
+     * llama/patches/0022's switch through the FFM binding: it reaches the CPU backend's entry points
+     * (the same process-wide switch as {@code LlamaModel.setCpuMoeBatched}) and round-trips.
+     */
+    @Test
+    void cpuMoeBatchedSwitchRoundTrips() {
+        boolean initial = Jllama.isCpuMoeBatched();
+        try {
+            Jllama.setCpuMoeBatched(false);
+            assertThat(Jllama.isCpuMoeBatched(), is(false));
+            Jllama.setCpuMoeBatched(true);
+            assertThat(Jllama.isCpuMoeBatched(), is(true));
+        } finally {
+            Jllama.setCpuMoeBatched(initial);
+        }
+    }
+
     @Test
     void apiVersionIsTheVersionThisModuleWasBuiltAs() {
         String expected = System.getProperty("net.ladenthin.llama.ffm.expected.version");

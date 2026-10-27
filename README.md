@@ -1673,6 +1673,29 @@ The `LogLevel` enum values passed to the callback correspond to the native llama
 | `WARN` | Non-fatal warnings |
 | `ERROR` | Errors that may affect inference results |
 
+### Mixture-of-experts models on the CPU
+
+A mixture-of-experts model (gpt-oss, Qwen3-MoE, ...) whose expert weights the CPU backend repacks at
+load -- MXFP4, Q4_0, IQ4_NL and Q4_K experts on an AVX2 or ARM CPU -- runs its expert
+multiplications through a path this project changes (`llama/patches/0022`): the tokens routed to one
+expert are multiplied together, and the work is handed out to the threads in small units, so a slower
+core takes fewer of them. Upstream llama.cpp multiplies one token at a time and gives every thread a
+fixed share. The results are the same up to rounding; measured on gpt-oss-20b in a sandbox, prompt
+processing was 47 % faster and token generation 26 %
+([`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md)).
+
+Both paths stay available, so the difference can be measured on your own machine:
+
+```java
+LlamaModel.setCpuMoeBatched(false); // upstream's path
+LlamaModel.setCpuMoeBatched(true);  // the batched path (the default)
+boolean batched = LlamaModel.isCpuMoeBatched();
+```
+
+The switch is process-wide and takes effect from the next computation on, for `NativeServer` as well.
+`GGML_CPU_REPACK_MMID_BATCHED=0` in the environment starts a process on upstream's path without a
+line of code, e.g. for the server launched from the command line.
+
 ## Importing in Android
 
 > [!IMPORTANT]

@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**12 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -34,6 +34,7 @@ match a binary to this page.
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
+| 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 
 ## 0001-win32-arg-parse-embed-guard.patch
 
@@ -513,4 +514,66 @@ launch_slot_with_task() in tools/server/server-context.cpp at the new tag -- onc
 params_base.lora_adapters with slot.lora and clears the prompt (or SET_LORA clears the slots),
 drop that hunk rather than refreshing it; and read the slot loop of init() -- once it sets
 slot.lora from params_base.lora_adapters, drop that hunk. The patch goes when both have.
+```
+
+## 0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch
+
+**Files (3):** `ggml/include/ggml-cpu.h`, `ggml/src/ggml-cpu/ggml-cpu.cpp`, `ggml/src/ggml-cpu/repack.cpp`
+
+The patch's own header, verbatim:
+
+```text
+ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically
+
+forward_mul_mat_id() of the CPU_REPACK buffer (ggml/src/ggml-cpu/repack.cpp) runs the expert
+matmuls of every MoE model whose expert weights are repacked at load -- MXFP4 (gpt-oss), Q4_0,
+IQ4_NL and Q4_K on AVX2, and their interleaved forms on ARM -- and it pays two costs that
+forward_mul_mat() of the same buffer does not:
+
+1. One gemv per token. The tokens routed to an expert are multiplied one at a time, so the 4-bit
+   weights are unpacked once per token, and the gemm kernel that exists for the same type is never
+   reached from here. In ggml's generic MUL_MAT_ID the tiled kernels take over for batches, but they
+   cover K-quants and IQ types, not MXFP4.
+2. A static split. Thread ith gets the fixed rows [ith*n/nth, (ith+1)*n/nth) of every expert, so
+   each expert matmul ends when the slowest thread does -- on a hybrid CPU, at the pace of its
+   slowest core. forward_mul_mat() hands its chunks out through ggml_threadpool_chunk_add().
+
+The patch keeps that path and adds a second one; thread 0 picks one per op, before the grouping
+barrier, from a process-wide switch, and publishes the choice in the work buffer, so a flip during a
+compute cannot send the threads down different paths:
+
+  ggml_backend_cpu_set_repack_mmid_batched(bool) / ggml_backend_cpu_get_repack_mmid_batched()
+  (ggml-cpu.h, and in the CPU backend's get_proc_address table for a GGML_BACKEND_DL build).
+  On by default; GGML_CPU_REPACK_MMID_BATCHED=0 in the environment makes off the initial value.
+
+The batched path: thread 0 lists the experts that got rows; the work is (expert, column chunk)
+units, about 16 per thread, taken through ggml_threadpool_chunk_add(). In a unit, every group of up
+to 16 of the expert's tokens (in fours) is gathered from src1, quantized interleaved with
+ggml_quantize_mat_t() -- the quantizer forward_mul_mat() uses for its gemm rows --, multiplied with
+gemm() into a per-thread tile and scattered back to the token rows; fewer than four leftover tokens
+take the gemv path from the rows quantized before. work_size() reserves the per-op state, the
+expert list and the per-thread scratch (16 float rows, their quantized form and a 16-row output
+tile; ~420 KB per thread for gpt-oss-20b) whatever the switch says, since it may flip before the
+graph runs.
+
+Measured in java-llama.cpp (docs/benchmarks/moe-mxfp4-cpu-alderlake.md): a random-weight GGUF in
+gpt-oss-20b's exact shape and ggml-org's MXFP4 layout, the alderlake CPU module (AVX2 + AVX-VNNI)
+staged alone, 4 threads: prompt processing +46 % (43.9 -> 64.1 t/s), token generation +23 %
+(7.84 -> 9.63 t/s), single-threaded prompt processing +59 %; the barrier wait after MUL_MAT_ID
+fell from 13.9 % to 1.7 % of all thread time. llama-perplexity with --kl-divergence against the
+unchanged code: mean KLD 0.000000, max 0.000002, same top token 100 %.
+
+The switch is this project's addition, for A/B measurements on a user's own machine
+(LlamaModel.setCpuMoeBatched, jllama_set_cpu_moe_batched, the environment variable); an upstream
+submission would offer the batched path alone.
+
+The guard is src/test/cpp/test_moe_repack.cpp: MUL_MAT_ID over repacked weights of four types, with
+both settings of the switch and 1, 3 and 4 threads, against the generic path over the same weights
+in a plain buffer, for routings that give an expert 0, 1, 3, 4 and 17 tokens, a slot of -1, one
+token alone and one input row per slot; and the switch is resolved through the CPU backend's
+get_proc_address, so a bump that drops the patch reds the test at once.
+
+Drop-check on every bump: read forward_mul_mat_id() in ggml/src/ggml-cpu/repack.cpp at the new tag
+-- once upstream calls gemm for an expert's batched rows and hands the work out through
+ggml_threadpool_chunk_add(), drop this patch (and with it the switch) rather than refreshing it.
 ```

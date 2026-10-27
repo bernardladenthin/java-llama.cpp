@@ -606,6 +606,28 @@ void set_log_sink(common_log_callback callback, void *user_data) {
     }
 }
 
+namespace {
+// patches/0022's switch; decltype ties the expected signature to ggml-cpu.h's declaration
+template <typename Fn> Fn cpu_proc(const char *name) {
+    ggml_backend_reg_t reg = ggml_backend_reg_by_name("CPU");
+    void *fn = reg != nullptr ? ggml_backend_reg_get_proc_address(reg, name) : nullptr;
+    if (fn == nullptr) {
+        throw std::runtime_error(reg == nullptr ? std::string("no CPU backend is loaded yet")
+                                                : std::string("the CPU backend does not provide ") + name +
+                                                      " (a library built without llama/patches/0022)");
+    }
+    return reinterpret_cast<Fn>(fn);
+}
+} // namespace
+
+void set_cpu_moe_batched(bool batched) {
+    cpu_proc<decltype(&ggml_backend_cpu_set_repack_mmid_batched)>("ggml_backend_cpu_set_repack_mmid_batched")(batched);
+}
+
+bool cpu_moe_batched() {
+    return cpu_proc<decltype(&ggml_backend_cpu_get_repack_mmid_batched)>("ggml_backend_cpu_get_repack_mmid_batched")();
+}
+
 // ---------------------------------------------------------------------------
 // The rest of LlamaModel (B.3).
 // ---------------------------------------------------------------------------

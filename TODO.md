@@ -150,7 +150,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 |---|---|---|
 | **OpenVINO on an Intel GPU/NPU** | suitable Intel device, unavailable to these sessions | the 21.7x/336x figures are CPU-plugin fallback only; they do not prove GPU/NPU execution |
 | the two **SME** aarch64 modules | Linux aarch64 with SME, absent from current CI/cloud machines | macOS's static Metal library does not exercise these modules |
-| **gpt-oss-20b, unchanged against the MoE fix**, on the **Core Ultra 7 165U** (`-t 6/8/10`) | the laptop; the fix is the prototype in [`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md) | its static work split meets real P-, E- and LP-E-cores only there; the sandbox could emulate one slow core for prompt processing (−49 % unchanged, −24 % fixed) but not for generation. Whether to carry the fix as `llama/patches/0022` is the owner's decision, open |
+| **gpt-oss-20b on both MoE paths of `llama/patches/0022`**, on the **Core Ultra 7 165U** (`-t 6/8/10`) | the laptop; switch with `LlamaModel.setCpuMoeBatched` or `GGML_CPU_REPACK_MMID_BATCHED=0` ([`docs/benchmarks/moe-mxfp4-cpu-alderlake.md`](docs/benchmarks/moe-mxfp4-cpu-alderlake.md)) | upstream's static work split meets real P-, E- and LP-E-cores only there; the sandbox could emulate one slow core for prompt processing (−49 % upstream's path, −24 % batched) but not for generation |
 | [`docs/local-test-plan.md`](docs/local-test-plan.md) parts A–D on the **Core Ultra 7 165U** | the laptop the Windows guide (#575) is written for | part A -- which CPU module ggml picks there and what it gains -- is what CI cannot measure; the only report so far is the Zen 3 one (`docs/handover/local-agent-report-b11538-windows.md`). One result file per machine, unmeasured values marked as such |
 
 ## Open — jllama-specific
@@ -369,8 +369,8 @@ because each is a design decision in code this project does not own. And say pla
 downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
 maintainer can see what a merged change would let this project delete.
 
-There are **twelve** patches today (`0001`–`0003`, `0006`–`0008`, `0014`, `0015`,
-`0017`, `0018`, `0020`, `0021`). Each
+There are **thirteen** patches today (`0001`–`0003`, `0006`–`0008`, `0014`, `0015`,
+`0017`, `0018`, `0020`, `0021`, `0022`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
@@ -384,7 +384,10 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
   copies the line `ggml-backend.cpp` already has), `0020` (validate leaf allocations before
   reusing a graph allocation), `0021` (invalidate the slot prompt cache when server LoRA adapters
-  change; both hunks have independent drop-checks in `CLAUDE.md`).
+  change; both hunks have independent drop-checks in `CLAUDE.md`), `0022` (batch an expert's tokens
+  through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
+  its switch, which exists for measurements here; the evidence is
+  `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`).
 - **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
 - **Two upstream-only defects worth an issue on that day, no patch here:** a lost RPC server
   mid-inference still aborts the process (the ggml backend interface has no error return for a lost

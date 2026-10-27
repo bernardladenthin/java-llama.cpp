@@ -1473,6 +1473,23 @@ TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
     EXPECT_EQ(jllama_json_schema_to_grammar(nullptr, &grammar.s), JLLAMA_STATUS_INVALID_ARGUMENT);
 }
 
+// patches/0022's switch through the C API: it reaches the CPU backend's entry points, round-trips,
+// and refuses a null out-pointer. What the two paths compute is test_moe_repack.cpp's business.
+TEST(CApiStatic, CpuMoeBatchedSwitchRoundTrips) {
+    bool initial = false;
+    ASSERT_EQ(jllama_get_cpu_moe_batched(&initial), JLLAMA_STATUS_OK) << jllama_last_error();
+    bool now = true;
+    ASSERT_EQ(jllama_set_cpu_moe_batched(false), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(jllama_get_cpu_moe_batched(&now), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(now);
+    ASSERT_EQ(jllama_set_cpu_moe_batched(true), JLLAMA_STATUS_OK);
+    ASSERT_EQ(jllama_get_cpu_moe_batched(&now), JLLAMA_STATUS_OK);
+    EXPECT_TRUE(now);
+    EXPECT_EQ(jllama_get_cpu_moe_batched(nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+    EXPECT_EQ(jllama_set_cpu_moe_batched(initial), JLLAMA_STATUS_OK);
+}
+
 TEST_F(CApi, QuantizeWritesAModelThatLoads) {
     const std::string out = path_ + ".q8_0.gguf";
     ASSERT_EQ(jllama_quantize(path_.c_str(), out.c_str(), /*LLAMA_FTYPE_MOSTLY_Q8_0*/ 7, 1, false), JLLAMA_STATUS_OK)

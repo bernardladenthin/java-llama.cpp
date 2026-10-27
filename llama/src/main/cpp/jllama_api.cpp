@@ -855,6 +855,33 @@ jllama_status jllama_finetune(const char *config_json) {
     }
 }
 
+jllama_status jllama_set_cpu_moe_batched(bool batched) {
+    try {
+        jllama::engine::set_cpu_moe_batched(batched);
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+jllama_status jllama_get_cpu_moe_batched(bool *batched) {
+    if (batched == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "batched must not be null");
+    }
+    try {
+        *batched = jllama::engine::cpu_moe_batched();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
 jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {
     try {
         if (callback == nullptr) {
