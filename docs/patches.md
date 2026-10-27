@@ -547,15 +547,22 @@ compute cannot send the threads down different paths:
   (ggml-cpu.h, and in the CPU backend's get_proc_address table for a GGML_BACKEND_DL build).
   On by default; GGML_CPU_REPACK_MMID_BATCHED=0 in the environment makes off the initial value.
 
-The batched path: thread 0 lists the experts that got rows; the work is (expert, column chunk)
-units, about 16 per thread, taken through ggml_threadpool_chunk_add(). In a unit, every group of up
-to 16 of the expert's tokens (in fours) is gathered from src1, quantized interleaved with
-ggml_quantize_mat_t() -- the quantizer forward_mul_mat() uses for its gemm rows --, multiplied with
-gemm() into a per-thread tile and scattered back to the token rows; fewer than four leftover tokens
-take the gemv path from the rows quantized before. work_size() reserves the per-op state, the
-expert list and the per-thread scratch (16 float rows, their quantized form and a 16-row output
-tile; ~420 KB per thread for gpt-oss-20b) whatever the switch says, since it may flip before the
-graph runs.
+The batched path: thread 0 lists the experts that got rows and where each one's groups of four
+tokens start in a shared buffer. Every such group is gathered from src1 and quantized interleaved
+with ggml_quantize_mat_t() -- the quantizer forward_mul_mat() uses for its gemm rows -- once, the
+groups split statically over the threads, then a barrier (both skipped when no expert got four
+tokens, as in token generation). The work is then (expert, column chunk) units, about 16 per
+thread, taken through ggml_threadpool_chunk_add(); a unit multiplies up to 16 of the expert's
+shared rows at a time with gemm() into a per-thread tile and scatters them back to the token rows,
+and fewer than four leftover tokens take the gemv path from the rows quantized before.
+work_size() reserves the per-op state, the shared rows (one per routed token slot; 6.3 MB for
+gpt-oss-20b at a 512-token batch) and the per-thread scratch (four float rows and a 16-row output
+tile) whatever the switch says, since it may flip before the graph runs.
+
+Quantizing once matters where the activation quantizer is slow: ARM has no SIMD form of
+ggml_quantize_mat_q8_K_4x4/4x8 (x86 has one for 4x8), and a first version of this patch, which
+quantized an expert's rows again in every column chunk, made Q4_K prompt processing on a
+Neoverse-N1 18 % slower at 32 threads (perf: 21 % of the time in the inlined generic quantizer).
 
 Measured in java-llama.cpp (docs/benchmarks/moe-mxfp4-cpu-alderlake.md): a random-weight GGUF in
 gpt-oss-20b's exact shape and ggml-org's MXFP4 layout, the alderlake CPU module (AVX2 + AVX-VNNI)
@@ -563,6 +570,17 @@ staged alone, 4 threads: prompt processing +46 % (43.9 -> 64.1 t/s), token gener
 (7.84 -> 9.63 t/s), single-threaded prompt processing +59 %; the barrier wait after MUL_MAT_ID
 fell from 13.9 % to 1.7 % of all thread time. llama-perplexity with --kl-divergence against the
 unchanged code: mean KLD 0.000000, max 0.000002, same top token 100 %.
+
+With real weights (b11901, llama-bench pp512, switch off -> on, t/s;
+docs/benchmarks/moe-repack-real-weights.md): a Ryzen 7 5800H (Zen 3, haswell module), 8 threads,
+gpt-oss-20b MXFP4 41.7 -> 59.6, Qwen3-30B-A3B Q4_K_M 58.3 -> 84.7, OLMoE-1B-7B Q4_0
+138.8 -> 190.0; a Neoverse-N1 (dotprod, armv8.2_2 module), 32 threads, 177.0 -> 278.7,
+190.7 -> 215.7 and 705.9 -> 990.0; an IBM z16 (z16 module, big-endian OLMoE Q4_0), 4 threads,
+45.8 -> 76.2. Token generation is unchanged within noise. KLD against the unchanged code on
+wikitext-2: 0.000000 for MXFP4 and Q4_0 (same top token 100 %, 99.98 % on the z16); 0.0075 for
+Q4_K, where the gemm and gemv kernels round
+differently and a router flips experts on near ties -- upstream's repack path is as far from
+--no-repack (0.0080 on the N1) as the batched one (0.0085).
 
 The switch is this project's addition, for A/B measurements on a user's own machine
 (LlamaModel.setCpuMoeBatched, jllama_set_cpu_moe_batched, the environment variable); an upstream

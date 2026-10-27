@@ -15,6 +15,7 @@ themselves live in [`../../TODO.md`](../../TODO.md).
 |---|---|
 | [`cpu-backend-modules.md`](cpu-backend-modules.md) | What each of the 22 shipped CPU backend modules is worth, per microarchitecture — and whether `ggml_backend_load_best` picks the fastest one |
 | [`moe-mxfp4-cpu-alderlake.md`](moe-mxfp4-cpu-alderlake.md) | Where the `alderlake` module (Core Ultra) loses time on Qwen3 and gpt-oss-20b, measured with random-weight models in the real shapes -- and what the fix to ggml's MoE path in `llama/patches/0022` is worth (+47 % prompt, +26 % generation; switchable for A/B) |
+| [`moe-repack-real-weights.md`](moe-repack-real-weights.md) | `llama/patches/0022` with trained weights (gpt-oss-20b MXFP4, Qwen3-30B-A3B Q4_K_M, OLMoE Q4_0) on Zen 3, a Neoverse-N1 and an IBM z16: +13 % to +66 % prompt processing, generation unchanged, KLD against upstream's path -- and the ARM defect of the first version it found |
 | [`gpu-module-jars.md`](gpu-module-jars.md) | What happens when a GPU module jar is actually *used* -- two findings that contradict the "a module that cannot help is skipped" premise |
 | [`arm-fp16-conversion.md`](arm-fp16-conversion.md) | Every shipped ARM binary converts fp32 to fp16 in software, ours and upstream's: 26 of 26 disassembled, 8.9x to 13.3x on the function, and 0.03 % of cycles so inference does not move |
 | [`upstream-f16c-30270.md`](upstream-f16c-30270.md) | An isolation of one upstream commit: what it does, that it changes nothing measurable here, and a compile-time guard proven red against the defect |
