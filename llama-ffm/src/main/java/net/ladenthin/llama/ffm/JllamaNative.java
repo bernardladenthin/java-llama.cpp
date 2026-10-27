@@ -83,6 +83,10 @@ final class JllamaNative {
     static final MethodHandle QUANTIZE = downcall(
             "jllama_quantize", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN));
     static final MethodHandle FINETUNE = downcall("jllama_finetune", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    static final MethodHandle SET_CPU_MOE_BATCHED =
+            downcall("jllama_set_cpu_moe_batched", FunctionDescriptor.of(JAVA_INT, JAVA_BOOLEAN));
+    static final MethodHandle GET_CPU_MOE_BATCHED =
+            downcall("jllama_get_cpu_moe_batched", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
     // -- the model ----------------------------------------------------------------------------------
     static final MethodHandle MODEL_LOAD = downcall(

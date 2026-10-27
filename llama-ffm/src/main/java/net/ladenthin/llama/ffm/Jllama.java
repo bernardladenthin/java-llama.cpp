@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 package net.ladenthin.llama.ffm;
 
+import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
 import static net.ladenthin.llama.ffm.JllamaNative.call;
 import static net.ladenthin.llama.ffm.JllamaNative.cString;
 import static net.ladenthin.llama.ffm.JllamaNative.invoke;
@@ -88,6 +89,36 @@ public final class Jllama {
         // The swap drained the previous sink before returning, so its stub is no longer reachable.
         if (previous != null) {
             previous.close();
+        }
+    }
+
+    /**
+     * Chooses how the CPU backend runs the expert matrix multiplications of a mixture-of-experts model
+     * over repacked weights: batched per expert with the work handed out dynamically ({@code true}, the
+     * default) or as upstream llama.cpp does, one multiplication per token over a fixed split
+     * ({@code false}). Process-wide and the same switch as {@code LlamaModel.setCpuMoeBatched} of the
+     * core, whose documentation has the details; {@code GGML_CPU_REPACK_MMID_BATCHED=0} in the
+     * environment makes {@code false} the initial value.
+     *
+     * @param batched {@code true} for the batched path, {@code false} for upstream's
+     * @throws LlamaException if the loaded library was built without the switch
+     */
+    public static void setCpuMoeBatched(boolean batched) {
+        call(JllamaNative.SET_CPU_MOE_BATCHED, batched);
+    }
+
+    /**
+     * Whether the CPU backend runs the expert matrix multiplications batched; see
+     * {@link #setCpuMoeBatched(boolean)}.
+     *
+     * @return {@code true} for the batched path (the default), {@code false} for upstream's
+     * @throws LlamaException if the loaded library was built without the switch
+     */
+    public static boolean isCpuMoeBatched() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_BOOLEAN);
+            call(JllamaNative.GET_CPU_MOE_BATCHED, out);
+            return out.get(JAVA_BOOLEAN, 0);
         }
     }
 

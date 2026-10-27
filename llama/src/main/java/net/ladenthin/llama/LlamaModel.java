@@ -456,6 +456,40 @@ public class LlamaModel implements AutoCloseable {
     public static native void setLogger(LogFormat format, BiConsumer<LogLevel, String> callback);
 
     /**
+     * Chooses how the CPU backend runs the expert matrix multiplications of a mixture-of-experts model
+     * (gpt-oss, Qwen3-MoE, ...) whose expert weights were repacked at load, which on an AVX2 or ARM CPU
+     * is the case for MXFP4, Q4_0, IQ4_NL and Q4_K experts.
+     *
+     * <p>{@code true}, the default: the tokens routed to one expert are multiplied together, and the
+     * work is handed out to the threads in small units, so a slower core (an efficiency core) takes
+     * fewer of them. {@code false}: upstream llama.cpp's way, one multiplication per token and a fixed
+     * share of every expert per thread. The results are the same up to floating-point rounding; the
+     * switch exists to measure the difference on a given machine (llama/patches/0022). Prompt processing
+     * gains from both halves, token generation (one token at a time) from the work distribution only;
+     * dense models and layers offloaded to a GPU are not affected.</p>
+     *
+     * <p>Process-wide, for every model, {@code NativeServer} included, from the next computation on;
+     * a computation already running finishes on the path it started with. Setting the environment
+     * variable {@code GGML_CPU_REPACK_MMID_BATCHED=0} before the JVM starts makes {@code false} the
+     * initial value, also for a process that never calls this method.</p>
+     *
+     * @param batched {@code true} for the batched path, {@code false} for upstream's
+     * @throws net.ladenthin.llama.exception.LlamaException if the loaded native library was built
+     *     without the switch
+     */
+    public static native void setCpuMoeBatched(boolean batched);
+
+    /**
+     * Whether the CPU backend runs the expert matrix multiplications of a mixture-of-experts model
+     * batched; see {@link #setCpuMoeBatched(boolean)}.
+     *
+     * @return {@code true} for the batched path (the default), {@code false} for upstream's
+     * @throws net.ladenthin.llama.exception.LlamaException if the loaded native library was built
+     *     without the switch
+     */
+    public static native boolean isCpuMoeBatched();
+
+    /**
      * Returns the upstream llama.cpp build identifier actually linked into the loaded native
      * library, composed as {@code "b<build-number>-<commit>"} (e.g. {@code "b9959-0badc06ab"}).
      *

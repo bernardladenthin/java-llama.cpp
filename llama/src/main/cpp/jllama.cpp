@@ -1223,6 +1223,31 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env
     });
 }
 
+// Reach LlamaModel.setCpuMoeBatched / isCpuMoeBatched (patches/0022's switch, process-wide).
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setCpuMoeBatched(JNIEnv *env, jclass clazz,
+                                                                            jboolean batched) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> void {
+        (void)clazz;
+        const jllama_status status = jllama_set_cpu_moe_batched(batched == JNI_TRUE);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+        }
+    });
+}
+
+JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_isCpuMoeBatched(JNIEnv *env, jclass clazz) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jboolean {
+        (void)clazz;
+        bool batched = false;
+        const jllama_status status = jllama_get_cpu_moe_batched(&batched);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return JNI_FALSE;
+        }
+        return batched ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_jsonSchemaToGrammarBytes(JNIEnv *env, jclass clazz,
                                                                                           jstring j_schema) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {

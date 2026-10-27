@@ -1,0 +1,131 @@
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+
+PROTOTYPE, not applied to any build of this project: the MUL_MAT_ID (MoE) path of ggml-cpu's repack
+buffer, with (a) the work handed out dynamically as (expert, column chunk) units instead of a static
+row split per thread, and (b) gemm for every group of four or more tokens routed to the same expert
+instead of one gemv per token. Behind -DJLLAMA_MMID_V2 (CMAKE_CXX_FLAGS) so one tree builds both
+sides of the A/B. Applies to llama.cpp b11887 + llama/patches/ with `git apply`; the measurement
+and the correctness check are in docs/benchmarks/moe-mxfp4-cpu-alderlake.md.
+
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -4554,7 +4554,19 @@
+ 
+ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE> class tensor_traits : public tensor_traits_base {
+ 
+-    bool work_size(int /* n_threads */, const struct ggml_tensor * op, size_t & size) override {
++#ifdef JLLAMA_MMID_V2
++    // MUL_MAT_ID: token rows per gemm call, and the per-thread scratch that call needs
++    static constexpr int64_t MMID_GEMM_ROWS = 16;
++
++    static size_t mmid_thread_scratch(int64_t ne10, int64_t ne01) {
++        return GGML_PAD(MMID_GEMM_ROWS * ne10 * sizeof(float), 64) +
++               GGML_PAD(MMID_GEMM_ROWS * ggml_row_size(PARAM_TYPE, ne10), 64) +
++               GGML_PAD(MMID_GEMM_ROWS * ne01 * sizeof(float), 64);
++    }
++#endif
++
++    bool work_size(int n_threads, const struct ggml_tensor * op, size_t & size) override {
++        GGML_UNUSED(n_threads);
+         // not realy a GGML_TYPE_Q8_0 but same size.
+         switch (op->op) {
+             case GGML_OP_MUL_MAT:
+@@ -4573,6 +4585,10 @@
+                     const size_t sizeof_mmid_row_mapping = sizeof(int64_t);
+ 
+                     size += sizeof_mmid_row_mapping*ne02*(ne12 + 1);
++#ifdef JLLAMA_MMID_V2
++                    size += sizeof(int64_t)*(ne02 + 1) + 64;
++                    size += (size_t) n_threads * mmid_thread_scratch(op->src[1]->ne[0], op->src[0]->ne[1]);
++#endif
+ 
+                     return true;
+                 }
+@@ -4868,6 +4884,77 @@
+             }
+         }
+ 
++#ifdef JLLAMA_MMID_V2
++        // the experts that got rows, and the unit counter: threads take (expert, column chunk)
++        // units dynamically, so a slower core takes fewer of them instead of holding the barrier
++        int64_t * active = (int64_t *) (matrix_rows + n_as*ne12);
++        if (ith == 0) {
++            int64_t n_active = 0;
++            for (int cur_a = 0; cur_a < n_as; ++cur_a) {
++                if (matrix_row_counts[cur_a] > 0) {
++                    active[n_active++] = cur_a;
++                }
++            }
++            active[n_as] = n_active;
++            ggml_threadpool_chunk_set(params->threadpool, nth);
++        }
++
++        ggml_barrier(params->threadpool);
++
++        const int64_t n_active = active[n_as];
++        if (n_active == 0) {
++            return;
++        }
++        const int64_t n_col_blocks = ne01 / NB_COLS;
++        const int64_t nck          = MAX(1, MIN(n_col_blocks, (nth * 16 + n_active - 1) / n_active));
++        const int64_t cols_per     = ((n_col_blocks + nck - 1) / nck) * NB_COLS;
++        const int64_t n_units      = n_active * nck;
++
++        char * scratch_base = (char *) (((uintptr_t) (active + n_as + 1) + 63) & ~(uintptr_t) 63);
++        char * scratch      = scratch_base + ith * mmid_thread_scratch(ne10, ne01);
++        float * fbuf = (float *) scratch;
++        char *  qbuf = scratch + GGML_PAD(MMID_GEMM_ROWS * ne10 * sizeof(float), 64);
++        float * obuf = (float *) (qbuf + GGML_PAD(MMID_GEMM_ROWS * ggml_row_size(PARAM_TYPE, ne10), 64));
++        GGML_ASSERT((char *) obuf + MMID_GEMM_ROWS * ne01 * sizeof(float) <= (char *) params->wdata + params->wsize);
++
++        for (int64_t unit = ith; unit < n_units; unit = ggml_threadpool_chunk_add(params->threadpool, 1)) {
++            const int64_t cur_a = active[unit / nck];
++            const int64_t c0    = (unit % nck) * cols_per;
++            const int64_t c1    = MIN(c0 + cols_per, ne01);
++            if (c0 >= c1) {
++                continue;
++            }
++            const int64_t nc   = c1 - c0;
++            const int64_t cne1 = matrix_row_counts[cur_a];
++            const char * src0_cur = (const char *) src0->data + cur_a*nb02 + c0*nb01;
++
++            // groups of four or more rows: gather the float rows, interleave-quantize, gemm, scatter
++            int64_t ir1 = 0;
++            while (cne1 - ir1 >= 4) {
++                const int64_t nr = MIN(MMID_GEMM_ROWS, (cne1 - ir1) & ~(int64_t) 3);
++                for (int64_t r = 0; r < nr; r++) {
++                    const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1 + r);
++                    memcpy(fbuf + r*ne10, (const char *) src1->data + (rm.i1 % ne11)*nb11 + rm.i2*nb12, ne10*sizeof(float));
++                }
++                for (int64_t r = 0; r < nr; r += 4) {
++                    ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>(fbuf + r*ne10, qbuf + r*nbw1, 4, ne10);
++                }
++                gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, obuf, nc, src0_cur, qbuf, nr, nc);
++                for (int64_t r = 0; r < nr; r++) {
++                    const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1 + r);
++                    memcpy((float *) ((char *) dst->data + rm.i1*nb1 + rm.i2*nb2) + c0, obuf + r*nc, nc*sizeof(float));
++                }
++                ir1 += nr;
++            }
++            for (; ir1 < cne1; ir1++) {
++                const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1);
++                const char * src1_col = (const char *) wdata + ((rm.i1 % ne11) * nbw1 + rm.i2 * nbw2);
++                gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(
++                    ne00, (float *) ((char *) dst->data + (rm.i1 * nb1 + rm.i2 * nb2)) + c0, ne01,
++                    src0_cur, src1_col, 1, nc);
++            }
++        }
++#else
+         ggml_barrier(params->threadpool);
+ 
+         // compute each matrix multiplication in sequence
+@@ -4915,6 +5002,7 @@
+                     src0_cur + src0_cur_start * nb01, src1_col, 1, src0_cur_end - src0_cur_start);
+             }
+         }
++#endif
+ #undef MMID_MATRIX_ROW
+     }
+ 

@@ -93,6 +93,20 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_releaseTask(JNIEnv *,
 
 /*
  * Class:     net_ladenthin_llama_LlamaModel
+ * Method:    setCpuMoeBatched
+ * Signature: (Z)V
+ */
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setCpuMoeBatched(JNIEnv *, jclass, jboolean);
+
+/*
+ * Class:     net_ladenthin_llama_LlamaModel
+ * Method:    isCpuMoeBatched
+ * Signature: ()Z
+ */
+JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_isCpuMoeBatched(JNIEnv *, jclass);
+
+/*
+ * Class:     net_ladenthin_llama_LlamaModel
  * Method:    jsonSchemaToGrammarBytes
  * Signature: (Ljava/lang/String;)[B
  */
