@@ -21,15 +21,22 @@ compute cannot send the threads down different paths:
   (ggml-cpu.h, and in the CPU backend's get_proc_address table for a GGML_BACKEND_DL build).
   On by default; GGML_CPU_REPACK_MMID_BATCHED=0 in the environment makes off the initial value.
 
-The batched path: thread 0 lists the experts that got rows; the work is (expert, column chunk)
-units, about 16 per thread, taken through ggml_threadpool_chunk_add(). In a unit, every group of up
-to 16 of the expert's tokens (in fours) is gathered from src1, quantized interleaved with
-ggml_quantize_mat_t() -- the quantizer forward_mul_mat() uses for its gemm rows --, multiplied with
-gemm() into a per-thread tile and scattered back to the token rows; fewer than four leftover tokens
-take the gemv path from the rows quantized before. work_size() reserves the per-op state, the
-expert list and the per-thread scratch (16 float rows, their quantized form and a 16-row output
-tile; ~420 KB per thread for gpt-oss-20b) whatever the switch says, since it may flip before the
-graph runs.
+The batched path: thread 0 lists the experts that got rows and where each one's groups of four
+tokens start in a shared buffer. Every such group is gathered from src1 and quantized interleaved
+with ggml_quantize_mat_t() -- the quantizer forward_mul_mat() uses for its gemm rows -- once, the
+groups split statically over the threads, then a barrier (both skipped when no expert got four
+tokens, as in token generation). The work is then (expert, column chunk) units, about 16 per
+thread, taken through ggml_threadpool_chunk_add(); a unit multiplies up to 16 of the expert's
+shared rows at a time with gemm() into a per-thread tile and scatters them back to the token rows,
+and fewer than four leftover tokens take the gemv path from the rows quantized before.
+work_size() reserves the per-op state, the shared rows (one per routed token slot; 6.3 MB for
+gpt-oss-20b at a 512-token batch) and the per-thread scratch (four float rows and a 16-row output
+tile) whatever the switch says, since it may flip before the graph runs.
+
+Quantizing once matters where the activation quantizer is slow: ARM has no SIMD form of
+ggml_quantize_mat_q8_K_4x4/4x8 (x86 has one for 4x8), and a first version of this patch, which
+quantized an expert's rows again in every column chunk, made Q4_K prompt processing on a
+Neoverse-N1 18 % slower at 32 threads (perf: 21 % of the time in the inlined generic quantizer).
 
 Measured in java-llama.cpp (docs/benchmarks/moe-mxfp4-cpu-alderlake.md): a random-weight GGUF in
 gpt-oss-20b's exact shape and ggml-org's MXFP4 layout, the alderlake CPU module (AVX2 + AVX-VNNI)
@@ -37,6 +44,15 @@ staged alone, 4 threads: prompt processing +46 % (43.9 -> 64.1 t/s), token gener
 (7.84 -> 9.63 t/s), single-threaded prompt processing +59 %; the barrier wait after MUL_MAT_ID
 fell from 13.9 % to 1.7 % of all thread time. llama-perplexity with --kl-divergence against the
 unchanged code: mean KLD 0.000000, max 0.000002, same top token 100 %.
+
+With real weights (b11901, llama-bench pp512, switch off -> on, t/s;
+docs/benchmarks/moe-repack-real-weights.md): a Ryzen 7 5800H (Zen 3, haswell module), 8 threads, gpt-oss-20b MXFP4
+41.7 -> 59.6, Qwen3-30B-A3B Q4_K_M 58.3 -> 84.7, OLMoE-1B-7B Q4_0 138.8 -> 190.0; a Neoverse-N1
+(dotprod, armv8.2_2 module), 32 threads, 177.0 -> 278.7, 190.7 -> 215.7 and 705.9 -> 990.0. Token
+generation is unchanged within noise. KLD against the unchanged code on wikitext-2: 0.000000 for
+MXFP4 and Q4_0 (same top token 100 %); 0.0075 for Q4_K, where the gemm and gemv kernels round
+differently and a router flips experts on near ties -- upstream's repack path is as far from
+--no-repack (0.0080 on the N1) as the batched one (0.0085).
 
 The switch is this project's addition, for A/B measurements on a user's own machine
 (LlamaModel.setCpuMoeBatched, jllama_set_cpu_moe_batched, the environment variable); an upstream
@@ -88,7 +104,7 @@ index 81ff5d7..05738c6 100644
      // threadpool - TODO:  move to ggml-base
      if (strcmp(name, "ggml_threadpool_new") == 0) {
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 9282ca2..bdeb684 100644
+index 9282ca2..9e9e86a 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -15,9 +15,29 @@
@@ -121,17 +137,22 @@ index 9282ca2..bdeb684 100644
  #if defined(__GNUC__)
  #pragma GCC diagnostic ignored "-Woverlength-strings"
  #endif
-@@ -4554,7 +4574,16 @@ class tensor_traits_base : public ggml::cpu::tensor_traits {
+@@ -4554,7 +4574,21 @@ class tensor_traits_base : public ggml::cpu::tensor_traits {
  
  template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE> class tensor_traits : public tensor_traits_base {
  
 -    bool work_size(int /* n_threads */, const struct ggml_tensor * op, size_t & size) override {
-+    // MUL_MAT_ID, batched path: token rows per gemm call, and the scratch each thread needs for one
++    // MUL_MAT_ID, batched path: token rows per gemm call; the rows every expert's gemm reads, quantized
++    // once for all its column chunks (at most one per routed token slot); and each thread's scratch,
++    // four gathered float rows and one gemm's output tile
 +    static constexpr int64_t MMID_GEMM_ROWS = 16;
 +
++    static size_t mmid_shared_rows(int64_t ne10, int64_t n_rows) {
++        return GGML_PAD(n_rows * ggml_row_size(PARAM_TYPE, ne10), 64);
++    }
++
 +    static size_t mmid_thread_scratch(int64_t ne10, int64_t ne01) {
-+        return GGML_PAD(MMID_GEMM_ROWS * ne10 * sizeof(float), 64) +
-+               GGML_PAD(MMID_GEMM_ROWS * ggml_row_size(PARAM_TYPE, ne10), 64) +
++        return GGML_PAD(4 * ne10 * sizeof(float), 64) +
 +               GGML_PAD(MMID_GEMM_ROWS * ne01 * sizeof(float), 64);
 +    }
 +
@@ -139,29 +160,31 @@ index 9282ca2..bdeb684 100644
          // not realy a GGML_TYPE_Q8_0 but same size.
          switch (op->op) {
              case GGML_OP_MUL_MAT:
-@@ -4574,6 +4603,11 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+@@ -4574,6 +4608,12 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
  
                      size += sizeof_mmid_row_mapping*ne02*(ne12 + 1);
  
 +                    // the path chosen for the op, the active-expert list and the batched path's scratch;
 +                    // reserved whatever the switch says now, since it may flip before the graph runs
-+                    size += sizeof(int64_t)*(ne02 + 2) + 64;
++                    size += sizeof(int64_t)*(2*ne02 + 3) + 64;
++                    size += mmid_shared_rows(op->src[1]->ne[0], op->src[2]->ne[0]*ne12);
 +                    size += (size_t) n_threads * mmid_thread_scratch(op->src[1]->ne[0], op->src[0]->ne[1]);
 +
                      return true;
                  }
              default:
-@@ -4845,6 +4879,9 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+@@ -4845,6 +4885,10 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
  
  #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id) * ne12 + (i1)]
  
-+        // [0] the path thread 0 chose for this op, [1] the number of experts that got rows, [2..] those experts
++        // [0] the path thread 0 chose for this op, [1] the number of experts that got rows, [2..2+n_as) those
++        // experts, [2+n_as..2+2*n_as) where each one's gemm rows start in the shared rows, [2+2*n_as] their total
 +        int64_t * mmid_state = (int64_t *) (matrix_rows + n_as*ne12);
 +
          if (ith == 0) {
              // initialize matrix_row_counts
              memset(matrix_row_counts, 0, n_as * sizeof(int64_t));
-@@ -4866,10 +4903,90 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+@@ -4866,10 +4910,112 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
                      matrix_row_counts[i02] += 1;
                  }
              }
@@ -171,13 +194,17 @@ index 9282ca2..bdeb684 100644
 +            const bool batched = ggml_backend_cpu_get_repack_mmid_batched();
 +            mmid_state[0] = batched;
 +            if (batched) {
-+                int64_t n_active = 0;
++                int64_t n_active  = 0;
++                int64_t gemm_rows = 0;
 +                for (int cur_a = 0; cur_a < n_as; ++cur_a) {
 +                    if (matrix_row_counts[cur_a] > 0) {
-+                        mmid_state[2 + n_active++] = cur_a;
++                        mmid_state[2 + n_as + n_active] = gemm_rows;
++                        mmid_state[2 + n_active++]      = cur_a;
++                        gemm_rows += matrix_row_counts[cur_a] & ~(int64_t) 3;
 +                    }
 +                }
-+                mmid_state[1] = n_active;
++                mmid_state[1]            = n_active;
++                mmid_state[2 + 2 * n_as] = gemm_rows;
 +                ggml_threadpool_chunk_set(params->threadpool, nth);
 +            }
          }
@@ -190,6 +217,8 @@ index 9282ca2..bdeb684 100644
 +            // routed to the same expert goes through one gemm instead of a gemv per token.
 +            const int64_t   n_active     = mmid_state[1];
 +            const int64_t * active       = mmid_state + 2;
++            const int64_t * gemm_row0    = mmid_state + 2 + n_as;
++            const int64_t   gemm_rows    = mmid_state[2 + 2 * n_as];
 +            const int64_t   n_col_blocks = ne01 / NB_COLS;
 +            if (n_active == 0) {
 +                return;
@@ -198,15 +227,39 @@ index 9282ca2..bdeb684 100644
 +            const int64_t cols_per = ((n_col_blocks + nck - 1) / nck) * NB_COLS;
 +            const int64_t n_units  = n_active * nck;
 +
-+            char * scratch = (char *) (((uintptr_t) (mmid_state + 2 + n_as) + 63) & ~(uintptr_t) 63) +
-+                             ith * mmid_thread_scratch(ne10, ne01);
++            char * shared  = (char *) (((uintptr_t) (mmid_state + 3 + 2 * n_as) + 63) & ~(uintptr_t) 63);
++            char * scratch = shared + mmid_shared_rows(ne10, n_ids * ne12) + ith * mmid_thread_scratch(ne10, ne01);
 +            float * fbuf = (float *) scratch;
-+            char *  qbuf = scratch + GGML_PAD(MMID_GEMM_ROWS * ne10 * sizeof(float), 64);
-+            float * obuf = (float *) (qbuf + GGML_PAD(MMID_GEMM_ROWS * nbw1, 64));
++            float * obuf = (float *) (scratch + GGML_PAD(4 * ne10 * sizeof(float), 64));
 +            GGML_ASSERT((char *) (obuf + MMID_GEMM_ROWS * ne01) <= (char *) params->wdata + params->wsize);
 +
++            // every group of four rows routed to one expert is gathered and quantized interleaved (as
++            // forward_mul_mat quantizes its gemm rows) once, here, not once per column chunk: an expert's
++            // rows lie together in the shared rows, so a gemm reads up to four groups in a row. Equal
++            // pieces of work, split statically; skipped with its barrier when no expert got four rows
++            // (token generation)
++            if (gemm_rows > 0) {
++                int64_t group = 0;
++                for (int64_t k = 0; k < n_active; k++) {
++                    const int64_t cur_a = active[k];
++                    for (int64_t ir1 = 0; ir1 + 4 <= matrix_row_counts[cur_a]; ir1 += 4, group++) {
++                        if (group % nth != ith) {
++                            continue;
++                        }
++                        for (int64_t r = 0; r < 4; r++) {
++                            const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1 + r);
++                            memcpy(fbuf + r*ne10, (const char *) src1->data + (rm.i1 % ne11)*nb11 + rm.i2*nb12,
++                                   ne10*sizeof(float));
++                        }
++                        ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>(fbuf, shared + (gemm_row0[k] + ir1)*nbw1, 4, ne10);
++                    }
++                }
++                ggml_barrier(params->threadpool);
++            }
++
 +            for (int64_t unit = ith; unit < n_units; unit = ggml_threadpool_chunk_add(params->threadpool, 1)) {
-+                const int64_t cur_a = active[unit / nck];
++                const int64_t k     = unit / nck;
++                const int64_t cur_a = active[k];
 +                const int64_t c0    = (unit % nck) * cols_per;
 +                const int64_t c1    = MIN(c0 + cols_per, ne01);
 +                if (c0 >= c1) {
@@ -216,20 +269,12 @@ index 9282ca2..bdeb684 100644
 +                const int64_t cne1     = matrix_row_counts[cur_a];
 +                const char *  src0_cur = (const char *) src0->data + cur_a*nb02 + c0*nb01;
 +
-+                // groups of four or more rows: gather the float rows, quantize them interleaved as the
-+                // gemm of forward_mul_mat does, multiply, and scatter the rows back
++                // groups of four or more rows: multiply the shared rows, and scatter the result back
 +                int64_t ir1 = 0;
 +                while (cne1 - ir1 >= 4) {
 +                    const int64_t nr = MIN(MMID_GEMM_ROWS, (cne1 - ir1) & ~(int64_t) 3);
-+                    for (int64_t r = 0; r < nr; r++) {
-+                        const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1 + r);
-+                        memcpy(fbuf + r*ne10, (const char *) src1->data + (rm.i1 % ne11)*nb11 + rm.i2*nb12,
-+                               ne10*sizeof(float));
-+                    }
-+                    for (int64_t r = 0; r < nr; r += 4) {
-+                        ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>(fbuf + r*ne10, qbuf + r*nbw1, 4, ne10);
-+                    }
-+                    gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, obuf, nc, src0_cur, qbuf, nr, nc);
++                    gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, obuf, nc, src0_cur,
++                                                                     shared + (gemm_row0[k] + ir1)*nbw1, nr, nc);
 +                    for (int64_t r = 0; r < nr; r++) {
 +                        const struct mmid_row_mapping rm = MMID_MATRIX_ROW(cur_a, ir1 + r);
 +                        memcpy((float *) ((char *) dst->data + rm.i1*nb1 + rm.i2*nb2) + c0, obuf + r*nc,
