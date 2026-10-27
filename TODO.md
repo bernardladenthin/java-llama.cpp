@@ -663,6 +663,32 @@ measurements and is not evidence that GPU testing is currently blocked.
   `test_patches.RenderTest.test_doc_is_current_compares_the_committed_page_with_the_render` fails
   with a bare `False is not true` (cause not found; `docs/patches.md` is LF in the work tree). Fix
   them, or document that the suite is Linux-only.
+- **Round 2 of the natives smoke depends on Hugging Face answering.** `smoke-test-natives.sh` (and
+  its `.ps1` and macOS counterparts) downloads `stories260K.gguf` from huggingface.co through the
+  server's own HTTPS client, on purpose -- that download is the proof that the statically linked
+  BoringSSL verifies against the OS store. In run 40554119477 (PR #583, the re-run) the
+  `linux-aarch64` row passed round 1 and then failed: `failed to download model: ... failed with
+  status code: 429`, "server process exited before becoming healthy". A 429 is Hugging Face's rate
+  limit, not a defect, and it already shows that the TLS handshake and the certificate check
+  worked. Make the round robust against it without losing what it proves: retry round 2 after a
+  pause when the server log names an HTTP status of 429 or 5xx, and fail only when the retries run
+  out or the error is a TLS or connection error.
+- **The GGUF cache is downloaded about 20 times per Publish run, and GitHub refused one download.**
+  In run 40580317285 (`main` at `8bab7232`) the non-gating `LLM Service app UI test on emulator`
+  failed at `actions/cache/restore` with "Failed to restore: Egress is over the account limit"
+  (an Azure storage request id), while the 14 other restores of the run succeeded. The entry
+  `gguf-models-<hash of models.csv>` holds all eleven models, 6.1 GB, and `restore-models` brings
+  the whole set to every job that needs any model: `verify-model-cache` (3 rows), the four
+  `smoke-natives` rows, `smoke-agent-linux`, the six Java test jobs, the ffm, langchain4j and agent
+  integration jobs, `build-macos-arm64-metal-15` and the two Android emulator jobs -- the latter two
+  delete every model but the draft model right after the restore. That is roughly 100 GB of cache
+  egress per run. **Do not delete the entry to fix this**: it is intact, its key follows
+  `models.csv` by itself, and a miss only makes `download-models` fetch the 6.1 GB from Hugging
+  Face again (the 429 above). The lever is a second, small entry (the draft model, plus
+  `stories260K.gguf` if round 2 moves to it) for the jobs that need nothing else. Also note: the
+  repository's caches total 11.1 GB, above the 10 GB GitHub keeps per repository, so it evicts the
+  least recently used entries (Gradle and Maven caches); the model entry, read by every run, is
+  not the one that goes.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.
