@@ -67,6 +67,12 @@ trap 'rm -rf "$WORK"' EXIT
 unzip -o -q "$JAR" "$DYLIB_ENTRY" -d "$WORK" \
     || fail "the natives jar does not contain $DYLIB_ENTRY — the macOS natives never reached the package job"
 DYLIB="$WORK/$DYLIB_ENTRY"
+# NativeLoadSmoke is compiled first rather than run as a single source file: the post-release
+# consumer runs this script on Java 8, whose launcher has no source-file mode (Java 11+).
+SMOKE_CLASSES="$WORK/smoke-classes"
+mkdir -p "$SMOKE_CLASSES"
+javac -nowarn -cp "$CP" -d "$SMOKE_CLASSES" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
+    || fail "NativeLoadSmoke.java does not compile against the set"
 echo "extracted: $(cd "$(dirname "$DYLIB")" && pwd)/$(basename "$DYLIB") ($(wc -c < "$DYLIB") bytes)"
 
 # 0) The oldest macOS it loads on. CMAKE_OSX_DEPLOYMENT_TARGET (llama/CMakeLists.txt) pins it;
@@ -98,7 +104,7 @@ codesign --verify --strict --verbose=2 "$DYLIB" \
 #    and it is the only check that covers load-time failures the signature check cannot see
 #    (missing dependent library, wrong architecture, unresolved JNI_OnLoad class lookup).
 echo "== JVM load + JNI round-trip =="
-java -cp "$CP" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
+java -cp "$SMOKE_CLASSES:$CP" NativeLoadSmoke \
     || fail "the packaged native library did not load in a JVM"
 
 # 3) HTTPS in both directions out of the packaged jar: the server behind a self-signed certificate
@@ -154,7 +160,7 @@ wait "$SERVER_PID" 2> /dev/null || true
 echo "== lib.path: the natives directory, no natives jar on the classpath =="
 NATIVES_DIR="$(smoke_natives_directory "$SET_DIR" "$WORK/natives-dir")" || fail "could not unpack the natives jar into a directory"
 CP_NO_NATIVES="$(smoke_classpath_without_natives "$SET_DIR")" || exit 1
-java -cp "$CP_NO_NATIVES" "-Dnet.ladenthin.llama.lib.path=$NATIVES_DIR" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
+java -cp "$SMOKE_CLASSES:$CP_NO_NATIVES" "-Dnet.ladenthin.llama.lib.path=$NATIVES_DIR" NativeLoadSmoke \
     > load-dir-out.log 2> load-dir-err.log \
     || { cat load-dir-out.log load-dir-err.log; fail "the packaged native library did not load from the lib.path directory"; }
 cat load-dir-out.log
