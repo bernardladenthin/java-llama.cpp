@@ -107,7 +107,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `GLIBC_2.28` like the other manylinux directories. Its output names the highest `GLIBC`, `GLIBCXX`
   and `CXXABI` version of every library.
 
-## [6.0.0] - 2026-10-25
+## [6.0.0] - 2026-10-26
 
 ### Upgrading from 5.1
 
