@@ -1263,13 +1263,16 @@ endif()
 # libjllama (layer A) and against libjllama itself (layer B: jllama_api.h must compile as C and the
 # jllama_* symbols must be exported) and registers it as the ctest `c_abi` -- the first and only test of the modular build
 # jobs, which refuse BUILD_TESTING (jllama_test needs the CPU backend statically). build.sh and
-# build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling without an emulator
-# (the Android jobs cannot run the executable); s390x runs it through its toolchain's qemu, which
-# also makes ggml score the IBM Z variants against qemu's CPU model. Also useful locally:
-# `ctest --test-dir build -R c_abi -V`.
+# build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling, with one exception:
+# s390x runs it through the emulator of its own toolchain (s390x-toolchain.cmake, qemu with the
+# sysroot as loader prefix), which also makes ggml score the IBM Z variants against qemu's CPU
+# model. "Has an emulator" is not the test: the dockcross Android images set
+# CMAKE_CROSSCOMPILING_EMULATOR too (qemu-arm, which cannot run an aarch64 bionic executable --
+# "Invalid ELF image for this architecture", the first run of the s390x variants). Also useful
+# locally: `ctest --test-dir build -R c_abi -V`.
 option(JLLAMA_C_ABI_TEST "Build and run the plain-C test of the shared upstream libraries of a modular build" ON)
 if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
-   AND (NOT CMAKE_CROSSCOMPILING OR CMAKE_CROSSCOMPILING_EMULATOR))
+   AND (NOT CMAKE_CROSSCOMPILING OR (CMAKE_CROSSCOMPILING_EMULATOR AND CMAKE_SYSTEM_PROCESSOR STREQUAL "s390x")))
     enable_language(C)
     add_executable(jllama_c_abi src/test/c/test_c_abi.c)
     target_compile_features(jllama_c_abi PRIVATE c_std_11)

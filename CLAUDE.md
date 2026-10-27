@@ -312,7 +312,7 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   CPU jars on RHEL 8.10.
 - **One `ctest` in a modular build job, `c_abi`, and no `jllama_test`**: `jllama_test` calls the
   CPU/RPC backends directly, so the option refuses `BUILD_TESTING`; what a library-jar build does
-  run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling) is `src/test/c/test_c_abi.c`
+  run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling -- s390x excepted, which runs it under its toolchain's qemu) is `src/test/c/test_c_abi.c`
   -- plain C11, linked against the shared `llama` and `ggml-base` only, no JNI, no C++: it calls
   `ggml_backend_load_all_from_path` on the natives directory, `llama_backend_init`, requires at
   least one device (the CPU module must have loaded), prints `llama_print_system_info`, and loads a
