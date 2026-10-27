@@ -74,6 +74,15 @@ public class VocabOnlyModelTest {
     }
 
     @Test
+    public void theMetaClaimsNoCapability() {
+        // Without a server context the model can only tokenize: it refuses chat, so it must not
+        // report the chat capability either.
+        assertThat(model.getModelMeta().supportsChat(), is(false));
+        assertThat(model.getModelMeta().supportsAudioGeneration(), is(false));
+        assertThat(model.getModelMeta().supportsAudioStream(), is(false));
+    }
+
+    @Test
     public void applyTemplateIsRefused() {
         assertRefused(() -> model.applyTemplate(chat()));
     }

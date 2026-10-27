@@ -13,15 +13,23 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
  * Real-model coverage for {@link TextToSpeech} (Qwen3-TTS audio output, llama.cpp's upstream
- * {@code mtmd_helper::gen_audio} pipeline). Loads the backbone+mmproj TTS pipeline and synthesizes
- * a short clip, checking the WAV container is well-formed.
+ * {@code mtmd_helper::gen_audio} pipeline). Loads the backbone+mmproj TTS pipeline once and
+ * synthesizes short clips, with the model's default voice and with a voice cloned from the committed
+ * {@link TestConstants#DEFAULT_AUDIO_INPUT_PATH} clip, checking the WAV container is well-formed.
+ *
+ * <p>Every test shares the one instance on purpose: a synthesis must leave the engine ready for the
+ * next. Until the engine cleared the KV cache before each synthesis, the second call on an instance
+ * failed with "prompt processing failed" ({@link #synthesizesAgainOnTheSameInstance} pins it, in
+ * whatever order the tests run).
  *
  * <p>Uses CI's Qwen3-TTS backbone + mmproj ({@link TestConstants#DEFAULT_TTS_MODEL_PATH},
  * {@link TestConstants#DEFAULT_TTS_MMPROJ_PATH}) unless {@link TestConstants#PROP_TTS_MODEL} /
@@ -32,10 +40,21 @@ public class TtsIntegrationTest {
     /** Canonical RIFF/WAVE header size in bytes (16-bit PCM, no extra chunks). */
     private static final int WAV_HEADER_BYTES = 44;
 
-    @Test
-    @DisplayName("synthesize() returns a well-formed, non-silent 24 kHz mono 16-bit WAV")
-    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
-    public void synthesizesWellFormedWav() {
+    /**
+     * Frame cap of the capped syntheses. Qwen3-TTS runs at 12 frames per second, so this is under a
+     * second of audio: enough to prove the clip was generated, short enough for the CPU-only CI
+     * runners (macOS arm64 without Metal took over 300 s for 48 frames with a speaker reference).
+     * A clip that short may be all silence -- a voice often starts with a pause, and where depends on
+     * the sampled codes, which differ between CPU backends: with a speaker reference the first 8
+     * frames were audible on Linux x86-64 and silent on Windows x86-64 (run 40394627911) -- so only
+     * the uncapped synthesis, which runs to the end of speech, is held to audible samples.
+     */
+    private static final int MAX_FRAMES = 8;
+
+    private static TextToSpeech tts;
+
+    @BeforeAll
+    public static void setup() {
         String model =
                 TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MODEL, TestConstants.DEFAULT_TTS_MODEL_PATH);
         String mmproj = TestConstants.resolveModelProperty(
@@ -49,38 +68,91 @@ public class TtsIntegrationTest {
         Assumptions.assumeTrue(new File(mmproj).exists(), "TTS mmproj file missing: " + mmproj);
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, 0);
-        try (TextToSpeech tts = new TextToSpeech(model, mmproj, gpuLayers, 0)) {
-            byte[] wav = tts.synthesize("hello from llama");
+        tts = new TextToSpeech(model, mmproj, gpuLayers, 0);
+    }
 
-            assertNotNull(wav, "WAV bytes must not be null");
-            // A bare 44-byte header with no payload is not a valid clip: require real samples beyond it.
-            assertTrue(
-                    wav.length > WAV_HEADER_BYTES,
-                    "WAV must carry a header plus samples; got " + wav.length + " bytes");
+    @AfterAll
+    public static void tearDown() {
+        if (tts != null) {
+            tts.close();
+        }
+    }
 
-            // RIFF/WAVE container magic.
-            assertEquals("RIFF", tag(wav, 0), "RIFF magic");
-            assertEquals("WAVE", tag(wav, 8), "WAVE magic");
-            assertEquals("fmt ", tag(wav, 12), "fmt subchunk tag");
-            assertEquals("data", tag(wav, 36), "data subchunk tag");
+    private static TextToSpeech tts() {
+        assertNotNull(tts, "the TTS pipeline must be loaded by setup()");
+        return tts;
+    }
 
-            // fmt fields must match the documented output format: 24 kHz mono 16-bit PCM. A mis-loaded
-            // model that still framed a header would not silently pass with the wrong rate/channels.
-            ByteBuffer header = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN);
-            assertEquals(1, header.getShort(20) & 0xFFFF, "audio format must be PCM (1)");
-            assertEquals(1, header.getShort(22) & 0xFFFF, "must be mono (1 channel)");
-            assertEquals(24_000, header.getInt(24), "sample rate must be 24 kHz");
-            assertEquals(16, header.getShort(34) & 0xFFFF, "must be 16-bit samples");
+    @Test
+    @DisplayName("synthesize() returns a well-formed, non-silent 24 kHz mono 16-bit WAV")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void synthesizesWellFormedWav() {
+        assertWellFormedWav(tts().synthesize("hello from llama"), true);
+    }
 
-            // Declared chunk sizes must be self-consistent with the actual byte-array length.
-            assertEquals(wav.length - 8, header.getInt(4), "RIFF chunk size must equal fileLength - 8");
-            int dataSize = header.getInt(40);
-            assertEquals(wav.length - WAV_HEADER_BYTES, dataSize, "data chunk size must equal fileLength - 44");
-            assertEquals(0, dataSize % 2, "16-bit PCM data size must be even");
+    @Test
+    @DisplayName("Qwen3-TTS reports that it clones a voice from a speaker reference")
+    public void supportsSpeakerReference() {
+        // llama.cpp's mtmd_helper_cap::audio_gen_spk_ref (b11901) is true for the Qwen3-TTS pipeline,
+        // which encodes the reference clip with the speaker encoder bundled in its mmproj.
+        assertTrue(tts().supportsSpeakerReference(), "Qwen3-TTS must accept a speaker reference");
+    }
 
-            // The clip must contain real audio, not just the zeroed 0.25 s lead-in (or the all-silent
-            // buffer a mis-configured model could still frame inside an otherwise valid header). The
-            // original `length > 44` check passed on a single padding byte; scan the PCM payload instead.
+    @Test
+    @DisplayName("synthesize() with a speaker reference clip returns a well-formed, non-silent WAV")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void synthesizesWithAClonedVoice() {
+        String reference = TestConstants.resolveModelProperty(
+                TestConstants.PROP_AUDIO_PATH, TestConstants.DEFAULT_AUDIO_INPUT_PATH);
+        Assumptions.assumeTrue(new File(reference).exists(), "speaker reference clip missing: " + reference);
+
+        // The committed clip is 2.6 s of 48 kHz stereo; llama.cpp decodes it at the projector's rate.
+        assertWellFormedWav(tts().synthesize("hello from llama", reference, "english", MAX_FRAMES, 4, 0), false);
+    }
+
+    @Test
+    @DisplayName("synthesize() works again on the same instance")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void synthesizesAgainOnTheSameInstance() {
+        // The Qwen3-TTS pipeline starts every prompt at position 0 and leaves the KV cache to the
+        // caller; without the engine clearing it, the second synthesis failed in prompt processing.
+        assertWellFormedWav(tts().synthesize("first", MAX_FRAMES, 4, 0), false);
+        assertWellFormedWav(tts().synthesize("second", MAX_FRAMES, 4, 0), false);
+    }
+
+    /**
+     * Asserts the 24 kHz mono 16-bit PCM container and a payload; with {@code audible}, also a
+     * non-zero sample (see {@link #MAX_FRAMES} for why only an uncapped clip is held to that).
+     */
+    private static void assertWellFormedWav(byte[] wav, boolean audible) {
+        assertNotNull(wav, "WAV bytes must not be null");
+        // A bare 44-byte header with no payload is not a valid clip: require real samples beyond it.
+        assertTrue(wav.length > WAV_HEADER_BYTES, "WAV must carry a header plus samples; got " + wav.length + " bytes");
+
+        // RIFF/WAVE container magic.
+        assertEquals("RIFF", tag(wav, 0), "RIFF magic");
+        assertEquals("WAVE", tag(wav, 8), "WAVE magic");
+        assertEquals("fmt ", tag(wav, 12), "fmt subchunk tag");
+        assertEquals("data", tag(wav, 36), "data subchunk tag");
+
+        // fmt fields must match the documented output format: 24 kHz mono 16-bit PCM. A mis-loaded
+        // model that still framed a header would not silently pass with the wrong rate/channels.
+        ByteBuffer header = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN);
+        assertEquals(1, header.getShort(20) & 0xFFFF, "audio format must be PCM (1)");
+        assertEquals(1, header.getShort(22) & 0xFFFF, "must be mono (1 channel)");
+        assertEquals(24_000, header.getInt(24), "sample rate must be 24 kHz");
+        assertEquals(16, header.getShort(34) & 0xFFFF, "must be 16-bit samples");
+
+        // Declared chunk sizes must be self-consistent with the actual byte-array length.
+        assertEquals(wav.length - 8, header.getInt(4), "RIFF chunk size must equal fileLength - 8");
+        int dataSize = header.getInt(40);
+        assertEquals(wav.length - WAV_HEADER_BYTES, dataSize, "data chunk size must equal fileLength - 44");
+        assertEquals(0, dataSize % 2, "16-bit PCM data size must be even");
+
+        // The clip must contain real audio, not just the zeroed 0.25 s lead-in (or the all-silent
+        // buffer a mis-configured model could still frame inside an otherwise valid header). The
+        // original `length > 44` check passed on a single padding byte; scan the PCM payload instead.
+        if (audible) {
             assertTrue(
                     hasNonZeroSample(wav, WAV_HEADER_BYTES),
                     "synthesized PCM must contain audible (non-zero) samples, not pure silence");

@@ -144,6 +144,8 @@ final class JllamaNative {
     static final MethodHandle TTS_SYNTHESIZE = downcall(
             "jllama_tts_synthesize",
             json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
+    static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
+            downcall("jllama_tts_supports_speaker_reference", json(ADDRESS, ADDRESS));
     static final MethodHandle TTS_FREE = downcall("jllama_tts_free", FunctionDescriptor.ofVoid(ADDRESS));
 
     private JllamaNative() {}
@@ -343,5 +345,10 @@ final class JllamaNative {
     /** An out-slot for a {@code size_t} or {@code int}. */
     static MemorySegment longSlot(Arena arena) {
         return arena.allocate(JAVA_LONG);
+    }
+
+    /** An out-slot for a C {@code bool}. */
+    static MemorySegment booleanSlot(Arena arena) {
+        return arena.allocate(JAVA_BOOLEAN);
     }
 }

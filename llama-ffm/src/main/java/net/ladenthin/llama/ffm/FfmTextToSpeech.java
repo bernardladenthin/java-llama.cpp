@@ -4,6 +4,8 @@
 package net.ladenthin.llama.ffm;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
+import static net.ladenthin.llama.ffm.JllamaNative.booleanSlot;
 import static net.ladenthin.llama.ffm.JllamaNative.cString;
 import static net.ladenthin.llama.ffm.JllamaNative.invoke;
 import static net.ladenthin.llama.ffm.JllamaNative.longSlot;
@@ -22,7 +24,7 @@ import net.ladenthin.llama.exception.LlamaException;
  */
 public final class FfmTextToSpeech implements AutoCloseable {
 
-    /** The two native calls on a loaded pair's handle; a seam so the locking is testable without it. */
+    /** The native calls on a loaded pair's handle; a seam so the locking is testable without it. */
     interface Backend {
 
         /**
@@ -39,6 +41,14 @@ public final class FfmTextToSpeech implements AutoCloseable {
          */
         byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
                 int maxFrames, int topK, int seed);
+
+        /**
+         * Whether the pair on {@code handle} clones a voice from a speaker reference.
+         *
+         * @param handle the loaded pair
+         * @return {@code true} if a speaker reference is accepted
+         */
+        boolean supportsSpeakerReference(MemorySegment handle);
 
         /**
          * Frees {@code handle}, the engine with it.
@@ -60,6 +70,15 @@ public final class FfmTextToSpeech implements AutoCloseable {
                         cString(arena, speakerReferencePath), cString(arena, language), maxFrames, topK, seed, wav,
                         length);
                 return takeBytes(wav, length);
+            }
+        }
+
+        @Override
+        public boolean supportsSpeakerReference(MemorySegment handle) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment supported = booleanSlot(arena);
+                JllamaNative.call(JllamaNative.TTS_SUPPORTS_SPEAKER_REFERENCE, handle, supported);
+                return supported.get(JAVA_BOOLEAN, 0);
             }
         }
 
@@ -121,10 +140,31 @@ public final class FfmTextToSpeech implements AutoCloseable {
     }
 
     /**
+     * Whether this pair clones a voice from a speaker reference, i.e. whether {@link #synthesize}
+     * accepts a {@code speakerReferencePath} ({@code mtmd_helper_cap::audio_gen_spk_ref}: Qwen3-TTS
+     * and Pocket TTS do, Soprano does not).
+     *
+     * @return {@code true} if a speaker reference is accepted
+     * @throws IllegalStateException when the pair is closed
+     */
+    public boolean supportsSpeakerReference() {
+        lifecycleLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("the model is closed");
+            }
+            return backend.supportsSpeakerReference(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
      * Synthesises text.
      *
      * @param text the text to speak
-     * @param speakerReferencePath a WAV to clone the voice from, or {@code null}
+     * @param speakerReferencePath a WAV to clone the voice from, or {@code null}; refused with a
+     *     {@link LlamaException} when {@link #supportsSpeakerReference()} is {@code false}
      * @param language the language ({@code "english"}, {@code "chinese"}, ...), or {@code null}
      * @param maxFrames the bound on the generated frames
      * @param topK the sampling top-k

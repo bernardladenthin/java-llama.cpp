@@ -86,12 +86,15 @@ it selects a registered JDK 22+ from `~/.m2/toolchains.xml`. CI needs only the s
 ```bash
 mvn -pl llama -am -DskipTests install          # the core first
 mvn -f llama-ffm/pom.xml verify                # the model-free tests + the model-backed ones
-# the model-backed test takes the draft model of .github/models.csv, or:
-mvn -f llama-ffm/pom.xml verify -Dnet.ladenthin.llama.ffm.model=/path/to/model.gguf
+# the model-backed tests take the draft model and the Qwen3-TTS pair of .github/models.csv, or:
+mvn -f llama-ffm/pom.xml verify -Dnet.ladenthin.llama.ffm.model=/path/to/model.gguf \
+    -Dnet.ladenthin.llama.ffm.tts.model=/path/to/backbone.gguf \
+    -Dnet.ladenthin.llama.ffm.tts.mmproj=/path/to/mmproj.gguf
 ```
 
 `FfmNativeServerTest` and `FfmTextToSpeechTest` run over fake `Backend` implementations and need
-no native library. `JllamaNativeTest` and the model-backed `FfmLlamaModelIntegrationTest` skip
-themselves without a native build (`llama/src/main/natives`, or
+no native library. `JllamaNativeTest` and the model-backed `FfmLlamaModelIntegrationTest` and
+`FfmTextToSpeechIntegrationTest` (the speaker-reference capability and a cloned-voice synthesis)
+skip themselves without a native build (`llama/src/main/natives`, or
 `-Dnet.ladenthin.llama.lib.path=<natives directory>`); `FfmRpcServerTest` serves the CPU over
 loopback and needs one as well.
