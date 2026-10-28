@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11929)
-set(JLLAMA_GIT_COMMIT "74a1fd3d039b5be814d54ee21d419cbee4cb00b8")   # the commit the tag b11929 names; kept as the pin (a tag name can move)
+set(JLLAMA_GIT_TAG    b11930)
+set(JLLAMA_GIT_COMMIT "85cc432e2c8b92925f17dfb8937742541312f1d4")   # the commit the tag b11930 names; kept as the pin (a tag name can move)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -935,9 +935,14 @@ target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
 )
+#
+# server-models-sched.cpp (b11930, #21231) is the router's request queue and device-memory
+# accounting (server_models_sched, --models-memory-margin); server-models.cpp holds one and calls it
+# on every spawn, so it goes wherever server-models.cpp goes, under the same Android guard.
 if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
     target_sources(jllama PRIVATE
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models-sched.cpp
     )
 endif()
 
@@ -1386,6 +1391,7 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models-sched.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
     )
