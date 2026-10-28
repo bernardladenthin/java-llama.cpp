@@ -57,7 +57,7 @@ SPDX-License-Identifier: MIT
 		<jspecify.version>1.0.1</jspecify.version>
 		<lombok.version>1.18.48</lombok.version>
 		<errorprone.version>2.51.0</errorprone.version>
-		<nullaway.version>0.14.2</nullaway.version>
+		<nullaway.version>0.14.3</nullaway.version>
 		<!-- Checker Framework: the processor AND the checker-qual qualifiers it resolves.
 		     Both run on the build JDK and neither ships (checker-qual is provided scope), so
 		     this tracks the newest release. -->
@@ -65,7 +65,7 @@ SPDX-License-Identifier: MIT
 		<!-- jackson.version is inherited from the parent pom (one source for every module) -->
 		<reactor.version>3.8.8</reactor.version>
 		<slf4j.version>2.0.20</slf4j.version>
-		<logback.version>1.6.5</logback.version>
+		<logback.version>1.6.6</logback.version>
 		<animal-sniffer.version>1.28</animal-sniffer.version>
 		<junit.version>6.1.3</junit.version>
 		<hamcrest.version>3.0</hamcrest.version>
@@ -101,7 +101,7 @@ SPDX-License-Identifier: MIT
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
 		<spotless.version>3.10.4</spotless.version>
-		<palantir-java-format.version>2.102.0</palantir-java-format.version>
+		<palantir-java-format.version>2.103.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-10-25T22:38:31Z</project.build.outputTimestamp>
 	</properties>
@@ -402,7 +402,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>org.jacoco</groupId>
 					<artifactId>jacoco-maven-plugin</artifactId>
-					<version>0.8.15</version>
+					<version>0.8.16</version>
 				</plugin>
 				<plugin>
 					<groupId>org.pitest</groupId>

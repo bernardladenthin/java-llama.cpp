@@ -66,7 +66,7 @@ The pom depends on that starter with a `*:*` exclusion, so no Spring class reach
 only the starter jar itself does, which is where `WebConsole` reads the pages from. Drop the dependency
 and `--web` starts with nothing to open (`WebConsole.available()` says so at startup).
 
-**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.75) ships
+**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.76) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
 streams (`stream:true`), accumulates `delta.tool_calls` by `index`, executes `ToolDefinition`
 executors, re-submits the conversation (assistant `tool_calls` message **without** a `content` key,
