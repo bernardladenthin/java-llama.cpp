@@ -21,12 +21,12 @@ compiles/loads the API); this one has a UI and is driven end-to-end. The name is
 domain is the only string that must be globally unique.
 
 Structure (mirrors the consumer-test's plumbing):
-- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.4.0` + the
+- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.4.1` + the
   Compose compiler plugin (`2.4.21`); `mavenLocal()` first so the freshly-built AAR + façade
   resolve there in CI (Maven Central for real users). Stay at `>= 9.2.1`: `9.2.1` (not `9.2.0`)
   first fixed a real R8 regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag`
   after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
-  `buildTypes.release` sets `isMinifyEnabled = true`; `9.4.0` carries that fix forward and the
+  `buildTypes.release` sets `isMinifyEnabled = true`; `9.4.1` carries that fix forward and the
   `.github/android-consumer-test` fixture is pinned the same way. AGP 9.4.x requires Gradle >= 9.6.0
   and JDK 17+; CI already runs JDK 21 everywhere (`.java-version`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)

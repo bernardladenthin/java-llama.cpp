@@ -10,6 +10,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **Dependencies and build plugins:** logback-classic 1.6.6, NullAway 0.14.3, maven-surefire-plugin
+  3.6.1, jacoco-maven-plugin 0.8.16, palantir-java-format 2.103.0 (no formatting change), and in the
+  standalone `llama-atmosphere-agent` Atmosphere 4.0.76 (with surefire and palantir); the Android Gradle
+  Plugin 9.4.1 in `android-llmservice` and the consumer fixture; `anthropics/claude-code-action`
+  v1.0.264.
 - **CI downloads its test models from Hugging Face, per job and per feature, instead of through the
   GitHub Actions cache.** `.github/models.csv` has four columns now, `filename,feature,sha256,url`,
   with every URL pinned to a Hugging Face commit; `.github/fetch-models.sh` (the composite action

@@ -19,14 +19,14 @@ pluginManagement {
     // first fixed a real R8 regression (java.lang.ClassNotFoundException on
     // com.android.tools.r8.RecordTag after upgrading Gradle to 9.x with AGP 9.2.0) that
     // hits this project directly since buildTypes.release sets isMinifyEnabled = true;
-    // 9.4.0 carries that fix forward.
+    // 9.4.1 carries that fix forward.
     // AGP 9.0+ has built-in Kotlin support (runtime dependency on Kotlin Gradle plugin
     // 2.2.10+), so the standalone org.jetbrains.kotlin.android plugin is no longer
     // applied/needed — see https://developer.android.com/build/migrate-to-built-in-kotlin.
     // The Compose compiler plugin (2.4.21) still applies separately and exceeds AGP's
     // 2.2.10 floor.
     plugins {
-        id("com.android.application") version "9.4.0"
+        id("com.android.application") version "9.4.1"
         id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
     }
 }
