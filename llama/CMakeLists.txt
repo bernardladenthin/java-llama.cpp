@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11901)
-set(JLLAMA_GIT_COMMIT "5320c87ff0d994845b44ce7976f10055ec697447")   # the commit the tag b11901 names; kept as the pin (a tag name can move)
+set(JLLAMA_GIT_TAG    b11954)
+set(JLLAMA_GIT_COMMIT "f1a7dea99aae1623bad10c4ce31fe220033ab7f6")   # the commit the tag b11954 names; kept as the pin (a tag name can move)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -927,6 +927,12 @@ add_library(jllama SHARED
 # server-stream.cpp -- a missing unit is an undefined reference, latent on Linux
 # but a hard link error on macOS/ld64 and Windows/MSVC. Platform-neutral, so it
 # stays outside the Android guard too.
+#
+# server-realtime.cpp (b11946, #31269) holds the realtime conversations over /v1/realtime
+# (server_realtime_slot, server_realtime_conversation); server-context.cpp creates the slot and
+# calls into it from its main loop and its websocket route, so it is mandatory for the same reason.
+# It talks to the socket only through server_http_context::ws_conn, an interface, and spawns
+# nothing, so it stays outside the Android guard as well.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
@@ -934,10 +940,16 @@ target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
 )
+#
+# server-models-sched.cpp (b11930, #21231) is the router's request queue and device-memory
+# accounting (server_models_sched, --models-memory-margin); server-models.cpp holds one and calls it
+# on every spawn, so it goes wherever server-models.cpp goes, under the same Android guard.
 if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
     target_sources(jllama PRIVATE
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models-sched.cpp
     )
 endif()
 
@@ -1386,8 +1398,10 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models-sched.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
     )
 
     target_include_directories(jllama_test PRIVATE
