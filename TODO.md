@@ -191,6 +191,17 @@ Kept as a list because each entry names the machine it needs -- the harness is
   `SERVER_TASK_TYPE_TRANSCRIBE_RT`, `SERVER_CONTROL_ACTION_AUDIO_*`). Served by `NativeServer`; the JDK's
   `com.sun.net.httpserver` has no WebSocket, so the Java transport cannot follow without a dependency. Not
   planned.
+- **Realtime conversations** (`/v1/realtime`, WebSocket, b11946, #31269: `SERVER_TASK_TYPE_REALTIME`,
+  `server_realtime_slot`, the `TEXT_APPEND` / `RESPONSE_CREATE` / `RESPONSE_CANCEL` / `CLEAR` control actions,
+  `server_task_result_realtime` with text, audio, `response_done`). A model that answers after the audio (an
+  audio-in/audio-out model such as LFM3-Audio) holds a spoken conversation with text and audio out. `NativeServer`
+  serves it already (classic and attach mode: `server-realtime.cpp` is compiled in since #590 and the route is
+  upstream's). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
+  request a response with an output mode (`MTMD_HELPER_GEN_AUDIO_OUT_AUTO` / `TEXT` / `AUDIO` / `MIXED`), receive
+  text and PCM events, cancel, clear -- and on the Java transport the same as for transcription above: the JDK's
+  `com.sun.net.httpserver` has no WebSocket. Needs an audio-out conversation model to test (LFM3-Audio 1.4 GB, not
+  in the CI set; `TtsChatTemplateIntegrationTest` uses it as a property-gated model already). Large; decide when
+  someone asks for spoken conversations from Java.
 - **`server_context_meta::has_cap_chat` / `has_cap_tts` / `has_audio_stream`** are not in the meta JSON
   (`ModelMeta` shows `"audio"` among the output modalities for a TTS-capable model, which covers the second).
   Add a `capabilities` object when the first item lands; `value.*` is PIT-gated at 100 %, so each getter

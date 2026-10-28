@@ -342,6 +342,10 @@ public final class ChatRequest {
             fn.put("description", t.getDescription());
             // appendTool already refused a schema that does not parse, so this cannot throw here.
             fn.set("parameters", parseSchemaOrThrow(t));
+            if (t.isDeferLoading()) {
+                // on the function, where upstream looks first (b11940, #31256)
+                fn.put("defer_loading", true);
+            }
             entry.set("function", fn);
             arr.add(entry);
         }

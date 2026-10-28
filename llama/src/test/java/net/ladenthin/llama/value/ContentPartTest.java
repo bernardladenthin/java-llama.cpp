@@ -62,6 +62,27 @@ public class ContentPartTest {
     }
 
     @Test
+    public void toolReferenceCarriesTheToolNameOnly() {
+        ContentPart p = ContentPart.toolReference("buy");
+        assertThat(p.getType(), is(ContentPart.Type.TOOL_REFERENCE));
+        assertThat(p.getToolName(), is("buy"));
+        assertThat(p.getText(), is(nullValue()));
+        assertThat(p.getImageUrl(), is(nullValue()));
+        assertThat(p.getAudioData(), is(nullValue()));
+    }
+
+    @Test
+    public void toolReferenceRejectsAnEmptyOrMissingName() {
+        assertThrows(IllegalArgumentException.class, () -> ContentPart.toolReference(""));
+        assertThrows(NullPointerException.class, () -> ContentPart.toolReference(null));
+    }
+
+    @Test
+    public void otherPartsCarryNoToolName() {
+        assertThat(ContentPart.text("x").getToolName(), is(nullValue()));
+    }
+
+    @Test
     public void inputAudioRejectsUnsupportedFormat() {
         assertThrows(IllegalArgumentException.class, () -> ContentPart.inputAudio(new byte[] {1}, "ogg"));
     }

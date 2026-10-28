@@ -185,7 +185,7 @@ public class TestConstants {
     public static final String DEFAULT_VISION_IMAGE_PATH = resolveModelPath("src/test/resources/images/test-image.jpg");
 
     /**
-     * System property holding a path to a decision model GGUF (laya, julia-1, lev, openjev, kev, ...)
+     * System property holding a path to a decision model GGUF (laya, julia-1, lev, openjev, kev, LFM3 d1, ...)
      * for {@code SystemOneIntegrationTest}, which drives llama.cpp's {@code /v1/systemone} API. Not in
      * the CI model set, so the decision-model half of that test self-skips when this is unset or the
      * file is missing; upstream tests with {@code ggml-org/tinylaya-for-testing-gguf}.
@@ -230,6 +230,17 @@ public class TestConstants {
      * predictor + code2wav decoder).
      */
     public static final String PROP_TTS_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.mmproj";
+
+    /**
+     * System property holding a path to a TTS backbone GGUF whose chat templates include a
+     * {@code "tts"} one (LFM3-Audio, llama.cpp b11941). Consumed by {@code TtsChatTemplateIntegrationTest},
+     * which self-skips when this or {@link #PROP_TTS_TEMPLATE_MMPROJ} is unset or missing: no such model
+     * is in CI's set.
+     */
+    public static final String PROP_TTS_TEMPLATE_MODEL = LlamaSystemProperties.PREFIX + ".tts.template.model";
+
+    /** System property holding a path to the mmproj of {@link #PROP_TTS_TEMPLATE_MODEL}. */
+    public static final String PROP_TTS_TEMPLATE_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.template.mmproj";
 
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");

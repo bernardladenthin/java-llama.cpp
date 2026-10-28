@@ -1523,6 +1523,17 @@ public class LlamaModelTest {
         assertFalse(meta.supportsAudioGeneration(), "a text model must not report audio generation");
         assertFalse(meta.supportsAudioStream(), "a text model must not report realtime transcription");
 
+        // The chat template's capabilities, as upstream's /props reports them (llama.cpp b11954): the
+        // object is there, and the reasoning effort levels are a list -- empty for CodeLlama's template.
+        assertTrue(meta.asJson().path("chat_template_caps").isObject(), "chat_template_caps must be an object");
+        assertTrue(
+                meta.asJson()
+                        .path("chat_template_caps")
+                        .path("reasoning_effort_levels")
+                        .isArray(),
+                "reasoning_effort_levels must be an array");
+        assertNotNull(meta.getReasoningEffortLevels(), "getReasoningEffortLevels() must not return null");
+
         // Dynamic access via the underlying JsonNode
         assertTrue(meta.asJson().has("modalities"), "modalities field must be present");
         assertTrue(meta.asJson().has("vocab_type"), "vocab_type field must be present");

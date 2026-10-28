@@ -459,6 +459,18 @@ JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char
                                                int top_k, unsigned int seed, unsigned char **wav, size_t *length);
 
 /**
+ * jllama_tts_synthesize with a `voice` (may be null): a model-dependent preset, e.g. "female" or
+ * "male" for LFM3-Audio. A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered
+ * from it with `text`, `lang` and `voice`, the others `text` itself; for such a model `lang` is its
+ * own code ("en", "de", ...) and null leaves the template's default. jllama_tts_synthesize is this
+ * function with a null voice. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text,
+                                                     const char *speaker_reference_path, const char *lang,
+                                                     const char *voice, int max_frames, int top_k, unsigned int seed,
+                                                     unsigned char **wav, size_t *length);
+
+/**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
  * mtmd_helper_cap::audio_gen_spk_ref, true for Qwen3-TTS and Pocket TTS. jllama_tts_synthesize
  * refuses a `speaker_reference_path` for a pair that does not.

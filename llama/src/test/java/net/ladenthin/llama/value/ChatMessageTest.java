@@ -48,6 +48,25 @@ public class ChatMessageTest {
     }
 
     @Test
+    public void toolResultWithPartsKeepsThePartsAndTheCallId() {
+        ChatMessage m = ChatMessage.toolResult("c0", ContentPart.text("found"), ContentPart.toolReference("buy"));
+        assertThat(m.getRole(), is("tool"));
+        assertThat(m.getToolCallId().orElseThrow(), is("c0"));
+        assertThat(m.hasParts(), is(true));
+        List<ContentPart> parts = m.getParts().orElseThrow();
+        assertThat(parts, hasSize(2));
+        assertThat(parts.get(1).getToolName(), is("buy"));
+        // the text of the TEXT parts is the plain content; a tool reference has none
+        assertThat(m.getContent(), is("found"));
+        assertThrows(UnsupportedOperationException.class, () -> parts.add(ContentPart.text("x")));
+    }
+
+    @Test
+    public void toolResultWithoutPartsIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> ChatMessage.toolResult("c0", new ContentPart[0]));
+    }
+
+    @Test
     public void toStringToolCallIdBranch() {
         ChatMessage m = ChatMessage.toolResult("c1", "42");
         assertThat(m.getRole(), is("tool"));

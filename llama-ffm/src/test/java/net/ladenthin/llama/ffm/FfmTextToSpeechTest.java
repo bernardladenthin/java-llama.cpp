@@ -43,7 +43,7 @@ class FfmTextToSpeechTest {
 
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                int maxFrames, int topK, int seed) {
+                String voice, int maxFrames, int topK, int seed) {
             events.add("synthesize entered");
             insideSynthesize.countDown();
             try {

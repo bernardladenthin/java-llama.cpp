@@ -105,6 +105,22 @@ public class ModelMetaTest {
     }
 
     @Test
+    public void reasoningEffortComesFromTheChatTemplateCaps() throws Exception {
+        ModelMeta meta = parse("{\"chat_template_caps\":{\"supports_tools\":true,"
+                + "\"supports_reasoning_effort\":true,\"reasoning_effort_levels\":[\"low\",\"medium\",\"high\"]}}");
+        assertThat(meta.supportsReasoningEffort(), is(true));
+        assertThat(meta.getReasoningEffortLevels(), is(java.util.Arrays.asList("low", "medium", "high")));
+    }
+
+    @Test
+    public void reasoningEffortDefaultsToNoneWithoutTheCaps() throws Exception {
+        // A vocab-only load and builds before llama.cpp b11954 emit no "chat_template_caps".
+        ModelMeta meta = parse("{\"vocab_type\":1,\"n_vocab\":100}");
+        assertThat(meta.supportsReasoningEffort(), is(false));
+        assertThat(meta.getReasoningEffortLevels(), is(java.util.Collections.<String>emptyList()));
+    }
+
+    @Test
     public void capabilityGettersDefaultToFalseWithoutTheKey() throws Exception {
         // A vocab-only load and builds before llama.cpp b11901 emit no "capabilities" object: every
         // accessor answers false rather than throw, and the modalities are unaffected.

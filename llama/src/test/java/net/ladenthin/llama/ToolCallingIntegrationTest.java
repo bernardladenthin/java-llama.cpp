@@ -5,6 +5,7 @@
 package net.ladenthin.llama;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 
@@ -17,7 +18,9 @@ import java.util.List;
 import net.ladenthin.llama.parameters.ChatRequest;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.ChatResponse;
+import net.ladenthin.llama.value.ContentPart;
 import net.ladenthin.llama.value.ToolCall;
 import net.ladenthin.llama.value.ToolDefinition;
 import org.junit.jupiter.api.AfterAll;
@@ -60,6 +63,40 @@ public class ToolCallingIntegrationTest {
         if (model != null) {
             model.close();
         }
+    }
+
+    /**
+     * Deferred tools and tool references (llama.cpp b11940, #31256) reach the native chat parser as
+     * this library sends them: a {@code defer_loading} tool and a tool result whose content is a
+     * {@code tool_reference} part. Before b11940 the parser refused that part ("Unsupported content
+     * part type"); this pins that the request is accepted and rendered. Whether the template keeps the
+     * deferred tool out of the system prompt is the template's business (LFM3's does, Qwen2.5's has no
+     * notion of it), so only the referencing tool turn is asserted.
+     */
+    @Test
+    public void aDeferredToolAndAToolReferenceAreAcceptedByTheChatParser() {
+        ChatRequest request = ChatRequest.empty()
+                .appendTool(new ToolDefinition(
+                        "tool_search",
+                        "Search for tools",
+                        "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}"))
+                .appendTool(new ToolDefinition(
+                        "buy",
+                        "Buy an item",
+                        "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}",
+                        true))
+                .appendMessage("user", "Buy the blue one")
+                .appendMessage(ChatMessage.assistantToolCalls(
+                        "", List.of(new ToolCall("c0", "tool_search", "{\"query\":\"buy\"}"))))
+                .appendMessage(ChatMessage.toolResult("c0", ContentPart.toolReference("buy")));
+        InferenceParameters parameters = InferenceParameters.empty()
+                .withMessagesJson(request.buildMessagesJson())
+                .withToolsJson(request.buildToolsJson().orElseThrow());
+
+        String prompt = model.applyTemplate(parameters);
+
+        assertThat(prompt, containsString("Buy the blue one"));
+        assertThat(prompt, containsString("tool_search"));
     }
 
     @Test

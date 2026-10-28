@@ -1876,6 +1876,16 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     EXPECT_EQ(jllama_tts_synthesize(nullptr, "Hi", nullptr, nullptr, 10, 1, 1, &wav, &length),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    // The voice variant (6.1.0) checks the same before it touches anything; the old function is it with
+    // a null voice.
+    EXPECT_EQ(jllama_tts_synthesize_voice(nullptr, "Hi", nullptr, "en", "male", 10, 1, 1, &wav, &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    int not_a_tts = 0;
+    EXPECT_EQ(jllama_tts_synthesize_voice(reinterpret_cast<jllama_tts_model *>(&not_a_tts), nullptr, nullptr, nullptr,
+                                          nullptr, 10, 1, 1, &wav, &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(wav, nullptr);
     bool supported = true;
     EXPECT_EQ(jllama_tts_supports_speaker_reference(nullptr, &supported), JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");

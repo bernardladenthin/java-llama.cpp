@@ -1434,22 +1434,22 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
     });
 }
 
-JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(JNIEnv *env, jclass clazz,
-                                                                                    jlong handle, jstring jtext,
-                                                                                    jstring jspeaker_reference_path,
-                                                                                    jstring jlang, jint max_frames,
-                                                                                    jint top_k, jint seed) {
+JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
+    JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
+    jstring jvoice, jint max_frames, jint top_k, jint seed) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
         const std::string speaker_reference_path =
             jspeaker_reference_path == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_path);
         const std::string lang = jlang == nullptr ? std::string() : parse_jstring(env, jlang);
+        const std::string voice = jvoice == nullptr ? std::string() : parse_jstring(env, jvoice);
         unsigned char *wav = nullptr;
         size_t length = 0;
-        const jllama_status status = jllama_tts_synthesize(
+        const jllama_status status = jllama_tts_synthesize_voice(
             reinterpret_cast<jllama_tts_model *>(handle), text.c_str(), speaker_reference_path.c_str(), lang.c_str(),
-            static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed), &wav, &length);
+            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed), &wav,
+            &length);
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
             return nullptr;
