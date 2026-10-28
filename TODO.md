@@ -31,11 +31,14 @@ so entries below describe remaining work or an explicit deferral policy.
         notes still name `53f307ac` (May) and nothing was pruned. Presumably the workflow token may
         not move a ref across commits that change `.github/workflows/` (12 files between the two);
         not verified. actions v1.0.3 (and later; v1.1.0 is pinned) deletes and re-creates the tag on that 403 and points
-        the release at it; whether GitHub accepts that shows only the next snapshot dispatch --
+        the release at it; whether GitHub accepts that shows only a snapshot dispatch that gets that far:
         [40367798517](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40367798517)
-        (`efc279c8`, dispatched 2026-10-26; the push run before it was cancelled by the concurrency
-        group). Done when `github-snapshot` has moved the `snapshot` tag to `efc279c8` and
-        `central-snapshot` has passed `superseded()` without a 502.
+        (`efc279c8`, 2026-10-26) and
+        [40699518595](https://github.com/bernardladenthin/java-llama.cpp/actions/runs/40699518595)
+        (`c8de6e7a`, 2026-10-28) both failed on cancelled macOS arm64 build jobs (runner capacity), so
+        the snapshot jobs were skipped and the tag is still `53f307ac`. Done when a dispatch's
+        `github-snapshot` has moved the `snapshot` tag to its commit and `central-snapshot` has passed
+        `superseded()` without a 502.
         `github-release` does not move a tag (the owner's `v6.0.0` exists already).
       - `central-snapshot`: `superseded()` died on a GitHub API `502` listing the jobs of an older
         run, in the re-run too: with 100 per page GitHub fails that listing for large runs, with 50
@@ -55,40 +58,12 @@ so entries below describe remaining work or an explicit deferral policy.
 - [ ] After publication: carry out the upstream submissions queued below (`main` is at
       `6.1.0-SNAPSHOT` since the post-release bump).
 - [ ] **The automated post-release check** (`.github/workflows/post-release.yml`,
-      docs/post-release-check.md "Automated"). Run locally against 6.0.0 before the first CI run:
-      the 8 checks of `java/audit-publication` pass (60 files + 60 signatures from one subkey, 118
-      Central files with the release's bytes, 120 files attested by run 40239731871; `next` warns,
-      `main` was still at 6.0.0), `post-release-check.py` passes natives (23/23), provenance
-      (patches.sha256 recomputed), source and cache (73 logs, 68 show the cache off, none on) and
-      fails android on exactly the known checker-qual finding; the consumer resolution, the server
-      smoke and the WebUI check pass on the jars from Central (in Docker, JDK 21, not 8). Open:
-      - [x] The `java/audit-publication` pin is the actions release that carries it: v1.1.0
-            (`44390bd4`), like every other pin of the workflows.
-      - [x] **The `workflow_dispatch` with `v6.0.0`** (2026-10-27). The first one (40373377002) found
-            two defects of the workflow itself: `smoke-native-macos.sh` launched
-            `NativeLoadSmoke.java` as a single source file, which Java 8 cannot ("Could not find or
-            load main class"), and `postrelease.run_logs` died on the first job log with a bare
-            `CalledProcessError` -- the runner's gh refuses a response with terminal escapes
-            unless given `--allow-escape-sequences`, which the gh 2.87 used locally does not know.
-            Both fixed (the smoke compiles the class first; `job_log` passes the flag where `gh api
-            --help` lists it, retries, and names what gh said). Run 40515663015 from the fix branch:
-            the 8 audit checks pass on the runner (signatures with the key from the keyserver,
-            provenance with the workflow token's `attestations: read`), `post-release-check.py` reads all 73
-            job logs (68 show the cache off, none on) and fails android on exactly the expected
-            checker-qual finding, and all four Java 8 consumers pass -- Temurin 8 on Linux x86-64,
-            Linux aarch64 and Windows, Zulu 8 on macOS arm64, including `smoke-native-macos.sh`
-            (load, HTTPS, lib.path) and `smoke-test-natives.ps1` on Java 8.
-      - [ ] The first `workflow_run` after 6.1.0. The `workflow_run` runs after #573 and since
-            (40367736958, 40367890447, ...) ended `skipped`, correctly: no `v*` tag is behind those
-            Publish runs.
-      - [x] **`LocalCheck` (Java 8) and `FfmCheck` against the 6.0.0 jars from Central**
-            (2026-10-27): `llama-platform` + `llama-ffm` 6.0.0 resolved into an empty local
-            repository (13 jars), Qwen3-0.6B Q4_K_M. `LocalCheck` -- `LlamaModel` chat ("Paris."),
-            an encode/decode round trip and `getJllamaBuildInfo()` (b11887, `jllama.version=6.0.0`)
-            -- passes on Temurin 8 in Docker (Linux x86-64, `cpu-linux-x86-64`, GNU 14.2.1, module
-            `haswell`) and on the Windows host with JDK 21 (`cpu-windows-x86-64`, Clang 20.1.8).
-            `FfmCheck` -- `Jllama.apiVersion()` 6.0.0, `FfmLlamaModel.chatCompletions` ("Paris.")
-            and a tokenize/detokenize round trip through FFM -- passes on Temurin 25 in Docker.
+      docs/post-release-check.md "Automated") is proven by hand: the `workflow_dispatch` with `v6.0.0`
+      (run 40515663015, 2026-10-27) passed the 8 audit checks, `post-release-check.py` (failing android
+      on exactly the expected checker-qual finding, fixed since) and all four Java 8 consumers, and
+      `LocalCheck` / `FfmCheck` passed against the 6.0.0 jars from Central. Open: the first
+      `workflow_run` after 6.1.0. The `workflow_run` runs after #573 and since (40367736958,
+      40367890447, ...) ended `skipped`, correctly: no `v*` tag is behind those Publish runs.
 
 ## Delivery roadmap — remaining work
 
@@ -141,8 +116,6 @@ The signing implementation and `--require-signed` checks exist. A successful
 does not prove Authenticode signing. The owner selected SSL.com IV + eSigner; macOS remains
 ad-hoc signed with GPG/Sigstore provenance, without an Apple Developer subscription.
 
-- [ ] **Owner:** delete the unusable Azure Trusted Signing account (9.99 USD/month at the time
-      of the decision; individual identity validation was unavailable for Germany).
 - [ ] **Owner:** obtain the SSL.com IV certificate, enroll it in eSigner and verify the quota
       against **35 DLL signatures per run**. Configure `ES_USERNAME`, `ES_PASSWORD`,
       `CREDENTIAL_ID`, `ES_TOTP_SECRET` in `maven-central`; keep the TOTP secret scoped to the
@@ -204,10 +177,6 @@ Kept as a list because each entry names the machine it needs -- the harness is
   `com.sun.net.httpserver` has no WebSocket. Needs an audio-out conversation model to test (LFM3-Audio 1.4 GB, not
   in the CI set; `TtsChatTemplateIntegrationTest` uses it as a property-gated model already). Large; decide when
   someone asks for spoken conversations from Java.
-- **`server_context_meta::has_cap_chat` / `has_cap_tts` / `has_audio_stream`** are not in the meta JSON
-  (`ModelMeta` shows `"audio"` among the output modalities for a TTS-capable model, which covers the second).
-  Add a `capabilities` object when the first item lands; `value.*` is PIT-gated at 100 %, so each getter
-  needs its test.
 - **`--connect` / `--connect-code`** (b11744, #28277): the server spawns the separate `llama-connect`
   binary (WebRTC tunnel to a browser outside the LAN). `LLAMA_CONNECT` stays OFF (a prebuilt download at
   configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
@@ -215,34 +184,14 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### Modular natives -- follow-ups
 
-1. **Windows GPU modules on real hardware.** Verify device registration from the published jars: `cuda13-windows-x86-64` and
-   `vulkan-windows-x86-64` next to `cpu-windows-x86-64` on the local agent's machine (RTX 3070 + AMD
-   iGPU), the loader line naming both, llama.cpp listing the devices once each (`device_id` dedup),
-   all layers offloaded, and the tg128 of the CUDA module against the 265.6 the static build measured
-   (`GGML_CUDA_GRAPHS_DEFAULT` is repeated in the modular path, so the 88.8 of addendum 3 of
-   `docs/handover/local-agent-report-b11538-windows.md` should be gone). Device indices are not stable
-   across the set of loaded modules (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU
-   without), so any device setting must go by name, never by index -- worth a README sentence once
-   measured.
-   Also check whether CUDA, Vulkan and OpenCL deduplicate the same NVIDIA GPU by `device_id`
-   and which backend wins. Linux CUDA on a Tesla T4 has already been measured; see
-   [the GPU module measurements](docs/benchmarks/gpu-module-jars.md).
-   **Measured 2026-10-26 on the published 6.0.0 jars**
-   ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md), section 3; RTX 3070
-   Laptop + AMD iGPU, `-lv 4`):
-   - [x] Registration lists the discrete GPU twice (`CUDA0`, a `Vulkan` device). llama.cpp
-         **deduplicates it in device selection by PCI id** ("skipping device Vulkan0 … already using
-         device CUDA0 … with the same id"). The first registered backend wins (CUDA), and all 29
-         layers go to `CUDA0`.
-   - [x] The iGPU is not drafted in, with Vulkan alone or with both modules.
-   - [x] OpenCL drops the NVIDIA GPU as unsupported (no device), so it takes no part.
-   - [x] CUDA, Vulkan and both are equal on Qwen2.5-1.5B Q4_K_M: ~190 t/s generation, ~2100–2500
-         t/s prompt.
-   - [x] README sentence added next to the module list. The device numbering depends on the module
-         set (Vulkan alone: RTX = `Vulkan1`; with CUDA: RTX = `Vulkan0`), so a device name is valid
-         only for the set it was read from.
-   - [ ] Still open: the tg128 of the CUDA module against the static build's 265.6 t/s. That
-         figure used another model, so it needs the same model, `llama-bench`-style, in both builds.
+1. **Windows GPU modules on real hardware -- the tg128 of the CUDA module.** Device registration,
+   the `device_id` dedup (CUDA wins), the iGPU, OpenCL and the README sentence on device names were
+   measured on 2026-10-26 on the published 6.0.0 jars
+   ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md), section 3). Still open:
+   the tg128 of the CUDA module against the static build's 265.6 t/s (`GGML_CUDA_GRAPHS_DEFAULT` is
+   repeated in the modular path, so the 88.8 of addendum 3 of
+   `docs/handover/local-agent-report-b11538-windows.md` should be gone). That figure used another
+   model, so it needs the same model, `llama-bench`-style, in both builds.
 2. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has
@@ -294,9 +243,9 @@ Kept as a list because each entry names the machine it needs -- the harness is
   release too), but the app needs `android.permission.INTERNET` even for loopback, which the AAR
   deliberately does not declare and the emulator fixture does not have. A loopback test on the
   emulator needs that permission in the fixture's manifest only.
-- **RPC smoke on the other smoke-set platforms.** `smoke-rpc.sh` runs in the `linux-x86-64` row
-  of the `smoke-natives` matrix only (widening it to `linux-aarch64` is a change of that step's `if:`;
-  Windows needs a PowerShell port of the script); the Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
+- **RPC smoke on Windows.** `smoke-rpc.sh` runs in both Linux rows of the `smoke-natives` matrix
+  (`linux-x86-64`, `linux-aarch64`; the step's `if: runner.os == 'Linux'`); the Windows rows need a
+  PowerShell port of the script. The Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
   (Windows and macOS included), so this is about the published jars, not the code path.
 - **Authentication / TLS.** Upstream has none; the documented answer is a trusted network or a
   tunnel. Only worth doing if it lands upstream.
@@ -526,75 +475,12 @@ ROCm anyway. So this needs a real Radeon machine, or a deliberate decision to sh
 of a green link plus `verify-native-deps.py`'s dependency allowlist. Do not quietly treat "the job is
 green" as the measurement.
 
-### Linux s390x: the glibc floor is 2.28 (fixed on `fix/s390x-glibc-floor`, 2026-10-26)
+### Linux s390x -- open
 
-**The defect, measured 2026-10-25** on the CI artifacts of Publish runs 40217818548 and 40227501358:
-the 6.0.0 `cpu-linux-s390x` jar referenced `GLIBC_2.38` (`__isoc23_strtol` / `strtoul` / `sscanf`
-and relatives, `fmod`), `GLIBCXX_3.4.32` and `CXXABI_1.3.13` -- only the newest symbol versions of
-the ubuntu runner's cross sysroot (glibc 2.39, GCC 13.3.0), no code needed them. Loaded as a consumer
-does it (`llama` + `cpu-linux-s390x`, `LlamaLoader.initialize()`, s390x under qemu in Docker) it
-failed on RHEL 8.10 (`UnsatisfiedLinkError … GLIBC_2.38 not found`), RHEL 9 and Ubuntu 22.04, and
-loaded on Ubuntu 24.04; x86-64 and aarch64 (2.27 / 3.4.25, manylinux_2_28) loaded on RHEL 8. Not a
-decision but a side effect: `GLIBC_CEILING` held only the manylinux directories, and the qemu `ctest`
-ran against the same new sysroot.
+The glibc floor 2.28 (clang-18 against the pypa `manylinux_2_28_s390x` sysroot) and the IBM Z CPU
+modules `z13` / `z15` / `z16` are done, measured on real IBM Z (cfarm191, z16) and documented in
+CLAUDE.md, "Linux s390x".
 
-**The fix** (CLAUDE.md, "Linux s390x"): clang-18 cross-compiles against the pypa
-`manylinux_2_28_s390x` image unpacked as a sysroot, with gcc-toolset-14's libstdc++ treatment, on a
-runner pinned to `ubuntu-24.04`. Measured locally (b11887): `GLIBC_2.27`, `GLIBCXX_3.4.25`,
-`CXXABI_1.3.11`, new dependencies `libpthread.so.0` and `libdl.so.2`; 694/694 C++ tests under qemu
-against the sysroot's glibc 2.28 and natively on cfarm191 (LinuxONE z16, Debian 13, 2.7 s); the jar
-loads on RHEL 8.10 s390x (UBI 8 OpenJDK 21 runtime under qemu) where the 6.0.0 jar still fails with
-`GLIBC_2.38 not found` -- the same script, so the check really catches it.
-
-- [x] `build-linux-s390x` pinned to `ubuntu-24.04` (the toolchain names `clang-18`).
-- [x] `"Linux/s390x/cpu": (2, 28)` in `GLIBC_CEILING`, plus a libstdc++ ceiling for every floor
-      directory (`LIBSTDCXX_CEILING`: `GLIBCXX_3.4.25`, `CXXABI_1.3.11`, which x86-64, aarch64 and
-      the CUDA module already met); `test_nativedeps.py` covers both, and the job runs
-      `verify-native-deps.py` on its own tree.
-- [x] The floor 2.28 itself: candidate (b) of this list, with clang instead of a cross GCC (none is
-      packaged for glibc 2.28). Candidate (a), the image's own gcc under qemu, would take hours per
-      uncached tag build. README row back to 2.28; the 6.0.0 CHANGELOG item 5 stays as it was (it is
-      what 6.0.0 shipped), [Unreleased] records the fix.
-- [x] `smoke-glibc-floor`: the three Linux CPU jars are loaded on RHEL 8.10 in every run, s390x under
-      qemu; `check-natives.py` holds the rows to `floor-set` (derived from `GLIBC_CEILING`).
-- [x] **The first Publish run of this branch** (40309665294, `c454baa5`) is green on every s390x job,
-      after the sysroot permission fix:
-      - `build-linux-s390x`: the sysroot came out at 289 MB with glibc 2.28; sccache wrapped clang
-        (260 requests, 99.62 % hits on the second run); the C++ suite passed 694/694 under qemu;
-        `verify-native-deps.py` reads `GLIBC_2.27`, `GLIBCXX_3.4.25`, `CXXABI_1.3.11`.
-      - All three `smoke-glibc-floor` rows passed, including s390x under qemu (the runner's binfmt
-        entry reached Docker).
-- [x] **The CI-built jar on real IBM Z** (cfarm191, z16, Debian 13; 2026-10-26):
-      - `NativeLoadSmoke` loads `llama-6.1.0-SNAPSHOT-cpu-linux-s390x.jar` from that run: linked
-        b11887, `compiler=Clang 18.1.3`, the same patch hash as 6.0.0.
-      - **Real big-endian inference**, which no CI job does: Qwen3-0.6B Q4_K_M, converted with
-        llama.cpp's `gguf_convert_endian.py`, served by `ServerLauncher` on JDK 21, answers "Paris."
-        with `system_fingerprint` b11887-6050b467c.
-      - **Speed against the 6.0.0 GCC 13 jar**, same model, prompt and `-t 8`, three alternating
-        rounds on the shared host: generation 0.62–1.87 t/s (clang) against 0.31–0.93 t/s (GCC),
-        prompt 2.0–6.5 against 1.9–2.8 t/s. Clang was ahead in every round. Absolute numbers are
-        noisy and low.
-- [x] **s390x ran scalar** (fixed on `feat/s390x-cpu-variants`, 2026-10-27; CLAUDE.md "Linux s390x").
-      `build-linux-s390x` is a modular build now with the CPU modules `z13` (scalar), `z15` (VXE2) and
-      `z16` (VXE2 + NNPA); `llama/patches/0023` makes clang build the vector modules (a duplicate
-      `<vecintrin.h>` include that only GCC's header guard hid) and adds the `z13` baseline, which
-      upstream's list lacks. On cfarm191 (b11901, Qwen3-0.6B Q4_K_M big-endian, 4 threads): `z13`
-      19.7 / 13.6 t/s, `z15` 90.0-95.5 / 57.3-58.3, `z16` 82.6-88.3 / 51.9-53.9 (prompt / generation).
-      The C++ suite moved to `test-cpp-linux-s390x` (a modular build cannot link `jllama_test`).
-- [x] **The CI-built modular s390x jar on cfarm191** (2026-10-27, the `llama-glibc-floor` set of the
-      green PR run 40475405391 of #580, JDK 25 on Debian 13, z16):
-      - `NativeLoadSmoke`: linked b11901-5320c87ff, `compiler=Clang 18.1.3`, patches 0001-0023; all 9
-        files extracted, and `JNI_OnLoad` logs `loaded CPU backend from .../libggml-cpu-z16.so`,
-        `2 backend(s) registered ... [RPC, CPU]`.
-      - `ServerLauncher` on the big-endian Qwen3-0.6B Q4_K_M answers "Paris." (fingerprint
-        b11901-5320c87ff), the same text as the static jar of run 40400361809 at temperature 0.
-      - **Speed against that static jar**, three alternating rounds on a quiet host (load < 1 before,
-        26 prompt tokens, 64 generated, t/s): at 4 threads prompt 50.3-61.8 against 14.4-16.0 and
-        generation 29.9-35.6 against 9.9-10.0 (3.0-3.6x); at 8 threads prompt 35.3-81.4 against
-        13.8-25.2 and generation 24.1-49.5 against 14.8-15.4, noisy on the shared host. The 0.33 t/s of
-        the earlier check was the host's load, not the jar.
-      Only a real IBM Z runs the vector modules at their own speed; qemu scores them against its CPU
-      model.
 - [ ] **z17 (`-march=arch15`)** is skipped: clang 18 rejects the flag (clang 19 on cfarm191 too), and
       ggml's configure drops the variant silently. Re-check when the toolchain's clang moves, and
       measure on a z17 if the farm gets one.
@@ -676,55 +562,6 @@ measurements and is not evidence that GPU testing is currently blocked.
   `test_patches.RenderTest.test_doc_is_current_compares_the_committed_page_with_the_render` fails
   with a bare `False is not true` (cause not found; `docs/patches.md` is LF in the work tree). Fix
   them, or document that the suite is Linux-only.
-- **First runs with the models from Hugging Face (`fetch-models`, 2026-10).** The GitHub Actions
-  model cache is gone: every job downloads the features it needs from Hugging Face with the
-  `HF_TOKEN` secret, SHA-256 checked (CLAUDE.md, "single source of truth: `.github/models.csv`"); the
-  natives smoke's HTTPS round passes the same token to llama.cpp. It replaced a 6.1 GB entry that
-  ~20 jobs restored per Publish run (one restore failed with "Egress is over the account limit", run
-  40580317285) and an anonymous HTTPS round that got a 429 (run 40554119477). Check over the first
-  Publish runs: no 429 and no other download failure, and how long a full-set job spends in
-  `fetch-models` (6.3 GB). Should Hugging Face still answer 429 with the token, retry the smoke's
-  round 2 after a pause when the server log names 429 or 5xx (failing only on a TLS or connection
-  error or when the retries run out); should a model disappear from Hugging Face, mirror the set to
-  a read-only bucket keyed by the SHA-256 column. Then delete this item.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.
-- **The two AAR poms ship `checker-qual` at `compile` scope, which the core deliberately does not**
-  (found by the post-release check of 6.0.0, `docs/post-release-check.md` check 14/16). Both
-  `llama-android-6.0.0.pom` and `llama-android-opencl-6.0.0.pom` carry
-  `org.checkerframework:checker-qual:4.3.1` with an explicit `<scope>compile</scope>`, so it is in
-  every Android consumer's dependency graph. In `llama/pom.xml` the same dependency is `provided`, and
-  the property's own comment says why: "neither ships (checker-qual is provided scope)" — its 417
-  classes are all class-file major 55 with `@Retention(RUNTIME)`, which is exactly the
-  `UnsupportedClassVersionError` that #411 put on `main` (CLAUDE.md, "Java 8 bytecode floor").
-  **Not a release blocker and not the Java 8 failure on Android**: D8/AGP consume major 55 fine, so
-  this is an avoidable dependency rather than a crash, which is why it ships in 6.0.0 unfixed. Two
-  parts to it, and the second is the reason it was never noticed: the scopes in those poms are
-  `llama-android/build.gradle.kts`'s own (only the *versions* are parsed out of the Maven poms), and
-  CLAUDE.md's "Android AAR + Kotlin façade" section describes the AAR pom as mirroring "the core's
-  compile-scope deps (jackson/slf4j-api/jspecify/checker-qual)" — but checker-qual is not a
-  compile-scope dep of the core. Fix the Gradle build (drop it, or mirror it as `provided`) and
-  correct that sentence in the same commit; `jspecify` is the one of the four that is genuinely
-  compile scope and stays. A cheap guard would be to assert the published AAR poms' scopes against
-  the core pom's, the way the versions are already derived from it.
-  **Fixed on `fix/s390x-glibc-floor` (2026-10-26)**, CLAUDE.md "Android AAR + Kotlin façade":
-  - [x] Dropped, not mirrored as `provided` (a Gradle consumer ignores `provided` in a pom, so it
-        would document nothing). The AAR build no longer keeps a list at all: `coreCompileDependencies`
-        reads the core's compile-scope, non-optional dependencies from `llama/pom.xml`, versions and
-        scopes -- jackson-databind, slf4j-api **and** jspecify are compile scope there (all three
-        stay; the sentence above undercounts). The Gradle-generated poms (Docker, `gradle:9.8.2`) list
-        exactly those three, plus the CPU AAR in the OpenCL one.
-  - [x] The guard: `.github/verify-aar-poms.py` (`buildcheck/aarpoms.py`, `test_aarpoms.py`) checks
-        the poms `publishToMavenLocal` wrote in `package-android-aar`. Run on the two 6.0.0 poms from
-        Central it reports checker-qual and nothing else.
-  - [x] The CLAUDE.md sentence corrected; the "provided" bullet there now also says what the TODO did
-        not: **the classes do reference checker-qual** -- the Nullness Checker writes its qualifiers
-        into 133 of the core's 146 class files (RUNTIME retention). So dropping the dependency needs
-        `-dontwarn org.checkerframework.**` in `consumer-proguard.txt`, or a minified app fails R8 on
-        "Missing class"; added, like lombok and animal-sniffer.
-  - [x] **Read the Publish run** (40475405391, #580, 2026-10-27): `verify-aar-poms.py` says both poms
-        "mirror the core" (jackson-databind, jspecify, slf4j-api); the consumer fixture's
-        `minifyReleaseWithR8` + `assembleRelease` pass for cpu and opencl without checker-qual; the
-        emulator job's `connectedDebugAndroidTest` passes (Jackson over the annotated classes, ART
-        skips the unresolvable annotation types as expected).

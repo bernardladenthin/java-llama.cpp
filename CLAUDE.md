@@ -2620,7 +2620,7 @@ lands at a mean KLD of 0.0777 on `z13` and 0.0746 on `z16` -- equally far from i
 between the two modules is about a tenth of what the quantization costs. The CI-built jar (run
 40475405391) loads `libggml-cpu-z16.so` there and serves the same model through `ServerLauncher` at
 29.9-35.6 t/s generation with 4 threads, against 9.9-10.0 for the static 6.1.0-SNAPSHOT jar before
-it (TODO.md, "Linux s390x"). **Under qemu** (the
+it. **Under qemu** (the
 `c_abi` run of `build-linux-s390x`, the RHEL 8 row of `smoke-glibc-floor`) ggml loads `z15`:
 qemu-user's CPU model has VXE2 and no NNPA, so CI runs the vector code too, in emulation (measured
 locally with the job's toolchain: `c_abi` reports `CPU : VXE = 1`, and the library loads in the UBI 8
