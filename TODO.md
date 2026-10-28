@@ -483,7 +483,9 @@ CLAUDE.md, "Linux s390x".
 
 - [ ] **z17 (`-march=arch15`)** is skipped: clang 18 rejects the flag (clang 19 on cfarm191 too), and
       ggml's configure drops the variant silently. Re-check when the toolchain's clang moves, and
-      measure on a z17 if the farm gets one.
+      measure on a z17 if the farm gets one. Upstream builds `-march=arch15` since b11968 (its zDNN
+      release job) with GCC 15.1 / binutils 2.44 on native Ubuntu 26.04 s390x runners (#31317);
+      which clang accepts the flag is still to check.
 - **Ruled out:** `ubuntu-22.04` as the runner (glibc 2.35 still misses RHEL 8/9, and its cross GCC 11
   cannot build llama.cpp, which needs GCC >= 12). `-static-libstdc++` alone is ruled out too: it
   fixes GLIBCXX but not GLIBC.
