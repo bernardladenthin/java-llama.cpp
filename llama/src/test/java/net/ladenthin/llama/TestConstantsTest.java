@@ -82,7 +82,7 @@ public class TestConstantsTest {
     /**
      * The models the tests default to and the models CI downloads are one set.
      *
-     * <p>{@code .github/models.csv} is what download-models fetches and validate-models requires;
+     * <p>{@code .github/models.csv} is what fetch-models downloads and checks in CI;
      * every model-gated test defaults to a {@code models/<file>} constant here. A model in the list
      * that no constant names is downloaded for nothing, and a constant naming a model the list lacks
      * makes its test self-skip in CI -- green, and silently. Both directions are asserted, which is

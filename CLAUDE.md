@@ -452,8 +452,9 @@ bernardladenthin/actions, so a file can move between them without a second heade
 third-party ones annotated in `REUSE.toml` (the generated dockcross wrappers, the JNI headers).
 
 **Composite actions (`.github/actions/`).** The shared ones are in bernardladenthin/actions (see
-above and "Signed publication"); the local ones are this repo's own: `restore-models` (restore the shared GGUF
-cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
+above and "Signed publication"); the local ones are this repo's own: `fetch-models` (`.github/fetch-models.sh`: the models of
+the features a job names, from Hugging Face with `HF_TOKEN`, SHA-256 checked; the one place a job gets
+its models — 9 call sites, plus the reusable `java-tests.yml` and `post-release.yml`) and
 `install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`),
 `build-core` (parent + `llama`, optionally more modules, built without tests/checks/javadoc/signing,
 `install` or `package` -- the one copy of that skip-flag list, 9 call sites) and
@@ -1140,9 +1141,9 @@ unlaunched.
 
 1. **`smoke-natives`** (matrix, `fail-fast: false`; rows `linux-x86-64` on `ubuntu-latest`,
    `linux-aarch64` on `ubuntu-24.04-arm`, `windows-x86-64` on `windows-2025-vs2026`,
-   `windows-aarch64` on `windows-11-arm`; `needs: [package, verify-model-cache]`). Each row runs
+   `windows-aarch64` on `windows-11-arm`; `needs: [package]`). Each row runs
    `java -cp '<set>/*' net.ladenthin.llama.server.ServerLauncher` (`smoke-test-natives.sh`, in
-   PowerShell `smoke-test-natives.ps1`) on a GPU-less runner with the cached draft model: poll
+   PowerShell `smoke-test-natives.ps1`) on a GPU-less runner with the draft model: poll
    `/health` to 200, assert a `/v1/chat/completions` choice, and require the loader line
    `[jllama] native backend '<lib>' loaded ... with GPU module(s) ...` naming **every** module jar of
    the platform (read from `natives.csv`, `smoke-lib.sh` / `Get-SetModules`) -- so every GPU module
@@ -1645,7 +1646,7 @@ suffixes only, and the merge step's "nothing else" rule applies to module direct
 **Tests.** `src/test/cpp/test_c_api.cpp` drives the C API compiled into `jllama_test`
 (`jllama_engine.cpp` + `jllama_api.cpp` are in its source list, with the same two definitions) over
 a tiny random llama-architecture GGUF it writes itself -- hermetic, so it runs in every `C++ Tests`
-job without `restore-models`; the output of a random model is noise, the contract is what is
+job without `fetch-models`; the output of a random model is noise, the contract is what is
 asserted. `test_c_abi.c` (the modular jobs' `c_abi`) links the shipped `libjllama` and resolves
 `jllama_api_version` / `jllama_build_info` through its exports, holding the build info's number to the
 `llama.cpp=` line of the directory's `jllama-build.txt` (`llama_build_info()` itself is llama-common,
@@ -1833,10 +1834,13 @@ verification needs an IP SAN for an IP-literal host, which a bare `CN=127.0.0.1`
 `smoke-natives-macos`: a second server round behind a self-signed certificate, serving a model it
 downloaded itself from the `https://` URL of `stories260K.gguf` (1 MB, `models.csv`) into a
 `LLAMA_CACHE` of the run -- `/health` and a chat completion over HTTPS, plain HTTP on the TLS port
-refused, the `.gguf` present in the cache. That download is the only place besides `download-models`
+refused, the `.gguf` present in the cache. That download is the only place besides `fetch-models`
 that reaches Hugging Face, on purpose: it is the end-to-end HTTPS client test with a real
-certificate chain and the OS store, which no local check can give. The macOS smoke thereby stopped
-being model-free; it is still cache-free and ~1 min.
+certificate chain and the OS store, which no local check can give. The step passes the `HF_TOKEN`
+secret, which llama.cpp sends as a bearer token (`-hft` reads it from the environment, also for a
+`--model-url` download): anonymous, the runner IP's shared rate limit answered 429 once (run
+40554119477). The macOS smoke thereby stopped being model-free; it still fetches no CI model and
+takes ~1 min.
 
 **Cost.** BoringSSL is ~400 C/C++ files compiled with `OPENSSL_NO_ASM` (upstream's setting, no
 assembler needed), cached by sccache like everything else; the shipped library grows by its
@@ -2143,7 +2147,8 @@ mvn test -Dtest=LlamaModelTest#testGenerateAnswer
 ```
 
 **Optional models.** Every model a test uses defaults to `models/<file>` from `.github/models.csv`
-(`TestConstants.DEFAULT_*`), so downloading a model from that list into `models/` is all it takes —
+(`TestConstants.DEFAULT_*`), so downloading a model from that list into `models/` is all it takes
+(`bash .github/fetch-models.sh vision`, or with no argument the whole set) —
 the tests find it (module-relative or at the reactor root) and self-skip while it is missing. The
 properties below only **override** a default. The full property → consumer → default table for every
 `net.ladenthin.llama.*` property the library understands (runtime + test) is the user-facing
@@ -2170,7 +2175,7 @@ below covers the model bindings:
 | `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed `src/test/resources/audios/sample.wav`; any `.wav`/`.mp3` |
 
 ```bash
-# CI's models, e.g. the vision pair (URLs in .github/models.csv) -- no property needed afterwards:
+# CI's models, e.g. the vision pair (bash .github/fetch-models.sh vision) -- no property needed afterwards:
 mvn test -Dtest=MultimodalIntegrationTest
 # Another model than the default:
 mvn test -Dtest=TtsIntegrationTest \
@@ -2715,8 +2720,9 @@ the wiring (a future edit that drops the wrapper from a constant fails that test
 silently re-muting the suite). `llama-langchain4j` had the identical defect and carries the same
 resolver as `TestModelPaths` (test classes are not shared between modules).
 
-`validate-models.sh` treats all of these as **required** (a missing model hard-fails the job before
-tests run, so a download regression can never silently downgrade to a skip). **The tests default to
+`fetch-models.sh` treats every model a job asks for as **required** (a missing or changed model
+hard-fails the job before tests run, so a download regression can never silently downgrade to a
+skip). **The tests default to
 exactly the CI model set**: every model-gated test reads its path through a `TestConstants`
 `DEFAULT_*` constant (`models/<file>`), a `-Dnet.ladenthin.llama.*` property only overrides it, and
 `TestConstantsTest.theModelDefaultsAreExactlyTheCiModelSet` asserts that the `.gguf` constants and the
@@ -2728,27 +2734,46 @@ has a runnable guard. **One** class still self-skips everywhere: `AudioInputInte
 prompt clip is committed (`src/test/resources/audios/sample.wav`), but the audio model + mmproj have no
 CI download. Half of `SystemOneIntegrationTest` does too (the `/v1/systemone` answers need a decision model,
 which is not in the CI set either); its rejection case runs everywhere with the draft model.
-The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
-model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
-`needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
-`curl` loop; files already restored from cache are skipped) and the **only writer** of the shared
-GGUF cache (path `models/`, key **`gguf-models-<hash of models.csv>`** — so *editing the manifest
-automatically creates a fresh complete cache entry*; no manual cache deletion on a model-set
-change). The writer sets **`enableCrossOsArchive: true`**, making the one ubuntu-built entry the
-same entry macOS and Windows restore. Every consumer uses the composite action
-**`.github/actions/restore-models`** — restore-only (`actions/cache/restore`; a consumer can never
-re-save an empty/partial entry) plus `validate-models.sh`, which reads its required list from the
-same manifest. A **`verify-model-cache` matrix job** (ubuntu / macOS / Windows, `needs:
-download-models`) runs the same action with `fail-on-cache-miss: true` and so proves the entry is
-restorable **and complete** on every OS **before any model-consuming job starts** — all `test-java-*`
-jobs, the langchain4j integration job, the Android emulator job and the smoke jobs `need:
-verify-model-cache`. (This design hardened after run 28805360584: without the cross-OS flag, cache
-entries are versioned per-OS and the unreachable Windows-side entry had been re-saved **empty** (343 B)
-after an eviction; and the then-separate `validate-models.bat`'s quoted `MODELS` list broke cmd's
-for-tokenization so its `exit /b 1` never fired — the empty cache sailed through the "gate" and the
-Windows jobs silently self-skipped every model-backed test until the server smoke's hard check caught
-it. The `.bat` is gone: Windows runs the one bash script under Git Bash, which is why it uses
-`head -c`/`wc -c` rather than `xxd`/`stat`.) The remaining `*_MODEL_NAME` env vars of publish.yml
+The model set has a **single source of truth: `.github/models.csv`**, one `filename,feature,sha256,url`
+row per model (`#` comments): the **feature** says what the model is in the set for (`text`, `draft`,
+`reasoning`, `tools`, `rerank`, `embedding`, `vision`, `tts`, `train`), the **URL** is pinned to a
+Hugging Face commit (`resolve/<commit>/`, never `main`) and the **SHA-256** is the file's. A job
+gets its models from the composite action **`.github/actions/fetch-models`**, naming the features it
+needs (`features: draft tts`; none = every row); it runs **`.github/fetch-models.sh`**, which downloads
+those rows from Hugging Face with the **`HF_TOKEN`** secret (a fine-grained read-only token; on a
+fork pull request it is absent and the download is anonymous), refuses a file whose SHA-256 differs,
+and keeps a file that is already there with the right hash (so the same command fills a local
+`models/`). What each job asks for:
+
+| Job | Features |
+|---|---|
+| `test-java-linux-x86_64`, the five `java-tests.yml` callers | all |
+| `test-java-llama-langchain4j-integration` | `reasoning embedding rerank tools` |
+| `test-java-llama-ffm` | `draft tts` |
+| `test-java-llama-atmosphere-agent-integration`, `smoke-agent-linux` | `tools` |
+| `smoke-natives` (4 rows), `test-android-emulator`, `test-android-llmservice` | `draft` |
+| `post-release.yml` `consumer` | `train` |
+
+`buildcheck/models.py` (`check-natives.py`) holds the rows to that format (four fields, one
+lower-case word as feature, a lower-case SHA-256, a pinned URL that names the row's file, no file
+twice) and every `features:` of publish.yml to a feature of the list. **Moving a model** means a new
+commit in its URL and the new SHA-256 in the same row (`/api/models/<repo>/revision/main` gives the
+commit, `/api/models/<repo>/paths-info/<commit>` the `lfs.oid`, which is the SHA-256).
+
+**Until 2026-10 the set went through the GitHub Actions cache**, and why that ended is worth keeping:
+a `download-models` job fetched every row into one entry keyed `gguf-models-<hash of models.csv>`
+(6.1 GB, `enableCrossOsArchive`), a three-OS `verify-model-cache` job proved it restorable, and
+`restore-models` brought **the whole entry** to every job that needed any model -- one cache entry
+cannot be restored in part -- about 20 times and 100 GB per Publish run. One restore failed with
+"Egress is over the account limit" (run 40580317285), the repository's caches stood at 11.1 GB of the
+10 GB GitHub keeps, and the one cold-cache download in between had to come from Hugging Face
+anonymously, from a runner IP whose shared rate limit answered 429. A cache entry per feature would
+have needed one fixed `actions/cache` step per entry (a composite action cannot loop over `uses:`)
+and kept the egress on GitHub; Hugging Face with a token serves each file on its own and counts the
+requests against the account. (The cache design had hardened after run 28805360584, when an entry
+re-saved **empty** after an eviction and a `validate-models.bat` whose `exit /b 1` never fired let the
+Windows jobs self-skip every model-backed test; the SHA-256 check is the stricter form of that gate.)
+The remaining `*_MODEL_NAME` env vars of publish.yml
 serve only the consumers outside the llama module's tests (smoke scripts, Android emulator jobs,
 langchain4j/agent integration); `check-natives.py` fails when one is not a filename of `models.csv`.
 Locally the model tests self-skip when a GGUF is absent (`Assume.assumeTrue`), so a partial local
@@ -2817,7 +2842,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_wire_contracts.cpp` | 6 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (5 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt from the schema check, and are checked **both** ways: still unknown to the schema (the inverted check), and read by at least one upstream reader-shaped site (the configure-time sweep — this is what caught `chat_template`, a key a public builder wrote and nothing read). See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
 | `src/test/cpp/test_rpc.cpp` | 28 | **The runnable guard for `patches/0015` and for `rpc_support.hpp`.** The device-selection rules (pure, literal inputs: `--rpc` endpoints accumulate across repeated options, an explicit `--device`/`-dev` is never overridden, stale RPC devices are replaced by the local GPUs chosen the way llama.cpp's default does — duplicates by device id dropped, iGPUs only without a discrete GPU, `none` on a CPU-only host). Then the **real** ggml-rpc client and server over loopback, no model: a `mul_mat` graph computed on the RPC backend equals the local CPU result; `ggml_backend_rpc_stop_server()` ends the server, frees the port and disconnects a client that is still connected; an unreachable or malformed endpoint is `nullptr`/`std::invalid_argument` instead of an abort; a registered server that went away is re-checked on the next registration; its device reports 0/0 memory instead of aborting; and a stale server is kept out of a later load that did not ask for it. The loopback server picks a free port from a range so parallel jobs do not collide, and serves the **CPU** by name — a served GPU that lacks an op aborts the server (see the RPC section). Also: server devices chosen by name (case-insensitive, deduplicated), an unknown name listing the available devices, and a registered RPC device refused; the mmproj device pinned the way clip would choose it minus the stale server; and `exclude_stale_devices()`, the params-level guard for TTS and the trainer. |
 | `src/test/cpp/test_rpc_comm.cpp` | 6 | **`patches/0015`'s COMM_INIT and stop contract over real TCP, protocol v8.** Each scenario runs the C API's RPC server in a fresh subprocess with a deadline, so a regression fails instead of hanging the runner: a loopback server opens no wildcard peer listener and a network bind stays an explicit opt-in; a stop with no peer closes both listeners and lets the port be bound again; a stop interrupts a stalled capability handshake of rank 0 and of rank 1; and a successful peer setup still works and stops. No model, GPU or external network. |
-| `src/test/cpp/test_c_api.cpp` | 55 | **The C API (`jllama_api.h`, layer B) without a JVM.** Writes a tiny random two-layer llama GGUF with the GPT-2 byte tokenizer (the public `gguf` API, like `test_kolibri1.cpp`), loads it through `jllama_model_load` and drives the shipped contract: version and build info, null-argument refusal with a message, a missing model failing to load, the load-progress callback (reported, and a `false` return aborts the load), a chat completion that is an OpenAI `chat.completion` object, an invalid request answered as the caller's fault (`JLLAMA_STATUS_INVALID_REQUEST`), streaming until `stop` with the task released afterwards ("Task not found" on the next receive), a released task gone, and the log callback seeing the server's lines with a null set flushing synchronously. Hermetic, so it runs in every `C++ Tests` job without `restore-models`; the output of a random model is noise, the contract is what is asserted. Two things the fixture does on purpose: the output rows of every non-ASCII and special token are scaled to almost nothing, because a byte above 0x7F is an incomplete UTF-8 piece the server holds back rather than streams (a random model that emits only those sends no partial chunk at all), and the task id is checked `>= 0` -- the server numbers its tasks from zero. Then every other `LlamaModel` operation in turn (the meta, raw and OAI completions, raw streaming, the streamed OAI completion (`text_completion` chunks with one id, probabilities, `usage` on the last), the template, tokenize/detokenize, metrics, slots, LoRA, configure, the refusals of a model loaded without `--embedding`/`--reranking`/FIM tokens, the grammar conversion, a Q8_0 quantisation that loads again, several prompts in one request and several completions of one (`"n"` > 1) refused on the blocking, raw and streamed paths while a token array stays one prompt, and every OpenAI answer and chunk carrying a `chatcmpl-` id and the model name, one id per stream), then the other engines: the embedded server in router mode and attached to the model (which still answers after the server stopped), the RPC server over loopback, text to speech refusing missing models, and a fine-tuning run over the random F32 model that writes a GGUF -- which is why `tts_engine.cpp`, `train_engine.cpp` and `native_server_engine.cpp` are in `jllama_test`'s source list. Five model-free cases (`CApiStatic`) run before any load. `CApiSlotFiles` loads the random model with `--slot-save-path`: a saved slot file lands under that directory by its name and restores, and a name with a directory part, `..`, an absolute path or nothing is `JLLAMA_STATUS_INVALID_REQUEST` with nothing written (red before F251: the name was the path, relative to the working directory); a model without the directory refuses save and restore with `JLLAMA_STATUS_ERROR`. Four `CApiRpc` cases pin `jllama_rpc_server_stop()` around the bind and the next serve: a stop issued before ggml binds the socket -- from the serving thread through the test seam `jllama::rpc::set_serve_hook_for_testing()` (`rpc_support.hpp`, not exported), or from another thread while the serve is held in that seam, where the stop must not return before the serve has -- ends the serve instead of being lost (patches/0015 clears ggml's stop flag at the bind; red before F241), a stop while nothing serves does not stop the next serve, and a stop does not reach a serve started while it waits for the one it is for (the stop seam `set_stop_hook_for_testing()` starts the next serve once the stop is recorded; red before F271: the stop waited 30 s for the newcomer and ended it too). Two `CApiFim` cases load the same random model with FIM tokens (`write_tiny_llama_gguf(prefix, true)`): a raw completion with `input_prefix`/`input_suffix`, blocking and streamed, evaluates exactly the prompt `jllama_infill` builds from the same fields, and one of the two fields alone is refused naming the other (red before F246: the completion path completed the empty prompt and dropped both). Two more `CApi` cases pin `messages` on the raw paths: blocking and streamed, the request evaluates exactly the tokens of a completion of the prompt `jllama_apply_template` renders from them (an empty `prompt` beside them counts as none), and a non-empty `prompt` or the infill fields beside them are refused (red before F247: the field was ignored). Two more: the chat fields the raw paths cannot apply beside `messages` (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `top_logprobs`, `thinking_budget_tokens`) are refused by name on both raw paths, and `CApiTemplateStops` loads the random model with an end-of-generation byte of its own (`write_tiny_llama_gguf(prefix, false, 4)`) and a template upstream adds the stop string `</assistant>` to, which a grammar forces: the raw paths stop there as the chat path does, also beside a `stop` of the request (red before F248: dropped, `stop_type` `eos` and the string in `content`). And `CApiReasoningBudget` loads it with a template that opens a `<think>` block in its generation prompt: a raw completion with `messages` and `reasoning_budget_tokens` 1 completes the forced `</think>` and then the chat path's answer, blocking and streamed, while an output-format grammar beside it still runs (the generation prompt the budget is primed with is left out there); a template without thinking tags leaves the request unchanged (red before F249: the tags were dropped and the budget did nothing). A third case loads the random model with `<think>`, `</think>` and `<tool>` as control tokens (`write_tiny_llama_gguf(prefix, false, 4, special)`): the forced end tag reads as text in the raw content, blocking and streamed, and a request's own `preserved_tokens` stays in force beside the template's (red before F250: the session's preserved tokens were not taken over, and the special end tag was an empty piece). A fourth, without `messages`, names the tags in the request with a logit bias that makes the model write the start tag: a budget of zero forces the end tag after each one, and a `reasoning_budget_message` before it (red before F252: without the message the budget forced nothing). Four cases pin the raw multimodal prompt: `CApiVision` loads the random model with a random llava-style vision projector the shared fixture writes too (`write_tiny_mmproj_gguf()`, `--mmproj`) and finds the server's `media_marker` in the model meta; a raw completion whose `prompt` is upstream's `{"prompt_string": "...<marker>...", "multimodal_data": ["<base64>"]}` evaluates the text tokens plus the image's four patch embeddings on the blocking, streamed and OpenAI paths (red before F258: refused as if the model had no projector), while markers that do not match the images, data that is not base64, no data and an image at the very end (an abort of the process in `update_slots`) are refused, and the same object on the model without a projector is the caller's fault. `CApiVocabOnly` loads the random model with `--vocab-only`: the meta, tokenize and detokenize calls answer, and a parameterized case per other C function on a model (22 instances: every completion, chat and stream path, the template, embeddings, rerank, infill, metrics, slots, LoRA, configure, systemone, the attached server) is `JLLAMA_STATUS_ERROR` with "`jllama_<function>` is not available in vocab-only mode" (red before F266: a `SIGSEGV` in `llama_vocab::token_bos()` or a wait that never ended). Two pin the `capabilities` object of the model meta (b11901, from upstream's server meta): the random model chats and neither generates nor streams audio, with the vision projector loaded as well (`CApiVision`), while a vocab-only load claims none; and `CApiTts` refuses `jllama_tts_supports_speaker_reference()` with a null handle or out-parameter. |
+| `src/test/cpp/test_c_api.cpp` | 55 | **The C API (`jllama_api.h`, layer B) without a JVM.** Writes a tiny random two-layer llama GGUF with the GPT-2 byte tokenizer (the public `gguf` API, like `test_kolibri1.cpp`), loads it through `jllama_model_load` and drives the shipped contract: version and build info, null-argument refusal with a message, a missing model failing to load, the load-progress callback (reported, and a `false` return aborts the load), a chat completion that is an OpenAI `chat.completion` object, an invalid request answered as the caller's fault (`JLLAMA_STATUS_INVALID_REQUEST`), streaming until `stop` with the task released afterwards ("Task not found" on the next receive), a released task gone, and the log callback seeing the server's lines with a null set flushing synchronously. Hermetic, so it runs in every `C++ Tests` job without `fetch-models`; the output of a random model is noise, the contract is what is asserted. Two things the fixture does on purpose: the output rows of every non-ASCII and special token are scaled to almost nothing, because a byte above 0x7F is an incomplete UTF-8 piece the server holds back rather than streams (a random model that emits only those sends no partial chunk at all), and the task id is checked `>= 0` -- the server numbers its tasks from zero. Then every other `LlamaModel` operation in turn (the meta, raw and OAI completions, raw streaming, the streamed OAI completion (`text_completion` chunks with one id, probabilities, `usage` on the last), the template, tokenize/detokenize, metrics, slots, LoRA, configure, the refusals of a model loaded without `--embedding`/`--reranking`/FIM tokens, the grammar conversion, a Q8_0 quantisation that loads again, several prompts in one request and several completions of one (`"n"` > 1) refused on the blocking, raw and streamed paths while a token array stays one prompt, and every OpenAI answer and chunk carrying a `chatcmpl-` id and the model name, one id per stream), then the other engines: the embedded server in router mode and attached to the model (which still answers after the server stopped), the RPC server over loopback, text to speech refusing missing models, and a fine-tuning run over the random F32 model that writes a GGUF -- which is why `tts_engine.cpp`, `train_engine.cpp` and `native_server_engine.cpp` are in `jllama_test`'s source list. Five model-free cases (`CApiStatic`) run before any load. `CApiSlotFiles` loads the random model with `--slot-save-path`: a saved slot file lands under that directory by its name and restores, and a name with a directory part, `..`, an absolute path or nothing is `JLLAMA_STATUS_INVALID_REQUEST` with nothing written (red before F251: the name was the path, relative to the working directory); a model without the directory refuses save and restore with `JLLAMA_STATUS_ERROR`. Four `CApiRpc` cases pin `jllama_rpc_server_stop()` around the bind and the next serve: a stop issued before ggml binds the socket -- from the serving thread through the test seam `jllama::rpc::set_serve_hook_for_testing()` (`rpc_support.hpp`, not exported), or from another thread while the serve is held in that seam, where the stop must not return before the serve has -- ends the serve instead of being lost (patches/0015 clears ggml's stop flag at the bind; red before F241), a stop while nothing serves does not stop the next serve, and a stop does not reach a serve started while it waits for the one it is for (the stop seam `set_stop_hook_for_testing()` starts the next serve once the stop is recorded; red before F271: the stop waited 30 s for the newcomer and ended it too). Two `CApiFim` cases load the same random model with FIM tokens (`write_tiny_llama_gguf(prefix, true)`): a raw completion with `input_prefix`/`input_suffix`, blocking and streamed, evaluates exactly the prompt `jllama_infill` builds from the same fields, and one of the two fields alone is refused naming the other (red before F246: the completion path completed the empty prompt and dropped both). Two more `CApi` cases pin `messages` on the raw paths: blocking and streamed, the request evaluates exactly the tokens of a completion of the prompt `jllama_apply_template` renders from them (an empty `prompt` beside them counts as none), and a non-empty `prompt` or the infill fields beside them are refused (red before F247: the field was ignored). Two more: the chat fields the raw paths cannot apply beside `messages` (`response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `top_logprobs`, `thinking_budget_tokens`) are refused by name on both raw paths, and `CApiTemplateStops` loads the random model with an end-of-generation byte of its own (`write_tiny_llama_gguf(prefix, false, 4)`) and a template upstream adds the stop string `</assistant>` to, which a grammar forces: the raw paths stop there as the chat path does, also beside a `stop` of the request (red before F248: dropped, `stop_type` `eos` and the string in `content`). And `CApiReasoningBudget` loads it with a template that opens a `<think>` block in its generation prompt: a raw completion with `messages` and `reasoning_budget_tokens` 1 completes the forced `</think>` and then the chat path's answer, blocking and streamed, while an output-format grammar beside it still runs (the generation prompt the budget is primed with is left out there); a template without thinking tags leaves the request unchanged (red before F249: the tags were dropped and the budget did nothing). A third case loads the random model with `<think>`, `</think>` and `<tool>` as control tokens (`write_tiny_llama_gguf(prefix, false, 4, special)`): the forced end tag reads as text in the raw content, blocking and streamed, and a request's own `preserved_tokens` stays in force beside the template's (red before F250: the session's preserved tokens were not taken over, and the special end tag was an empty piece). A fourth, without `messages`, names the tags in the request with a logit bias that makes the model write the start tag: a budget of zero forces the end tag after each one, and a `reasoning_budget_message` before it (red before F252: without the message the budget forced nothing). Four cases pin the raw multimodal prompt: `CApiVision` loads the random model with a random llava-style vision projector the shared fixture writes too (`write_tiny_mmproj_gguf()`, `--mmproj`) and finds the server's `media_marker` in the model meta; a raw completion whose `prompt` is upstream's `{"prompt_string": "...<marker>...", "multimodal_data": ["<base64>"]}` evaluates the text tokens plus the image's four patch embeddings on the blocking, streamed and OpenAI paths (red before F258: refused as if the model had no projector), while markers that do not match the images, data that is not base64, no data and an image at the very end (an abort of the process in `update_slots`) are refused, and the same object on the model without a projector is the caller's fault. `CApiVocabOnly` loads the random model with `--vocab-only`: the meta, tokenize and detokenize calls answer, and a parameterized case per other C function on a model (22 instances: every completion, chat and stream path, the template, embeddings, rerank, infill, metrics, slots, LoRA, configure, systemone, the attached server) is `JLLAMA_STATUS_ERROR` with "`jllama_<function>` is not available in vocab-only mode" (red before F266: a `SIGSEGV` in `llama_vocab::token_bos()` or a wait that never ended). Two pin the `capabilities` object of the model meta (b11901, from upstream's server meta): the random model chats and neither generates nor streams audio, with the vision projector loaded as well (`CApiVision`), while a vocab-only load claims none; and `CApiTts` refuses `jllama_tts_supports_speaker_reference()` with a null handle or out-parameter. |
 | `src/test/cpp/test_native_server_shutdown.cpp` | 3 | **The runnable guard for the shutdown-handler guard in `patches/0006`/`0007`.** Runs the real `llama_server()` in router mode over an empty `--models-dir` on an ephemeral loopback port (no model, no worker) and stops it the way `native_server.cpp` does. Pins a clean stop (exit code 0), that `llama_server_request_shutdown()` **after** the server returned is a no-op (the deterministic form of the CI `SIGSEGV` — it crashed every run before the fix), and that requests hammered from another thread while the server tears down are safe (5 rounds). Compiled on non-Android only, like `server.cpp` itself. |
 | `src/test/cpp/test_gallocr_leafs.cpp` | 1 | **The runnable guard for `patches/0020`.** Two graphs with the same two nodes in the same order (`n1 = add(x, x)`, `n2 = mul(w, n1)`) and only the leafs moved: one expands `n1` before `n2` and meets the input first, the other expands only `n2`, whose first source is the weight -- the shape of the llama.cpp case, where every node and node source still matches its slot, so the old check passed it. Reserved with the first, the second must get an allocation for the input inside the allocator's buffer and compute the right product on it. No model, every platform. **Verified both ways:** with the fix removed from the source tree the test dies with SIGSEGV (rc 139); a first version that swapped the operands of one `add` passed without the fix, because a swapped *node source* was already caught -- a guard has to move only the leafs. |
 | `src/test/cpp/test_lora_cache.cpp` | 5 | **The runnable guard for `patches/0021`.** Writes a random llama model (the shared `tiny_llama_gguf.hpp`, also used by `test_c_api.cpp`) and a random LoRA adapter on K, V and the FFN output of every layer, loads them with one slot and `--cache-ram 0`, and answers the same prompt greedily. After `jllama_set_lora_adapters` (scale 1 -> 0 and back) and after a request with its own adapters, the warm slot must answer exactly like an emptied one. One case guards the others against passing vacuously: the adapter changes the answer, and a repeated request reuses the cache (`timings.cache_n > 0`; not `tokens_cached`, which counts every token the slot holds and is positive after any request). After each adapter change the next request must take nothing from the cache (`timings.cache_n == 0`), so those three cases are red without the patch whether or not the random model happens to answer differently. **Verified both ways:** without the patch 3 of 4 red (the warm slot answered from the old scales), with it 4 of 4 green in three runs; no model, every platform. A second fixture (`LoraCacheFreshSlot`: two slots, `--slot-save-path`) saves slot 0 (by its file name inside that directory) after a request and restores it into the never-used slot 1, whose request must take all of the prompt but at most two tokens from it and answer like slot 0 -- red before the `init()` hunk (`Expected: (prompt_n) <= (2), actual: 77 vs 2`), green with it (F240). |
@@ -3293,8 +3318,8 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   Java 8, this optional module targets Java 22, and test release settings remain unchanged.
   CI needs one JDK installation. The `toolchain-jdk22` profile remains a local fallback for
   Maven running below JDK 22, selecting a registered JDK 22+ from `~/.m2/toolchains.xml`.
-- **CI**: `test-java-llama-ffm` (`needs: [crosscompile-linux-x86_64, verify-model-cache]`) downloads
-  the Linux x86-64 natives, restores the models, builds the core, runs `mvn -f llama-ffm/pom.xml
+- **CI**: `test-java-llama-ffm` (`needs: [crosscompile-linux-x86_64]`) downloads
+  the Linux x86-64 natives, fetches the `draft` and `tts` models, builds the core, runs `mvn -f llama-ffm/pom.xml
   verify` with `lib.path` and the draft model, and fails when `FfmLlamaModelIntegrationTest`,
   `FfmTextToSpeechIntegrationTest` or `JllamaNativeTest` skipped itself (a self-skip would hide a broken
   binding). It gates both publish jobs; the release gate check
@@ -3446,14 +3471,13 @@ Wiring:
    `mvn -P release deploy` (no separate module deploy step — the parent's inherited `release`
    profile signs and publishes every reactor module together at the same version).
    A separate **`test-java-llama-langchain4j-integration`** job runs the model-backed tests
-   (chat/streaming/embedding/scoring adapters) by **reusing** the shared GGUF cache
-   (`gguf-models-v1`, restore-only — no extra download) and the `natives-cpu-linux-x86-64` native
-   artifact: it `needs: [crosscompile-linux-x86_64, download-models]` (so the cache is already
-   populated and it runs in parallel), installs parent+core (classes), points the test JVM at the
-   downloaded library with `-Dnet.ladenthin.llama.lib.path`, and passes the already-cached chat (`REASONING_MODEL_NAME`), nomic-embedding and
-   jina-reranker model paths via the module's
+   (chat/streaming/embedding/scoring/tool adapters) with the four models it fetches
+   (`features: reasoning embedding rerank tools`) and the `natives-cpu-linux-x86-64` native
+   artifact: it `needs: [crosscompile-linux-x86_64]`, installs parent+core (classes), points the test JVM at the
+   downloaded library with `-Dnet.ladenthin.llama.lib.path`, and passes the chat (`REASONING_MODEL_NAME`), nomic-embedding,
+   jina-reranker and tool model paths via the module's
    `-Dnet.ladenthin.llama.langchain4j.{embedding,rerank}.model` / `net.ladenthin.llama.model.path`
-   properties. It is validation-only (not a release gate); a cold cache degrades to a self-skip.
+   properties.
 
 **Mapped** (since 5.0.6): blocking tool calling (`ToolSpecification` ↔ jllama `ToolDefinition`
 via the module's own `JsonSchemaElementSerializer` — langchain4j's serializer lives in its

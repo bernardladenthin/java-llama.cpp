@@ -9,8 +9,9 @@
 #
 # The only differences between the callers are the inputs below; everything OS-specific (memory
 # report, core dumps vs. Windows Error Reporting minidumps) is decided here by runner.os. The
-# JDK is .java-version, the models come from the shared cache, so nothing is passed through
-# `with:` that the caller's `env:` would have to repeat (a reusable workflow sees none of it).
+# JDK is .java-version and the models are every row of .github/models.csv (fetch-models), so
+# nothing is passed through `with:` that the caller's `env:` would have to repeat (a reusable
+# workflow sees none of it); the one secret it needs, HF_TOKEN, each caller passes explicitly.
 name: Java tests
 on:
   workflow_call:
@@ -32,6 +33,10 @@ on:
         description: Name of the artifact uploaded on failure (crash logs, dumps, surefire reports).
         type: string
         required: true
+    secrets:
+      HF_TOKEN:
+        description: Hugging Face token for the model downloads (fetch-models); absent on fork pull requests.
+        required: false
 permissions:
   contents: read
 jobs:
@@ -48,7 +53,9 @@ jobs:
         with:
           name: ${{ inputs.natives-artifact }}
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
