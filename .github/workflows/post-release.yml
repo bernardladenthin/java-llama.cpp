@@ -123,19 +123,25 @@ jobs:
           java -version
           .github/post-release-consumer.sh "${TAG#v}" release/.github/natives.csv consumer "${{ matrix.target }}" ${{ matrix.extra }}
       - name: Download the 1 MB test model
-        shell: bash
-        run: |
-          mkdir -p models
-          curl -sSfL --retry 3 -o models/stories260K.gguf "$(grep '^stories260K\.gguf,' .github/models.csv | cut -d, -f2-)"
+        uses: ./.github/actions/fetch-models
+        with:
+          features: train
+          hf-token: ${{ secrets.HF_TOKEN }}
       - name: The server smoke on the resolved jars, Java 8 (check 12)
         if: runner.os == 'Linux'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}  # the HTTPS round of the smoke downloads through llama.cpp
         run: .github/smoke-test-natives.sh consumer models/stories260K.gguf
       - name: The server smoke on the resolved jars, Java 8 (check 12)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}  # the HTTPS round of the smoke downloads through llama.cpp
         run: .github/smoke-test-natives.ps1 -SetDir consumer -Model models/stories260K.gguf
       - name: The macOS smoke on the resolved jars, Java 8 (check 12)
         if: runner.os == 'macOS'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}  # the HTTPS round of the smoke downloads through llama.cpp
         run: .github/smoke-native-macos.sh consumer
       - name: The embedded WebUI of the released library (check 15)
         if: matrix.target == 'linux-x86-64'

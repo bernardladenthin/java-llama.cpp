@@ -41,7 +41,7 @@ Follow the conventions documented in [CLAUDE.md](CLAUDE.md): native helper file 
 
 Every new feature or behaviour change MUST include automated tests; bug fixes SHOULD include a regression test.
 
-- Java tests: JUnit Jupiter, under `llama/src/test/java/net/ladenthin/llama/` and `llama/src/test/java/examples/`. Model-backed tests read their GGUF from `models/` (the list is `.github/models.csv`, which CI downloads) and skip themselves without it.
+- Java tests: JUnit Jupiter, under `llama/src/test/java/net/ladenthin/llama/` and `llama/src/test/java/examples/`. Model-backed tests read their GGUF from `models/` (the list is `.github/models.csv`; `bash .github/fetch-models.sh [feature ...]` downloads it, as CI does) and skip themselves without it.
 - C++ unit tests: GoogleTest, under `llama/src/test/cpp/` (one file per helper header and per carried llama.cpp patch; CLAUDE.md lists them), built with `cmake -B build -DBUILD_TESTING=ON` and run with `ctest`. No JVM and no downloaded model required: the tests that need a model write a tiny random GGUF themselves.
 - Coverage is reported via JaCoCo and pushed to Coveralls and Codecov on every CI run; new code must not regress coverage on critical paths.
 

@@ -2,21 +2,27 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Single source of truth for the CI model set: one "filename,url" row per model.
+# Single source of truth for the CI model set: one "filename,feature,sha256,url" row per model.
+#   filename  the file under models/ (no spaces or commas)
+#   feature   what the model is in the test set for, one word; a job asks for the features it needs
+#             (.github/actions/fetch-models) and gets only their files
+#   sha256    the file's SHA-256; fetch-models.sh refuses a download that does not match
+#   url       pinned to a Hugging Face commit (resolve/<commit>/), so the file cannot change under
+#             the test set; to move a model, change commit and sha256 together
 # Consumed by:
-#   - .github/workflows/publish.yml  download-models job (manifest-driven download loop;
-#     the cache key is gguf-models-<hash of this file>, so EDITING THIS FILE automatically
-#     creates a fresh cache entry - no manual cache deletion needed)
-#   - .github/validate-models.sh / .bat (the required-model list)
-# Filenames must not contain spaces or commas. Lines starting with # are ignored.
-codellama-7b.Q2_K.gguf,https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q2_K.gguf
-jina-reranker-v1-tiny-en-Q4_0.gguf,https://huggingface.co/gpustack/jina-reranker-v1-tiny-en-GGUF/resolve/main/jina-reranker-v1-tiny-en-Q4_0.gguf
-AMD-Llama-135m-code.Q2_K.gguf,https://huggingface.co/QuantFactory/AMD-Llama-135m-code-GGUF/resolve/main/AMD-Llama-135m-code.Q2_K.gguf
-Qwen3-0.6B-Q4_K_M.gguf,https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-Qwen2.5-1.5B-Instruct-Q4_K_M.gguf,https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
-nomic-embed-text-v1.5.f16.gguf,https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf
-SmolVLM-500M-Instruct-Q8_0.gguf,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/main/SmolVLM-500M-Instruct-Q8_0.gguf
-mmproj-SmolVLM-500M-Instruct-Q8_0.gguf,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf
-Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf
-mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf
-stories260K.gguf,https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories260K.gguf
+#   - .github/fetch-models.sh (the composite action fetch-models; also the local download), the
+#     only place that downloads the set -- from Hugging Face, with the HF_TOKEN secret when present
+#   - TestConstantsTest (the test defaults are exactly these files), buildcheck/models.py (the row
+#     format and publish.yml's *_MODEL_NAME env), the smoke scripts' HTTPS round (stories260K)
+# Lines starting with # are ignored.
+codellama-7b.Q2_K.gguf,text,d3c95001df2912a4214af265918c91515aaae02279492adde5656404e05e9ff5,https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/98596f7f6c318118824bcbee4b0e20010ec510ec/codellama-7b.Q2_K.gguf
+jina-reranker-v1-tiny-en-Q4_0.gguf,rerank,ed226ea4efdb7cc8409961e22969231c90aa1194344486ed9e54b97a97e86b3a,https://huggingface.co/gpustack/jina-reranker-v1-tiny-en-GGUF/resolve/34fdafe5a08b64246bcbfdbf0b8a23f818baf8e3/jina-reranker-v1-tiny-en-Q4_0.gguf
+AMD-Llama-135m-code.Q2_K.gguf,draft,b7a897c113a93bc238e392613fe73d764f4e53fe24e03722e99dc59b0ed0f2c6,https://huggingface.co/QuantFactory/AMD-Llama-135m-code-GGUF/resolve/1e4516c4243d1b1a8669737aa0aa2e54122f3591/AMD-Llama-135m-code.Q2_K.gguf
+Qwen3-0.6B-Q4_K_M.gguf,reasoning,ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a,https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/50968a4468ef4233ed78cd7c3de230dd1d61a56b/Qwen3-0.6B-Q4_K_M.gguf
+Qwen2.5-1.5B-Instruct-Q4_K_M.gguf,tools,1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370,https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/9eadc66189c7641e1ddd226b8267a9119b2ce2d4/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
+nomic-embed-text-v1.5.f16.gguf,embedding,f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb,https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/0188c9bf409793f810680a5a431e7b899c46104c/nomic-embed-text-v1.5.f16.gguf
+SmolVLM-500M-Instruct-Q8_0.gguf,vision,9d4612de6a42214499e301494a3ecc2be0abdd9de44e663bda63f1152fad1bf4,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/72e986006ef53e37cdd3f6d4241c90b0f01df376/SmolVLM-500M-Instruct-Q8_0.gguf
+mmproj-SmolVLM-500M-Instruct-Q8_0.gguf,vision,d1eb8b6b23979205fdf63703ed10f788131a3f812c7b1f72e0119d5d81295150,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/72e986006ef53e37cdd3f6d4241c90b0f01df376/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf
+Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf,tts,8d18c94acb2addd042f97da63c98be144eafa76d0d9495177eab65130cf85129,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/ca27d74bc954b73dadab5b71ca265d87fc861a7c/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf
+mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf,tts,6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/ca27d74bc954b73dadab5b71ca265d87fc861a7c/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf
+stories260K.gguf,train,047bf46455a544931cff6fef14d7910154c56afbc23ab1c5e56a72e69912c04b,https://huggingface.co/ggml-org/tiny-llamas/resolve/99dd1a73db5a37100bd4ae633f4cfce6560e1567/stories260K.gguf

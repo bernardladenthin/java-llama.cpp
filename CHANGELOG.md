@@ -10,6 +10,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **CI downloads its test models from Hugging Face, per job and per feature, instead of through the
+  GitHub Actions cache.** `.github/models.csv` has four columns now, `filename,feature,sha256,url`,
+  with every URL pinned to a Hugging Face commit; `.github/fetch-models.sh` (the composite action
+  `fetch-models`, replacing `restore-models`, `validate-models.sh` and the `download-models` /
+  `verify-model-cache` jobs) downloads the rows of the features a job names with the `HF_TOKEN`
+  secret and refuses a file whose SHA-256 differs. The 6.1 GB cache entry, restored whole by about 20
+  jobs per Publish run, had gone over the account's cache egress once; the smoke jobs need 57 MB now,
+  and the natives smoke's HTTPS round sends the token too (it had got a 429 anonymously). Locally,
+  `bash .github/fetch-models.sh [feature ...]` fills `models/`.
 - **The GPG signing-key preflight runs only when something is published.** The two jobs
   `verify-signing-key` and `verify-signing-key-gradle` ran on every trigger: red on every pull request,
   because the `maven-central` environment admits only `main` and `v*` tags, and on a push to `main`
