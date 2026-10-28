@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11945)
-set(JLLAMA_GIT_COMMIT "d05706b4f32a545814856e98ca518292585443b9")   # the commit the tag b11945 names; kept as the pin (a tag name can move)
+set(JLLAMA_GIT_TAG    b11946)
+set(JLLAMA_GIT_COMMIT "8ca4060b7e30e76baaa5670ee1ec1b760b7f8552")   # the commit the tag b11946 names; kept as the pin (a tag name can move)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -927,6 +927,12 @@ add_library(jllama SHARED
 # server-stream.cpp -- a missing unit is an undefined reference, latent on Linux
 # but a hard link error on macOS/ld64 and Windows/MSVC. Platform-neutral, so it
 # stays outside the Android guard too.
+#
+# server-realtime.cpp (b11946, #31269) holds the realtime conversations over /v1/realtime
+# (server_realtime_slot, server_realtime_conversation); server-context.cpp creates the slot and
+# calls into it from its main loop and its websocket route, so it is mandatory for the same reason.
+# It talks to the socket only through server_http_context::ws_conn, an interface, and spawns
+# nothing, so it stays outside the Android guard as well.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
@@ -934,6 +940,7 @@ target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
 )
 #
 # server-models-sched.cpp (b11930, #21231) is the router's request queue and device-memory
@@ -1394,6 +1401,7 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models-sched.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
     )
 
     target_include_directories(jllama_test PRIVATE

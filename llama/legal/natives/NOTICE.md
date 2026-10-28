@@ -22,7 +22,7 @@ texts are not needed here.
 
 | Component | Version | Compiled into | SPDX | Texts | Source |
 |---|---|---|---|---|---|
-| llama.cpp (ggml / llama / mtmd / llama-common / tools/server / CPU+Metal+GPU kernels / WebUI own code) | b11945 d05706b4f32a545814856e98ca518292585443b9 (texts unchanged since fa3645feb) | all 23 jars + both AARs | MIT | `llama.cpp` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/LICENSE |
+| llama.cpp (ggml / llama / mtmd / llama-common / tools/server / CPU+Metal+GPU kernels / WebUI own code) | b11946 8ca4060b7e30e76baaa5670ee1ec1b760b7f8552 (texts unchanged since fa3645feb) | all 23 jars + both AARs | MIT | `llama.cpp` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/LICENSE |
 | nlohmann/json | 3.12.0 + vendor/nlohmann/json-deep-nesting.patch | library jars | MIT | `nlohmann-json` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/licenses/LICENSE-jsonhpp |
 | cpp-httplib | v0.62.0 | library jars | MIT | `cpp-httplib` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/cpp-httplib/LICENSE |
 | BoringSSL (ssl + crypto; static; OPENSSL_NO_ASM) | 0.20261020.0 = d3bf4795ad5b79d646cddf2fec687da5b9b502db | library jars except cpu-android-* and cpu-linux-s390x | Apache-2.0 | `boringssl` | https://boringssl.googlesource.com/boringssl/+/refs/tags/0.20261020.0/LICENSE |
@@ -47,7 +47,7 @@ texts are not needed here.
 | WebUI vendored big-integer | in tree | library jars (embedded ui.cpp) | Unlicense | `webui-big-integer` | tools/ui/src/lib/vendors/big-integer/LICENSE |
 | WebUI vendored decimal.js | in tree | library jars (embedded ui.cpp) | MIT | `webui-decimal.js` | tools/ui/src/lib/vendors/decimal.js/LICENCE.md |
 | WebUI vendored nerdamer-prime | in tree | library jars (embedded ui.cpp) | MIT | `webui-nerdamer-prime` | tools/ui/src/lib/vendors/nerdamer-prime/LICENSE |
-| WebUI npm bundle (JS + CSS incl. KaTeX fonts + workbox) | tools/ui/package-lock.json at b11945 | library jars (every library build job downloads webui-generated) (upper bound (tree-shaking / server-only deps)) | 337 pkgs: MIT 271, ISC 43, BSD-3-Clause 9, Apache-2.0 5, BSD-2-Clause 2, MPL-2.0 OR Apache-2.0 1, Unlicense 1, 5 without field (MIT files); 19 MIT packages ship no license file, the MIT text follows them | `webui-npm` | webui-npm/packages.csv |
+| WebUI npm bundle (JS + CSS incl. KaTeX fonts + workbox) | tools/ui/package-lock.json at b11946 | library jars (every library build job downloads webui-generated) (upper bound (tree-shaking / server-only deps)) | 337 pkgs: MIT 271, ISC 43, BSD-3-Clause 9, Apache-2.0 5, BSD-2-Clause 2, MPL-2.0 OR Apache-2.0 1, Unlicense 1, 5 without field (MIT files); 19 MIT packages ship no license file, the MIT text follows them | `webui-npm` | webui-npm/packages.csv |
 | WebUI third-party logos (huggingface.ico / exa.ico / context7.png / github-*.png) | - | library jars (yes) | trademarks (no license file) | `(not shipped)` | tools/ui/static |
 | CCCL (CUB / Thrust / libcu++ headers) | v3.4.3 | cuda13-linux-x86-64 + cuda13-windows-x86-64 | Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND BSD-3-Clause (CUB) | `cccl` | https://github.com/NVIDIA/cccl/blob/v3.4.3/LICENSE |
 | CUDA Toolkit headers / libdevice | CUDA 13.4 | cuda13 modules (yes) | LicenseRef-NVIDIA-CUDA-EULA | `(not shipped)` | - |
