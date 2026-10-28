@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Downloads the models a job needs from Hugging Face -- the one place a job gets its models. A job
+# names the features it needs (the feature column of .github/models.csv) and gets exactly their
+# files; .github/fetch-models.sh pins each to a Hugging Face commit and checks its SHA-256, so a
+# missing or changed model fails here instead of letting a model-backed test self-skip. The token
+# makes the downloads count against the account's rate limit instead of the runner IP's shared one
+# (which answered 429); without it (fork pull requests) the download is anonymous. There is no
+# GitHub Actions cache in between any more: one 6.1 GB entry restored by about 20 jobs per run went
+# over the account's cache egress ("Egress is over the account limit") and the repository's 10 GB.
+# Needs the repository checked out.
+name: Fetch GGUF models
+description: Download the models of the named features of .github/models.csv from Hugging Face and verify their SHA-256.
+inputs:
+  features:
+    description: Space-separated features of .github/models.csv (draft, tts, ...); empty means every model.
+    required: false
+    default: ''
+  hf-token:
+    description: Hugging Face token (secrets.HF_TOKEN); empty downloads anonymously.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Download and verify the models (.github/models.csv)
+      shell: bash
+      env:
+        HF_TOKEN: ${{ inputs.hf-token }}
+        FEATURES: ${{ inputs.features }}
+      # $FEATURES unquoted on purpose: one argument per feature.
+      run: bash .github/fetch-models.sh $FEATURES

@@ -47,8 +47,9 @@ env:
   # of the merged tree to be signed.
   SIGN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_windows }}
   SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
-  # The CI model set is .github/models.csv (URLs, and the model cache key is its hash). The Java
-  # tests default to exactly that set (TestConstants; TestConstantsTest asserts both directions),
+  # The CI model set is .github/models.csv (one row per file: feature, SHA-256, a Hugging Face URL
+  # pinned to a commit); every job downloads the features it needs through .github/actions/fetch-models,
+  # with the HF_TOKEN secret. The Java tests default to exactly that set (TestConstants; TestConstantsTest asserts both directions),
   # so the test jobs pass no model properties. The names below are only for the consumers outside
   # the llama module's tests -- the smoke scripts, the Android emulator jobs and the langchain4j /
   # agent integration jobs; check-natives.py fails when one is not a filename of models.csv.
@@ -175,71 +176,6 @@ jobs:
           key-id: ${{ secrets.GPG_KEY_ID }}
 
   # ---------------------------------------------------------------------------
-  # Download + cache the GGUF test models ONCE, upfront, for the whole pipeline.
-  # Every Java test job (`test-java-*`) and the langchain4j integration job `needs:` this
-  # job and then only RESTORES the shared cache (key gguf-models-<manifest hash>) — so the ~5 GB model
-  # set is fetched from HuggingFace at most once per cache lifetime instead of racing to
-  # download in each job. GGUF is platform-independent, so this single ubuntu job's cache
-  # is reused by the macOS and Windows jobs too. On a warm cache this job is a no-op
-  # restore; on a cold cache it downloads all models, validates them, and saves the cache
-  # at job end (immutable key, so downstream jobs restore-hit). This is the single source
-  # of the download logic — do not re-add per-job downloads.
-  # ---------------------------------------------------------------------------
-
-  download-models:
-    name: Download + cache GGUF models (once)
-    needs: startgate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Cache GGUF models (GitHub Actions cache; avoids re-downloading from HuggingFace)
-        # This job is the ONLY writer of the model cache (every consumer job uses the
-        # restore-only action). enableCrossOsArchive makes the one ubuntu-built entry
-        # restorable on macOS AND Windows — without it, cache entries are versioned
-        # per-OS, and the unreachable Windows-side entry was once found re-saved EMPTY
-        # (343 B) after an eviction, silently starving the Windows jobs of models.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: models/
-          # GGUF is platform-independent, so ubuntu + macOS + Windows share one entry.
-          # The key is derived from the model manifest, so EDITING models.csv
-          # automatically creates a fresh complete entry — no manual cache deletion.
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Download missing models (manifest-driven, .github/models.csv)
-        # The manifest is the single source of truth for the model set; this loop is
-        # the ONLY place in CI that downloads models. Files already restored from the
-        # cache are skipped, so a warm cache downloads nothing.
-        run: |
-          while IFS=, read -r name url; do
-            case "$name" in ''|\#*) continue ;; esac
-            test -f "models/$name" || curl -L --proto =https --proto-redir =https --fail --retry 5 --retry-all-errors "$url" --create-dirs -o "models/$name"
-          done < .github/models.csv
-      - name: List files in models directory
-        run: ls -l models/
-      - name: Validate model files
-        run: bash .github/validate-models.sh
-
-  # Prove the freshly written cache entry is restorable AND complete on every OS the
-  # pipeline uses BEFORE any model-consuming job starts: the same restore-only action
-  # the consumers use (fail-on-cache-miss makes an unrestorable entry fail here, not
-  # deep inside a test job), followed by the full validate gate. Every model-backed
-  # job `needs:` this instead of download-models directly.
-  verify-model-cache:
-    name: "Verify model cache (${{ matrix.os }})"
-    needs: download-models
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15, windows-2025-vs2026]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: ./.github/actions/restore-models
-        with:
-          fail-on-cache-miss: true
-
-  # ---------------------------------------------------------------------------
   # Cross-compile jobs (Docker / dockcross) — produce release artifacts, no testing
   # ---------------------------------------------------------------------------
 
@@ -337,18 +273,16 @@ jobs:
         run: mvn -B --no-transfer-progress -f llama-kotlin/pom.xml verify
 
   # ---------------------------------------------------------------------------
-  # Model-backed integration for the langchain4j adapters. Reuses the SAME shared GGUF
-  # cache (populated once by download-models) and the SAME Linux-x86_64 native artifact the
-  # core Java jobs already use — no extra model download and no duplicated download logic
-  # (restore-only cache, no curl steps). It exercises the chat / embedding / scoring
-  # adapters against the already-cached chat (Qwen3-0.6B), nomic-embedding and jina-reranker
-  # models. The model-backed tests self-skip when a model is absent, so a cold cache degrades
-  # to a skip, never a failure.
+  # Model-backed integration for the langchain4j adapters. Reuses the SAME Linux-x86_64 native
+  # artifact the core Java jobs already use and fetches only the four models it needs
+  # (fetch-models, which fails on a missing or changed file). It exercises the chat / embedding /
+  # scoring / tool adapters against the chat (Qwen3-0.6B), nomic-embedding, jina-reranker and
+  # Qwen2.5-1.5B tool models.
   # ---------------------------------------------------------------------------
 
   test-java-llama-langchain4j-integration:
     name: Integration Test llama-langchain4j (model-backed)
-    needs: [crosscompile-linux-x86_64, verify-model-cache]
+    needs: [crosscompile-linux-x86_64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -359,14 +293,17 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: reasoning embedding rerank tools
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         uses: ./.github/actions/build-core
-      - name: Run llama-langchain4j model-backed integration tests (reused cached models)
+      - name: Run llama-langchain4j model-backed integration tests
         run: >
           mvn -B --no-transfer-progress -f llama-langchain4j/pom.xml test
           -Dnet.ladenthin.llama.model.path=models/${REASONING_MODEL_NAME}
@@ -397,7 +334,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # llama-ffm: the C API of libjllama (jllama_api.h) through the Java 22+ Foreign Function and
-  # Memory API, no JNI. Reuses the Linux x86_64 natives artifact and the cached models like the
+  # Memory API, no JNI. Reuses the Linux x86_64 natives artifact like the
   # langchain4j integration job (lib.path, no second loading path); Maven runs on the JDK of
   # .java-version (25), which compiles, tests and documents the module for its Java 22 target.
   # Gates both publish jobs: the module ships on Maven Central.
@@ -405,7 +342,7 @@ jobs:
 
   test-java-llama-ffm:
     name: Build and Test llama-ffm (Java 22+ FFM over the C API, model-backed)
-    needs: [crosscompile-linux-x86_64, verify-model-cache]
+    needs: [crosscompile-linux-x86_64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -416,7 +353,10 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: draft tts
+          hf-token: ${{ secrets.HF_TOKEN }}
       # Build with the shared JDK; llama-ffm retains its Java 22 bytecode target.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -424,7 +364,7 @@ jobs:
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         uses: ./.github/actions/build-core
-      - name: Build, test and document llama-ffm (the model-backed tests run on the cached draft model and the cached Qwen3-TTS pair)
+      - name: Build, test and document llama-ffm (the model-backed tests run on the draft model and the Qwen3-TTS pair)
         run: >
           mvn -B --no-transfer-progress -f llama-ffm/pom.xml verify -Dgpg.skip=true
           -Dnet.ladenthin.llama.ffm.model=models/${DRAFT_MODEL_NAME}
@@ -473,7 +413,7 @@ jobs:
   #     OpenAiCompatServer over a loopback socket with a scripted backend (no native lib,
   #     no GGUF) and pin the streamed tool_calls / role=tool / multi-round shape — seconds,
   #     on every PR. It also collects the agent jar and its dependencies for the smoke below.
-  #   - model-backed: the same loop against the cached Qwen2.5-1.5B tool model through the
+  #   - model-backed: the same loop against the Qwen2.5-1.5B tool model through the
   #     downloaded Linux native library (chat, streaming, tool call + result, read/write/read
   #     loop). A gate since its assertions stopped pinning wording (content checks are limited
   #     to facts no instruct model gets wrong and to tool results) and it ran green throughout.
@@ -529,7 +469,7 @@ jobs:
 
   test-java-llama-atmosphere-agent-integration:
     name: Integration Test llama-atmosphere-agent (model-backed)
-    needs: [crosscompile-linux-x86_64, verify-model-cache]
+    needs: [crosscompile-linux-x86_64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -540,7 +480,10 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: tools
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -551,7 +494,7 @@ jobs:
           modules: llama,llama-platform
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
-      - name: Run the Atmosphere tool-loop integration test (cached Qwen2.5-1.5B tool model, CPU)
+      - name: Run the Atmosphere tool-loop integration test (Qwen2.5-1.5B tool model, CPU)
         run: >
           mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none test
           -Dtest=AtmosphereToolLoopIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
@@ -1304,7 +1247,7 @@ jobs:
   # On-emulator runtime validation of the Android AAR: boots a KVM-accelerated
   # x86_64 emulator (GitHub Linux runners have KVM; arm64 images cannot run here,
   # which is exactly why the AAR carries the jni/x86_64 ABI), publishes the CPU AAR
-  # to mavenLocal, adb-pushes the already-cached tiny draft model, and runs the
+  # to mavenLocal, adb-pushes the tiny draft model, and runs the
   # consumer fixture's connectedDebugAndroidTest — System.loadLibrary from the APK,
   # pure-Java GgufInspector on-device, and real native inference on Android/bionic.
   # RELEASE GATE (in both publish needs graphs) since PR #298: the job ran
@@ -1316,7 +1259,7 @@ jobs:
 
   test-android-emulator:
     name: Android emulator on-device test (x86_64)
-    needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
+    needs: [crosscompile-android-aarch64, crosscompile-android-x86_64]
     runs-on: ubuntu-latest
     steps:
       - name: Free up disk space
@@ -1350,15 +1293,17 @@ jobs:
         with:
           goal: package
       - uses: ./.github/actions/publish-cpu-aar-local
-      - uses: ./.github/actions/restore-models
-      - name: Free disk space for the emulator (only the draft model is needed on-device)
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: draft
+          hf-token: ${{ secrets.HF_TOKEN }}
+      - name: Free disk space for the emulator
         # Same guard as test-android-llmservice: the AVD userdata partition needs ~7.4 GB; drop the
-        # rest of the restored ~10 GB GGUF cache (this job adb-pushes only the tiny draft model) plus
-        # the few preinstalled toolchains the free-disk-space step leaves, so the emulator can create
-        # userdata and boot.
+        # few preinstalled toolchains the free-disk-space step leaves, so the emulator can create
+        # userdata and boot. (Only the tiny draft model is fetched; until 2026-10 the whole GGUF set
+        # was restored here and deleted again.)
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
-          find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Pre-install the Android emulator package (retried)
@@ -1527,7 +1472,7 @@ jobs:
 
   test-android-llmservice:
     name: LLM Service app UI test on emulator (non-gating)
-    needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
+    needs: [crosscompile-android-aarch64, crosscompile-android-x86_64]
     runs-on: ubuntu-latest
     steps:
       - name: Free up disk space
@@ -1559,15 +1504,16 @@ jobs:
         with:
           modules: llama,llama-kotlin
       - uses: ./.github/actions/publish-cpu-aar-local
-      - uses: ./.github/actions/restore-models
-      - name: Free disk space for the emulator (only the draft model is needed on-device)
-        # The AVD userdata partition needs ~7.4 GB; the full ~10 GB GGUF cache restore leaves too
-        # little free, so the emulator FATALs ("Not enough space to create userdata partition") and
-        # the boot poll loops until timeout. This job only adb-pushes the tiny draft model, so drop
-        # the rest of the restored cache plus what the free-disk-space step leaves (PowerShell, CodeQL).
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: draft
+          hf-token: ${{ secrets.HF_TOKEN }}
+      - name: Free disk space for the emulator
+        # The AVD userdata partition needs ~7.4 GB; without this the emulator FATALs ("Not enough
+        # space to create userdata partition") and the boot poll loops until timeout. Drop what the
+        # free-disk-space step leaves (PowerShell, CodeQL); only the tiny draft model is fetched.
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
-          find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Pre-install the Android emulator package (retried)
@@ -2856,7 +2802,7 @@ jobs:
 
   test-java-linux-x86_64:
     name: Java Tests Ubuntu Latest x86_64
-    needs: [crosscompile-linux-x86_64, verify-model-cache]
+    needs: [crosscompile-linux-x86_64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2866,7 +2812,9 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -2966,8 +2914,10 @@ jobs:
   # the release gate and every reader of this file see the same jobs as before.
   test-java-macos-arm64-metal:
     name: Java Tests macOS 26 arm64 (Metal)
-    needs: [build-macos-arm64-metal, verify-model-cache]
+    needs: [build-macos-arm64-metal]
     uses: ./.github/workflows/java-tests.yml
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     with:
       runs-on: macos-26
       natives-artifact: macos-26-metal
@@ -2976,8 +2926,10 @@ jobs:
 
   test-java-macos-arm64-no-metal:
     name: Java Tests macOS 15 arm64 (no Metal)
-    needs: [build-macos-arm64-no-metal, verify-model-cache]
+    needs: [build-macos-arm64-no-metal]
     uses: ./.github/workflows/java-tests.yml
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     with:
       runs-on: macos-15
       natives-artifact: macos-15-no-metal
@@ -2985,8 +2937,10 @@ jobs:
 
   test-java-macos-arm64-metal-15:
     name: Java Tests macOS 15 arm64 (Metal)
-    needs: [build-macos-arm64-metal-15, verify-model-cache]
+    needs: [build-macos-arm64-metal-15]
     uses: ./.github/workflows/java-tests.yml
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     with:
       runs-on: macos-15
       natives-artifact: natives-metal-macos-aarch64
@@ -2998,8 +2952,10 @@ jobs:
   # the CPU module -- a load alone proves little (CLAUDE.md "CPU variants"), this runs inference.
   test-java-windows-x86_64:
     name: Java Tests Windows 2025 x86_64 (default / CPU variants, clang)
-    needs: [build-windows-x86_64, verify-model-cache]
+    needs: [build-windows-x86_64]
     uses: ./.github/workflows/java-tests.yml
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     with:
       runs-on: windows-2025-vs2026
       natives-artifact: natives-cpu-windows-x86-64
@@ -3011,8 +2967,10 @@ jobs:
   # end-to-end -- the MSVC one is not shipped, it is the second compiler's verdict on the code.
   test-java-windows-x86_64-msvc:
     name: Java Tests Windows 2025 x86_64 (MSVC, test only)
-    needs: [build-windows-x86_64-msvc, verify-model-cache]
+    needs: [build-windows-x86_64-msvc]
     uses: ./.github/workflows/java-tests.yml
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     with:
       runs-on: windows-2025-vs2026
       natives-artifact: msvc-windows-x86_64
@@ -3414,7 +3372,7 @@ jobs:
   # pipeline. fail-fast is off: one platform's failure must not hide another's.
   smoke-natives:
     name: Smoke test natives jars (${{ matrix.target }})
-    needs: [package, verify-model-cache]
+    needs: [package]
     strategy:
       fail-fast: false
       matrix:
@@ -3436,7 +3394,10 @@ jobs:
         with:
           name: llama-smoke-${{ matrix.target }}
           path: smoke/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: draft
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: ${{ matrix.jdk || 'temurin' }}
@@ -3453,10 +3414,18 @@ jobs:
             smoke
       - name: Run the server smoke test
         if: runner.os != 'Windows'
+        env:
+          # Round 2 downloads stories260K over HTTPS through llama.cpp, which sends HF_TOKEN as a
+          # bearer token (its -hft default): without it the runner IP's shared rate limit answered 429.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .github/smoke-test-natives.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Run the server smoke test
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          # Round 2 downloads stories260K over HTTPS through llama.cpp, which sends HF_TOKEN as a
+          # bearer token (its -hft default): without it the runner IP's shared rate limit answered 429.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .github/smoke-test-natives.ps1 -SetDir smoke -Model "models/$env:DRAFT_MODEL_NAME"
       # RPC over two JVMs from the same jars: RpcServer in one, the default NativeServer with --rpc
       # in the other. Requires a chat completion, the model buffer on the RPC endpoint in the load
@@ -3477,6 +3446,10 @@ jobs:
           java-version: '8'
       - name: Run the same published core and natives on Java 8
         if: matrix.target == 'linux-x86-64'
+        env:
+          # Round 2 downloads stories260K over HTTPS through llama.cpp, which sends HF_TOKEN as a
+          # bearer token (its -hft default): without it the runner IP's shared rate limit answered 429.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .github/smoke-test-natives.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
@@ -3502,7 +3475,7 @@ jobs:
   # answer, a read_file tool round, --web and --acp work through the shipped jars.
   smoke-agent-linux:
     name: Smoke test the agent on the natives jars (Linux)
-    needs: [test-java-llama-atmosphere-agent, package, verify-model-cache]
+    needs: [test-java-llama-atmosphere-agent, package]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -3516,7 +3489,10 @@ jobs:
         with:
           name: llama-smoke-linux-x86-64
           path: smoke/
-      - uses: ./.github/actions/restore-models
+      - uses: ./.github/actions/fetch-models
+        with:
+          features: tools
+          hf-token: ${{ secrets.HF_TOKEN }}
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -3564,7 +3540,7 @@ jobs:
   # macOS-specific in two ways. Its smoke set has one natives jar, metal-macos-aarch64 (macOS has
   # no GPU module jar: Metal is compiled into the library), and it asserts native loadability
   # rather than a CLI exit code -- `codesign --strict` is what actually detects a dylib assembled
-  # from two builds. No cache restore (~1 min): a full model-backed macOS server smoke would be
+  # from two builds. No model fetch (~1 min): a full model-backed macOS server smoke would be
   # strictly more, but this catches the failure class that shipped and is cheap enough to always
   # run. Its last step downloads the 1 MB stories260K.gguf over HTTPS and serves it behind a
   # self-signed certificate -- the proof that the dylib's SSL is the statically linked BoringSSL
@@ -3588,6 +3564,10 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Run the packaged-native smoke test
+        env:
+          # Round 2 downloads stories260K over HTTPS through llama.cpp, which sends HF_TOKEN as a
+          # bearer token (its -hft default): without it the runner IP's shared rate limit answered 429.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: .github/smoke-native-macos.sh smoke
       - name: Upload server logs
         if: failure()

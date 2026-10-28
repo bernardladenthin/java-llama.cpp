@@ -90,7 +90,7 @@ manages the final app-signing key. CI wires it from the optional `ANDROID_UPLOAD
 + password/alias secrets.
 
 **CI wiring** — **two split jobs** in `.github/workflows/publish.yml` (both `needs:` the two Android
-native jobs; the test job additionally `needs: verify-model-cache`), so the installable artifacts are
+native jobs; the test job fetches the draft model itself), so the installable artifacts are
 **always** produced even when the on-device UI test is flaky/slow:
 - **`build-android-llmservice`** — installs the core + `llama-kotlin` to mavenLocal (`llama-kotlin`'s
   core dep is provided-scope, so the desktop JAR is never pulled into the APK), stages the CI-built

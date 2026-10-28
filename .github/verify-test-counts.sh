@@ -88,7 +88,7 @@ if [ "${#empty_suites[@]}" -gt 0 ]; then
     printf '  %s\n' "${empty_suites[@]}" >&2
     echo "  A class-level @BeforeAll assumption that fails looks exactly like this. It is NOT a" >&2
     echo "  skip — the class reports no tests at all, so it is invisible to a skip check. If a" >&2
-    echo "  model is missing, validate-models should have failed the job before this point." >&2
+    echo "  model is missing, fetch-models should have failed the job before this point." >&2
     status=1
 fi
 

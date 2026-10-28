@@ -111,7 +111,7 @@ java -cp "$SMOKE_CLASSES:$CP" NativeLoadSmoke \
 #    (--ssl-key-file / --ssl-cert-file) serving a model it downloaded from an https:// URL, verified
 #    against the macOS certificate store (Security.framework). -ngl 0: this is about TLS, not Metal.
 echo "== HTTPS server + https:// model download =="
-HTTPS_MODEL_URL="$(grep -E "^${HTTPS_MODEL_NAME//./\\.}," "$SCRIPT_DIR/models.csv" | cut -d, -f2- || true)"
+HTTPS_MODEL_URL="$(awk -F, -v name="$HTTPS_MODEL_NAME" '$1 == name { print $4 }' "$SCRIPT_DIR/models.csv" | tr -d '\r')"
 [ -n "$HTTPS_MODEL_URL" ] || fail "$HTTPS_MODEL_NAME has no row in $SCRIPT_DIR/models.csv"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/tls-key.pem" -out "$WORK/tls-cert.pem" -days 2 \
     -subj "/CN=127.0.0.1" > /dev/null 2>&1 || fail "could not create the self-signed TLS certificate"

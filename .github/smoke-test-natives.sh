@@ -60,7 +60,7 @@ CP="$(smoke_classpath "$SET_DIR")" || exit 1
 echo "smoke set: $SET_DIR ($(find "$SET_DIR" -maxdepth 1 -name 'llama-*.jar' -exec basename {} \; | sort | tr '\n' ' '))"
 echo "GPU module jars in the set: $(smoke_set_modules "$SET_DIR" | tr '\n' ' ')"
 
-HTTPS_MODEL_URL="$(grep -E "^${HTTPS_MODEL_NAME//./\\.}," "$SCRIPT_DIR/models.csv" | cut -d, -f2- || true)"
+HTTPS_MODEL_URL="$(awk -F, -v name="$HTTPS_MODEL_NAME" '$1 == name { print $4 }' "$SCRIPT_DIR/models.csv" | tr -d '\r')"
 [ -n "$HTTPS_MODEL_URL" ] || fail "$HTTPS_MODEL_NAME has no row in $SCRIPT_DIR/models.csv (round 2 downloads it over HTTPS)"
 
 SERVER_PID=""

@@ -171,7 +171,7 @@ Write-Host "smoke set: $SetDir ($($jars.Count) jars; GPU module jars: $($setModu
 $modelsCsv = Join-Path $PSScriptRoot 'models.csv'
 $httpsModelUrl = (Get-Content $modelsCsv | Where-Object { $_ -like "$HttpsModelName,*" } | Select-Object -First 1)
 if (-not $httpsModelUrl) { Write-Error "$HttpsModelName has no row in $modelsCsv (round 2 downloads it over HTTPS)" }
-$httpsModelUrl = $httpsModelUrl.Substring($HttpsModelName.Length + 1)
+$httpsModelUrl = ($httpsModelUrl -split ',')[3]  # filename,feature,sha256,url
 
 # ---- Round 1: plain HTTP, the cached model -------------------------------------------------------
 $proc = Start-Process java -PassThru -NoNewWindow `
