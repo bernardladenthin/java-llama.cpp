@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **llama.cpp b11960** (from b11954, 6 upstream commits): llama.cpp 0.8.0 and ggml 0.28.0, tool calls in
+  `/v1/realtime` (#31287), video input for LFM3 (#31283), the WebUI's reasoning menu built from the
+  template's effort levels (#31273). No source change here.
 - **llama.cpp b11954** (from b11901, 53 upstream commits, in five steps, all tagged). Two upstream
   server units are compiled into `libjllama` now: `server-models-sched.cpp` (#21231, the router's
   request queue, with optional device-memory accounting through `--models-memory-margin`) next to
