@@ -10,6 +10,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **llama.cpp b11954** (from b11901, 53 upstream commits, in five steps, all tagged). Two upstream
+  server units are compiled into `libjllama` now: `server-models-sched.cpp` (#21231, the router's
+  request queue, with optional device-memory accounting through `--models-memory-margin`) next to
+  `server-models.cpp`, and `server-realtime.cpp` (#31269, realtime conversations and transcription on
+  `/v1/realtime`), which the server context needs on every platform. Upstream also brings LiquidAI
+  LFM3 (text, VL, Audio, Omni and the d1 decision models, #31252, #31257, #31275) and MiniCPM-OCR-Jev
+  (#30980), deferred tools and `tool_reference` content parts in the chat layer (#31256), the
+  reasoning effort levels of a chat template in `/props` (#31271), qwen3-coder parsing that stops
+  before the template separators (#30557); a parse without a model now fails with `--model or -hf is
+  required` (#31242, the text only). No patch changed; the request schema is the same.
 - **Dependencies and build plugins:** logback-classic 1.6.6, NullAway 0.14.3, maven-surefire-plugin
   3.6.1, jacoco-maven-plugin 0.8.16, palantir-java-format 2.103.0 (no formatting change), and in the
   standalone `llama-atmosphere-agent` Atmosphere 4.0.76 (with surefire and palantir); the Android Gradle
