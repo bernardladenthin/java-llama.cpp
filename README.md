@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11954](https://img.shields.io/badge/llama.cpp-%23b11954-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11954)  
+[![llama.cpp b11960](https://img.shields.io/badge/llama.cpp-%23b11960-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11960)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -113,7 +113,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Text-to-speech** (`TextToSpeech`) over llama.cpp's Qwen3-TTS pipeline (`mtmd_helper::gen_audio`), returning WAV audio.
 - **In-JVM GGUF quantization** (`LlamaQuantizer`) over llama.cpp's `llama_model_quantize` — convert a GGUF to another quantization scheme without shelling out to `llama-quantize`.
 - **Kolibri-1** (Aleph Alpha's German/English reasoning MoE, architecture `kolibri1`), supported by llama.cpp itself since b11709; GGUFs converted with upstream's converter. See [Kolibri-1](#kolibri-1-aleph-alpha).
-- **Decision models** (`handleSystemOne`) — llama.cpp's TypeSafe-compatible `/v1/systemone` API: typed `choice` / `score` / `noul` questions about a state, answered with probabilities in one forward pass, no token generated (laya, julia-1, lev, openjev, kev and the later decision models). See [Decision models](#decision-models-v1systemone).
+- **Decision models** (`handleSystemOne`) — llama.cpp's TypeSafe-compatible `/v1/systemone` API: typed `choice` / `score` / `noul` questions about a state, answered with probabilities in one forward pass, no token generated (laya, julia-1, lev, openjev, kev, and since llama.cpp b11954 MiniCPM-OCR-Jev and LiquidAI's LFM3 d1 / d1-omni). See [Decision models](#decision-models-v1systemone).
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
 - **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
@@ -552,12 +552,14 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
-| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
+| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
 | `net.ladenthin.llama.tts.model` | `models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
 | `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
+| `net.ladenthin.llama.tts.template.model` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to a TTS backbone GGUF whose chat templates include a `"tts"` one, LFM3-Audio (e.g. `LFM3-Audio-2B-Q4_0.gguf` of `LiquidAI/LFM3-Audio-2B-GGUF`): the synthesis speaks the prompt rendered from that template with language and voice. Not in CI's model set. |
+| `net.ladenthin.llama.tts.template.mmproj` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
 | `net.ladenthin.llama.model.path` | the `reasoning.model` path (`models/Qwen3-0.6B-Q4_K_M.gguf`; tests self-skip if missing) | test | `IdleSleepWakeIntegrationTest`, `SessionForkRewindIntegrationTest` | Path to the model these two tests load; unset, they use the reasoning model. |
 | `net.ladenthin.llama.server.model` | the `text.model` path (`models/codellama-7b.Q2_K.gguf`) | test | `examples.OpenAiServerExample` (a `@Disabled` demo, run by hand) | GGUF the demo's OpenAI-compatible endpoint serves. |
@@ -758,7 +760,10 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 `LlamaModel.supportsVision()` / `supportsAudio()` report which modalities the loaded projector enables.
 `getModelMeta()` adds what llama.cpp derives from it: `supportsChat()` (false only for a
 text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
-`POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`).
+`POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`), and from the chat
+template `supportsReasoningEffort()` and `getReasoningEffortLevels()`: the `reasoning_effort` levels the
+template renders differently (llama.cpp b11954), so a client offers only the settings that change
+something.
 
 ### Tool Calling
 
@@ -794,6 +799,14 @@ try (LlamaModel model = new LlamaModel(new ModelParameters()
 `tool_choice` is the OpenAI-compatible string form (`auto`, `none`, or `required`). Set
 `parallel_tool_calls` to `false` when handlers should be issued one at a time. Handler failures and
 unknown tool names are returned to the model as valid `{"error":"..."}` tool-result JSON.
+
+**Deferred tools** (llama.cpp b11940): `new ToolDefinition(name, description, schema, true)` withholds
+a tool from the system prompt (`"defer_loading": true`) until a message names it with
+`ContentPart.toolReference(name)`, typically the result of a tool-search tool,
+`ChatMessage.toolResult(callId, ContentPart.toolReference("buy"))`. A catalogue of tools then costs
+prompt only for the ones the model actually asks for. The template decides what deferred means: LFM3's
+renders the referenced definition at that point, a template without the notion renders deferred tools
+like any other.
 
 ### Infilling
 
@@ -920,6 +933,23 @@ voice cloning from a reference clip. `supportsSpeakerReference()` says whether t
 clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
 `LlamaException`). As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
+
+A model whose GGUF carries a `"tts"` chat template, **LFM3-Audio** (`LiquidAI/LFM3-Audio-2B-GGUF`,
+llama.cpp b11941), speaks the prompt rendered from that template, as upstream's `/tts` route and
+`llama-tts` do; `synthesize(text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed)`
+adds its voice preset (`"female"`, the default, or `"male"`), and its language is a code (`"en"`,
+`"de"`, ...; empty for the template's default). It clones no voice, and it samples its frames with
+the settings of its model card rather than `topK`:
+
+```java
+try (TextToSpeech tts = new TextToSpeech(
+        "models/LFM3-Audio-2B-Q4_0.gguf", "models/mmproj-LFM3-Audio-2B-Q8_0.gguf")) {
+    byte[] wav = tts.synthesize("Guten Morgen.", null, "de", "male", 200, 4, 0);
+    Files.write(Paths.get("out.wav"), wav);
+}
+```
+
+`FfmTextToSpeech` (`llama-ffm`) has the same overload, over the C API's `jllama_tts_synthesize_voice`.
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS

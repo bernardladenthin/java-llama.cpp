@@ -146,8 +146,8 @@ final class JllamaNative {
     // -- text to speech -------------------------------------------------------------------------------
     static final MethodHandle TTS_LOAD = downcall("jllama_tts_load", json(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
     static final MethodHandle TTS_SYNTHESIZE = downcall(
-            "jllama_tts_synthesize",
-            json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
+            "jllama_tts_synthesize_voice",
+            json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
     static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
             downcall("jllama_tts_supports_speaker_reference", json(ADDRESS, ADDRESS));
     static final MethodHandle TTS_FREE = downcall("jllama_tts_free", FunctionDescriptor.ofVoid(ADDRESS));

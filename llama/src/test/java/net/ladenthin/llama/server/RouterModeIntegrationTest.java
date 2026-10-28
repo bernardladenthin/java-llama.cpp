@@ -140,7 +140,7 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
      *
      * @return the worker classpath, or an empty string when the code source cannot be resolved
      */
-    private static String workerClasspath() throws Exception {
+    static String workerClasspath() throws Exception {
         String inherited = System.getProperty("java.class.path", "");
         CodeSource source = NativeServer.class.getProtectionDomain().getCodeSource();
         if (source == null || source.getLocation() == null) {
@@ -158,7 +158,7 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
         return mainClasses + File.pathSeparator + inherited;
     }
 
-    private static int findFreePort() throws IOException {
+    static int findFreePort() throws IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
         }
@@ -199,7 +199,7 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
      * @param expectedId the identifier derived from the symlink's file name
      * @return the identifier of the listed model
      */
-    private static String discoverModelName(RouterClient client, String expectedId) throws Exception {
+    static String discoverModelName(RouterClient client, String expectedId) throws Exception {
         List<RouterModel> models = client.listModels();
         for (RouterModel model : models) {
             if (model.getId().equals(expectedId)) {

@@ -34,13 +34,14 @@ public final class FfmTextToSpeech implements AutoCloseable {
          * @param text the text to speak
          * @param speakerReferencePath a WAV to clone the voice from, or {@code null}
          * @param language the language, or {@code null}
+         * @param voice the voice preset, or {@code null}
          * @param maxFrames the bound on the generated frames
          * @param topK the sampling top-k
          * @param seed the sampling seed
          * @return the WAV bytes
          */
         byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                int maxFrames, int topK, int seed);
+                String voice, int maxFrames, int topK, int seed);
 
         /**
          * Whether the pair on {@code handle} clones a voice from a speaker reference.
@@ -62,13 +63,13 @@ public final class FfmTextToSpeech implements AutoCloseable {
     private static final Backend NATIVE = new Backend() {
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                int maxFrames, int topK, int seed) {
+                String voice, int maxFrames, int topK, int seed) {
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment wav = pointerSlot(arena);
                 MemorySegment length = longSlot(arena);
                 JllamaNative.call(JllamaNative.TTS_SYNTHESIZE, handle, cString(arena, text),
-                        cString(arena, speakerReferencePath), cString(arena, language), maxFrames, topK, seed, wav,
-                        length);
+                        cString(arena, speakerReferencePath), cString(arena, language), cString(arena, voice),
+                        maxFrames, topK, seed, wav, length);
                 return takeBytes(wav, length);
             }
         }
@@ -174,13 +175,36 @@ public final class FfmTextToSpeech implements AutoCloseable {
      */
     public byte[] synthesize(String text, String speakerReferencePath, String language, int maxFrames, int topK,
             int seed) {
+        return synthesize(text, speakerReferencePath, language, null, maxFrames, topK, seed);
+    }
+
+    /**
+     * Synthesises text with a voice preset. A model with a {@code "tts"} chat template (LFM3-Audio)
+     * speaks the prompt rendered from it with {@code text}, {@code language} and {@code voice}; the
+     * other pipelines speak {@code text} itself (the C API's {@code jllama_tts_synthesize_voice}).
+     *
+     * @param text the text to speak
+     * @param speakerReferencePath a WAV to clone the voice from, or {@code null}; refused with a
+     *     {@link LlamaException} when {@link #supportsSpeakerReference()} is {@code false}
+     * @param language the language: a name for Qwen3-TTS ({@code "english"}, ...), a code for
+     *     LFM3-Audio ({@code "en"}, {@code "de"}, ...), or {@code null} for the model's default
+     * @param voice a model-dependent preset ({@code "female"} or {@code "male"} for LFM3-Audio), or
+     *     {@code null} for the model's default
+     * @param maxFrames the bound on the generated frames
+     * @param topK the sampling top-k
+     * @param seed the sampling seed
+     * @return the WAV bytes
+     * @throws LlamaException when the synthesis fails
+     */
+    public byte[] synthesize(String text, String speakerReferencePath, String language, String voice, int maxFrames,
+            int topK, int seed) {
         Objects.requireNonNull(text, "text");
         lifecycleLock.readLock().lock();
         try {
             if (closed) {
                 throw new IllegalStateException("the model is closed");
             }
-            return backend.synthesize(handle, text, speakerReferencePath, language, maxFrames, topK, seed);
+            return backend.synthesize(handle, text, speakerReferencePath, language, voice, maxFrames, topK, seed);
         } finally {
             lifecycleLock.readLock().unlock();
         }

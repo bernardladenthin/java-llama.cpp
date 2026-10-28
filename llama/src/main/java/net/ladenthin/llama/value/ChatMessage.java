@@ -136,6 +136,26 @@ public final class ChatMessage {
     }
 
     /**
+     * Factory for a tool-result turn whose content is a list of parts, e.g. the
+     * {@link ContentPart#toolReference(String) tool references} a tool-search tool returns to reveal
+     * deferred tools (llama.cpp b11940).
+     *
+     * @param toolCallId the id of the originating tool call
+     * @param parts the content parts (must not be empty)
+     * @return a {@code tool} message carrying {@code parts} and {@code toolCallId}
+     * @throws IllegalArgumentException if {@code parts} is empty
+     */
+    public static ChatMessage toolResult(String toolCallId, ContentPart... parts) {
+        List<ContentPart> list = requireNonEmpty(Arrays.asList(parts));
+        return new ChatMessage(
+                "tool",
+                concatText(list),
+                toolCallId,
+                Collections.<ToolCall>emptyList(),
+                Collections.unmodifiableList(new java.util.ArrayList<ContentPart>(list)));
+    }
+
+    /**
      * Factory for an assistant turn that issues tool calls.
      *
      * @param content   optional reasoning text accompanying the tool calls (may be empty)

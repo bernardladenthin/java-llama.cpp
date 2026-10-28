@@ -46,7 +46,12 @@ public final class ContentPart {
         /** An image reference (data URI or remote URL). */
         IMAGE_URL,
         /** An audio clip (base64 {@code data} + {@code format}), for audio-input models. */
-        INPUT_AUDIO
+        INPUT_AUDIO,
+        /**
+         * A reference to a request tool by name (llama.cpp b11940): reveals a deferred
+         * {@link ToolDefinition} to the model, whose template renders its definition here.
+         */
+        TOOL_REFERENCE
     }
 
     private final Type type;
@@ -54,6 +59,7 @@ public final class ContentPart {
     private final @Nullable String imageUrl;
     private final @Nullable String audioData;
     private final @Nullable String audioFormat;
+    private final @Nullable String toolName;
 
     private ContentPart(
             Type type,
@@ -61,11 +67,22 @@ public final class ContentPart {
             @Nullable String imageUrl,
             @Nullable String audioData,
             @Nullable String audioFormat) {
+        this(type, text, imageUrl, audioData, audioFormat, null);
+    }
+
+    private ContentPart(
+            Type type,
+            @Nullable String text,
+            @Nullable String imageUrl,
+            @Nullable String audioData,
+            @Nullable String audioFormat,
+            @Nullable String toolName) {
         this.type = type;
         this.text = text;
         this.imageUrl = imageUrl;
         this.audioData = audioData;
         this.audioFormat = audioFormat;
+        this.toolName = toolName;
     }
 
     /**
@@ -167,6 +184,24 @@ public final class ContentPart {
     }
 
     /**
+     * Build a tool reference: names a tool of the request, typically a deferred one
+     * ({@link ToolDefinition#isDeferLoading()}), whose definition the chat template then renders at
+     * this point of the conversation -- the result of a tool search, for instance (llama.cpp b11940).
+     * Sent as {@code {"type":"tool_reference","name":...}}; the request must declare the tool.
+     *
+     * @param toolName the name of a tool of the request (must not be {@code null} or empty)
+     * @return a TOOL_REFERENCE part
+     * @throws IllegalArgumentException if {@code toolName} is empty
+     */
+    public static ContentPart toolReference(String toolName) {
+        Objects.requireNonNull(toolName, "toolName");
+        if (toolName.isEmpty()) {
+            throw new IllegalArgumentException("toolName must not be empty (length=" + toolName.length() + ")");
+        }
+        return new ContentPart(Type.TOOL_REFERENCE, null, null, null, null, toolName);
+    }
+
+    /**
      * Build an audio part by reading a file from disk and detecting its format from the file
      * extension. Recognised extensions: {@code .wav}, {@code .mp3}. Anything else throws
      * {@link IllegalArgumentException}; use {@link #inputAudio(byte[], String)} to force a format.
@@ -232,5 +267,13 @@ public final class ContentPart {
      */
     public @Nullable String getAudioFormat() {
         return audioFormat;
+    }
+
+    /**
+     * Tool-name accessor (only set for {@link Type#TOOL_REFERENCE}).
+     * @return the name of the referenced tool, or {@code null} for other parts
+     */
+    public @Nullable String getToolName() {
+        return toolName;
     }
 }

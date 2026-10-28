@@ -29,6 +29,20 @@ public class ToolDefinitionTest {
     }
 
     @Test
+    public void aToolIsNotDeferredUnlessAsked() {
+        assertThat(new ToolDefinition("echo", "d", SCHEMA).isDeferLoading(), is(false));
+        assertThat(new ToolDefinition("echo", "d", SCHEMA, false).isDeferLoading(), is(false));
+        assertThat(new ToolDefinition("echo", "d", SCHEMA, true).isDeferLoading(), is(true));
+    }
+
+    @Test
+    public void deferLoadingTakesPartInEquality() {
+        assertThat(new ToolDefinition("echo", "d", "{}", true), is(new ToolDefinition("echo", "d", "{}", true)));
+        assertThat(
+                new ToolDefinition("echo", "d", "{}", true).equals(new ToolDefinition("echo", "d", "{}")), is(false));
+    }
+
+    @Test
     public void toStringRendersAllFields() {
         ToolDefinition d = new ToolDefinition("echo", "Echo a string", SCHEMA);
         String s = d.toString();

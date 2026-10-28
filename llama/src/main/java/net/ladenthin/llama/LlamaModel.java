@@ -644,8 +644,11 @@ public class LlamaModel implements AutoCloseable {
      * probabilities, the expected level, or the probability of {@code true}) and reports
      * {@code "usage"}. The full description is upstream's {@code tools/server/README.md}.</p>
      *
-     * <p>Needs a decision model (laya, julia-1, lev, openjev, kev and the ones upstream adds later);
-     * any other model fails with a {@link LlamaException} saying it is not a decision model.</p>
+     * <p>Needs a decision model: laya, julia-1, lev, openjev, kev, and since llama.cpp b11954 also
+     * MiniCPM-OCR-Jev and LiquidAI's LFM3 d1 / d1-omni (upstream's {@code COMMON_DECISION_TYPE_*}
+     * names every type it reads); any other model fails with a {@link LlamaException} saying it is not
+     * a decision model. Which of them take images is upstream's decision too
+     * ({@code server_decision_context::can_use_images}).</p>
      *
      * @param requestJson the request body as JSON
      * @return the response body as JSON

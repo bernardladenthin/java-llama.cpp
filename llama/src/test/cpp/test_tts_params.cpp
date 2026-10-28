@@ -77,6 +77,22 @@ TEST(TtsSpeakerReference, APairWithoutAVoiceEncoderRefusesTheReferenceByName) {
     EXPECT_NE(refusal.find("clips/voice.wav"), std::string::npos) << refusal;
 }
 
+// The language handed to the pipeline (b11941, #31257): a prompt rendered from a "tts" chat template
+// (LFM3-Audio) leaves an empty language empty, so the template's own default ("en") applies; the
+// pipelines without such a template (Qwen3-TTS) keep this library's "english".
+TEST(TtsPipelineLang, AnExplicitLanguageIsPassedAsGiven) {
+    EXPECT_EQ(jllama_tts::tts_pipeline_lang(false, "chinese"), "chinese");
+    EXPECT_EQ(jllama_tts::tts_pipeline_lang(true, "de"), "de");
+}
+
+TEST(TtsPipelineLang, WithoutATtsTemplateAnEmptyLanguageIsEnglish) {
+    EXPECT_EQ(jllama_tts::tts_pipeline_lang(false, ""), "english");
+}
+
+TEST(TtsPipelineLang, WithATtsTemplateAnEmptyLanguageStaysEmpty) {
+    EXPECT_EQ(jllama_tts::tts_pipeline_lang(true, ""), "");
+}
+
 // ---------------------------------------------------------------------------
 // Pins the upstream trap the builder works around, in the same spirit as the CommonJsonEnumTrap
 // pair in test_json_helpers.cpp. If upstream ever gives common_cpu_params a sane default, this

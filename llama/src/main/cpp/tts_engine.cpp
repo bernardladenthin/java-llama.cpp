@@ -10,6 +10,7 @@
 #include "tts_wav.hpp"     // pcm_to_wav16_bytes
 #include "rpc_support.hpp" // exclude_stale_devices
 
+#include "chat.h"
 #include "common.h"
 #include "llama.h"
 #include "mtmd-helper.h"
@@ -31,6 +32,8 @@ struct tts_engine {
     int n_batch = 2048;
     // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
     bool speaker_reference = false;
+    // The model's chat templates: a "tts" one (LFM3-Audio, b11941) renders the prompt to speak.
+    common_chat_templates_ptr templates;
     // Serializes engine_synthesize: it drives llama_decode (via mtmd_helper::gen_audio) on the
     // shared ctx/mctx, so two threads on one engine would race.
     std::mutex synthesize_mutex;
@@ -77,6 +80,9 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
     engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref;
+    // As llama-tts: the model's own templates, no override. A backbone without a chat template gets
+    // the library's fallback, which has no "tts" variant, so its text is spoken as given.
+    engine->templates = common_chat_templates_init(engine->model, "");
 
     return engine;
 }
@@ -86,8 +92,8 @@ bool engine_supports_speaker_reference(const tts_engine *engine) {
 }
 
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
-                       const std::string &lang, int n_predict, int top_k, uint32_t seed, std::vector<uint8_t> &out_wav,
-                       std::string &err) {
+                       const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
+                       std::vector<uint8_t> &out_wav, std::string &err) {
     if (engine == nullptr) {
         err = "engine is null";
         return false;
@@ -139,12 +145,20 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     }
     // upstream's defaults (b11796: a `stream` flag joined the struct, off for a one-shot synthesis);
     // every field the caller controls is set below
+    // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
+    // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
+    // template error, which the C API reports.
+    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice);
+    const std::string &prompt = rendered.empty() ? text : rendered;
+    const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
+
     mtmd_helper_gen_audio_inp inp = mtmd_helper_gen_audio_inp_default();
     inp.seq_id = 0;
-    inp.prompt = text.c_str();
-    inp.prompt_len = text.size();
+    inp.prompt = prompt.c_str();
+    inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
-    inp.lang = lang.empty() ? "english" : lang.c_str();
+    inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
+    inp.voice = voice.empty() ? nullptr : voice.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = 1.0f;
     inp.seed = seed;

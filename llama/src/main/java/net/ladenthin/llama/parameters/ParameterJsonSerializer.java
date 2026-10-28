@@ -148,6 +148,10 @@ public class ParameterJsonSerializer {
                         inputAudio.put("data", data != null ? data : "");
                         inputAudio.put("format", format != null ? format : "wav");
                         part.set("input_audio", inputAudio);
+                    } else if (p.getType() == ContentPart.Type.TOOL_REFERENCE) {
+                        part.put("type", "tool_reference");
+                        final String toolName = p.getToolName();
+                        part.put("name", toolName != null ? toolName : "");
                     } else {
                         part.put("type", "image_url");
                         ObjectNode imageUrl = OBJECT_MAPPER.createObjectNode();

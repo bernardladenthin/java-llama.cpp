@@ -41,13 +41,16 @@ bool engine_supports_speaker_reference(const tts_engine *engine);
 
 // Synthesize `text` to a 24 kHz mono 16-bit WAV byte stream in `out_wav`. `speaker_reference_path`
 // may be empty (uses the model's default voice) and is refused for a pair that does not support one
-// (engine_supports_speaker_reference); `lang` selects the codec_language special token
-// (e.g. "english", "chinese" — see upstream tools/tts/README.md for the supported set) and may be
-// empty (defaults to "english"). Returns false and sets `err` on failure. Thread-compatible but not
-// re-entrant on the same engine instance.
+// (engine_supports_speaker_reference). A model with a "tts" chat template (LFM3-Audio) speaks the
+// prompt rendered from it with `text`, `lang` and `voice`, as upstream's /tts route and llama-tts do;
+// the others speak `text` itself. `lang` is the model's language (Qwen3-TTS: "english", "chinese", ...,
+// empty = "english"; LFM3-Audio: "en", "de", ..., empty = the template's default, see upstream
+// tools/tts/README.md) and `voice` a model-dependent preset (LFM3-Audio: "female", "male"), empty for
+// the model's default. Returns false and sets `err` on failure. Thread-compatible but not re-entrant
+// on the same engine instance.
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
-                       const std::string &lang, int n_predict, int top_k, uint32_t seed, std::vector<uint8_t> &out_wav,
-                       std::string &err);
+                       const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
+                       std::vector<uint8_t> &out_wav, std::string &err);
 
 // Release the loaded model/context. Safe on nullptr.
 void engine_free(tts_engine *engine);

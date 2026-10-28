@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **llama.cpp b11960** (from b11954, 6 upstream commits): llama.cpp 0.8.0 and ggml 0.28.0, tool calls in
+  `/v1/realtime` (#31287), video input for LFM3 (#31283), the WebUI's reasoning menu built from the
+  template's effort levels (#31273). No source change here.
 - **llama.cpp b11954** (from b11901, 53 upstream commits, in five steps, all tagged). Two upstream
   server units are compiled into `libjllama` now: `server-models-sched.cpp` (#21231, the router's
   request queue, with optional device-memory accounting through `--models-memory-margin`) next to
@@ -96,6 +99,25 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **Text to speech with LFM3-Audio, and a voice.** A model whose GGUF carries a `"tts"` chat template
+  (LiquidAI's LFM3-Audio, llama.cpp b11941) speaks the prompt rendered from that template, as
+  llama.cpp's own `/tts` route and `llama-tts` do; before, `TextToSpeech` handed it the raw text. New
+  `TextToSpeech.synthesize(text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed)`
+  (and the same on `FfmTextToSpeech`, over the new C function `jllama_tts_synthesize_voice`) takes the
+  voice preset (`"female"` or `"male"` for LFM3-Audio); for such a model an empty language leaves the
+  template's default (`en`), Qwen3-TTS keeps `"english"`. Covered by `TtsChatTemplateIntegrationTest`
+  against `LiquidAI/LFM3-Audio-2B-GGUF` (property-gated, not in the CI set).
+- **Deferred tools** (llama.cpp b11940): `new ToolDefinition(name, description, schema, true)` sends
+  `"defer_loading": true`, `ContentPart.toolReference(name)` a `tool_reference` part, and
+  `ChatMessage.toolResult(callId, parts...)` a tool result made of parts, so a tool-search tool can
+  reveal deferred tools one at a time; a template that supports it (LFM3's) renders a tool's definition
+  only where a reference names it.
+- **`ModelMeta.supportsReasoningEffort()` and `getReasoningEffortLevels()`**: the model meta carries the
+  chat template's capabilities (`chat_template_caps`, as upstream's `/props`), including the reasoning
+  effort levels the template renders differently (llama.cpp b11944).
+- **Router memory accounting in the JVM** (`--models-memory-margin`, llama.cpp b11930) works with
+  `NativeServer.setWorkerCommand`: the router's measure child is a worker JVM too and reports the
+  model's memory before it loads (`RouterModeMemoryMarginIntegrationTest`).
 - **Faster prompt processing for MoE models on the CPU** (`llama/patches/0022`): the expert matmuls
   over repacked weights batch the tokens of an expert through `gemm` and hand their work out
   dynamically, instead of one gemv per token on a fixed thread split. With trained weights

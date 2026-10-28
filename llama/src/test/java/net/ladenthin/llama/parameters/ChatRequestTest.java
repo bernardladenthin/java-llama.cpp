@@ -242,6 +242,30 @@ class ChatRequestTest {
                             + "\"parameters\":{\"type\":\"object\"}}}]"));
         }
 
+        @Test
+        void buildToolsJsonMarksADeferredToolOnTheFunction() {
+            // llama.cpp b11940 (#31256) reads "defer_loading" on the function first.
+            String json = ChatRequest.empty()
+                    .appendTool(new ToolDefinition("buy", "d", "{\"type\":\"object\"}", true))
+                    .buildToolsJson()
+                    .orElseThrow(IllegalStateException::new);
+            assertThat(
+                    json,
+                    is("[{\"type\":\"function\",\"function\":{\"name\":\"buy\",\"description\":\"d\","
+                            + "\"parameters\":{\"type\":\"object\"},\"defer_loading\":true}}]"));
+        }
+
+        @Test
+        void buildMessagesJsonSendsAToolReferenceInAToolResult() {
+            String json = ChatRequest.empty()
+                    .appendMessage(ChatMessage.toolResult("c0", ContentPart.toolReference("buy")))
+                    .buildMessagesJson();
+            assertThat(
+                    json,
+                    is("[{\"role\":\"tool\",\"content\":[{\"type\":\"tool_reference\",\"name\":\"buy\"}],"
+                            + "\"tool_call_id\":\"c0\"}]"));
+        }
+
         @ParameterizedTest
         @ValueSource(strings = {"", "  ", "not json{{{", "{\"type\":\"object\"} {\"required\":[\"x\"]}"})
         void appendToolRejectsASchemaThatIsNotExactlyOneJsonValue(String schema) {

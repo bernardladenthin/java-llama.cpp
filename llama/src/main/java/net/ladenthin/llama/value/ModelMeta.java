@@ -172,6 +172,35 @@ public final class ModelMeta {
     }
 
     /**
+     * Returns true if the model's chat template reads a reasoning effort (the {@code reasoning_effort}
+     * of an OpenAI chat request, which the servers of this library pass to the template), as upstream's
+     * {@code /props} reports it in {@code chat_template_caps}.
+     *
+     * <p>{@code false} for metadata from a vocab-only load or from a build before llama.cpp b11954.</p>
+     *
+     * @return {@code true} if the template supports a reasoning effort
+     */
+    public boolean supportsReasoningEffort() {
+        return node.at("/chat_template_caps/supports_reasoning_effort").asBoolean(false);
+    }
+
+    /**
+     * The reasoning effort levels the model's chat template renders differently, lowest first, out of
+     * {@code minimal}, {@code low}, {@code medium}, {@code high}, {@code xhigh} and {@code max}
+     * (llama.cpp b11944, #31271). A level the template ignores is left out, and of levels that render
+     * the same only the highest is kept, so each entry is a distinct setting worth offering.
+     *
+     * <p>Empty when the template has no reasoning effort ({@link #supportsReasoningEffort()} is
+     * {@code false}), and for metadata from a vocab-only load or from a build before llama.cpp
+     * b11954.</p>
+     *
+     * @return the levels, unmodifiable
+     */
+    public List<String> getReasoningEffortLevels() {
+        return strings(node.at("/chat_template_caps/reasoning_effort_levels"));
+    }
+
+    /**
      * What the model can read, as upstream's {@code GET /models} reports it in
      * {@code architecture.input_modalities}: always {@code "text"}, plus {@code "image"},
      * {@code "audio"} and {@code "video"} for each media type the loaded projector supports.

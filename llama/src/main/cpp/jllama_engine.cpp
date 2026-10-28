@@ -690,6 +690,10 @@ std::string model_meta(jllama_context *jctx) {
         j["input_modalities"] = modalities.at("input_modalities");
         j["output_modalities"] = modalities.at("output_modalities");
     }
+    // What the chat template supports, as upstream's /props reports it: supports_tools,
+    // supports_reasoning_effort, ... and since b11944 (#31271) reasoning_effort_levels, the levels the
+    // template renders differently (an alias of a higher level, or one it ignores, is left out).
+    j["chat_template_caps"] = m.chat_template_caps;
     // Resolved default chat template (Jinja); empty when the model ships none.
     const char *chat_tmpl = mdl != nullptr ? llama_model_chat_template(mdl, /*name*/ nullptr) : nullptr;
     j["chat_template"] = chat_tmpl != nullptr ? std::string(chat_tmpl) : std::string();

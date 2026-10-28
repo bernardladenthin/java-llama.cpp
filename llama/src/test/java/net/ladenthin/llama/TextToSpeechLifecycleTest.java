@@ -38,6 +38,8 @@ public class TextToSpeechLifecycleTest {
         volatile boolean speakerReference;
         volatile boolean holdSynthesize;
         volatile boolean deletedDuringSynthesize;
+        volatile @Nullable String lastLanguage;
+        volatile @Nullable String lastVoice;
 
         @Override
         public long load(String modelPath, String mmprojPath, int gpuLayers, int threads) {
@@ -50,9 +52,12 @@ public class TextToSpeechLifecycleTest {
                 String text,
                 @Nullable String speakerReferenceAudioPath,
                 @Nullable String language,
+                @Nullable String voice,
                 int maxFrames,
                 int topK,
                 int seed) {
+            lastLanguage = language;
+            lastVoice = voice;
             insideSynthesize.incrementAndGet();
             try {
                 synthesizeEntered.countDown();
@@ -135,6 +140,26 @@ public class TextToSpeechLifecycleTest {
         FakeBackend backend = new FakeBackend();
         try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
             assertThat(tts.synthesize("hello"), is(WAV));
+        }
+    }
+
+    @Test
+    public void synthesize_withVoice_handsLanguageAndVoiceToTheBackend() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            assertThat(tts.synthesize("hello", null, "de", "male", 64, 4, 0), is(WAV));
+            assertThat(backend.lastLanguage, is("de"));
+            assertThat(backend.lastVoice, is("male"));
+        }
+    }
+
+    @Test
+    public void synthesize_withoutVoice_handsNoVoiceToTheBackend() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            tts.synthesize("hello", null, "english", 64, 4, 0);
+            assertThat(backend.lastLanguage, is("english"));
+            assertThat(backend.lastVoice, is((String) null));
         }
     }
 

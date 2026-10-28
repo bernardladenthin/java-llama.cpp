@@ -51,6 +51,7 @@ public final class TextToSpeech implements AutoCloseable {
          * @param text                      the text to speak
          * @param speakerReferenceAudioPath reference clip, or {@code null}
          * @param language                  language name, or {@code null}
+         * @param voice                     voice preset, or {@code null}
          * @param maxFrames                 cap on generated audio frames
          * @param topK                      top-k cutoff
          * @param seed                      sampler seed
@@ -61,6 +62,7 @@ public final class TextToSpeech implements AutoCloseable {
                 String text,
                 @Nullable String speakerReferenceAudioPath,
                 @Nullable String language,
+                @Nullable String voice,
                 int maxFrames,
                 int topK,
                 int seed);
@@ -95,10 +97,11 @@ public final class TextToSpeech implements AutoCloseable {
                 String text,
                 @Nullable String speakerReferenceAudioPath,
                 @Nullable String language,
+                @Nullable String voice,
                 int maxFrames,
                 int topK,
                 int seed) {
-            return synthesizeNative(handle, text, speakerReferenceAudioPath, language, maxFrames, topK, seed);
+            return synthesizeNative(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
         }
 
         @Override
@@ -227,10 +230,44 @@ public final class TextToSpeech implements AutoCloseable {
             int maxFrames,
             int topK,
             int seed) {
+        return synthesize(text, speakerReferenceAudioPath, language, null, maxFrames, topK, seed);
+    }
+
+    /**
+     * Synthesize speech with an optional cloned voice, language and voice preset.
+     *
+     * <p>A model whose GGUF carries a {@code "tts"} chat template (LFM3-Audio) speaks the prompt
+     * rendered from that template with {@code text}, {@code language} and {@code voice}, as llama.cpp's
+     * own {@code /tts} route and {@code llama-tts} do (b11941); the other pipelines (Qwen3-TTS, Pocket
+     * TTS, Soprano) speak {@code text} itself and ignore an unknown voice.</p>
+     *
+     * @param text the text to speak
+     * @param speakerReferenceAudioPath path to a reference audio clip whose voice is cloned, or
+     *     {@code null}/empty for the model's default voice; refused by a model pair that cannot clone
+     *     a voice ({@link #supportsSpeakerReference()} is {@code false}, e.g. LFM3-Audio)
+     * @param language the model's language: Qwen3-TTS takes names ({@code "english"}, {@code
+     *     "chinese"}, ...; {@code null}/empty is {@code "english"}), LFM3-Audio codes ({@code "en"},
+     *     {@code "de"}, ...; {@code null}/empty is its template's default, {@code "en"})
+     * @param voice a model-dependent voice preset, e.g. {@code "female"} (the default) or {@code
+     *     "male"} for LFM3-Audio, or {@code null}/empty for the model's default
+     * @param maxFrames cap on generated audio frames (longer = longer audio)
+     * @param topK top-k sampling cutoff for the semantic (backbone) token stream; LFM3-Audio samples
+     *     its frames with the settings of its model card instead
+     * @param seed sampler seed
+     * @return a mono 16-bit WAV byte stream at the pipeline's sample rate
+     */
+    public byte[] synthesize(
+            String text,
+            @Nullable String speakerReferenceAudioPath,
+            @Nullable String language,
+            @Nullable String voice,
+            int maxFrames,
+            int topK,
+            int seed) {
         lifecycleLock.readLock().lock();
         try {
             requireOpen();
-            return backend.synthesize(handle, text, speakerReferenceAudioPath, language, maxFrames, topK, seed);
+            return backend.synthesize(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -263,6 +300,7 @@ public final class TextToSpeech implements AutoCloseable {
             String text,
             @Nullable String speakerReferenceAudioPath,
             @Nullable String language,
+            @Nullable String voice,
             int maxFrames,
             int topK,
             int seed);

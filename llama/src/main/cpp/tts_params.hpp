@@ -63,6 +63,20 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
     return "this TTS model does not accept a speaker reference (no voice cloning): " + speaker_reference_path;
 }
 
+// ---------------------------------------------------------------------------
+// The language handed to the pipeline (mtmd_helper_gen_audio_inp::lang), "" for none. A model whose
+// "tts" chat template rendered the prompt (LFM3-Audio, b11941, #31257) takes the caller's value as
+// given -- its codes are "en", "de", ... and its template supplies the default -- so an empty one stays
+// empty, as upstream's /tts route and llama-tts leave it. A pipeline without such a template
+// (Qwen3-TTS) keeps this library's default "english", which it has always sent.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::string tts_pipeline_lang(bool prompt_from_template, const std::string &lang) {
+    if (!lang.empty() || prompt_from_template) {
+        return lang;
+    }
+    return "english";
+}
+
 } // namespace jllama_tts
 
 #endif // JLLAMA_TTS_PARAMS_HPP
