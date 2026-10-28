@@ -3376,8 +3376,9 @@ certificate and the secrets exist.
   merge signed DLLs, the Windows `smoke-natives` rows run the signed sets and the jars carry them
   ("no asset ships that CI has not run"). Not steps in `package`: the secrets live in the
   `maven-central` environment (the GPG key's, same trust class, same rules), and `package` runs on
-  every pull request, where that environment's rules must not apply -- `verify-signing-key` on the
-  same environment is "red by design" on foreign branches. The job waits for the Windows Java test
+  every pull request, where that environment's rules must not apply (it admits only `main` and
+  `v*` tags, which is why `verify-signing-key` on the same environment runs only on a publishing
+  dispatch). The job waits for the Windows Java test
   job because it reads `natives-cpu-windows-x86-64`: `overwrite` deletes the artifact for a moment,
   and a download in that moment fails. **The job runs on every run and is never skipped**: without
   the switch its steps are gated off (`env.SIGN_WINDOWS`) and it takes the unprotected environment

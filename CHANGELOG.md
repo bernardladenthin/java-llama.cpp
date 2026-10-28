@@ -19,6 +19,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   jobs per Publish run, had gone over the account's cache egress once; the smoke jobs need 57 MB now,
   and the natives smoke's HTTPS round sends the token too (it had got a 429 anonymously). Locally,
   `bash .github/fetch-models.sh [feature ...]` fills `models/`.
+- **The GPG signing-key preflight runs only when something is published.** The two jobs
+  `verify-signing-key` and `verify-signing-key-gradle` ran on every trigger: red on every pull request,
+  because the `maven-central` environment admits only `main` and `v*` tags, and on a push to `main`
+  they sat out the environment's wait timer for a run that publishes nothing. They run now on a
+  `publish_to_central` dispatch only, still at the start of the run, and both publish jobs need them
+  (no longer an exemption of the release gate).
 - **llama.cpp b11901** (from b11887, 14 upstream commits, tagged). Nothing new to call from Java;
   what changes is robustness. Input nested deeper than upstream's new limits is refused instead of
   overflowing the native stack, which ended the JVM (#31153): a JSON schema (`response_format`, tool
