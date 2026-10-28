@@ -196,7 +196,9 @@ Kept as a list because each entry names the machine it needs -- the harness is
   `server_task_result_realtime` with text, audio, `response_done`). A model that answers after the audio (an
   audio-in/audio-out model such as LFM3-Audio) holds a spoken conversation with text and audio out. `NativeServer`
   serves it already (classic and attach mode: `server-realtime.cpp` is compiled in since #590 and the route is
-  upstream's). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
+  upstream's), and `RealtimeNativeServerIntegrationTest` drives it end to end with LFM3-Audio over the JDK's
+  WebSocket client: session formats, a text and an audio response, spoken input, a transcription session and a
+  tool call (b11960, #31287), 6 cases in ~12 s on 16 cores (property-gated, not in CI). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
   request a response with an output mode (`MTMD_HELPER_GEN_AUDIO_OUT_AUTO` / `TEXT` / `AUDIO` / `MIXED`), receive
   text and PCM events, cancel, clear -- and on the Java transport the same as for transcription above: the JDK's
   `com.sun.net.httpserver` has no WebSocket. Needs an audio-out conversation model to test (LFM3-Audio 1.4 GB, not

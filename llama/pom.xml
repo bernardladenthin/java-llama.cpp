@@ -579,6 +579,14 @@ SPDX-License-Identifier: MIT
 								<arg>-XDcompilePolicy=simple</arg>
 								<arg>--should-stop=ifError=FLOW</arg>
 								<arg>-Xplugin:ErrorProne -Xep:NullAway:OFF -Xep:GuardedBy:OFF</arg>
+								<!-- The tests compile inside the module and may use the JDK's WebSocket client
+								     (RealtimeNativeServerIntegrationTest drives the embedded server's
+								     /v1/realtime); the shipped module does not read java.net.http. Surefire
+								     runs on the classpath, where nothing else is needed. -->
+								<arg>--add-modules</arg>
+								<arg>java.net.http</arg>
+								<arg>--add-reads</arg>
+								<arg>net.ladenthin.llama=java.net.http</arg>
 							</compilerArgs>
 							<annotationProcessorPaths combine.children="append">
 								<path>

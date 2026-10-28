@@ -242,6 +242,17 @@ public class TestConstants {
     /** System property holding a path to the mmproj of {@link #PROP_TTS_TEMPLATE_MODEL}. */
     public static final String PROP_TTS_TEMPLATE_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.template.mmproj";
 
+    /**
+     * System property holding a path to a model that holds a spoken conversation on the embedded
+     * server's {@code /v1/realtime} (audio in, text and audio out: LFM3-Audio, llama.cpp b11946).
+     * Consumed by {@code RealtimeNativeServerIntegrationTest}, which self-skips when this or
+     * {@link #PROP_REALTIME_MMPROJ} is unset or missing: no such model is in CI's set.
+     */
+    public static final String PROP_REALTIME_MODEL = LlamaSystemProperties.PREFIX + ".realtime.model";
+
+    /** System property holding a path to the mmproj of {@link #PROP_REALTIME_MODEL}. */
+    public static final String PROP_REALTIME_MMPROJ = LlamaSystemProperties.PREFIX + ".realtime.mmproj";
+
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");
 

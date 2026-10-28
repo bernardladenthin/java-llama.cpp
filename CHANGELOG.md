@@ -99,6 +99,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **`/v1/realtime` of the embedded server tested end to end** (`RealtimeNativeServerIntegrationTest`, with
+  LFM3-Audio, property-gated): the session's audio formats, a text and a spoken answer, spoken input, a
+  transcription session and a tool call (llama.cpp b11946 / b11960), over the JDK's WebSocket client.
 - **Text to speech with LFM3-Audio, and a voice.** A model whose GGUF carries a `"tts"` chat template
   (LiquidAI's LFM3-Audio, llama.cpp b11941) speaks the prompt rendered from that template, as
   llama.cpp's own `/tts` route and `llama-tts` do; before, `TextToSpeech` handed it the raw text. New
