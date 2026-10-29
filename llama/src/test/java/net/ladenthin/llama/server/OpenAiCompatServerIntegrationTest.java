@@ -15,7 +15,10 @@ import java.io.File;
 import java.io.IOException;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.TestConstants;
+import net.ladenthin.llama.json.ChatResponseParser;
+import net.ladenthin.llama.json.ChatStreamAssembler;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.ChatResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -133,6 +136,41 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(response.code, is(200));
         assertThat(response.body, containsString("chat.completion.chunk"));
         assertThat(response.body, containsString("data: [DONE]"));
+    }
+
+    /**
+     * A streamed answer assembles into the answer of the same request without {@code stream}: the same
+     * text and reasoning, finish reason and token counts. Greedy and without the prompt cache, so both
+     * requests are the same computation and differ only in how the answer travels.
+     */
+    @Test
+    public void aStreamedChatAssemblesIntoTheNonStreamedAnswer() throws IOException {
+        String request = "\"model\":\"" + MODEL_ID + "\",\"max_tokens\":16,\"temperature\":0,\"top_k\":1,"
+                + "\"seed\":42,\"cache_prompt\":false,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]";
+        Response whole = post(port, "/v1/chat/completions", "{" + request + "}", "");
+        Response streamed = post(
+                port,
+                "/v1/chat/completions",
+                "{\"stream\":true,\"stream_options\":{\"include_usage\":true}," + request + "}",
+                "");
+        assertThat(whole.code, is(200));
+        assertThat(streamed.code, is(200));
+
+        ChatResponseParser parser = new ChatResponseParser();
+        ChatResponse direct = parser.parseResponse(whole.body);
+        ChatResponse assembled = ChatStreamAssembler.parseStream(streamed.body);
+
+        assertThat(assembled.getFirstContent(), is(direct.getFirstContent()));
+        assertThat(
+                parser.extractChoiceReasoningContent(assembled.getRawJson()),
+                is(parser.extractChoiceReasoningContent(whole.body)));
+        assertThat(
+                assembled.getChoices().get(0).getFinishReason(),
+                is(direct.getChoices().get(0).getFinishReason()));
+        assertThat(assembled.getUsage().getPromptTokens(), is(direct.getUsage().getPromptTokens()));
+        assertThat(
+                assembled.getUsage().getCompletionTokens(), is(direct.getUsage().getCompletionTokens()));
     }
 
     @Test

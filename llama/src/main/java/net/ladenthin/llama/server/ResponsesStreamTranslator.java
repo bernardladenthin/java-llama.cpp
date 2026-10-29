@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import lombok.ToString;
+import net.ladenthin.llama.json.ToolCallDeltaAccumulator;
 import org.jspecify.annotations.Nullable;
 
 /**

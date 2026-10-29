@@ -103,6 +103,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   An app that used checker-qual's annotations itself through the AAR has to declare it.
 
 ### Added
+- **`json.ChatStreamAssembler`: a streamed chat completion becomes the answer of the same request
+  without `stream`.** It reads a Server-Sent Events body (`parseStream`, or line by line with
+  `acceptLine`) or the chunk strings `LlamaModel.streamChatCompletion` hands its sink (`acceptChunk`),
+  joins content and `reasoning_content` per choice, rebuilds the tool calls, keeps the last finish
+  reason, `usage` and `timings`, and hands the result to `ChatResponseParser` (`toResponse`) or out as
+  the non-streaming JSON (`toCompletionJson`). A data line that is not JSON, a chunk with an `error` and
+  a body without `data: [DONE]` throw `ChatStreamAssembler.InvalidStreamException` instead of passing
+  for a short answer; heartbeat comments are skipped. Tested against `OpenAiCompatServer`'s own
+  stream, and with Qwen3-0.6B: a greedy request streamed and not streamed gives the same text,
+  reasoning, finish reason and token counts. `ToolCallDeltaAccumulator` moved from the `server` to the
+  `json` package and is public, so the server's protocol translators and the assembler share it.
 - **`/v1/realtime` of the embedded server tested end to end** (`RealtimeNativeServerIntegrationTest`, with
   LFM3-Audio, property-gated): the session's audio formats, a text and a spoken answer, spoken input, a
   transcription session and a tool call (llama.cpp b11946 / b11960), over the JDK's WebSocket client.

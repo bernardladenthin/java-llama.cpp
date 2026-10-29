@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package net.ladenthin.llama.server;
+package net.ladenthin.llama.json;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;

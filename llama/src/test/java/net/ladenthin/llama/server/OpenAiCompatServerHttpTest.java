@@ -25,6 +25,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.json.ChatResponseParser;
+import net.ladenthin.llama.json.ChatStreamAssembler;
+import net.ladenthin.llama.value.ChatResponse;
 import nl.altindag.log.LogCaptor;
 import org.junit.jupiter.api.Test;
 
@@ -73,6 +76,38 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * The client half of the stream contract: what the server streams assembles into the answer it
+     * gives the same request without {@code stream}, usage chunk included.
+     */
+    @Test
+    public void streamingAssemblesIntoTheNonStreamingAnswer() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            String body = "{\"stream\":true,\"stream_options\":{\"include_usage\":true},"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response streamed = post(server.getPort(), "/v1/chat/completions", body, "");
+            Response whole = post(server.getPort(), "/v1/chat/completions", CHAT_BODY, "");
+            assertThat(streamed.code, is(200));
+            assertThat(whole.code, is(200));
+
+            ChatResponse fromStream = ChatStreamAssembler.parseStream(streamed.body);
+            ChatResponse direct = new ChatResponseParser().parseResponse(whole.body);
+
+            assertThat(fromStream.getFirstContent(), is("hello"));
+            assertThat(fromStream.getFirstContent(), is(direct.getFirstContent()));
+            assertThat(fromStream.getChoices().get(0).getFinishReason(), is("stop"));
+            assertThat(
+                    fromStream.getUsage().getPromptTokens(),
+                    is(direct.getUsage().getPromptTokens()));
+            assertThat(
+                    fromStream.getUsage().getCompletionTokens(),
+                    is(direct.getUsage().getCompletionTokens()));
+            assertThat(
+                    fromStream.getUsage().getCachedTokens(),
+                    is(direct.getUsage().getCachedTokens()));
+        }
+    }
+
     @Test
     public void streamingCompletionsReturnsTextCompletionChunksThenDone() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
@@ -102,6 +137,8 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             assertThat(response.body, startsWith(": ping"));
             assertThat(response.body, containsString("\"content\":\"done\""));
             assertThat(response.body, containsString("data: [DONE]"));
+            // the heartbeats are comments, which a client skips
+            assertThat(ChatStreamAssembler.parseStream(response.body).getFirstContent(), is("done"));
         }
     }
 

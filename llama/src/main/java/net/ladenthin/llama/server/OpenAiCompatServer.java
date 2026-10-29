@@ -33,6 +33,7 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.json.ToolCallDeltaAccumulator;
 import net.ladenthin.llama.value.SlotMetrics;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;

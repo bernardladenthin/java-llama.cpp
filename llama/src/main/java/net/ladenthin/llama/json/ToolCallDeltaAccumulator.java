@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package net.ladenthin.llama.server;
+package net.ladenthin.llama.json;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,14 +16,15 @@ import lombok.ToString;
  * Reconstructs whole tool calls from the incremental {@code delta.tool_calls} fragments of an OpenAI
  * streaming chat completion. Across a stream, the first fragment for a given {@code index} carries the
  * call {@code id} and {@code function.name}, and subsequent fragments append {@code function.arguments}
- * string pieces. This accumulator merges them by index so the non-OpenAI protocol shims (Ollama,
- * Anthropic, OpenAI Responses) — which deliver tool calls whole rather than fragmented — can emit a
- * complete tool-call list once the stream finishes.
+ * string pieces. This accumulator merges them by index so the non-OpenAI protocol shims of the server
+ * (Ollama, Anthropic, OpenAI Responses) — which deliver tool calls whole rather than fragmented — can
+ * emit a complete tool-call list once the stream finishes, and so {@link ChatStreamAssembler} can
+ * rebuild the message of a streamed answer.
  *
  * <p>Stateful but free of JNI / model dependencies; unit-testable by feeding chunk JSON literals.
  */
 @ToString
-final class ToolCallDeltaAccumulator {
+public final class ToolCallDeltaAccumulator {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -36,13 +37,16 @@ final class ToolCallDeltaAccumulator {
 
     private final Map<Integer, Partial> byIndex = new TreeMap<>();
 
+    /** Creates an empty accumulator. */
+    public ToolCallDeltaAccumulator() {}
+
     /**
      * Feed one OpenAI chunk from its raw JSON; unparseable chunks are ignored. Convenience for streaming
      * sinks that hold the chunk as a string.
      *
      * @param openAiChunkJson one OpenAI {@code chat.completion.chunk} serialized as JSON
      */
-    void accept(String openAiChunkJson) {
+    public void accept(String openAiChunkJson) {
         try {
             accept(OBJECT_MAPPER.readTree(openAiChunkJson));
         } catch (java.io.IOException e) {
@@ -56,8 +60,17 @@ final class ToolCallDeltaAccumulator {
      *
      * @param openAiChunk a parsed OpenAI streaming chunk
      */
-    void accept(JsonNode openAiChunk) {
-        JsonNode toolCalls = openAiChunk.path("choices").path(0).path("delta").path("tool_calls");
+    public void accept(JsonNode openAiChunk) {
+        acceptToolCalls(openAiChunk.path("choices").path(0).path("delta").path("tool_calls"));
+    }
+
+    /**
+     * Feed the {@code delta.tool_calls} array of one choice, for a caller that reads the chunk itself
+     * (e.g. one with several choices). Anything but an array is ignored.
+     *
+     * @param toolCalls the {@code delta.tool_calls} node of one choice
+     */
+    public void acceptToolCalls(JsonNode toolCalls) {
         if (!toolCalls.isArray()) {
             return;
         }
@@ -82,7 +95,7 @@ final class ToolCallDeltaAccumulator {
      *
      * @return {@code true} if at least one tool call was seen
      */
-    boolean hasToolCalls() {
+    public boolean hasToolCalls() {
         return !byIndex.isEmpty();
     }
 
@@ -93,7 +106,7 @@ final class ToolCallDeltaAccumulator {
      *
      * @return the reconstructed tool-call array (empty when none were seen)
      */
-    ArrayNode toOpenAiToolCalls() {
+    public ArrayNode toOpenAiToolCalls() {
         ArrayNode out = OBJECT_MAPPER.createArrayNode();
         for (Partial partial : byIndex.values()) {
             ObjectNode toolCall = out.addObject();
