@@ -166,6 +166,19 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        ChatStreamAssembler.acceptChunk: a chunk of a streamed chat completion that is not JSON is
+        reported as ChatStreamAssembler.InvalidStreamException (an IllegalArgumentException quoting the
+        chunk) instead of being skipped, which would turn a broken stream into a plausible short answer.
+        Jackson's readTree declares the checked IOException, so the conversion is unavoidable; the
+        cause is chained through. Same tradeoff as ChatStreamChunkParser.feed above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.json.ChatStreamAssembler"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="acceptChunk"/>
+    </Match>
+
+    <!--
         InferenceParameters and ModelParameters are fluent builders whose
         parameters field is a Map<String, String> serving as the CLI / JSON
         wire-format passed across JNI to nlohmann/json. Every setter
@@ -664,7 +677,7 @@ SPDX-License-Identifier: MIT
         the CancellationToken / ChatTranscript block above.
     -->
     <Match>
-        <Class name="net.ladenthin.llama.server.ToolCallDeltaAccumulator"/>
+        <Class name="net.ladenthin.llama.json.ToolCallDeltaAccumulator"/>
         <Bug pattern="IMC_IMMATURE_CLASS_NO_EQUALS"/>
     </Match>
 

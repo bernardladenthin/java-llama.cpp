@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import net.ladenthin.llama.json.ToolCallDeltaAccumulator;
 import org.junit.jupiter.api.Test;
 
 /**

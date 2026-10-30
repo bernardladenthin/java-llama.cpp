@@ -56,7 +56,7 @@
  *       {@link net.ladenthin.llama.server.ResponsesStreamTranslator}.</li>
  * </ul>
  * <p>Streamed tool calls on these surfaces are reconstructed from the OpenAI {@code delta.tool_calls}
- * fragments by {@link net.ladenthin.llama.server.ToolCallDeltaAccumulator}.</p>
+ * fragments by {@link net.ladenthin.llama.json.ToolCallDeltaAccumulator}.</p>
  *
  * <p>The HTTP surface is decoupled from the model behind {@link net.ladenthin.llama.server.OpenAiBackend}
  * (production implementation {@link net.ladenthin.llama.server.LlamaModelBackend}) so routing,

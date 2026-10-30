@@ -856,6 +856,7 @@ SPDX-License-Identifier: MIT
 						<param>net.ladenthin.llama.json.TimingsLogger</param>
 						<param>net.ladenthin.llama.json.RerankResponseParser</param>
 						<param>net.ladenthin.llama.json.ChatResponseParser</param>
+						<param>net.ladenthin.llama.json.ChatStreamAssembler</param>
 						<param>net.ladenthin.llama.json.CompletionResponseParser</param>
 						<!--
 						  JsonParameters carries the one-JSON-value invariant that stops a
