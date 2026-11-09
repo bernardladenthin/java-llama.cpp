@@ -2258,12 +2258,12 @@ not track the loader's own Java package; no leading slash, it is resolved throug
 ### Code Formatting
 
 C++ formatting is **enforced in CI** (`.github/workflows/clang-format.yml`) with a **pinned**
-clang-format — currently **23.1.3**, installed via `pip install clang-format==23.1.3`. Format with
+clang-format — currently **23.1.5**, installed via `pip install clang-format==23.1.5`. Format with
 that exact version before committing; a different clang-format version reflows code differently and
 will fail the check.
 
 ```bash
-pip install "clang-format==23.1.3"
+pip install "clang-format==23.1.5"
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp src/test/cpp/*.cpp   # Format C++ code
 ```
 
