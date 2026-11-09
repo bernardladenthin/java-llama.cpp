@@ -58,6 +58,9 @@ env:
   REASONING_MODEL_NAME: "Qwen3-0.6B-Q4_K_M.gguf"
   TOOL_MODEL_NAME: "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
   NOMIC_EMBED_MODEL_NAME: "nomic-embed-text-v1.5.f16.gguf"
+  # The minutes an artifact upload or download may take (see bernardladenthin/actions,
+  # common/check-artifact-timeouts): the repository variable, else 20.
+  ARTIFACT_TIMEOUT_MINUTES: ${{ vars.ARTIFACT_TIMEOUT_MINUTES || '20' }}
 # Supersede an in-flight run when a PR branch is pushed again.
 #
 # Without this every push starts a full parallel pipeline and the older ones keep
@@ -100,6 +103,12 @@ jobs:
 
   startgate:
     name: Start gate (abort window)
+    # A pull request Dependabot opens or rebases does not start the pipeline: Dependabot
+    # opens one per update and rebases each on every change of main, and its runs get none of
+    # the repository's secrets. Every job needs this one, so all of them are skipped. The merge
+    # to main runs the pipeline, a push of a person to the branch runs it too, and a run on
+    # the branch can be started by hand (workflow_dispatch).
+    if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     environment: startgate
     steps:
@@ -121,19 +130,21 @@ jobs:
         with:
           persist-credentials: false
       - name: Files equal their templates in bernardladenthin/actions
-        uses: bernardladenthin/actions/common/check-templates@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/check-templates@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       # This repository's own build checks build on actionlib (the setup step puts it on PYTHONPATH).
-      - uses: bernardladenthin/actions/common/setup@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/common/setup@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build-check tests of this repository
         run: python3 -m unittest discover -s .github/buildcheck/tests -t .github
       - name: Release gate (every job gates both publish jobs, or release-gate-exemptions.txt says why)
-        uses: bernardladenthin/actions/common/check-release-gate@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/check-release-gate@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Run scripts parse (bash -n over every bash run script of the workflows and actions)
-        uses: bernardladenthin/actions/common/check-run-scripts@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/check-run-scripts@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
+      - name: Artifact timeouts (every upload/download-artifact step times out after ARTIFACT_TIMEOUT_MINUTES)
+        uses: bernardladenthin/actions/common/check-artifact-timeouts@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Maven versions (warns where a dependency or plugin differs from a sibling repository)
-        uses: bernardladenthin/actions/java/check-maven-versions@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/check-maven-versions@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Publication wiring and release asset contract (dry run)
-        uses: bernardladenthin/actions/java/check-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/check-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
 
   # ---------------------------------------------------------------------------
   # GPG signing-key preflight: what maven-gpg-plugin does at deploy time, so a
@@ -152,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: maven-central
     steps:
-      - uses: bernardladenthin/actions/common/verify-gpg-key@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/common/verify-gpg-key@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -173,7 +184,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: bernardladenthin/actions/java/verify-signing-key-gradle@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/java/verify-signing-key-gradle@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -212,7 +223,7 @@ jobs:
           print(f'{len(files)} workflow files, {bad} that do not parse')
           sys.exit(1 if bad else 0)
           PY
-      - uses: bernardladenthin/actions/common/setup@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/common/setup@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
       - name: Patch hunk check (every hunk of llama/patches/*.patch declares exactly the lines it carries)
@@ -291,9 +302,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -319,11 +331,12 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/print-crash-logs@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           modules: llama-langchain4j
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: error-log-langchain4j-integration
           path: |
@@ -351,9 +364,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -385,11 +399,12 @@ jobs:
           done
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/print-crash-logs@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           modules: llama-ffm
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: error-log-llama-ffm
           path: |
@@ -464,6 +479,7 @@ jobs:
           ls agent-jar
       - name: Upload the agent jar and its dependencies
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-atmosphere-agent-jar
           path: agent-jar/
@@ -478,9 +494,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -508,11 +525,12 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/print-crash-logs@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           modules: llama-atmosphere-agent
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: error-log-atmosphere-agent-integration
           path: |
@@ -621,6 +639,7 @@ jobs:
           fi
       - name: Upload WebUI artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -656,17 +675,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: bash
         run: |
           .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cuda13-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -693,17 +714,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: bash
         run: |
           .github/dockcross/dockcross-manylinux_2_28-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -754,6 +777,7 @@ jobs:
         shell: bash
         run: bash .github/archive-llama-source.sh llama-src llama-source-archive
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -770,6 +794,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -786,7 +811,7 @@ jobs:
           # source directory, so the stamp the archive carries is what proves the patches are in.
           bash .github/verify-patches-applied.sh "$RUNNER_TEMP/llama-src"
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries from the archive
         shell: bash
         run: |
@@ -817,17 +842,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: bash
         run: |
           .github/manylinux/manylinux_2_28-aarch64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -859,9 +886,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -906,6 +934,7 @@ jobs:
         run: python3 .github/verify-native-deps.py llama/src/main/natives/net/ladenthin/llama/
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-s390x
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -928,6 +957,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -945,6 +975,7 @@ jobs:
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-vulkan-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -963,6 +994,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -982,6 +1014,7 @@ jobs:
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=aarch64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-vulkan-linux-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1005,17 +1038,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: bash
         run: |
           .github/dockcross/dockcross-android-arm64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-android-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1035,6 +1070,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1044,6 +1080,7 @@ jobs:
           .github/dockcross/dockcross-android-x86_64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-android-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1066,6 +1103,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1075,6 +1113,7 @@ jobs:
           .github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-opencl-android-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1113,16 +1152,19 @@ jobs:
           goal: package
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Download Android OpenCL natives
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-opencl-android-aarch64
           path: stage/opencl/
@@ -1242,6 +1284,7 @@ jobs:
           done
       - name: Upload AARs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-android-aars
           path: llama-android/build/aar/*.aar
@@ -1278,7 +1321,7 @@ jobs:
           swap-storage: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           java-version-file: .java-version
@@ -1384,6 +1427,7 @@ jobs:
       - name: Upload instrumentation reports (on failure)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: android-emulator-test-reports
           path: .github/android-consumer-test/app/build/reports/androidTests/
@@ -1460,6 +1504,7 @@ jobs:
           test -f android-llmservice/app/build/outputs/apk/release/app-release.apk
       - name: Upload release bundle (AAB — for Play upload)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: android-llmservice-aab
           path: android-llmservice/app/build/outputs/bundle/release/*.aab
@@ -1469,6 +1514,7 @@ jobs:
         # release). Debug-signed unless the ANDROID_UPLOAD_* secrets are set. This is the file to
         # grab to try the app on a phone; the .aab above is only for the Play Console.
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: android-llmservice-apk
           path: android-llmservice/app/build/outputs/apk/release/*.apk
@@ -1593,6 +1639,7 @@ jobs:
       - name: Upload instrumentation reports (on failure)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: android-llmservice-test-reports
           path: android-llmservice/app/build/reports/androidTests/
@@ -1613,6 +1660,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1621,7 +1669,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1635,6 +1683,7 @@ jobs:
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: macos-15-no-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1650,6 +1699,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1658,7 +1708,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1672,6 +1722,7 @@ jobs:
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: macos-26-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1690,11 +1741,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: cmd
         run: |
@@ -1703,6 +1755,7 @@ jobs:
         run: ctest --test-dir llama/build -C Release --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: msvc-windows-x86_64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1745,6 +1798,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1753,7 +1807,7 @@ jobs:
         with:
           arch: x64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1767,6 +1821,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1803,9 +1858,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1827,6 +1883,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1858,6 +1915,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1949,6 +2007,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cuda13-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1964,6 +2023,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1988,6 +2048,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-vulkan-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2003,6 +2064,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2022,6 +2084,7 @@ jobs:
           .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-opencl-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2054,6 +2117,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2099,6 +2163,7 @@ jobs:
         run: python3 .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-rocm-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2119,6 +2184,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2172,6 +2238,7 @@ jobs:
         run: python .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-rocm-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2199,6 +2266,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2296,6 +2364,7 @@ jobs:
           fi
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-sycl-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2315,6 +2384,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2374,6 +2444,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=icx -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-sycl-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2393,6 +2464,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2410,6 +2482,7 @@ jobs:
           .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-opencl-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2433,6 +2506,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2476,6 +2550,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-vulkan-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2491,6 +2566,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2531,6 +2607,7 @@ jobs:
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR=$OpenVINO_DIR -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-openvino-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2546,6 +2623,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2595,6 +2673,7 @@ jobs:
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DVCPKG_APPLOCAL_DEPS=OFF -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-openvino-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2615,7 +2694,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
@@ -2651,7 +2730,7 @@ jobs:
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       # armv8.2-a+dotprod: the plain ARMv8 baseline has no repacked CPU weights at all, so all 24
       # test_moe_repack cases (llama/patches/0022) skipped here; dotprod selects the q4_0_4x4 and
       # q4_K_8x4 kernels, the ones an N1-class server runs (the shipped jar's armv8.2 modules)
@@ -2683,7 +2762,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'temurin'
@@ -2725,7 +2804,7 @@ jobs:
         with:
           arch: x64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: cmd
         run: |
@@ -2752,7 +2831,7 @@ jobs:
         with:
           arch: arm64
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Build libraries
         shell: cmd
         run: |
@@ -2774,6 +2853,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -2782,7 +2862,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -2796,6 +2876,7 @@ jobs:
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-metal-macos-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2811,8 +2892,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2840,6 +2922,7 @@ jobs:
       - name: Verify tests actually ran
         run: .github/verify-test-counts.sh llama/target/surefire-reports --min-executed 1800
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: success()
         with:
           name: jacoco-report
@@ -2859,6 +2942,7 @@ jobs:
             fi
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: always()
         with: { name: pit-reports, path: llama/target/pit-reports/ }
       - name: Memory after tests
@@ -2867,11 +2951,12 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/print-crash-logs@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           modules: llama
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: error-log-linux-x86_64
           path: |
@@ -2907,6 +2992,7 @@ jobs:
           mvn --batch-mode --no-transfer-progress -f llama/pom.xml -Pvmlens test
           -Dtest=VmlensInterleavingSmokeTest,SessionStateInterleavingTest -DfailIfNoTests=false
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: always()
         with:
           name: vmlens-report
@@ -3032,6 +3118,7 @@ jobs:
       # Unmerged, one directory per artifact (Windows/<arch>/<backend>/ inside), the layout the
       # build jobs uploaded and merge-native-artifacts.sh expects back.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           pattern: "natives-*-windows-*"
@@ -3052,6 +3139,7 @@ jobs:
         run: python3 .github/verify-native-deps.py --require-signed "${{ github.workspace }}/native-artifacts"
       # One upload per artifact, same name, same layout; overwrite replaces the build job's.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cpu-windows-x86-64
@@ -3059,6 +3147,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cpu-windows-aarch64
@@ -3066,6 +3155,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cuda13-windows-x86-64
@@ -3073,6 +3163,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-vulkan-windows-x86-64
@@ -3080,6 +3171,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-opencl-windows-x86-64
@@ -3087,6 +3179,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-rocm-windows-x86-64
@@ -3094,6 +3187,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-sycl-windows-x86-64
@@ -3101,6 +3195,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-opencl-windows-aarch64
@@ -3108,6 +3203,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-vulkan-windows-aarch64
@@ -3115,6 +3211,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-openvino-windows-x86-64
@@ -3185,8 +3282,9 @@ jobs:
       # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
@@ -3227,7 +3325,7 @@ jobs:
       # module-info.class and META-INF/versions/** are skipped unconditionally because a
       # classpath JVM never loads them. Kept byte-identical across all four sibling repos.
       - name: Verify Java 8 bytecode (no class newer than major 52)
-        uses: bernardladenthin/actions/java/verify-bytecode@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/verify-bytecode@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           max-major: "52"
           paths: |
@@ -3257,6 +3355,7 @@ jobs:
             llama/target/*.jar
       - name: Upload JARs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-jars
           path: llama/target/*.jar
@@ -3275,6 +3374,7 @@ jobs:
           bash .github/package-smoke-sets.sh llama/target runtime-deps smoke-sets
       - name: Upload smoke set linux-x86-64
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-linux-x86-64
           path: smoke-sets/linux-x86-64/
@@ -3283,6 +3383,7 @@ jobs:
           if-no-files-found: error
       - name: Upload smoke set linux-aarch64
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-linux-aarch64
           path: smoke-sets/linux-aarch64/
@@ -3291,6 +3392,7 @@ jobs:
           if-no-files-found: error
       - name: Upload smoke set windows-x86-64
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-windows-x86-64
           path: smoke-sets/windows-x86-64/
@@ -3299,6 +3401,7 @@ jobs:
           if-no-files-found: error
       - name: Upload smoke set windows-aarch64
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-windows-aarch64
           path: smoke-sets/windows-aarch64/
@@ -3307,6 +3410,7 @@ jobs:
           if-no-files-found: error
       - name: Upload smoke set macos-aarch64
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-macos-aarch64
           path: smoke-sets/macos-aarch64/
@@ -3317,6 +3421,7 @@ jobs:
       # jar and its dependencies, for smoke-glibc-floor below.
       - name: Upload the glibc-floor set
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-glibc-floor
           path: smoke-sets/glibc-floor/
@@ -3348,6 +3453,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-glibc-floor
           path: floor/
@@ -3393,8 +3499,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-${{ matrix.target }}
           path: smoke/
@@ -3411,7 +3518,7 @@ jobs:
       # script is bash-only, so the Linux rows check; the Windows sets hold the same jars.
       - name: Verify Java 8 bytecode (no class newer than major 52)
         if: runner.os == 'Linux'
-        uses: bernardladenthin/actions/java/verify-bytecode@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/verify-bytecode@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           max-major: "52"
           paths: |
@@ -3458,6 +3565,7 @@ jobs:
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: smoke-natives-${{ matrix.target }}-logs
           path: |
@@ -3484,12 +3592,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-atmosphere-agent-jar
           path: agent/
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-linux-x86-64
           path: smoke/
@@ -3515,7 +3625,7 @@ jobs:
       # dumb terminal instead of failing (verified on 21.0.10). Only that package is waived, so
       # any other class above 65 still fails the gate.
       - name: Verify Java 21 bytecode (no class newer than major 65)
-        uses: bernardladenthin/actions/java/verify-bytecode@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/verify-bytecode@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           max-major: "65"
           allow: |
@@ -3527,6 +3637,7 @@ jobs:
       - name: Upload agent logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: agent-smoke-linux-logs
           path: agent-*.log
@@ -3558,8 +3669,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-smoke-macos-aarch64
           path: smoke/
@@ -3576,6 +3688,7 @@ jobs:
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: smoke-natives-macos-logs
           path: |
@@ -3594,6 +3707,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with: { name: jacoco-report, path: target/site/jacoco/ }
         continue-on-error: true
       # The dependency graph is submitted by dependency-submission.yml (on pushes to main, with the
@@ -3628,7 +3742,7 @@ jobs:
       # a release is tagged on.
       - name: Require a SNAPSHOT version
         if: inputs.publish_to_central
-        uses: bernardladenthin/actions/java/check-release-ref@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/check-release-ref@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: snapshot
 
@@ -3643,7 +3757,7 @@ jobs:
           persist-credentials: false
       # The tag names exactly the project version (v1.2.3 for 1.2.3), which is no SNAPSHOT.
       - name: Require the release version the tag names
-        uses: bernardladenthin/actions/java/check-release-ref@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/check-release-ref@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: release
 
@@ -3680,6 +3794,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
@@ -3702,6 +3817,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3752,7 +3868,7 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       - name: Finalize and secure the signed publication
         id: finalize
-        uses: bernardladenthin/actions/java/finalize-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/finalize-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: snapshot
 
@@ -3768,7 +3884,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: bernardladenthin/actions/java/publish-github@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/java/publish-github@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3807,6 +3923,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           pattern: natives-*
           path: ${{ github.workspace }}/native-artifacts/
@@ -3832,6 +3949,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: llama-cpp-source
           path: llama-source-archive/
@@ -3875,7 +3993,7 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       - name: Finalize and secure the signed publication
         id: finalize
-        uses: bernardladenthin/actions/java/finalize-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/finalize-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: release
 
@@ -3888,7 +4006,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: bernardladenthin/actions/java/publish-github@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/java/publish-github@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
@@ -3913,7 +4031,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
-        uses: bernardladenthin/actions/java/publish-central@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/publish-central@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3934,7 +4052,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Transfer frozen artifacts (no rebuild, signing or validation polling)
-        uses: bernardladenthin/actions/java/publish-central@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/publish-central@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}
@@ -3952,7 +4070,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: bernardladenthin/actions/java/attest-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/java/attest-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: snapshot
           assets-complete: ${{ needs.publish-snapshot.outputs.assets_complete }}
@@ -3968,7 +4086,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: bernardladenthin/actions/java/attest-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+      - uses: bernardladenthin/actions/java/attest-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           channel: release
           assets-complete: ${{ needs.publish-release.outputs.assets_complete }}

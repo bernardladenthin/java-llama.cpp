@@ -39,6 +39,11 @@ on:
         required: false
 permissions:
   contents: read
+env:
+  # The minutes an artifact upload or download may take (see bernardladenthin/actions,
+  # common/check-artifact-timeouts): the repository variable, else 20.
+  ARTIFACT_TIMEOUT_MINUTES: ${{ vars.ARTIFACT_TIMEOUT_MINUTES || '20' }}
+
 jobs:
   tests:
     name: Java tests
@@ -48,8 +53,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Display CPU Info
-        uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/common/print-host-info@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: ${{ inputs.natives-artifact }}
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -123,11 +129,12 @@ jobs:
       # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
-        uses: bernardladenthin/actions/java/print-crash-logs@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/print-crash-logs@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           modules: llama
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: ${{ inputs.error-artifact }}
           path: |

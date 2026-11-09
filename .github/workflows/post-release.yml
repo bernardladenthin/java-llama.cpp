@@ -44,6 +44,9 @@ concurrency:
 
 env:
   TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+  # The minutes an artifact upload or download may take (see bernardladenthin/actions,
+  # common/check-artifact-timeouts): the repository variable, else 20.
+  ARTIFACT_TIMEOUT_MINUTES: ${{ vars.ARTIFACT_TIMEOUT_MINUTES || '20' }}
 
 jobs:
   audit:
@@ -72,7 +75,7 @@ jobs:
           path: release
           persist-credentials: false
       - name: Audit the release (run, jobs, files, Maven Central, signatures, provenance, bytecode)
-        uses: bernardladenthin/actions/java/audit-publication@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
+        uses: bernardladenthin/actions/java/audit-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
         with:
           tag: ${{ env.TAG }}
           root: release
@@ -149,6 +152,7 @@ jobs:
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: post-release-${{ matrix.target }}-logs
           path: |
