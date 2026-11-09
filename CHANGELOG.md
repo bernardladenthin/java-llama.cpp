@@ -42,6 +42,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12233** (from b12217, 16 upstream commits): extra GGUF shards for a model
+  (`--shard`, #31185), an unbuffered model load on Windows (#26014), a temperature for the audio
+  frames of Pocket TTS (#31655), `response_format` with an unnested `json_schema` (#28697). No
+  source change here.
 - **llama.cpp b12217** (from b12216, one upstream commit): **RPC protocol 9** (#29413, faster model
   loading over RPC: the client sends a tensor's hash first when the server caches tensors). A
   server and a client of different protocol versions refuse each other, so `RpcServer` and a
