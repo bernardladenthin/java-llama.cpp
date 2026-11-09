@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-// Real TCP protocol-v8 clients of the C API used by JNI/FFM. No models, GPU or external network.
+// Real TCP protocol-v9 clients of the C API used by JNI/FFM. No models, GPU or external network.
 // Each scenario runs in a fresh subprocess: a regression in stop must produce a bounded failure,
 // rather than hang the test runner or leave a server thread affecting the following cases.
 
@@ -184,10 +184,11 @@ void hello(fd_t fd) {
     command(fd, 14, caps.data(), caps.size());
     uint64_t size = 0;
     recv_bytes(fd, &size, sizeof(size));
-    require(size == 28, "HELLO response changed: update the protocol-v8 fixture");
+    require(size == 28, "HELLO response changed: update the protocol-v9 fixture");
     std::array<uint8_t, 28> response{};
     recv_bytes(fd, response.data(), response.size());
-    require(response[0] == 8, "expected RPC protocol v8");
+    // b12217 (#29413): protocol 9; the fourth byte, padding until then, carries server feature flags
+    require(response[0] == 9, "expected RPC protocol v9");
 }
 
 void comm_init(fd_t fd, int port, bool rank_one) {

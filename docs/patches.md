@@ -257,6 +257,11 @@ rpc_server_track_peer() before its first blocking read, so a stop shuts it down 
 mutex wherever COMM_INIT blocks on it -- the handshake, the rank, or the bootstrap exchange.
 Not covered: a backend communicator's own init (ggml_backend_comm_init_rank, CUDA with NCCL)
 blocks inside the backend until every rank has joined and has no cancellation.
+
+Refreshed at b12217 (#29413, "RPC: Improve loading times", protocol 9.0.0): the HELLO answer
+carries server feature flags and negotiate_hello() takes the dispatcher's flags to fill; the
+hunk that turns a failed handshake of rpc_dispatcher::start() into a reported failure is
+rewritten over that call. Nothing else moved.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch

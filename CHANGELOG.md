@@ -42,6 +42,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12217** (from b12216, one upstream commit): **RPC protocol 9** (#29413, faster model
+  loading over RPC: the client sends a tensor's hash first when the server caches tensors). A
+  server and a client of different protocol versions refuse each other, so `RpcServer` and a
+  `--rpc` client must run the same version of this library. Patch `0015` refreshed.
 - **llama.cpp b12216** (from b12079, 137 upstream commits, the last before the RPC patch needs work
   again): llama.cpp 0.9.0 and ggml 0.29.0; Chatterbox and Drama-3 text to speech, Nemotron 3.5
   Transcribe, MageVL-Cowork (#30993, #31613, #31471, #31819); Metis-1.6, xing4_0, Ripple and

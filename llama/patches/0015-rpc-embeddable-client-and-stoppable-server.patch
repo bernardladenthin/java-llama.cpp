@@ -70,11 +70,16 @@ mutex wherever COMM_INIT blocks on it -- the handshake, the rank, or the bootstr
 Not covered: a backend communicator's own init (ggml_backend_comm_init_rank, CUDA with NCCL)
 blocks inside the backend until every rank has joined and has no cancellation.
 
+Refreshed at b12217 (#29413, "RPC: Improve loading times", protocol 9.0.0): the HELLO answer
+carries server feature flags and negotiate_hello() takes the dispatcher's flags to fill; the
+hunk that turns a failed handshake of rpc_dispatcher::start() into a reported failure is
+rewritten over that call. Nothing else moved.
+
 diff --git a/common/arg.cpp b/common/arg.cpp
-index e3ab084c6..90c1f1fbc 100644
+index 69be4a61e..6a17bed6a 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -1167,6 +1167,11 @@ static void add_rpc_devices(const std::string & servers) {
+@@ -1187,6 +1187,11 @@ static void add_rpc_devices(const std::string & servers) {
      }
      for (const auto & server : rpc_servers) {
          auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
@@ -87,7 +92,7 @@ index e3ab084c6..90c1f1fbc 100644
      }
  }
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
-index ecf0a3a6d..9d73a48a7 100644
+index f32ddeee2..89275aee1 100644
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
 @@ -26,6 +26,11 @@ GGML_BACKEND_API void ggml_backend_rpc_get_device_memory(const char * endpoint,
@@ -103,10 +108,10 @@ index ecf0a3a6d..9d73a48a7 100644
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
-index 966bd9975..7ec167e96 100644
+index ffa9118f7..f2a6ccd5f 100644
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -430,7 +430,12 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock) {
+@@ -444,7 +444,12 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, rpc_dispatch
      sock->get_caps(request.conn_caps);
  
      bool status = send_rpc_cmd(sock, RPC_CMD_HELLO, &request, sizeof(request), &response, sizeof(response));
@@ -120,7 +125,7 @@ index 966bd9975..7ec167e96 100644
  
      if (response.major != RPC_PROTO_MAJOR_VERSION || response.minor > RPC_PROTO_MINOR_VERSION) {
          LOG_ERROR("RPC server version mismatch: %d.%d.%d\n",
-@@ -513,7 +518,7 @@ public:
+@@ -526,7 +531,7 @@ public:
      void busy_spin_release();
      void graph_compute(uint32_t device, const ggml_cgraph * cgraph);
  
@@ -128,8 +133,8 @@ index 966bd9975..7ec167e96 100644
 +    bool start(const std::string & endpoint);
      void work();
  
-     ~rpc_dispatcher();
-@@ -638,26 +643,32 @@ void rpc_dispatcher::busy_spin_release() {
+     bool get_send_tensor_hash() const { return flags & RPC_DISPATCHER_FLAGS_SEND_TENSOR_HASH; }
+@@ -641,26 +646,32 @@ void rpc_dispatcher::busy_spin_release() {
      GGML_ASSERT(previous > 0);
  }
  
@@ -154,7 +159,7 @@ index 966bd9975..7ec167e96 100644
 +        LOG_ERROR("Failed to connect to %s\n", endpoint.c_str());
 +        return false;
      }
-     if (!negotiate_hello(sock)) {
+     if (!negotiate_hello(sock, flags)) {
 -        GGML_ABORT("RPC handshake failed for %s\n", endpoint.c_str());
 +        LOG_ERROR("RPC handshake failed for %s\n", endpoint.c_str());
 +        sock = nullptr;
@@ -167,7 +172,7 @@ index 966bd9975..7ec167e96 100644
  }
  
  void rpc_dispatcher::work() {
-@@ -708,7 +719,8 @@ rpc_dispatcher::~rpc_dispatcher() {
+@@ -711,7 +722,8 @@ rpc_dispatcher::~rpc_dispatcher() {
      }
  }
  
@@ -177,7 +182,7 @@ index 966bd9975..7ec167e96 100644
      static std::mutex mutex;
      std::lock_guard<std::mutex> lock(mutex);
      static std::unordered_map<std::string, std::weak_ptr<rpc_dispatcher>> dispatchers;
-@@ -721,11 +733,23 @@ static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoi
+@@ -724,11 +736,23 @@ static std::shared_ptr<rpc_dispatcher> get_dispatcher(const std::string & endpoi
      }
  
      auto dispatcher = std::make_shared<rpc_dispatcher>();
@@ -202,7 +207,7 @@ index 966bd9975..7ec167e96 100644
  static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
      auto request = std::make_shared<rpc_msg_free_buffer_req>();
-@@ -1363,6 +1387,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
+@@ -1370,6 +1394,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
          /* .name       = */ dev_name,
      };
      auto reg = ggml_backend_rpc_add_server(endpoint);
@@ -213,7 +218,7 @@ index 966bd9975..7ec167e96 100644
      LOG_DBG("[%s] %s\n", __func__, dev_name.c_str());
      ggml_backend_t backend = new ggml_backend {
          /* .guid    = */ ggml_backend_rpc_guid(),
-@@ -1378,7 +1406,15 @@ bool ggml_backend_is_rpc(ggml_backend_t backend) {
+@@ -1385,7 +1413,15 @@ bool ggml_backend_is_rpc(ggml_backend_t backend) {
  }
  
  void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device, size_t * free, size_t * total) {
@@ -230,7 +235,7 @@ index 966bd9975..7ec167e96 100644
      auto request = std::make_shared<rpc_msg_get_device_memory_req>();
      request->device = device;
      rpc_msg_get_device_memory_rsp response;
-@@ -1389,12 +1425,37 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device,
+@@ -1396,12 +1432,37 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device,
      *total = response.total_mem;
  }
  
@@ -270,7 +275,7 @@ index 966bd9975..7ec167e96 100644
          stored_graphs.resize(backends.size());
          comm_states.resize(backends.size());
      }
-@@ -1465,6 +1526,7 @@ private:
+@@ -1472,6 +1533,7 @@ private:
  
      std::vector<ggml_backend_t> backends;
      const char * cache_dir;
@@ -278,7 +283,7 @@ index 966bd9975..7ec167e96 100644
      std::unordered_set<ggml_backend_buffer_t> buffers;
      // computed graphs cached per backend, keyed by uid
      std::vector<std::unordered_map<uint64_t, stored_graph>> stored_graphs;
-@@ -2291,7 +2353,8 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2322,7 +2384,8 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
  
      // Rank 0 listens and accepts world-1 peers; every other rank connects back to it.
      if (request.rank == 0) {
@@ -288,7 +293,7 @@ index 966bd9975..7ec167e96 100644
          if (srv == nullptr) {
              LOG_ERROR("[%s] failed to listen on comm port %u\n", __func__, request.port);
              return true;
-@@ -2300,9 +2363,10 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2331,9 +2394,10 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
          // Each peer sends its rank because peers may connect in any order.
          state.peers.resize(request.world - 1);
          for (uint32_t i = 1; i < request.world; i++) {
@@ -301,7 +306,7 @@ index 966bd9975..7ec167e96 100644
                  !peer->recv_data(&peer_rank, sizeof(peer_rank)) ||
                  peer_rank == 0 || peer_rank >= request.world || state.peers[peer_rank - 1] != nullptr) {
                  LOG_ERROR("[%s] bad peer connection (rank %u)\n", __func__, peer_rank);
-@@ -2315,9 +2379,9 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2346,9 +2410,9 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
          const std::string host(request.host, strnlen(request.host, sizeof(request.host)));
          socket_ptr peer;
          // rank 0 may not be listening yet, retry for a few seconds
@@ -314,7 +319,7 @@ index 966bd9975..7ec167e96 100644
                  std::this_thread::sleep_for(std::chrono::milliseconds(50));
              }
          }
-@@ -2325,7 +2389,7 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2356,7 +2420,7 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
              LOG_ERROR("[%s] failed to connect to peer %s:%u\n", __func__, host.c_str(), request.port);
              return true;
          }
@@ -323,7 +328,7 @@ index 966bd9975..7ec167e96 100644
              !peer->send_data(&request.rank, sizeof(request.rank)) || !peer->flush()) {
              return true;
          }
-@@ -2600,8 +2664,8 @@ rpc_server::~rpc_server() {
+@@ -2631,8 +2695,8 @@ rpc_server::~rpc_server() {
  }
  
  static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
@@ -334,7 +339,7 @@ index 966bd9975..7ec167e96 100644
      uint8_t cmd;
      if (!sock->recv_data(&cmd, 1)) {
          return;
-@@ -2927,6 +2991,25 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
+@@ -2958,6 +3022,25 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
      }
  }
  
@@ -360,7 +365,7 @@ index 966bd9975..7ec167e96 100644
  void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
      if (n_devices == 0 || devices == nullptr) {
-@@ -2934,6 +3017,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2965,6 +3048,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          return;
      }
      std::vector<ggml_backend_t> backends;
@@ -373,7 +378,7 @@ index 966bd9975..7ec167e96 100644
      LOG_INFO("Starting RPC server v%d.%d.%d\n",
          RPC_PROTO_MAJOR_VERSION,
          RPC_PROTO_MINOR_VERSION,
-@@ -2950,6 +3039,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2981,6 +3070,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          auto backend = ggml_backend_dev_init(dev, nullptr);
          if (!backend) {
              LOG_ERROR("Failed to create backend for device %s\n", dev->iface.get_name(dev));
@@ -381,7 +386,7 @@ index 966bd9975..7ec167e96 100644
              return;
          }
          backends.push_back(backend);
-@@ -2965,6 +3055,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2996,6 +3086,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
      std::string host;
      int port;
      if (!parse_endpoint(endpoint, host, port)) {
@@ -389,7 +394,7 @@ index 966bd9975..7ec167e96 100644
          return;
      }
  
-@@ -2975,27 +3066,54 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -3006,27 +3097,54 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
  #endif // GGML_RPC_RDMA
      if (!rpc_transport_init()) {
          LOG_ERROR("Failed to initialize RPC transport\n");
@@ -452,7 +457,7 @@ index 966bd9975..7ec167e96 100644
  }
  
  static const char * ggml_backend_rpc_device_get_name(ggml_backend_dev_t dev) {
-@@ -3279,6 +3397,12 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
+@@ -3310,6 +3428,12 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
      if (std::strcmp(name, "ggml_backend_comm_allreduce_tensor") == 0) {
          return (void *)ggml_backend_rpc_comm_allreduce_tensor;
      }
@@ -465,7 +470,7 @@ index 966bd9975..7ec167e96 100644
      return NULL;
  
      GGML_UNUSED(reg);
-@@ -3301,8 +3425,13 @@ ggml_backend_reg_t ggml_backend_rpc_reg(void) {
+@@ -3332,8 +3456,13 @@ ggml_backend_reg_t ggml_backend_rpc_reg(void) {
      return &ggml_backend_rpc_reg;
  }
  
@@ -478,9 +483,9 @@ index 966bd9975..7ec167e96 100644
 +        return 0;
 +    }
      rpc_msg_device_count_rsp response;
-     dispatcher->send(RPC_CMD_DEVICE_COUNT, nullptr, 0, &response, sizeof(response));
+     dispatcher->send(RPC_CMD_DEVICE_COUNT, nullptr, 0, nullptr, 0, &response, sizeof(response));
      return response.device_count;
-@@ -3321,6 +3450,11 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
+@@ -3352,6 +3481,11 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
      static uint32_t dev_id = 0;
      std::lock_guard<std::mutex> lock(mutex);
      if (reg_map.find(endpoint) != reg_map.end()) {
@@ -493,7 +498,7 @@ index 966bd9975..7ec167e96 100644
          return reg_map[endpoint];
      }
 diff --git a/ggml/src/ggml-rpc/transport.cpp b/ggml/src/ggml-rpc/transport.cpp
-index d5670f34d..1b2c6e334 100644
+index c7d9f5321..2c316c61c 100644
 --- a/ggml/src/ggml-rpc/transport.cpp
 +++ b/ggml/src/ggml-rpc/transport.cpp
 @@ -16,11 +16,14 @@
@@ -511,7 +516,7 @@ index d5670f34d..1b2c6e334 100644
  
  #ifdef GGML_RPC_RDMA
  #  include <infiniband/verbs.h>
-@@ -550,7 +553,12 @@ bool socket_t::impl::send_data(const void * data, size_t size) {
+@@ -560,7 +563,12 @@ bool socket_t::impl::send_data(const void * data, size_t size) {
      size_t bytes_sent = 0;
      while (bytes_sent < size) {
          size_t size_to_send = std::min(size - bytes_sent, MAX_CHUNK_SIZE);
@@ -524,7 +529,7 @@ index d5670f34d..1b2c6e334 100644
          if (n < 0) {
              LOG_ERROR("send failed (bytes_sent=%zu, size_to_send=%zu)\n",
                             bytes_sent, size_to_send);
-@@ -707,21 +715,121 @@ static bool set_no_delay(sockfd_t sockfd) {
+@@ -717,21 +725,121 @@ static bool set_no_delay(sockfd_t sockfd) {
      return ret == 0;
  }
  
@@ -648,7 +653,7 @@ index d5670f34d..1b2c6e334 100644
      LOG_DBG("[%s] accepted client connection\n", __func__);
      return socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
  }
-@@ -733,10 +841,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -743,10 +851,12 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      }
      if (!set_reuse_addr(sockfd)) {
          LOG_ERROR("Failed to set SO_REUSEADDR\n");
@@ -661,7 +666,7 @@ index d5670f34d..1b2c6e334 100644
          return nullptr;
      }
      struct sockaddr_in serv_addr;
-@@ -745,34 +855,60 @@ socket_ptr socket_t::create_server(const char * host, int port) {
+@@ -755,34 +865,60 @@ socket_ptr socket_t::create_server(const char * host, int port) {
      serv_addr.sin_port = htons(port);
  
      if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
