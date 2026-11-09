@@ -68,7 +68,7 @@ SPDX-License-Identifier: MIT
 		     newer core from the snapshot repository below. -->
 		<llama.version>${project.version}</llama.version>
 		<atmosphere.version>4.0.76</atmosphere.version>
-		<jline.version>4.4.8</jline.version>
+		<jline.version>4.5.0</jline.version>
 		<jetty.version>12.1.14</jetty.version>
 		<acp.version>0.80.0</acp.version>
 		<slf4j.version>2.0.20</slf4j.version>
@@ -88,7 +88,7 @@ SPDX-License-Identifier: MIT
 		<install.plugin.version>3.2.0</install.plugin.version>
 		<deploy.plugin.version>3.2.0</deploy.plugin.version>
 		<dependency.plugin.version>3.11.0</dependency.plugin.version>
-		<spotless.version>3.10.4</spotless.version>
+		<spotless.version>3.11.0</spotless.version>
 		<palantir-java-format.version>2.103.0</palantir-java-format.version>
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
 	</properties>
