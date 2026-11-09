@@ -335,6 +335,17 @@ void run_scenario(scenario mode) {
             std::array<uint8_t, 24> caps{};
             send_bytes(peer.fd, caps.data(), caps.size());
             recv_bytes(peer.fd, caps.data(), caps.size());
+            // b12079 (#28967): a peer names its rank after the capability exchange, and the ranks
+            // then agree on the communicator -- every rank sends one byte (whether its backend
+            // has one; this fake peer has none) and rank 0 answers with the bytes of all ranks.
+            // Without a backend communicator on both sides the pair falls back to the pairwise path.
+            const uint32_t peer_rank = 1;
+            send_bytes(peer.fd, &peer_rank, sizeof(peer_rank));
+            const uint8_t no_backend_communicator = 0;
+            send_bytes(peer.fd, &no_backend_communicator, sizeof(no_backend_communicator));
+            std::array<uint8_t, 2> all_ranks{};
+            recv_bytes(peer.fd, all_ranks.data(), all_ranks.size());
+            require(all_ranks[0] == 0 && all_ranks[1] == 0, "the CPU pair negotiated a backend communicator");
             uint64_t size = 0;
             uint8_t ok = 0;
             recv_bytes(client.fd, &size, sizeof(size));

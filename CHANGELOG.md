@@ -42,6 +42,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12079** (from b12078, one upstream commit): the RPC server's COMM_INIT connects
+  more than two ranks and can hand the collective to a backend communicator (CUDA with NCCL,
+  #28967). Patch `0015` is refreshed over the new peer loop with the same stop contract.
 - **llama.cpp b12078** (from b12061, 17 upstream commits, the last before the RPC patch needs
   work): GLM-5.3's next tensor format (#30499), a constraint type after gpt-oss's final channel
   (#31556), IQ4_XS on OpenCL, a GGUF split merge that rejects mismatched shards (#31579). No source

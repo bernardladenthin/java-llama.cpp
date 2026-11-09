@@ -28,7 +28,7 @@ match a binary to this page.
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 30 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 31 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
@@ -246,6 +246,17 @@ normal peer setup, socket cleanup and restart. Subprocess deadlines bound failur
 
 Drop-check on each upstream bump: inspect comm_init, the stoppable accept/connect
 paths and stop_server. Drop upstream-fixed hunks instead of mechanically refreshing them.
+
+Refreshed at b12079 (#28967, NCCL for multi-node tensor parallelism): COMM_INIT accepts
+world-1 peers on rank 0 instead of one (comm_state::peers, a vector in rank order), factors
+the capability exchange into comm_caps_handshake(), has every peer send its rank after it, and
+negotiates the communicator over those sockets (comm_bootstrap_exchange) before it answers.
+The cancellation contract is carried over unchanged: every accept of the loop and the
+connect/retry of a higher rank observe the stop flag, and each peer socket is registered with
+rpc_server_track_peer() before its first blocking read, so a stop shuts it down under the
+mutex wherever COMM_INIT blocks on it -- the handshake, the rank, or the bootstrap exchange.
+Not covered: a backend communicator's own init (ggml_backend_comm_init_rank, CUDA with NCCL)
+blocks inside the backend until every rank has joined and has no cancellation.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
