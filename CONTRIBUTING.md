@@ -35,7 +35,7 @@ When reporting a bug, include: OS and architecture, `java -version` output, the 
 
 ## Coding standards
 
-Follow the conventions documented in [CLAUDE.md](CLAUDE.md): native helper file split (`json_helpers.hpp` vs `jni_helpers.hpp`), include-order rule for upstream server headers, Javadoc HTML-entity table, and the upstream-llama.cpp upgrade procedure. The core targets Java 8 bytecode (`llama-langchain4j` Java 17, `llama-ffm` Java 22). C++ must be C++17-clean. Format Java with `mvn spotless:apply` and C++ with clang-format 23.1.3 (`clang-format -i llama/src/main/cpp/*.cpp llama/src/main/cpp/*.hpp llama/src/test/cpp/*.cpp`) before committing.
+Follow the conventions documented in [CLAUDE.md](CLAUDE.md): native helper file split (`json_helpers.hpp` vs `jni_helpers.hpp`), include-order rule for upstream server headers, Javadoc HTML-entity table, and the upstream-llama.cpp upgrade procedure. The core targets Java 8 bytecode (`llama-langchain4j` Java 17, `llama-ffm` Java 22). C++ must be C++17-clean. Format Java with `mvn spotless:apply` and C++ with clang-format 23.1.5 (`clang-format -i llama/src/main/cpp/*.cpp llama/src/main/cpp/*.hpp llama/src/test/cpp/*.cpp`) before committing.
 
 ## Test policy
 
