@@ -9,6 +9,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **`TextToSpeech.getVoices()`** (and `FfmTextToSpeech.getVoices()`, `jllama_tts_voices()` in the C
+  API): the predefined voices of a model that ships some in its projector (llama.cpp b12061: Pocket
+  TTS without voice cloning, LFM3-Audio), to pass as `voice` to `synthesize`. Empty for a model
+  without them (Qwen3-TTS).
+- **`ModelParameters.addShard(String)`** -- an extra GGUF shard of the model, anywhere on disk
+  (upstream `--shard` / `--ple`, llama.cpp b12233); repeatable.
+- **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
+  CPU computes instead of uploading them (upstream `--moe-cache-cpu-share`, llama.cpp b12191).
+- **`QuantizationType.F8_E4M3`** -- the OCP FP8 E4M3 file type (llama.cpp b12000).
+
 ### Changed
 - - **Dependabot: one grouped pull request per ecosystem a week, on Saturday.**
   `.github/dependabot.yml` is the template of bernardladenthin/actions v1.2.1: every minor and

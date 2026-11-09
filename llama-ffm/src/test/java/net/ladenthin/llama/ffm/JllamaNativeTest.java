@@ -197,4 +197,16 @@ class JllamaNativeTest {
             assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
         }
     }
+
+    /** The voices query resolves and reaches the library without a TTS model, like the one above. */
+    @Test
+    void ttsVoicesRefusesANullHandle() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment names = JllamaNative.pointerSlot(arena);
+            MemorySegment count = JllamaNative.longSlot(arena);
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> JllamaNative.call(JllamaNative.TTS_VOICES, MemorySegment.NULL, names, count));
+            assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
+        }
+    }
 }

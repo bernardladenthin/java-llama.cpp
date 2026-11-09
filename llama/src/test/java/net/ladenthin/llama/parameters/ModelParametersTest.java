@@ -913,4 +913,48 @@ public class ModelParametersTest {
     public void testSetMoeCacheMibRejectsNegative() {
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setMoeCacheMib(-1));
     }
+
+    // -------------------------------------------------------------------------
+    // setMoeCacheCpuShare (llama.cpp b12191)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetMoeCacheCpuShare() {
+        ModelParameters p = new ModelParameters().setMoeCacheCpuShare(0.25f);
+        assertThat(p.parameters.get("--moe-cache-cpu-share"), is("0.25"));
+    }
+
+    @Test
+    public void testSetMoeCacheCpuShareAcceptsBothEnds() {
+        assertThat(new ModelParameters().setMoeCacheCpuShare(0.0f).parameters.get("--moe-cache-cpu-share"), is("0.0"));
+        assertThat(new ModelParameters().setMoeCacheCpuShare(1.0f).parameters.get("--moe-cache-cpu-share"), is("1.0"));
+    }
+
+    @Test
+    public void testSetMoeCacheCpuShareRejectsValuesOutsideTheRange() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setMoeCacheCpuShare(-0.01f));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setMoeCacheCpuShare(1.01f));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setMoeCacheCpuShare(Float.NaN));
+    }
+
+    // -------------------------------------------------------------------------
+    // addShard (llama.cpp b12233)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testAddShard() {
+        ModelParameters p = new ModelParameters().addShard("/models/a-00002-of-00002.gguf");
+        assertThat(p.parameters.get("--shard"), is("/models/a-00002-of-00002.gguf"));
+    }
+
+    @Test
+    public void testAddShardTwiceKeepsBoth() {
+        ModelParameters p = new ModelParameters().addShard("b.gguf").addShard("c.gguf");
+        assertThat(p.parameters.get("--shard"), is("b.gguf,c.gguf"));
+    }
+
+    @Test
+    public void testAddShardRejectsAnEmptyPath() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().addShard(""));
+    }
 }

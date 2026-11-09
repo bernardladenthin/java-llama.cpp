@@ -1482,6 +1482,34 @@ JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_TextToSpeech_supportsSpeaker
     });
 }
 
+JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_TextToSpeech_voicesNative(JNIEnv *env, jclass clazz,
+                                                                                  jlong handle) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jobjectArray {
+        (void)clazz;
+        char **names = nullptr;
+        size_t count = 0;
+        const jllama_status status =
+            jllama_tts_voices(reinterpret_cast<const jllama_tts_model *>(handle), &names, &count);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return nullptr;
+        }
+        jclass string_class = env->FindClass("java/lang/String");
+        jobjectArray out =
+            string_class != nullptr ? env->NewObjectArray(static_cast<jsize>(count), string_class, nullptr) : nullptr;
+        if (out != nullptr) {
+            for (size_t i = 0; i < count; ++i) {
+                // a voice name comes out of the GGUF, so it crosses as UTF-8 bytes, not Modified UTF-8
+                jstring name = utf8_to_jstring(env, names[i]);
+                env->SetObjectArrayElement(out, static_cast<jsize>(i), name);
+                env->DeleteLocalRef(name);
+            }
+        }
+        jllama_strings_free(names, count);
+        return out;
+    });
+}
+
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_TextToSpeech_deleteNative(JNIEnv *env, jclass clazz, jlong handle) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         (void)env;

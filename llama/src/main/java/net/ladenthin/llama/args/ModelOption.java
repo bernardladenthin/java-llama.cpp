@@ -194,6 +194,9 @@ public enum ModelOption {
     /** CLI option {@code --model-url}. */
     MODEL_URL("--model-url"),
 
+    /** CLI option {@code --moe-cache-cpu-share}. */
+    MOE_CACHE_CPU_SHARE("--moe-cache-cpu-share"),
+
     /** CLI option {@code --moe-cache-mib}. */
     MOE_CACHE_MIB("--moe-cache-mib"),
 
@@ -265,6 +268,9 @@ public enum ModelOption {
 
     /** CLI option {@code --seed}. */
     SEED("--seed"),
+
+    /** CLI option {@code --shard}. */
+    SHARD("--shard"),
 
     /** CLI option {@code --sleep-idle-seconds}. */
     SLEEP_IDLE_SECONDS("--sleep-idle-seconds"),

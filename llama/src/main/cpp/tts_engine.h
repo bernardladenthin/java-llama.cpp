@@ -39,6 +39,11 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
 // mtmd_helper_cap::audio_gen_spk_ref, read once at load). False on nullptr.
 bool engine_supports_speaker_reference(const tts_engine *engine);
 
+// The names of the predefined voices the loaded pair ships in its projector (llama.cpp b12061,
+// mtmd_gen_audio_info::n_voices: Pocket TTS without voice cloning, LFM3-Audio), read once at load.
+// Empty for a model without them, and on nullptr.
+const std::vector<std::string> &engine_voices(const tts_engine *engine);
+
 // Synthesize `text` to a 24 kHz mono 16-bit WAV byte stream in `out_wav`. `speaker_reference_path`
 // may be empty (uses the model's default voice) and is refused for a pair that does not support one
 // (engine_supports_speaker_reference). A model with a "tts" chat template (LFM3-Audio) speaks the

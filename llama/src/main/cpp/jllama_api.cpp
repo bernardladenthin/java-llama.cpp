@@ -849,6 +849,35 @@ jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts,
     return JLLAMA_STATUS_OK;
 }
 
+jllama_status jllama_tts_voices(const jllama_tts_model *tts, char ***names, size_t *count) {
+    if (tts == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
+    }
+    if (names == nullptr || count == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "names and count must not be null");
+    }
+    *names = nullptr;
+    *count = 0;
+    try {
+        const auto &voices = jllama_tts::engine_voices(reinterpret_cast<const jllama_tts::tts_engine *>(tts));
+        auto **out = static_cast<char **>(std::calloc(std::max<size_t>(voices.size(), 1), sizeof(char *)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (size_t i = 0; i < voices.size(); ++i) {
+            out[i] = copy_out(voices[i]);
+        }
+        *names = out;
+        *count = voices.size();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
 void jllama_tts_free(jllama_tts_model *tts) {
     jllama_tts::engine_free(reinterpret_cast<jllama_tts::tts_engine *>(tts));
 }

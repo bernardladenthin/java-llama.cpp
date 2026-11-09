@@ -32,6 +32,8 @@ struct tts_engine {
     int n_batch = 2048;
     // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
     bool speaker_reference = false;
+    // The predefined voices of the projector (b12061, #31429), read once at load; empty for most models.
+    std::vector<std::string> voices;
     // The model's chat templates: a "tts" one (LFM3-Audio, b11941) renders the prompt to speak.
     common_chat_templates_ptr templates;
     // Serializes engine_synthesize: it drives llama_decode (via mtmd_helper::gen_audio) on the
@@ -80,11 +82,19 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
     engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref;
+    for (int32_t i = 0; const char *name = mtmd_gen_audio_voice_name(engine->mctx.get(), i); i++) {
+        engine->voices.emplace_back(name);
+    }
     // As llama-tts: the model's own templates, no override. A backbone without a chat template gets
     // the library's fallback, which has no "tts" variant, so its text is spoken as given.
     engine->templates = common_chat_templates_init(engine->model, "");
 
     return engine;
+}
+
+const std::vector<std::string> &engine_voices(const tts_engine *engine) {
+    static const std::vector<std::string> none;
+    return engine != nullptr ? engine->voices : none;
 }
 
 bool engine_supports_speaker_reference(const tts_engine *engine) {
@@ -137,9 +147,9 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // b12061 (#31429): mtmd_helper_gen_audio_inp lost its `voice`; a model with predefined voices
     // takes one as its speaker reference instead (see choose_predefined_voice), every other model
     // keeps naming the voice in the prompt its "tts" template renders below.
-    const mtmd_gen_audio_info audio_info = mtmd_gen_audio_get_info(engine->mctx.get());
     std::string voice_name = voice;
-    switch (choose_predefined_voice(audio_info.n_voices, !voice.empty(), speaker_bitmap != nullptr)) {
+    switch (
+        choose_predefined_voice(static_cast<int>(engine->voices.size()), !voice.empty(), speaker_bitmap != nullptr)) {
     case predefined_voice::NOT_USED:
         break;
     case predefined_voice::CONFLICT:
@@ -147,15 +157,15 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         err = "a voice and a speaker reference cannot be used together";
         return false;
     case predefined_voice::FIRST:
-        voice_name = mtmd_gen_audio_voice_name(engine->mctx.get(), 0);
+        voice_name = engine->voices.front();
         [[fallthrough]];
     case predefined_voice::NAMED:
         speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
         if (!speaker_bitmap) {
             common_sampler_free(smpl);
             err = "unknown voice \"" + voice_name + "\", the model has:";
-            for (int32_t i = 0; i < audio_info.n_voices; i++) {
-                err += std::string(" ") + mtmd_gen_audio_voice_name(engine->mctx.get(), i);
+            for (const std::string &name : engine->voices) {
+                err += " " + name;
             }
             return false;
         }

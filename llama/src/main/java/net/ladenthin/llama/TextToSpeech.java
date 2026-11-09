@@ -4,6 +4,9 @@
 
 package net.ladenthin.llama;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.loader.LlamaLoader;
 import org.jspecify.annotations.Nullable;
@@ -76,6 +79,14 @@ public final class TextToSpeech implements AutoCloseable {
         boolean supportsSpeakerReference(long handle);
 
         /**
+         * The names of the predefined voices of the loaded pair.
+         *
+         * @param handle a handle returned by {@link #load}
+         * @return the names, empty for a model without predefined voices
+         */
+        String[] voices(long handle);
+
+        /**
          * Frees the pipeline.
          *
          * @param handle a handle returned by {@link #load}
@@ -107,6 +118,11 @@ public final class TextToSpeech implements AutoCloseable {
         @Override
         public boolean supportsSpeakerReference(long handle) {
             return supportsSpeakerReferenceNative(handle);
+        }
+
+        @Override
+        public String[] voices(long handle) {
+            return voicesNative(handle);
         }
 
         @Override
@@ -202,6 +218,29 @@ public final class TextToSpeech implements AutoCloseable {
         try {
             requireOpen();
             return backend.supportsSpeakerReference(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * The predefined voices of this model pair, to pass as {@code voice} to
+     * {@link #synthesize(String, String, String, String, int, int, int)}. A model that ships voices
+     * in its projector (Pocket TTS without voice cloning, LFM3-Audio; llama.cpp b12061) only speaks
+     * with one of them, and uses the first of this list when a synthesis names neither a voice nor
+     * a speaker reference. llama.cpp's own server lists the same names as {@code voices} in
+     * {@code GET /props}.
+     *
+     * @return the voice names in the model's order, unmodifiable; empty for a model without
+     *     predefined voices (Qwen3-TTS, Soprano)
+     * @throws IllegalStateException if this instance is closed
+     */
+    public List<String> getVoices() {
+        lifecycleLock.readLock().lock();
+        try {
+            requireOpen();
+            return Collections.unmodifiableList(
+                    Arrays.asList(backend.voices(handle).clone()));
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -311,6 +350,8 @@ public final class TextToSpeech implements AutoCloseable {
             int seed);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
+
+    private static native String[] voicesNative(long handle);
 
     private static native void deleteNative(long handle);
 }

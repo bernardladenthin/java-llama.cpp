@@ -59,7 +59,8 @@ public class QuantizationTypeTest {
                 Arguments.of(QuantizationType.MXFP4_MOE, 38),
                 Arguments.of(QuantizationType.NVFP4, 39),
                 Arguments.of(QuantizationType.Q1_0, 40),
-                Arguments.of(QuantizationType.Q2_0, 41));
+                Arguments.of(QuantizationType.Q2_0, 41),
+                Arguments.of(QuantizationType.F8_E4M3, 42));
     }
 
     @ParameterizedTest

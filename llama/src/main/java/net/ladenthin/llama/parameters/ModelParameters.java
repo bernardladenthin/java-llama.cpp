@@ -976,6 +976,29 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Let the CPU compute a share of the MoE expert cache's misses instead of uploading them.
+     *
+     * <p>Once the cache of {@link #setMoeCacheMib(int)} is full, every expert that is not in it is
+     * uploaded to the GPU, replacing another one. With a share above {@code 0} llama.cpp computes
+     * that fraction of the misses on the CPU, from the experts in host memory, and leaves the
+     * cache as it is. Upstream {@code --moe-cache-cpu-share} (llama.cpp b12191, EXPERIMENTAL
+     * there); {@code 0}, the default, uploads every miss. Without a cache the option has no
+     * effect.</p>
+     *
+     * @param share the share of the misses the CPU computes, from {@code 0} to {@code 1}
+     * @return this builder
+     * @throws IllegalArgumentException if {@code share} is not a number from 0 to 1 (upstream
+     *     rejects it as well)
+     */
+    public ModelParameters setMoeCacheCpuShare(float share) {
+        if (!(share >= 0.0f && share <= 1.0f)) {
+            throw new IllegalArgumentException(
+                    "Invalid moe-cache-cpu-share value: " + share + " (must be from 0 to 1)");
+        }
+        return putScalar(ModelOption.MOE_CACHE_CPU_SHARE, share);
+    }
+
+    /**
      * Keep the dense FFN weights of the first {@code n} layers on the CPU.
      *
      * <p>The dense-model counterpart of {@link #setCpuMoeLayers(int)}: it offloads the feed-forward
@@ -1086,6 +1109,23 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
         return appendCsvValue(ModelOption.LORA_SCALED, scaledField(ModelOption.LORA_SCALED, fname, scale));
+    }
+
+    /**
+     * Add an extra GGUF shard of the model (can be repeated to add several).
+     *
+     * <p>A model split into several GGUF files normally finds its parts next to the first one, by
+     * their names. A shard named here is loaded with the model wherever it lies, also on another
+     * drive, and in addition to the parts found by name. Upstream {@code --shard} (alias
+     * {@code --ple}), llama.cpp b12233. Upstream reads the option as a comma-separated list; a
+     * path with a comma in it is quoted here, so it is passed as given.</p>
+     *
+     * @param fname the file path of the shard
+     * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
+     */
+    public ModelParameters addShard(String fname) {
+        return appendCsvValue(ModelOption.SHARD, fname);
     }
 
     /**

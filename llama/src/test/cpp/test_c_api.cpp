@@ -1895,6 +1895,17 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     EXPECT_EQ(jllama_tts_supports_speaker_reference(reinterpret_cast<const jllama_tts_model *>(&not_a_model), nullptr),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "supported must not be null");
+    // The predefined voices (b12061): the same refusals, and a refused call leaves the out-parameters alone.
+    char **voices = reinterpret_cast<char **>(&not_a_model);
+    size_t n_voices = 7;
+    EXPECT_EQ(jllama_tts_voices(nullptr, &voices, &n_voices), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    EXPECT_EQ(n_voices, 7u) << "a refused call must not write the out-parameters";
+    EXPECT_EQ(jllama_tts_voices(reinterpret_cast<const jllama_tts_model *>(&not_a_model), nullptr, &n_voices),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "names and count must not be null");
+    EXPECT_EQ(jllama_tts_voices(reinterpret_cast<const jllama_tts_model *>(&not_a_model), &voices, nullptr),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
     jllama_tts_free(nullptr);
     jllama_bytes_free(nullptr);
 }

@@ -8,6 +8,8 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,6 +37,8 @@ public class TextToSpeechLifecycleTest {
         final AtomicInteger insideSynthesize = new AtomicInteger();
         final AtomicInteger deletes = new AtomicInteger();
         final AtomicInteger speakerReferenceQueries = new AtomicInteger();
+        final AtomicInteger voiceQueries = new AtomicInteger();
+        volatile String[] voices = new String[0];
         volatile boolean speakerReference;
         volatile boolean holdSynthesize;
         volatile boolean deletedDuringSynthesize;
@@ -78,6 +82,12 @@ public class TextToSpeechLifecycleTest {
         public boolean supportsSpeakerReference(long handle) {
             speakerReferenceQueries.incrementAndGet();
             return speakerReference;
+        }
+
+        @Override
+        public String[] voices(long handle) {
+            voiceQueries.incrementAndGet();
+            return voices;
         }
 
         @Override
@@ -180,6 +190,37 @@ public class TextToSpeechLifecycleTest {
         tts.close();
         assertThrows(IllegalStateException.class, tts::supportsSpeakerReference);
         assertThat(backend.speakerReferenceQueries.get(), is(0));
+    }
+
+    @Test
+    public void getVoices_whileOpen_returnsTheBackendsNamesInOrder() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            assertThat(tts.getVoices().isEmpty(), is(true));
+            backend.voices = new String[] {"alba", "marius"};
+            assertThat(tts.getVoices(), is(Arrays.asList("alba", "marius")));
+        }
+    }
+
+    @Test
+    public void getVoices_returnsAListTheCallerCannotChangeTheModelsVoicesThrough() {
+        FakeBackend backend = new FakeBackend();
+        backend.voices = new String[] {"alba"};
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            List<String> voices = tts.getVoices();
+            assertThrows(UnsupportedOperationException.class, () -> voices.add("x"));
+            assertThrows(UnsupportedOperationException.class, () -> voices.set(0, "x"));
+            assertThat(backend.voices[0], is("alba"));
+        }
+    }
+
+    @Test
+    public void getVoices_afterClose_throwsWithoutAskingTheFreedEngine() {
+        FakeBackend backend = new FakeBackend();
+        TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0);
+        tts.close();
+        assertThrows(IllegalStateException.class, tts::getVoices);
+        assertThat(backend.voiceQueries.get(), is(0));
     }
 
     /** Waits until the thread waits for a lock or has finished, whichever comes first. */

@@ -933,7 +933,9 @@ Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
 voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
 clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
-`LlamaException`). As with `LlamaModel`, native memory is not GC-managed — use
+`LlamaException`). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
+without voice cloning, LFM3-Audio); such a model speaks with the one named as `voice`, or with the
+first of the list. As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
 
 A model whose GGUF carries a `"tts"` chat template, **LFM3-Audio** (`LiquidAI/LFM3-Audio-2B-GGUF`,

@@ -99,6 +99,15 @@ public class TtsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Qwen3-TTS ships no predefined voices")
+    public void getVoicesIsEmptyForAModelWithoutPredefinedVoices() {
+        // llama.cpp's mtmd_gen_audio_info::n_voices (b12061) counts the voices a projector ships
+        // (Pocket TTS without voice cloning, LFM3-Audio); Qwen3-TTS clones a voice instead. The call
+        // crosses JNI and the C API's string array either way.
+        assertTrue(tts().getVoices().isEmpty(), "Qwen3-TTS has no predefined voices: " + tts().getVoices());
+    }
+
+    @Test
     @DisplayName("synthesize() with a speaker reference clip returns a well-formed, non-silent WAV")
     @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
     public void synthesizesWithAClonedVoice() {

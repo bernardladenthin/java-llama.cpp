@@ -480,6 +480,14 @@ JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, cons
  */
 JLLAMA_API jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts, bool *supported);
 
+/**
+ * The predefined voices of the loaded pair: *count names in *names (jllama_strings_free), to pass
+ * as `voice` to jllama_tts_synthesize_voice. llama.cpp b12061: a model that ships voices in its
+ * projector (Pocket TTS without voice cloning, LFM3-Audio) only speaks with one of them. *count is 0
+ * for a model without predefined voices. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_voices(const jllama_tts_model *tts, char ***names, size_t *count);
+
 /** Frees the model pair; null is ignored. */
 JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);
 

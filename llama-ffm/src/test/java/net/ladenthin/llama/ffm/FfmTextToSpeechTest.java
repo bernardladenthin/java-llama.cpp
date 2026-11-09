@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -40,6 +41,7 @@ class FfmTextToSpeechTest {
         final CountDownLatch insideSynthesize = new CountDownLatch(1);
         final CountDownLatch releaseSynthesize = new CountDownLatch(1);
         volatile boolean speakerReference;
+        volatile List<String> voices = List.of();
 
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
@@ -59,6 +61,12 @@ class FfmTextToSpeechTest {
         public boolean supportsSpeakerReference(MemorySegment handle) {
             events.add("supportsSpeakerReference");
             return speakerReference;
+        }
+
+        @Override
+        public List<String> voices(MemorySegment handle) {
+            events.add("voices");
+            return voices;
         }
 
         @Override
@@ -129,6 +137,29 @@ class FfmTextToSpeechTest {
         assertThat(tts.supportsSpeakerReference(), is(false));
         backend.speakerReference = true;
         assertThat(tts.supportsSpeakerReference(), is(true));
+    }
+
+    @Test
+    void getVoicesReturnsTheBackendsNamesAsAnUnmodifiableList() {
+        GatedBackend backend = new GatedBackend();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+
+        assertThat(tts.getVoices(), is(List.of()));
+        backend.voices = new ArrayList<>(List.of("alba", "marius"));
+        List<String> voices = tts.getVoices();
+        assertThat(voices, is(List.of("alba", "marius")));
+        assertThrows(UnsupportedOperationException.class, () -> voices.add("x"));
+    }
+
+    @Test
+    void getVoicesAfterCloseIsRefusedWithoutTouchingTheHandle() {
+        GatedBackend backend = new GatedBackend();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+
+        tts.close();
+
+        assertThrows(IllegalStateException.class, tts::getVoices);
+        assertThat(backend.events, contains("free (deletes the engine)"));
     }
 
     @Test

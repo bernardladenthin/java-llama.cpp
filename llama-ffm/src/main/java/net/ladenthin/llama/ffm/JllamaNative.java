@@ -150,6 +150,7 @@ final class JllamaNative {
             json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
     static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
             downcall("jllama_tts_supports_speaker_reference", json(ADDRESS, ADDRESS));
+    static final MethodHandle TTS_VOICES = downcall("jllama_tts_voices", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle TTS_FREE = downcall("jllama_tts_free", FunctionDescriptor.ofVoid(ADDRESS));
 
     private JllamaNative() {}

@@ -11,9 +11,11 @@ import static net.ladenthin.llama.ffm.JllamaNative.invoke;
 import static net.ladenthin.llama.ffm.JllamaNative.longSlot;
 import static net.ladenthin.llama.ffm.JllamaNative.pointerSlot;
 import static net.ladenthin.llama.ffm.JllamaNative.takeBytes;
+import static net.ladenthin.llama.ffm.JllamaNative.takeStrings;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.exception.LlamaException;
@@ -52,6 +54,14 @@ public final class FfmTextToSpeech implements AutoCloseable {
         boolean supportsSpeakerReference(MemorySegment handle);
 
         /**
+         * The names of the predefined voices of the pair on {@code handle}.
+         *
+         * @param handle the loaded pair
+         * @return the names, empty for a model without predefined voices
+         */
+        List<String> voices(MemorySegment handle);
+
+        /**
          * Frees {@code handle}, the engine with it.
          *
          * @param handle the loaded pair
@@ -80,6 +90,16 @@ public final class FfmTextToSpeech implements AutoCloseable {
                 MemorySegment supported = booleanSlot(arena);
                 JllamaNative.call(JllamaNative.TTS_SUPPORTS_SPEAKER_REFERENCE, handle, supported);
                 return supported.get(JAVA_BOOLEAN, 0);
+            }
+        }
+
+        @Override
+        public List<String> voices(MemorySegment handle) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment names = pointerSlot(arena);
+                MemorySegment count = longSlot(arena);
+                JllamaNative.call(JllamaNative.TTS_VOICES, handle, names, count);
+                return takeStrings(names, count);
             }
         }
 
@@ -155,6 +175,28 @@ public final class FfmTextToSpeech implements AutoCloseable {
                 throw new IllegalStateException("the model is closed");
             }
             return backend.supportsSpeakerReference(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * The predefined voices of this pair, to pass as {@code voice} to {@link #synthesize}: a model
+     * that ships voices in its projector (Pocket TTS without voice cloning, LFM3-Audio; llama.cpp
+     * b12061) only speaks with one of them, and with the first when a synthesis names neither a
+     * voice nor a speaker reference.
+     *
+     * @return the voice names in the model's order, unmodifiable; empty for a model without
+     *     predefined voices
+     * @throws IllegalStateException when the pair is closed
+     */
+    public List<String> getVoices() {
+        lifecycleLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("the model is closed");
+            }
+            return List.copyOf(backend.voices(handle));
         } finally {
             lifecycleLock.readLock().unlock();
         }

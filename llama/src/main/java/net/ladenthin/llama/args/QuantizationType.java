@@ -85,7 +85,9 @@ public enum QuantizationType {
     /** Mostly Q1_0 — {@code LLAMA_FTYPE_MOSTLY_Q1_0 = 40}. */
     Q1_0(40),
     /** Mostly Q2_0 — {@code LLAMA_FTYPE_MOSTLY_Q2_0 = 41}. */
-    Q2_0(41);
+    Q2_0(41),
+    /** Mostly OCP FP8 E4M3 — {@code LLAMA_FTYPE_MOSTLY_F8_E4M3 = 42} (llama.cpp b12000). */
+    F8_E4M3(42);
 
     private final int ftypeValue;
 

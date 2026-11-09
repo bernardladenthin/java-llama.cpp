@@ -182,6 +182,102 @@ Kept as a list because each entry names the machine it needs -- the harness is
   configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
   flag answers with upstream's "not available" message. No plan to bundle a binary.
 
+### From the b11968–b12233 bump (2026-11-09) -- to implement, to decide, to measure
+
+What the range brought that this library does not use yet, or that changed under it. Done at the bump
+and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jllama_tts_voices`, the
+`voice` of a synthesis handed over as upstream now wants it), `ModelParameters.addShard`
+(`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`), `QuantizationType.F8_E4M3`.
+
+**To decide and measure first -- Windows, non-ASCII paths other than the model's.** Since b12131 /
+b12132 (#31682, #31681) upstream builds every `std::filesystem::path` in `common/` and `tools/server/`
+from a plain `std::string`, which Windows reads in the process's **active code page**; before, it used
+`u8path()`. Upstream's executables are UTF-8 there through the app manifest of #31329. `libjllama`
+runs inside `java.exe`, which has no such manifest, so its code page is the system's (1252, 932, ...).
+Expected, **not measured** (no Windows machine at the bump): with a non-ASCII character in the path,
+the download cache and its `.etag` / partial files (`LLAMA_CACHE`, `-hf`, `--model-url`),
+`--models-dir` in router mode, the MCP configuration file and the built-in file tools address a
+mis-decoded name; and the checkpoint / draft-state appendix of a slot file (`--slot-save-path`) is
+appended through `std::ofstream(filepath)` while the slot file itself is written through `ggml_fopen`
+(UTF-8), so the appendix would land in a second, mis-named file and a restore would silently come back
+without its checkpoints. The model, mmproj and LoRA files are opened through `ggml_fopen` and are not
+affected; ASCII paths are not affected.
+  - Measure on Windows with a user name or directory containing `ä` / `日本`: `LlamaModel` with
+    `setSlotSavePath` + save/restore (compare `timings` after the restore), `-hf` into such an
+    `LLAMA_CACHE`, router mode over such a `--models-dir`.
+  - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
+    lines over `common/{common,download,hf-cache,preset}.cpp` and
+    `tools/server/server-{context,mcp,models,tools}.cpp`; upstream removed exactly these, so it has
+    to be refreshed whenever they move); (b) refuse such a path in the Java layer on Windows with a
+    message; (c) report it upstream as the embedding-host half of #31329 -- a library cannot carry a
+    manifest. `setlocale(LC_ALL, ".UTF-8")` would switch MSVC's narrow file APIs to UTF-8 but changes
+    the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently.
+
+**Build and CI**
+- **CUDA 13.5.** Upstream builds its CUDA 13 release binaries with 13.5 since b12169 (#31788) and
+  dropped `-DGGML_CUDA_CCCL_VERSION=v3.4.3` for them (13.5 bundles CCCL 3.5); its
+  `.github/actions/windows-setup-cuda/action.yml` moved with it. This project stays on 13.4 with the
+  pin, which still builds (upstream's 12.4 rows keep the pin). Follow CLAUDE.md "Upgrading CUDA
+  Version": the two places of the toolkit version, the redist manifest and component list of the
+  Windows job, then **drop both CCCL flags** -- and with them, check whether `option(BUILD_TESTING
+  ... OFF)` before the first `FetchContent_MakeAvailable()` is still needed for another reason. Needs
+  a Publish run; re-measure the nvcc/sccache hit table on the first warm run.
+- **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,
+  b11980 #31125). Nothing to change; read the first Publish run's two SYCL jobs for a compiler that
+  rejects the new kernels, and the module's dependency list for a new import.
+- **`ggml-base` is compiled with `-fp-model=precise` under `icx`/`icpx`** (upstream's own change in
+  `ggml/src/CMakeLists.txt`). A module-only SYCL build links the ggml-base of its own configure but
+  ships only the module, so nothing changes in a jar.
+- **mtmd is a unity build** (#31760, batches of 16 model sources). Follows by itself; if a
+  Windows/sccache job shows a miss rate for `mtmd` it did not have, that is why.
+- **RPC over more than two ranks / NCCL** (b12079 #28967): the CUDA module would link NCCL only if
+  the toolkit image has it (`find_package(NCCL)`, unchanged). Nothing ships it; `RpcServer` serves
+  the pairwise path. Only relevant if someone wants multi-node tensor parallelism from Java.
+
+**API surface not exposed yet**
+- **Audio-frame temperature for text to speech** (`mtmd_helper_gen_audio_inp::temp`, b12218 #31655;
+  the `/tts` route's `temperature`). `engine_synthesize` keeps the model's default (`-1`). Would be
+  one more parameter through `engine_synthesize`, a `jllama_tts_synthesize_*` variant, the JNI
+  shell, `TextToSpeech` and `FfmTextToSpeech`. Only Pocket TTS reads it today.
+- **New audio generation pipelines: Chatterbox (b12097 #30993) and Drama-3 (b12116 #31613)**,
+  `MTMD_GEN_AUDIO_TYPE_CHATTERBOX` / `DRAMA3`. `TextToSpeech` drives `mtmd_helper::gen_audio`
+  generically, so they are expected to work; neither was loaded. A property-gated run of
+  `TtsIntegrationTest`'s shape with each (the WAV header takes its sample rate from
+  `gen_audio::get_output`, so another rate than 24 kHz is carried) is the test.
+- **Re-run `TtsChatTemplateIntegrationTest` with LFM3-Audio** (property-gated, not in CI): since
+  b12061 its `female` / `male` are predefined voices handed over as a voice bitmap *and* named in the
+  template, and a synthesis without a voice takes the first of `getVoices()`. The "template's
+  defaults" and "two voices differ" cases were written before that.
+- **`voices` in the model meta and on the Java transport.** Upstream lists them in `GET /props`
+  (`server_context_meta::tts_voices`); `NativeServer` serves that. `LlamaModel.getModelMeta()` and
+  `OpenAiSseFormatter.propsJson` do not carry it. Belongs with server-side TTS through `LlamaModel`
+  (the b11800 list above).
+- **`extra_params` on `/v1/responses`** (b12022 #30959): llama.cpp parameters the Responses API has
+  no field for (`{"seed": 42, "min_p": 0.05}`), merged into the converted request. `NativeServer`
+  has it; `ResponsesApiSupport` drops the key. Small, model-free to test.
+- **`response_format` of type `json_schema` with the schema at the top level** (b12229 #28697).
+  `OpenAiRequestMapper` forwards `response_format` verbatim, so the chat route follows upstream;
+  `ResponsesApiSupport` builds the nested form itself and is unaffected. Add one
+  `OpenAiCompatServerHttpTest` row so the forwarding is pinned.
+- **Nemotron 3.5 Transcribe (b12087), MageVL-Cowork (b12192), Qwen3-VL's video prompt format
+  (b12098, `MTMD_VIDEO_TEMPLATE_QWEN3VL`)**: upstream-side model support, reached through the
+  existing multimodal paths. No code here; candidates for `AudioInputIntegrationTest` /
+  `MultimodalIntegrationTest` models.
+- **Reference-counted prompt checkpoints** (b12141 #30137) and **the MoE expert cache's CPU share**
+  (b12191): both internal. Whether upstream exports a hit rate
+  for the cache that `ServerMetrics` could carry was not looked at.
+- **Speculative decoding state** (b12091 #30141, MTP hidden state saved and restored; b12231's
+  functionality test): slot save/restore of a model with a draft carries more state. Whether the suite has a
+  slot save/restore round trip with a draft model was not checked; add one if not.
+
+**Compatibility notes to carry into the release notes**
+- **RPC protocol 9** (b12217): `RpcServer` and a `--rpc` client must run the same version of this
+  library.
+- **`TextToSpeech` voice handling** changed for models with predefined voices (first voice by
+  default, voice + speaker reference refused).
+- **`HF_TOKEN` is sent to `huggingface.co` hosts only** (b12166 #31730): a mirror on another host
+  that needs the token no longer receives it.
+
 ### Modular natives -- follow-ups
 
 1. **Windows GPU modules on real hardware -- the tg128 of the CUDA module.** Device registration,
