@@ -463,7 +463,10 @@ JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char
  * "male" for LFM3-Audio. A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered
  * from it with `text`, `lang` and `voice`, the others `text` itself; for such a model `lang` is its
  * own code ("en", "de", ...) and null leaves the template's default. jllama_tts_synthesize is this
- * function with a null voice. Since 6.1.0.
+ * function with a null voice. A model with predefined voices in its projector (Pocket TTS without
+ * voice cloning, llama.cpp b12061) speaks with the named one, or its first when `voice` and the
+ * speaker reference are both null; an unknown name fails naming the model's voices, and a voice next
+ * to a speaker reference is refused. Since 6.1.0.
  */
 JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text,
                                                      const char *speaker_reference_path, const char *lang,

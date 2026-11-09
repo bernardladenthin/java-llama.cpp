@@ -241,6 +241,11 @@ public final class TextToSpeech implements AutoCloseable {
      * own {@code /tts} route and {@code llama-tts} do (b11941); the other pipelines (Qwen3-TTS, Pocket
      * TTS, Soprano) speak {@code text} itself and ignore an unknown voice.</p>
      *
+     * <p>A model that ships predefined voices in its projector (Pocket TTS without voice cloning,
+     * llama.cpp b12061) only speaks with one of them: {@code voice} names it, an unknown name fails
+     * with the list of the model's voices, a voice next to a speaker reference is refused, and
+     * without either the model's first voice is used.</p>
+     *
      * @param text the text to speak
      * @param speakerReferenceAudioPath path to a reference audio clip whose voice is cloned, or
      *     {@code null}/empty for the model's default voice; refused by a model pair that cannot clone

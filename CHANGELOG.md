@@ -42,6 +42,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12061** (from b12060, one upstream commit): predefined voices for audio generation
+  models (#31429, Pocket TTS without voice cloning). Upstream removed the `voice` field of the TTS
+  input; `TextToSpeech.synthesize(..., voice, ...)` / `jllama_tts_synthesize_voice` now hand a model
+  with predefined voices the named one (its first when neither a voice nor a speaker reference is
+  given), refuse a voice next to a speaker reference, and name the model's voices for an unknown
+  one. Models without predefined voices behave as before.
 - **llama.cpp b12060** (from b12014, 46 upstream commits, the last before the TTS input changes):
   a more efficient unified KV cache for several sequences (#29510), Clover (#31306), Gemma 4 images
   resized without letterbox padding (#30922), `extra_params` on `/v1/responses` (#30959),

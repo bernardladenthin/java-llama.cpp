@@ -288,3 +288,33 @@ TEST(TrainParams, MapsTheContextAndScheduleFields) {
     // Survives init() only because epochs (4) > decay_epochs (2.5) -- see the fixture comment.
     EXPECT_FLOAT_EQ(params.lr.decay_epochs, 2.5f);
 }
+
+// The predefined voices of a model (b12061, #31429): upstream's rule of llama-tts and the /tts route,
+// which engine_synthesize applies before it builds the input. A model without predefined voices
+// never gets a voice bitmap, whatever the caller names (its template takes the name); one with them
+// takes the named voice, falls back to its first voice when the caller gave neither a voice nor a
+// speaker reference, keeps a speaker reference given alone, and refuses both at once.
+TEST(TtsPredefinedVoice, AModelWithoutPredefinedVoicesNeverGetsOne) {
+    using jllama_tts::choose_predefined_voice;
+    using jllama_tts::predefined_voice;
+    EXPECT_EQ(choose_predefined_voice(0, false, false), predefined_voice::NOT_USED);
+    EXPECT_EQ(choose_predefined_voice(0, true, false), predefined_voice::NOT_USED);
+    EXPECT_EQ(choose_predefined_voice(0, false, true), predefined_voice::NOT_USED);
+    EXPECT_EQ(choose_predefined_voice(0, true, true), predefined_voice::NOT_USED);
+    EXPECT_EQ(choose_predefined_voice(-1, true, false), predefined_voice::NOT_USED);
+}
+
+TEST(TtsPredefinedVoice, AModelWithPredefinedVoicesTakesTheNamedOneOrItsFirst) {
+    using jllama_tts::choose_predefined_voice;
+    using jllama_tts::predefined_voice;
+    EXPECT_EQ(choose_predefined_voice(1, true, false), predefined_voice::NAMED);
+    EXPECT_EQ(choose_predefined_voice(5, true, false), predefined_voice::NAMED);
+    EXPECT_EQ(choose_predefined_voice(5, false, false), predefined_voice::FIRST);
+}
+
+TEST(TtsPredefinedVoice, ASpeakerReferenceIsKeptAloneAndRefusedNextToAVoice) {
+    using jllama_tts::choose_predefined_voice;
+    using jllama_tts::predefined_voice;
+    EXPECT_EQ(choose_predefined_voice(5, false, true), predefined_voice::NOT_USED);
+    EXPECT_EQ(choose_predefined_voice(5, true, true), predefined_voice::CONFLICT);
+}

@@ -64,6 +64,33 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
 }
 
 // ---------------------------------------------------------------------------
+// What a synthesis does about the predefined voices of a model (b12061, #31429: Pocket TTS without
+// voice cloning ships its voices in the mmproj, mtmd_gen_audio_info::n_voices of them, and such a
+// model only speaks with one -- it is handed over as the speaker reference, a "voice bitmap" from
+// mtmd_gen_audio_get_voice()). The rule is upstream's, of llama-tts and the /tts route: a model
+// without predefined voices names the voice in its prompt (the "tts" chat template) or has none; one
+// with them takes the named voice, refuses a voice next to a speaker reference, keeps a speaker
+// reference given alone, and falls back to its first voice when the caller gave neither (without a
+// voice prompt it produces near silence).
+enum class predefined_voice {
+    NOT_USED, // no predefined voice is handed to the pipeline
+    NAMED,    // the caller's voice, looked up by name
+    FIRST,    // the model's first voice, as its default
+    CONFLICT, // a voice and a speaker reference at once
+};
+
+[[nodiscard]] inline predefined_voice choose_predefined_voice(int n_voices, bool has_voice,
+                                                              bool has_speaker_reference) {
+    if (n_voices <= 0) {
+        return predefined_voice::NOT_USED;
+    }
+    if (has_voice) {
+        return has_speaker_reference ? predefined_voice::CONFLICT : predefined_voice::NAMED;
+    }
+    return has_speaker_reference ? predefined_voice::NOT_USED : predefined_voice::FIRST;
+}
+
+// ---------------------------------------------------------------------------
 // The language handed to the pipeline (mtmd_helper_gen_audio_inp::lang), "" for none. A model whose
 // "tts" chat template rendered the prompt (LFM3-Audio, b11941, #31257) takes the caller's value as
 // given -- its codes are "en", "de", ... and its template supplies the default -- so an empty one stays

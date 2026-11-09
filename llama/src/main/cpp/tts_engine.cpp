@@ -134,6 +134,34 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         speaker_bitmap.reset(wrapper.bitmap);
     }
 
+    // b12061 (#31429): mtmd_helper_gen_audio_inp lost its `voice`; a model with predefined voices
+    // takes one as its speaker reference instead (see choose_predefined_voice), every other model
+    // keeps naming the voice in the prompt its "tts" template renders below.
+    const mtmd_gen_audio_info audio_info = mtmd_gen_audio_get_info(engine->mctx.get());
+    std::string voice_name = voice;
+    switch (choose_predefined_voice(audio_info.n_voices, !voice.empty(), speaker_bitmap != nullptr)) {
+    case predefined_voice::NOT_USED:
+        break;
+    case predefined_voice::CONFLICT:
+        common_sampler_free(smpl);
+        err = "a voice and a speaker reference cannot be used together";
+        return false;
+    case predefined_voice::FIRST:
+        voice_name = mtmd_gen_audio_voice_name(engine->mctx.get(), 0);
+        [[fallthrough]];
+    case predefined_voice::NAMED:
+        speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
+        if (!speaker_bitmap) {
+            common_sampler_free(smpl);
+            err = "unknown voice \"" + voice_name + "\", the model has:";
+            for (int32_t i = 0; i < audio_info.n_voices; i++) {
+                err += std::string(" ") + mtmd_gen_audio_voice_name(engine->mctx.get(), i);
+            }
+            return false;
+        }
+        break;
+    }
+
     // b11796 (#30902): the helper is default-constructed and initialised explicitly; init() leaves it
     // invalid for a projector without audio generation (checked at load, but the contract is here).
     mtmd_helper::gen_audio gen;
@@ -148,7 +176,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
     // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
     // template error, which the C API reports.
-    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice);
+    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
     const std::string &prompt = rendered.empty() ? text : rendered;
     const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
 
@@ -158,7 +186,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
-    inp.voice = voice.empty() ? nullptr : voice.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = 1.0f;
     inp.seed = seed;
