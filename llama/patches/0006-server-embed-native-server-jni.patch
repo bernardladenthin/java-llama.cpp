@@ -1,15 +1,13 @@
-server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable)
+server: make llama_server() embeddable in a host process (no signal handlers, stoppable)
 
 b9870 exposes int llama_server(int, char **) with no main() in server.cpp; this patch adds what a
 JVM host needs to run it inside libjllama: a g_llama_server_embedded flag with
 llama_server_set_embedded() / llama_server_request_shutdown() (declared by the host in
 native_server_bridge.h), no process-wide SIGINT/SIGTERM handlers in embedded mode (they would
-hijack the JVM's), common_params_parse instead of common_params_parse_main for the forwarded argv
-(the latter's GetCommandLineW recovery would pick up java.exe's command line, the class of defect
-0001 fixes), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the locals
-it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
-over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
-Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+hijack the JVM's), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the
+locals it captures are destroyed -- a request landing after llama_server() returned used to run the
+lambda over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
+Runnable guard: src/test/cpp/test_native_server_shutdown.cpp.
 
 Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
 server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
@@ -18,8 +16,12 @@ guarding the sigaction block, and each role function that installs a shutdown ha
 reset after the last local its handler captures: models_routes in the router, ctx_http in the
 instance.
 
+Refreshed at b12014: #31417 removed the Windows argv reconstruction from common_params_parse (the
+defect 0001 carried a fix for, dropped at the same bump), so the forwarded-argv hunk is gone:
+llama_server() calls common_params_parse for every caller, and it parses the argv it is given.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index cf9a4045b..2fa87673c 100644
+index 8b1d42650..bbbf20a90 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
 @@ -16,6 +16,7 @@
@@ -37,10 +39,10 @@ index cf9a4045b..2fa87673c 100644
 +// [jllama] Embedded-mode support: when llama_server() is hosted inside libjllama and driven over
 +// JNI (net.ladenthin.llama.server.NativeServer), it must NOT install process-wide signal handlers
 +// (that would hijack the JVM's SIGINT/SIGTERM), and it must be stoppable out-of-band because
-+// ctx_server is local to the role function. It also parses exactly the forwarded argv rather than
-+// re-deriving it from the process command line (which would be java.exe's — the Windows bug the
-+// 0001 patch fixes for the embedded path). These symbols are declared in
-+// src/main/cpp/native_server_bridge.h and called by native_server.cpp.
++// ctx_server is local to the role function. The forwarded argv needs no special case any more:
++// since b12014 (#31417) common_params_parse parses exactly the argv it is given on every platform.
++// These symbols are declared in src/main/cpp/native_server_bridge.h and called by
++// native_server.cpp.
 +static std::atomic<bool> g_llama_server_embedded{false};
 +
 +void llama_server_set_embedded(bool embedded) {
@@ -84,7 +86,7 @@ index cf9a4045b..2fa87673c 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -447,6 +495,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -486,6 +534,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
  
      // setup server instances manager
      std::optional<server_models_routes> models_routes;
@@ -94,7 +96,7 @@ index cf9a4045b..2fa87673c 100644
      try {
          models_routes.emplace(params, argc, argv);
      } catch (const std::exception & e) {
-@@ -522,14 +573,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -561,14 +612,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
      }
      ctx_http.is_ready.store(true);
  
@@ -111,7 +113,7 @@ index cf9a4045b..2fa87673c 100644
  
      try {
          models_routes->models.load_startup_models();
-@@ -590,6 +641,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -629,6 +680,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
      server_tools   tools;
  
      server_http_context ctx_http;
@@ -121,7 +123,7 @@ index cf9a4045b..2fa87673c 100644
      if (!ctx_http.init(params)) {
          SRV_ERR("%s", "failed to initialize HTTP server\n");
          return 1;
-@@ -642,11 +696,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -681,11 +735,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
  
      SRV_INF("%s", "model loaded\n");
  
@@ -135,23 +137,7 @@ index cf9a4045b..2fa87673c 100644
  
      if (opts.install_signal_handlers) {
          server_install_signal_handlers();
-@@ -743,7 +797,14 @@ int llama_server(int argc, char ** argv) {
-     // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
-     server_stream_session_manager_start();
- 
--    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_SERVER)) {
-+    // [jllama] embedded (JNI) callers forward a clean UTF-8 argv, so honor it exactly via
-+    // common_params_parse; only the standalone tool needs common_params_parse_main's
-+    // process-command-line (GetCommandLineW) UTF-8 recovery.
-+    const bool embedded = g_llama_server_embedded.load();
-+    const bool parsed_ok = embedded
-+        ? common_params_parse(argc, argv, params, LLAMA_EXAMPLE_SERVER)
-+        : common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_SERVER);
-+    if (!parsed_ok) {
-         return 1;
-     }
- 
-@@ -752,7 +813,11 @@ int llama_server(int argc, char ** argv) {
+@@ -797,7 +851,11 @@ int llama_server(int argc, char ** argv) {
      llama_backend_init();
      llama_numa_init(params.numa);
  
@@ -159,7 +145,7 @@ index cf9a4045b..2fa87673c 100644
 +    server_run_opts opts;
 +    // [jllama] no process-wide SIGINT/SIGTERM handlers when embedded in the JVM (they would hijack
 +    // the JVM's own); NativeServer stops the embedded server via llama_server_request_shutdown()
-+    opts.install_signal_handlers = !embedded;
++    opts.install_signal_handlers = !g_llama_server_embedded.load();
 +    const int result = server_run(params, argc, argv, role, opts);
      common_log_flush(common_log_main());
      return result;

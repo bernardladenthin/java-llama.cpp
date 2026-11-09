@@ -42,6 +42,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12014** (from b12013, one upstream commit): upstream removed the Windows argv
+  substitution from `common_params_parse` (#31417, fixing this project's report #26416), so
+  **patch `0001` is dropped** and `0006` lost its forwarded-argv hunk; 13 local patches remain.
 - **llama.cpp b12013** (from b11968, 45 upstream commits, the last before a local patch needs
   work): the OCP FP8 E4M3 quantization type (#27512), a batched tensor copy API in ggml (#30881),
   IQ1/IQ2/Q2_0 on OpenCL, a DPAS flash-attention kernel for quantized KV caches in SYCL (#31125),

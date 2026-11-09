@@ -346,14 +346,11 @@ because each is a design decision in code this project does not own. And say pla
 downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
 maintainer can see what a merged change would let this project delete.
 
-There are **fourteen** patches today (`0001`–`0003`, `0006`–`0008`, `0014`, `0015`,
+There are **thirteen** patches today (`0002`, `0003`, `0006`–`0008`, `0014`, `0015`,
 `0017`, `0018`, `0020`–`0023`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
-- **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
-  guard, already reported as ggml-org/llama.cpp#26416 with the reproducer in
-  `docs/upstream-investigation-win32-argv-substitution.md`; the maintainers have not picked a
-  direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
+- **Submittable as they are** (self-contained, no jllama specifics): `0002` (preserve the caller's load-progress callback), `0006` (embeddable
   `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0014` (`common_log_set_callback`), `0015`
   (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper),
   **`0018`** (the AMX buffer released with `free()` instead of `ggml_aligned_free` -- one line, with

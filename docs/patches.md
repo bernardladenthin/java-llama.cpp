@@ -18,14 +18,13 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**14 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
-| 0001 | [`0001-win32-arg-parse-embed-guard.patch`](#0001-win32-arg-parse-embed-guardpatch) | common: parse exactly the argv an embedding caller passes (no GetCommandLineW override) | 35 | 36 |
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 8 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 7 |
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
@@ -36,30 +35,6 @@ match a binary to this page.
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
-
-## 0001-win32-arg-parse-embed-guard.patch
-
-**Files (35):** `common/arg.cpp`, `common/arg.h`, `examples/batched/batched.cpp`, `examples/debug/debug.cpp`, `examples/diffusion/diffusion-cli.cpp`, `examples/embedding/embedding.cpp`, `examples/eval-callback/eval-callback.cpp`, `examples/idle/idle.cpp`, `examples/lookahead/lookahead.cpp`, `examples/lookup/lookup-create.cpp`, `examples/lookup/lookup-stats.cpp`, `examples/lookup/lookup.cpp`, `examples/parallel/parallel.cpp`, `examples/passkey/passkey.cpp`, `examples/retrieval/retrieval.cpp`, `examples/speculative-simple/speculative-simple.cpp`, `examples/speculative/speculative.cpp`, `examples/training/finetune.cpp`, `tests/test-arg-parser.cpp`, `tests/test-export-graph-ops.cpp`, `tests/test-thread-safety.cpp`, `tools/batched-bench/batched-bench.cpp`, `tools/cli/cli.cpp`, `tools/completion/completion.cpp`, `tools/cvector-generator/cvector-generator.cpp`, `tools/export-lora/export-lora.cpp`, `tools/fit-params/fit-params.cpp`, `tools/imatrix/imatrix.cpp`, `tools/mtmd/debug/mtmd-debug.cpp`, `tools/mtmd/mtmd-cli.cpp`, `tools/perplexity/perplexity.cpp`, `tools/results/results.cpp`, `tools/server/server.cpp`, `tools/tokenize/tokenize.cpp`, `tools/tts/tts.cpp`
-
-The patch's own header, verbatim:
-
-```text
-common: parse exactly the argv an embedding caller passes (no GetCommandLineW override)
-
-Since llama.cpp #24779 (b9739) common_params_parse re-derives argv from the PROCESS command line on
-Windows and adopts it, so an embedded caller -- java.exe hosting libjllama through JNI -- loses the
-`--model ...` it passed and the load fails with "Failed to parse model parameters". b9789 narrowed
-that to a count guard, which still fires whenever the embedded argv happens to have the length of
-java.exe's own. This patch keeps common_params_parse to the argv it is given and moves the UTF-8
-recovery for the standalone tools into a new common_params_parse_main(), which every tool's main()
-now calls; a regression case in tests/test-arg-parser.cpp pins the contract. The embedded caller
-(jllama.cpp) keeps calling common_params_parse. Reported upstream as ggml-org/llama.cpp#26416;
-carried here until upstream decides which of the two directions it wants.
-
-Touches common/arg.{cpp,h} and the ~34 standalone main() call sites, which this project does not
-compile (LLAMA_BUILD_TOOLS/TESTS are OFF for a FetchContent subproject) but keeps in the patch so it
-can be submitted verbatim.
-```
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -111,18 +86,16 @@ being refreshed on every version bump.
 The patch's own header, verbatim:
 
 ```text
-server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable)
+server: make llama_server() embeddable in a host process (no signal handlers, stoppable)
 
 b9870 exposes int llama_server(int, char **) with no main() in server.cpp; this patch adds what a
 JVM host needs to run it inside libjllama: a g_llama_server_embedded flag with
 llama_server_set_embedded() / llama_server_request_shutdown() (declared by the host in
 native_server_bridge.h), no process-wide SIGINT/SIGTERM handlers in embedded mode (they would
-hijack the JVM's), common_params_parse instead of common_params_parse_main for the forwarded argv
-(the latter's GetCommandLineW recovery would pick up java.exe's command line, the class of defect
-0001 fixes), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the locals
-it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
-over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
-Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+hijack the JVM's), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the
+locals it captures are destroyed -- a request landing after llama_server() returned used to run the
+lambda over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
+Runnable guard: src/test/cpp/test_native_server_shutdown.cpp.
 
 Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
 server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
@@ -130,6 +103,10 @@ server_run_opts::install_signal_handlers (upstream's own switch, which llama-cli
 guarding the sigaction block, and each role function that installs a shutdown handler declares the
 reset after the last local its handler captures: models_routes in the router, ctx_http in the
 instance.
+
+Refreshed at b12014: #31417 removed the Windows argv reconstruction from common_params_parse (the
+defect 0001 carried a fix for, dropped at the same bump), so the forwarded-argv hunk is gone:
+llama_server() calls common_params_parse for every caller, and it parses the argv it is given.
 ```
 
 ## 0007-server-attach-http-frontend.patch
