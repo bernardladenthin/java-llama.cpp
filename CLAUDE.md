@@ -380,6 +380,7 @@ rejects anything else loudly.
 | `common/check-templates` | `repository-checks` | the files this repository carries equal their templates (`.github/actions-config.json`, `templates`) |
 | `common/check-release-gate` | `repository-checks` | every job gates **both** publish jobs, unless `.github/release-gate-exemptions.txt` names it with a reason |
 | `common/check-run-scripts` | `repository-checks` | every bash `run:` script of the workflows and local actions parses (`bash -n`) |
+| `common/check-artifact-timeouts` | `repository-checks` | every `upload-artifact` / `download-artifact` step carries `timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}`, and its workflow's top-level `env` reads the repository variable `ARTIFACT_TIMEOUT_MINUTES` with the default 20 ([`../workspace/policies/ci-artifact-timeouts.md`](../workspace/policies/ci-artifact-timeouts.md)): in Publish run 42675444364 an upload hung for hours, with GitHub's 360 minutes the only limit, while the longest transfer measured over two complete runs took 18 s |
 | `java/check-maven-versions` | `repository-checks` | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
 | `java/check-publication` | `repository-checks` | the publication jobs are wired as documented; a dry run of `.github/release-assets.json` collects what it promises |
 | `java/check-release-ref`, `java/finalize-publication`, `java/publish-central`, `java/publish-github`, `java/attest-publication` | `check-snapshot` / `check-tag`, the publish jobs, the six consumers | the signed publication (see "Signed publication") |
@@ -392,6 +393,8 @@ from Central into an empty local repository, then the server smoke on Java 8, an
 `post-release-webui.sh`). Tools from the default branch, the release's facts from a checkout of the
 tag in `release/`. It is not in the release gate -- it runs after the publication, on what was
 published (docs/post-release-check.md).
+
+**Dependabot pull requests do not run the pipeline.** `startgate` carries `if: github.event_name != 'pull_request' || github.actor != 'dependabot[bot]'`, and every job needs it, so a pull request Dependabot opens or rebases skips all 73 jobs. Such a run gets none of the repository's secrets -- no Depot cache, no `HF_TOKEN` -- so it built every native jar cold, and Dependabot rebases each of its pull requests on every change of `main`. The merge to `main` runs the pipeline; a push of a person to the branch, or a dispatch on it, runs it too.
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
