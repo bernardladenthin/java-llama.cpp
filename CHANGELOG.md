@@ -42,6 +42,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12060** (from b12014, 46 upstream commits, the last before the TTS input changes):
+  a more efficient unified KV cache for several sequences (#29510), Clover (#31306), Gemma 4 images
+  resized without letterbox padding (#30922), `extra_params` on `/v1/responses` (#30959),
+  `map('filter')` in chat templates (#24033), miniaudio 0.11.26. No source change here.
 - **llama.cpp b12014** (from b12013, one upstream commit): upstream removed the Windows argv
   substitution from `common_params_parse` (#31417, fixing this project's report #26416), so
   **patch `0001` is dropped** and `0006` lost its forwarded-argv hunk; 13 local patches remain.
