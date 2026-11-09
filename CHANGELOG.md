@@ -42,6 +42,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12216** (from b12079, 137 upstream commits, the last before the RPC patch needs work
+  again): llama.cpp 0.9.0 and ggml 0.29.0; Chatterbox and Drama-3 text to speech, Nemotron 3.5
+  Transcribe, MageVL-Cowork (#30993, #31613, #31471, #31819); Metis-1.6, xing4_0, Ripple and
+  Kimi-K3.1-Pro (#31134, #31589, #31692, #31779); a hybrid MoE expert cache that can compute misses
+  on the CPU (#31233, #30966); reference-counted prompt checkpoints in the server (#30137); the
+  Hugging Face token is sent to `huggingface.co` hosts only (#31730); cpp-httplib 0.65.0 and
+  BoringSSL 0.20261105.0. No source change here. **On Windows**, upstream now reads its secondary
+  paths (download cache, `--models-dir`, the checkpoint appendix of a slot file, the MCP
+  configuration) in the process's active code page, which inside `java.exe` is not UTF-8: such a
+  path with non-ASCII characters is not expected to work until that is measured and decided
+  (TODO.md). The model path itself is unaffected.
 - **llama.cpp b12079** (from b12078, one upstream commit): the RPC server's COMM_INIT connects
   more than two ranks and can hand the collective to a backend communicator (CUDA with NCCL,
   #28967). Patch `0015` is refreshed over the new peer loop with the same stop contract.
