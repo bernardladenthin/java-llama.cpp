@@ -75,7 +75,7 @@ jobs:
           path: release
           persist-credentials: false
       - name: Audit the release (run, jobs, files, Maven Central, signatures, provenance, bytecode)
-        uses: bernardladenthin/actions/java/audit-publication@68dde11a60623d76c22a3f1975355a236a6ccd39 # v1.2.0
+        uses: bernardladenthin/actions/java/audit-publication@f62f8f48b84f4789ef57af563d364b2c0b658ab0 # v1.2.1
         with:
           tag: ${{ env.TAG }}
           root: release

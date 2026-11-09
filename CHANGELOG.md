@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- - **Dependabot: one grouped pull request per ecosystem a week, on Saturday.**
+  `.github/dependabot.yml` is the template of bernardladenthin/actions v1.2.1: every minor and
+  patch update of Maven, and of the GitHub Actions, comes in one pull request (a major update
+  stays a pull request of its own), on Saturday, so a week of updates is one merge and one run of
+  the pipeline on `main`. `common/check-dependabot` in `repository-checks` holds the file to that
+  rule, and every action and reusable workflow of bernardladenthin/actions is pinned at v1.2.1.
 - **CI: every artifact upload and download step times out**, after the minutes of the repository
   variable `ARTIFACT_TIMEOUT_MINUTES`, else 20 (110 steps in `publish.yml`, `java-tests.yml` and
   `post-release.yml`). In Publish run 42675444364 an `upload-artifact` step hung for hours after a
