@@ -11,7 +11,7 @@
 #
 # Why this image: it is what the other two Linux CPU jars are built in (../dockcross
 # manylinux_2_28-x64, manylinux_2_28-aarch64), so s390x gets the same floor by the same means.
-# Contents (checked 2026-10-25): AlmaLinux 8.10, glibc 2.28, gcc-toolset-14 (GCC 14.2.1) with the
+# Contents (checked 2026-11-09): AlmaLinux 8.10, glibc 2.28, gcc-toolset-14 (GCC 14.2.1) with the
 # system libstdc++ of GCC 8 (GLIBCXX_3.4.25). gcc-toolset's libstdc++.so is a linker script that
 # takes the system libstdc++.so.6 plus libstdc++_nonshared.a, which links what GCC 14's headers
 # need beyond 3.4.25 statically -- the gcc-toolset treatment, here exactly as in a native build,
@@ -19,7 +19,7 @@
 # The previous build used the cross toolchain of the ubuntu runner, whose glibc 2.39 sysroot and
 # GCC 13 libstdc++ made the jar need glibc 2.38 and GLIBCXX_3.4.32 (CLAUDE.md, "Linux s390x").
 #
-# Pinned by digest, tag 2026.10.03-1 (the tag of the aarch64 image). Bump it deliberately, with a
+# Pinned by digest, tag 2026.11.07-1 (the tag of the aarch64 image). Bump it deliberately, with a
 # Publish run: the image decides the artifact's glibc floor (verify-native-deps.py holds
 # Linux/s390x/cpu to GLIBC_2.28) and its C++ runtime.
 #
@@ -31,7 +31,7 @@
 # Usage: .github/manylinux/manylinux_2_28-s390x-sysroot <empty-or-new-directory>
 set -euo pipefail
 
-IMAGE="quay.io/pypa/manylinux_2_28_s390x@sha256:c64d9390efad901ed09ca959df4bc441468c65478f5750e37197813a6017a49c"
+IMAGE="quay.io/pypa/manylinux_2_28_s390x@sha256:7858f085fa0395f5b17ffb051830d96cf861371e2030cb3e4f7500f47f33f38e"
 GCC_DIR="opt/rh/gcc-toolset-14/root/usr/lib/gcc/s390x-redhat-linux/14"
 
 if [ "$#" -ne 1 ]; then

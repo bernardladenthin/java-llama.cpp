@@ -27,7 +27,7 @@
 # only a JRE.
 #
 # Pinned by digest: the multi-arch index (amd64, arm64, ppc64le, s390x) of ubi8/openjdk-21-runtime
-# 1.23, checked 2026-10-26 -- RHEL 8.10, glibc 2.28, OpenJDK 21.0.12, uid 185. Bump it deliberately;
+# 1.23-6.1793319828, checked 2026-11-09 -- RHEL 8.10, glibc 2.28, OpenJDK 21.0.13, uid 185. Bump it deliberately;
 # it must stay an RHEL 8 image.
 #
 # Usage: smoke-glibc-floor.sh <set-dir> <target>
@@ -37,7 +37,7 @@ set -euo pipefail
 
 SET_DIR="${1:?usage: smoke-glibc-floor.sh <set-dir> <target>}"
 TARGET="${2:?usage: smoke-glibc-floor.sh <set-dir> <target>}"
-IMAGE="registry.access.redhat.com/ubi8/openjdk-21-runtime@sha256:4ce885c8f0c78dfaa11d53b12e99b4e61c02c30b65943ac3ac2e77923ce36906"
+IMAGE="registry.access.redhat.com/ubi8/openjdk-21-runtime@sha256:ded495dfca8d868254d4f3de7409a7cde7916b86b25c94f83d1eb5dbec1de870"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fail() {

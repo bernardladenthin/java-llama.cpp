@@ -2584,7 +2584,7 @@ Wiring:
 - `MANYLINUX_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` forwards the
   cache env like `DOCKCROSS_ARGS`; `build.sh` fetches the aarch64 static-musl sccache inside the
   container (curl is in the image) and the probe guards it.
-- The image is pinned by **digest** in the wrapper (tag `2026.10.03-1`). Bump it deliberately, with a
+- The image is pinned by **digest** in the wrapper (tag `2026.11.07-1`). Bump it deliberately, with a
   Publish run: it decides the glibc floor `verify-native-deps.py` enforces (`GLIBC_2.28`) and the
   compiler.
 - No `ctest` (the modular build has no static CPU backend for `jllama_test`): **`test-cpp-linux-aarch64`**

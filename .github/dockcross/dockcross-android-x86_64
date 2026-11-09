@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Pinned by digest (tag 20260712-79e54f9, the manifest Docker Hub served for it on 2026-10-09);
+# Pinned by digest (tag 20261028-1173e18, the manifest Docker Hub served for it on 2026-11-09);
 # the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
-DEFAULT_DOCKCROSS_IMAGE=dockcross/android-x86_64@sha256:d12c4091e9983d4ee5ebb4dad4b6f51420b2e9ec3bf6522d3e32ed87f54ea783
+DEFAULT_DOCKCROSS_IMAGE=dockcross/android-x86_64@sha256:e76fde8b35c6515a5532fa31724d11db5694b5286e4176c192d8a7709e2c75ca
 
 #------------------------------------------------------------------------------
 # Helpers
@@ -26,9 +26,9 @@ has() {
 
 # If OCI_EXE is not already set, search for a container executor (OCI stands for "Open Container Initiative")
 if [ -z "$OCI_EXE" ]; then
-    if which podman >/dev/null 2>/dev/null; then
+    if type -p podman >/dev/null 2>/dev/null; then
         OCI_EXE=podman
-    elif which docker >/dev/null 2>/dev/null; then
+    elif type -p docker >/dev/null 2>/dev/null; then
         OCI_EXE=docker
     else
         die "Cannot find a container executor. Search for docker and podman."
@@ -220,7 +220,7 @@ elif [ -n "$CYGWIN" ]; then
     HOST_PWD="$( cygpath -w "$( readlink -f "$( pwd ;)" ; )" ; )" ;
 else
     HOST_PWD=$PWD
-    [ -L $HOST_PWD ] && HOST_PWD=$(readlink $HOST_PWD)
+    [ -L "$HOST_PWD" ] && HOST_PWD=$(readlink $HOST_PWD)
 fi
 
 # Mount Additional Volumes
@@ -270,10 +270,10 @@ exit $run_exit_code
 # This image is not intended to be run manually.
 #
 # To create a dockcross helper script for the
-# dockcross/android-x86_64:20260712-79e54f9 image, run:
+# dockcross/android-x86_64:20261028-1173e18 image, run:
 #
-# docker run --rm dockcross/android-x86_64:20260712-79e54f9 > dockcross-android-x86_64-20260712-79e54f9
-# chmod +x dockcross-android-x86_64-20260712-79e54f9
+# docker run --rm dockcross/android-x86_64:20261028-1173e18 > dockcross-android-x86_64-20261028-1173e18
+# chmod +x dockcross-android-x86_64-20261028-1173e18
 #
 # You may then wish to move the dockcross script to your PATH.
 #
