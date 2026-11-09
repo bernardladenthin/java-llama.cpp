@@ -27,6 +27,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reasoning effort levels of a chat template in `/props` (#31271), qwen3-coder parsing that stops
   before the template separators (#30557); a parse without a model now fails with `--model or -hf is
   required` (#31242, the text only). No patch changed; the request schema is the same.
+- **Dependencies, build plugins and CI pins, in step with the sibling repositories:** Jackson 2.23.0,
+  Checker Framework 4.4.0, animal-sniffer-annotations 1.29; in the standalone `llama-atmosphere-agent`
+  JLine 4.5.0 and spotless-maven-plugin 3.11.0; Gradle 9.9.0 (`GRADLE_VERSION`) and the Android Gradle
+  Plugin 9.5.1 in `android-llmservice` and the consumer fixture; `anthropics/claude-code-action`
+  v1.0.269. `bernardladenthin/actions` is pinned at v1.1.1: its actions and reusable workflows run
+  `actions/setup-java` 6.2.0, `github/codeql-action` 4.39.3, `gradle/actions/setup-gradle` 6.4.1 and
+  `softprops/action-gh-release` 3.0.4, and `verify-signing-key-gradle` signs with Gradle 9.9.0 by
+  default. That is `GRADLE_VERSION` again, so the signing preflight and the AAR build use the same
+  Gradle.
 - **Dependencies and build plugins:** logback-classic 1.6.6, NullAway 0.14.3, maven-surefire-plugin
   3.6.1, jacoco-maven-plugin 0.8.16, palantir-java-format 2.103.0 (no formatting change), and in the
   standalone `llama-atmosphere-agent` Atmosphere 4.0.76 (with surefire and palantir); the Android Gradle
