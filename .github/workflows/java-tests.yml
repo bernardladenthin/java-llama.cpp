@@ -39,6 +39,11 @@ on:
         required: false
 permissions:
   contents: read
+env:
+  # The minutes an artifact upload or download may take (see bernardladenthin/actions,
+  # common/check-artifact-timeouts): the repository variable, else 20.
+  ARTIFACT_TIMEOUT_MINUTES: ${{ vars.ARTIFACT_TIMEOUT_MINUTES || '20' }}
+
 jobs:
   tests:
     name: Java tests
@@ -50,6 +55,7 @@ jobs:
       - name: Display CPU Info
         uses: bernardladenthin/actions/common/print-host-info@a9386a26fe6706204cb4d975e6958d29bc783624 # v1.1.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: ${{ inputs.natives-artifact }}
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -128,6 +134,7 @@ jobs:
           modules: llama
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
         with:
           name: ${{ inputs.error-artifact }}
           path: |

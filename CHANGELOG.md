@@ -10,6 +10,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **CI: every artifact upload and download step times out**, after the minutes of the repository
+  variable `ARTIFACT_TIMEOUT_MINUTES`, else 20 (110 steps in `publish.yml`, `java-tests.yml` and
+  `post-release.yml`). In Publish run 42675444364 an `upload-artifact` step hung for hours after a
+  build of a minute and a half, with GitHub's 360-minute default the only limit; the longest
+  transfer measured over two complete runs of that pipeline took 18 s. The workflow's top-level
+  `env` reads the variable with the default, each step says `timeout-minutes: ${{
+  fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}`, the layout `common/check-artifact-timeouts` of
+  bernardladenthin/actions checks.
 - **Build images, pinned by digest as before:** dockcross `android-arm64`, `android-x86_64` and
   `manylinux_2_28-x64` from `20260712-79e54f9` to `20261028-1173e18`, which moves the two Android
   builds from **NDK r28b to r30** (clang 21; API level 24 in the image, the jar's floor stays 28) and
