@@ -10,6 +10,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **Build images, pinned by digest as before:** dockcross `android-arm64`, `android-x86_64` and
+  `manylinux_2_28-x64` from `20260712-79e54f9` to `20261028-1173e18`, which moves the two Android
+  builds from **NDK r28b to r30** (clang 21; API level 24 in the image, the jar's floor stays 28) and
+  only refreshes the manylinux one (gcc-toolset-14, glibc 2.28); the three wrappers are generated
+  anew from the image's template, which drops the `which` and the unquoted `$HOST_PWD` they still
+  carried from an older template. pypa `manylinux_2_28` aarch64 and s390x from `2026.10.03-1` to
+  `2026.11.07-1` (AlmaLinux 8.10, glibc 2.28, GCC 14.2.1, unchanged), and UBI 8
+  `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
+  library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
+  (bionic-only dependencies, 16 KB alignment, 97 exports).
 - **llama.cpp b11968** (from b11960, 8 upstream commits): SVE-256 kernels for the Q6_K gemm and the
   MXFP4 gemv on ARM CPUs (#27472, #28141), CUDA's MMQ fuses a MoE's gate/up projections with the GLU
   (#31188), a work-group argmax for short TOP_K rows in SYCL (#31110), DeepSeek-V4's KV cache without

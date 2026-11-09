@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Pinned by digest (tag 20260712-79e54f9, the manifest Docker Hub served for it on 2026-10-09);
+# Pinned by digest (tag 20261028-1173e18, the manifest Docker Hub served for it on 2026-11-09);
 # the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
-DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64@sha256:44fa969013dd9a27d25b2f2d2d86651bf961c02c66bce785890a0ea4ff4190fa
+DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64@sha256:f934e36381959654952480bbcec3e54c246288ba997a32132116c6b3beeea4f0
 
 #------------------------------------------------------------------------------
 # Helpers
@@ -26,9 +26,9 @@ has() {
 
 # If OCI_EXE is not already set, search for a container executor (OCI stands for "Open Container Initiative")
 if [ -z "$OCI_EXE" ]; then
-    if which podman >/dev/null 2>/dev/null; then
+    if type -p podman >/dev/null 2>/dev/null; then
         OCI_EXE=podman
-    elif which docker >/dev/null 2>/dev/null; then
+    elif type -p docker >/dev/null 2>/dev/null; then
         OCI_EXE=docker
     else
         die "Cannot find a container executor. Search for docker and podman."
@@ -220,7 +220,7 @@ elif [ -n "$CYGWIN" ]; then
     HOST_PWD="$( cygpath -w "$( readlink -f "$( pwd ;)" ; )" ; )" ;
 else
     HOST_PWD=$PWD
-    [ -L $HOST_PWD ] && HOST_PWD=$(readlink $HOST_PWD)
+    [ -L "$HOST_PWD" ] && HOST_PWD=$(readlink $HOST_PWD)
 fi
 
 # Mount Additional Volumes
@@ -270,10 +270,10 @@ exit $run_exit_code
 # This image is not intended to be run manually.
 #
 # To create a dockcross helper script for the
-# dockcross/manylinux_2_28-x64:20260712-79e54f9 image, run:
+# dockcross/manylinux_2_28-x64:20261028-1173e18 image, run:
 #
-# docker run --rm dockcross/manylinux_2_28-x64:20260712-79e54f9 > dockcross-manylinux_2_28-x64-20260712-79e54f9
-# chmod +x dockcross-manylinux_2_28-x64-20260712-79e54f9
+# docker run --rm dockcross/manylinux_2_28-x64:20261028-1173e18 > dockcross-manylinux_2_28-x64-20261028-1173e18
+# chmod +x dockcross-manylinux_2_28-x64-20261028-1173e18
 #
 # You may then wish to move the dockcross script to your PATH.
 #
