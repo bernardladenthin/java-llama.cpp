@@ -80,14 +80,16 @@ public enum QuantizationType {
     TQ2_0(37),
     /** Mostly MXFP4 (MoE) — {@code LLAMA_FTYPE_MOSTLY_MXFP4_MOE = 38}. */
     MXFP4_MOE(38),
-    /** Mostly NVFP4 — {@code LLAMA_FTYPE_MOSTLY_NVFP4 = 39}. */
+    /**
+     * Mostly NVFP4 — {@code LLAMA_FTYPE_MOSTLY_NVFP4 = 39}. The file type of models converted to
+     * NVFP4; {@code llama_model_quantize} does not produce it and refuses it as a target
+     * ("invalid output file type"), so {@link net.ladenthin.llama.LlamaQuantizer} fails with it.
+     */
     NVFP4(39),
     /** Mostly Q1_0 — {@code LLAMA_FTYPE_MOSTLY_Q1_0 = 40}. */
     Q1_0(40),
     /** Mostly Q2_0 — {@code LLAMA_FTYPE_MOSTLY_Q2_0 = 41}. */
-    Q2_0(41),
-    /** Mostly OCP FP8 E4M3 — {@code LLAMA_FTYPE_MOSTLY_F8_E4M3 = 42} (llama.cpp b12000). */
-    F8_E4M3(42);
+    Q2_0(41);
 
     private final int ftypeValue;
 

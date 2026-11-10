@@ -187,7 +187,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 What the range brought that this library does not use yet, or that changed under it. Done at the bump
 and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jllama_tts_voices`, the
 `voice` of a synthesis handed over as upstream now wants it), `ModelParameters.addShard`
-(`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`), `QuantizationType.F8_E4M3`.
+(`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`).
 
 **To decide and measure first -- Windows, non-ASCII paths other than the model's.** Since b12131 /
 b12132 (#31682, #31681) upstream builds every `std::filesystem::path` in `common/` and `tools/server/`
@@ -202,6 +202,10 @@ appended through `std::ofstream(filepath)` while the slot file itself is written
 (UTF-8), so the appendix would land in a second, mis-named file and a restore would silently come back
 without its checkpoints. The model, mmproj and LoRA files are opened through `ggml_fopen` and are not
 affected; ASCII paths are not affected.
+  - **A test asks the question now:** `CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile`
+    (`test_c_api.cpp`) saves and restores a slot with a draft model under such a directory and requires
+    the draft-state appendix in the same file. Green on Linux; the three Windows C++ jobs of the next
+    Publish run are the measurement. Red there is this finding, not a test to relax.
   - Measure on Windows with a user name or directory containing `ä` / `日本`: `LlamaModel` with
     `setSlotSavePath` + save/restore (compare `timings` after the restore), `-hf` into such an
     `LLAMA_CACHE`, router mode over such a `--models-dir`.
@@ -212,6 +216,24 @@ affected; ASCII paths are not affected.
     message; (c) report it upstream as the embedding-host half of #31329 -- a library cannot carry a
     manifest. `setlocale(LC_ALL, ".UTF-8")` would switch MSVC's narrow file APIs to UTF-8 but changes
     the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently.
+
+**Found while writing tests for the bump (2026-11-10), both older than it**
+- **A draft model alone does not speculate.** Upstream's speculative types default to `none`, and a
+  plain draft GGUF infers none (`common_speculative_types_from_gguf` knows MTP, DFlash and DSpark
+  only), so `--spec-draft-model` without `--spec-type draft-simple` loads the second model and
+  drafts nothing. Measured with the random test model, 48 tokens, greedy: `n_draft_tokens_total` 0
+  without the type, 35 (all accepted) with it. `ModelParameters.setModelDraft` writes only the model,
+  and no builder method writes `--spec-type`, so Java callers pay the memory and get no speed-up; the
+  same structure is in upstream at b11400, b11639 and b11968. To decide: a `setSpecTypes(...)` enum
+  setter (registry constant, checked by `test_model_flags`), and whether `setModelDraft` should add
+  `draft-simple` itself when no type is set. `LlamaModelTest`'s speculative test only counts the
+  generated tokens; it should assert `getDraftTokensTotal() > 0`.
+- **`QuantizationType.NVFP4` cannot be quantized to.** `llama_model_quantize` refuses file type 39
+  ("invalid output file type"; it is written by converters), so `LlamaQuantizer.quantize(..., NVFP4)`
+  always throws. Its Javadoc says so now and `CApi.TheQuantizerRefusesTheFileTypesItDoesNotProduce`
+  pins it; removing the constant would break a released enum, so that is the owner's call.
+- **`setMoeCacheMib` on a host without a GPU fails the load** ("MoE cache requires a GPU backend");
+  its Javadoc claimed the option had no effect there and is corrected.
 
 **Build and CI**
 - **CUDA 13.5.** Upstream builds its CUDA 13 release binaries with 13.5 since b12169 (#31788) and

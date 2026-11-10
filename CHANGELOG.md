@@ -18,7 +18,6 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (upstream `--shard` / `--ple`, llama.cpp b12233); repeatable.
 - **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
   CPU computes instead of uploading them (upstream `--moe-cache-cpu-share`, llama.cpp b12191).
-- **`QuantizationType.F8_E4M3`** -- the OCP FP8 E4M3 file type (llama.cpp b12000).
 
 ### Changed
 - - **Dependabot: one grouped pull request per ecosystem a week, on Saturday.**

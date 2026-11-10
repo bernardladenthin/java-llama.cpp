@@ -191,11 +191,11 @@ void hello(fd_t fd) {
     require(response[0] == 9, "expected RPC protocol v9");
 }
 
-void comm_init(fd_t fd, int port, bool rank_one) {
+void comm_init(fd_t fd, int port, bool rank_one, uint32_t world = 2) {
     struct request {
         uint32_t device, rank, world, port;
         char host[64];
-    } req{0, rank_one ? 1u : 0u, 2, static_cast<uint32_t>(port), "127.0.0.1"};
+    } req{0, rank_one ? 1u : 0u, world, static_cast<uint32_t>(port), "127.0.0.1"};
     static_assert(sizeof(req) == 80, "COMM_INIT wire layout changed");
     command(fd, 20, &req, sizeof(req));
 }
@@ -280,7 +280,25 @@ class running_server {
     std::thread worker_;
 };
 
-enum class scenario { bind_local, bind_network, no_peer, rank_zero_handshake, rank_one_handshake, established };
+enum class scenario {
+    bind_local,
+    bind_network,
+    no_peer,
+    rank_zero_handshake,
+    rank_one_handshake,
+    established,
+    // b12079 (#28967): rank 0 accepts world - 1 peers, in whatever order they connect
+    three_ranks_refused,
+    second_peer_missing,
+};
+
+// A fake peer's side of the setup with rank 0: the capability exchange, then its rank.
+void join_as_rank(fd_t fd, uint32_t rank) {
+    std::array<uint8_t, 24> caps{};
+    send_bytes(fd, caps.data(), caps.size());
+    recv_bytes(fd, caps.data(), caps.size());
+    send_bytes(fd, &rank, sizeof(rank));
+}
 
 void run_scenario(scenario mode) {
     init_sockets();
@@ -306,9 +324,42 @@ void run_scenario(scenario mode) {
         require(bind(listener.fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0, "fake peer bind failed");
         require(listen(listener.fd, 1) == 0, "fake peer listen failed");
     }
-    comm_init(client.fd, peer_port, mode == scenario::rank_one_handshake);
+    const bool three_ranks = mode == scenario::three_ranks_refused || mode == scenario::second_peer_missing;
+    comm_init(client.fd, peer_port, mode == scenario::rank_one_handshake, three_ranks ? 3 : 2);
     socket_owner peer;
-    if (mode == scenario::rank_one_handshake) {
+    socket_owner second_peer;
+    if (three_ranks) {
+        // The first peer to connect is rank 2: rank 0 must sort the sockets by the rank each one
+        // names, not by the order of the accepts.
+        require(eventually([&]() { return trace.listening.load(); }), "COMM_INIT did not open its listener");
+        peer.fd = try_connect("127.0.0.1", peer_port);
+        require(peer.fd != invalid_fd, "first peer connection failed");
+        join_as_rank(peer.fd, 2);
+        if (mode == scenario::three_ranks_refused) {
+            second_peer.fd = try_connect("127.0.0.1", peer_port);
+            require(second_peer.fd != invalid_fd, "second peer connection failed");
+            join_as_rank(second_peer.fd, 1);
+            // The communicator negotiation: rank 0 reads one byte from rank 1, then from rank 2, and
+            // answers each with the bytes of all three ranks. No rank here has a backend communicator,
+            // and the pairwise fallback covers two ranks only, so the setup is refused -- with an
+            // answer, not a hang or an abort.
+            const uint8_t no_backend_communicator = 0;
+            send_bytes(second_peer.fd, &no_backend_communicator, sizeof(no_backend_communicator));
+            send_bytes(peer.fd, &no_backend_communicator, sizeof(no_backend_communicator));
+            for (fd_t fd : {second_peer.fd, peer.fd}) {
+                std::array<uint8_t, 3> all_ranks{1, 1, 1};
+                recv_bytes(fd, all_ranks.data(), all_ranks.size());
+                require(all_ranks == std::array<uint8_t, 3>{0, 0, 0}, "three CPU ranks negotiated a communicator");
+            }
+            uint64_t size = 0;
+            uint8_t ok = 1;
+            recv_bytes(client.fd, &size, sizeof(size));
+            require(size == 1, "COMM_INIT response size changed");
+            recv_bytes(client.fd, &ok, sizeof(ok));
+            require(ok == 0, "COMM_INIT accepted three ranks without a backend communicator");
+        }
+        // second_peer_missing: rank 0 now waits in its second accept, which the stop below must end
+    } else if (mode == scenario::rank_one_handshake) {
         // select bounds accept even with the old implementation. No model is needed to reach it.
         fd_set read_set;
         FD_ZERO(&read_set);
@@ -409,3 +460,7 @@ TEST(RpcComm, StopWithoutPeerClosesBothListenersAndAllowsRestart) { check_scenar
 TEST(RpcComm, StopInterruptsRankZeroCapsHandshake) { check_scenario(scenario::rank_zero_handshake); }
 TEST(RpcComm, StopInterruptsRankOneCapsHandshake) { check_scenario(scenario::rank_one_handshake); }
 TEST(RpcComm, SuccessfulPeerSetupStillWorksAndStops) { check_scenario(scenario::established); }
+TEST(RpcComm, ThreeRanksConnectInAnyOrderAndAreRefusedWithoutABackendCommunicator) {
+    check_scenario(scenario::three_ranks_refused);
+}
+TEST(RpcComm, StopInterruptsTheWaitForTheSecondPeer) { check_scenario(scenario::second_peer_missing); }

@@ -1538,6 +1538,169 @@ TEST_F(CApi, QuantizeWritesAModelThatLoads) {
     EXPECT_EQ(jllama_quantize("/nonexistent/in.gguf", out.c_str(), 7, 1, false), JLLAMA_STATUS_ERROR);
 }
 
+TEST_F(CApi, TheQuantizerRefusesTheFileTypesItDoesNotProduce) {
+    // llama_ftype names every file type a GGUF can declare, llama_model_quantize produces most of
+    // them: NVFP4 (39) and OCP FP8 E4M3 (42, llama.cpp b12000) are written by converters only and
+    // refused as a target ("invalid output file type"). QuantizationType.NVFP4 says so; a QuantizationType
+    // for 42 was added at the b12233 bump and taken out again when this test showed it could not work.
+    // Should upstream start to quantize to one of them, this goes red and the enum can offer it.
+    for (const int ftype : {39, 42}) {
+        const std::string out = path_ + ".ftype" + std::to_string(ftype) + ".gguf";
+        EXPECT_EQ(jllama_quantize(path_.c_str(), out.c_str(), ftype, 1, false), JLLAMA_STATUS_ERROR) << ftype;
+        EXPECT_NE(std::strlen(jllama_last_error()), 0u) << ftype;
+        std::error_code ec;
+        EXPECT_FALSE(std::filesystem::exists(out, ec)) << "a refused quantization left a file behind";
+        std::filesystem::remove(out, ec);
+    }
+}
+
+namespace {
+
+// Loads a model with the arguments after the common ones, or returns null with the error in jllama_last_error().
+jllama_model *load_tiny(const std::string &model_path, const std::vector<std::string> &extra) {
+    std::vector<std::string> args = {"jllama", "-m", model_path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
+    args.insert(args.end(), extra.begin(), extra.end());
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model);
+    return model;
+}
+
+// The greedy answer to one prompt, evaluated whole (a fresh model has nothing cached).
+std::string greedy_answer(jllama_model *model, int n_predict = 8) {
+    Owned completion;
+    const std::string request =
+        R"({"prompt":"Hello there","temperature":0,"n_predict":)" + std::to_string(n_predict) + "}";
+    EXPECT_EQ(jllama_completions(model, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    return completion.s != nullptr ? json::parse(completion.str()).at("content").get<std::string>() : std::string();
+}
+
+} // namespace
+
+TEST(CApiShard, AnExtraShardInAnotherDirectoryCompletesTheModel) {
+    // --shard (llama.cpp b12233, ModelParameters.addShard): an extra GGUF with tensors of the model,
+    // wherever it lies. The generator writes the same weights twice, once whole and once with the last
+    // layer in a shard of another directory; loaded with the shard, the split model must answer what
+    // the whole one answers, and without it the load must fail -- else the shard would prove nothing.
+    const std::string whole = write_tiny_llama_gguf("jllama-c-api-whole");
+    std::string shard;
+    const std::string split = write_tiny_llama_gguf("jllama-c-api-split", false, '>', {}, &shard);
+    ASSERT_FALSE(whole.empty());
+    ASSERT_FALSE(split.empty());
+    ASSERT_TRUE(std::filesystem::exists(shard));
+    ASSERT_NE(std::filesystem::path(shard).parent_path(), std::filesystem::path(split).parent_path());
+
+    jllama_model *reference = load_tiny(whole, {});
+    ASSERT_NE(reference, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(reference);
+    jllama_model_free(reference);
+    ASSERT_FALSE(expected.empty());
+
+    EXPECT_EQ(load_tiny(split, {}), nullptr) << "the model without its shard lacks a layer and must not load";
+
+    jllama_model *sharded = load_tiny(split, {"--shard", shard});
+    ASSERT_NE(sharded, nullptr) << jllama_last_error();
+    EXPECT_EQ(greedy_answer(sharded), expected);
+    jllama_model_free(sharded);
+
+    // upstream's alias, and a shard that does not exist is a failed load, not a model without a layer
+    jllama_model *aliased = load_tiny(split, {"--ple", shard});
+    EXPECT_NE(aliased, nullptr) << jllama_last_error();
+    jllama_model_free(aliased);
+    EXPECT_EQ(load_tiny(split, {"--shard", shard + ".missing"}), nullptr);
+
+    std::error_code ignored;
+    std::filesystem::remove(whole, ignored);
+    std::filesystem::remove(split, ignored);
+    std::filesystem::remove_all(std::filesystem::path(shard).parent_path(), ignored);
+}
+
+TEST(CApiMoeCache, TheCpuShareOfTheMoeCacheIsAcceptedAndRangeChecked) {
+    // --moe-cache-cpu-share (llama.cpp b12191, ModelParameters.setMoeCacheCpuShare). Without a cache
+    // the share has no effect, so the model loads and answers with it on any host -- which is what
+    // shows the option reaches upstream's parser and the context parameters; a share outside 0..1 is
+    // refused by upstream, as the Java setter refuses it before. The cache itself (--moe-cache-mib)
+    // is not loaded here: it needs a GPU backend and fails the load without one.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-moe-cache");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--moe-cache-cpu-share", "0.25"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model).empty());
+    jllama_model_free(model);
+    for (const char *share : {"1.5", "-0.1"}) {
+        EXPECT_EQ(load_tiny(path, {"--moe-cache-cpu-share", share}), nullptr) << share;
+        EXPECT_NE(std::strlen(jllama_last_error()), 0u) << share;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
+    // Since llama.cpp b12131/b12132 upstream builds its paths from plain std::string, which Windows
+    // reads in the process's active code page, where it used u8path(); its own executables are UTF-8
+    // there through an app manifest, a library inside java.exe is not. The slot file itself is written
+    // through ggml_fopen (UTF-8), but its appendix -- the state of the draft context -- through a
+    // std::ofstream over that string. So with a draft model and a directory outside ASCII the appendix
+    // has to land in the same file, and the round trip has to work, on every platform. This is the
+    // measurement TODO.md asks for: red on Windows means the appendix went to a mis-decoded path.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-utf8");
+    ASSERT_FALSE(path.empty());
+    const std::string leaf = "jllama-slots-\xC3\xA4-\xE6\x97\xA5\xE6\x9C\xAC-" + std::to_string(std::random_device{}());
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / std::filesystem::u8path(leaf);
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    // the directory as UTF-8, which is what the C API takes on every platform
+    const auto dir_u8 = dir.u8string();
+    const std::string dir_arg(dir_u8.begin(), dir_u8.end());
+
+    for (const bool with_draft : {false, true}) {
+        SCOPED_TRACE(with_draft ? "with a draft model" : "without a draft model");
+        std::vector<std::string> extra = {"--slot-save-path", dir_arg};
+        if (with_draft) {
+            extra.insert(extra.end(),
+                         {"--spec-draft-model", path, "--spec-draft-ngl", "0", "--spec-type", "draft-simple"});
+        }
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(model, 48).empty());
+
+        const std::string name = with_draft ? "draft.bin" : "plain.bin";
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json saved_json = json::parse(saved.str());
+        std::error_code ec;
+        const auto on_disk = std::filesystem::file_size(dir / name, ec);
+        ASSERT_FALSE(ec) << "no file under the directory's real name: " << ec.message();
+        // the server reports what it wrote, appendix included: all of it has to be in this one file
+        EXPECT_EQ(on_disk, saved_json.at("n_written").get<size_t>()) << saved.str();
+
+        Owned restored;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &restored.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json restored_json = json::parse(restored.str());
+        EXPECT_EQ(restored_json.at("n_restored").get<int>(), saved_json.at("n_saved").get<int>()) << restored.str();
+        EXPECT_EQ(restored_json.at("n_read").get<size_t>(), on_disk) << restored.str();
+        jllama_model_free(model);
+    }
+    // the draft's file carries the appendix this test is about: without it the case above proves nothing
+    std::error_code size_ec;
+    EXPECT_GT(std::filesystem::file_size(dir / "draft.bin", size_ec),
+              std::filesystem::file_size(dir / "plain.bin", size_ec));
+    // nothing but the two slot files, and no sibling directory under a mis-decoded name
+    size_t entries = 0;
+    for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        (void)entry;
+        ++entries;
+    }
+    EXPECT_EQ(entries, 2u);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
 // ---------------------------------------------------------------------------
 // The other engines through the C API: the embedded server, the RPC server, text to speech and
 // the trainer.

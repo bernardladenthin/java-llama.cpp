@@ -962,7 +962,8 @@ public final class ModelParameters extends CliParameters {
      * used experts on the device up to this budget; with several GPUs the budget is split among
      * them like the layers ({@link #setTensorSplit(String)}). Upstream {@code --moe-cache-mib}
      * (llama.cpp b11480, marked EXPERIMENTAL there); {@code 0}, the default, disables the cache.
-     * Without a GPU backend the option has no effect.</p>
+     * A cache needs a GPU backend: without one the model does not load (llama.cpp: "MoE cache
+     * requires a GPU backend").</p>
      *
      * @param mib the cache size in MiB, {@code 0} to disable
      * @return this builder

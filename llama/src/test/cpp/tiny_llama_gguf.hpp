@@ -102,9 +102,13 @@ inline void confine_output_to_ascii(ggml_tensor *output) {
 // is the byte eos, '>' unless a test needs to generate that character as text. Each string of special
 // is appended to the vocabulary as one control token (ids 256, 257, ...), the way a model's vocabulary
 // holds its chat-template tags; their output rows are scaled down like every non-printable byte's, so
-// they are generated only when a sampler forces them.
+// they are generated only when a sampler forces them. With shard_path, the tensors of the last layer
+// are written to a second GGUF in a directory of its own instead -- an extra shard as --shard takes
+// it (llama.cpp b12233): tensors only, no metadata, a name the split numbering does not know. The
+// weights are the ones the unsplit model gets (same seed, same order), so both answer alike.
 inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false,
-                                         uint32_t eos = '>', const std::vector<std::string> &special = {}) {
+                                         uint32_t eos = '>', const std::vector<std::string> &special = {},
+                                         std::string *shard_path = nullptr) {
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
     const std::string path = (std::filesystem::temp_directory_path() /
@@ -151,19 +155,30 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {N_EMBD}, 1.0f);
     confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, n_vocab}, 0.1f));
+    gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
     for (int il = 0; il < N_LAYER; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
-        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "attn_q.weight", {N_EMBD, N_HEAD * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_k.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_v.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD_DIM, N_EMBD}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {N_FF, N_EMBD}, 0.1f);
+        gguf_context *to = shard != nullptr && il == N_LAYER - 1 ? shard : g;
+        add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "attn_q.weight", {N_EMBD, N_HEAD * HEAD_DIM}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_k.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_v.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD_DIM, N_EMBD}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {N_EMBD}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "ffn_gate.weight", {N_EMBD, N_FF}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {N_EMBD, N_FF}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {N_FF, N_EMBD}, 0.1f);
     }
-    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    bool ok = gguf_write_to_file(g, path.c_str(), false);
+    if (shard != nullptr) {
+        // another directory than the model's, which is what --shard is for
+        const std::filesystem::path dir = std::filesystem::path(path).replace_extension(".shards");
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        *shard_path = (dir / "last-layer.gguf").string();
+        ok = ok && !ec && gguf_write_to_file(shard, shard_path->c_str(), false);
+        gguf_free(shard);
+    }
     gguf_free(g);
     ggml_free(ctx);
     return ok ? path : std::string();
