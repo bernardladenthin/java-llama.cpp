@@ -80,8 +80,9 @@ final class JllamaNative {
             downcall("jllama_set_log_callback", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     static final MethodHandle JSON_SCHEMA_TO_GRAMMAR =
             downcall("jllama_json_schema_to_grammar", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-    static final MethodHandle QUANTIZE = downcall(
-            "jllama_quantize", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN));
+    static final MethodHandle QUANTIZE_IMATRIX = downcall(
+            "jllama_quantize_imatrix",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN, ADDRESS));
     static final MethodHandle FINETUNE = downcall("jllama_finetune", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     static final MethodHandle SET_CPU_MOE_BATCHED =
             downcall("jllama_set_cpu_moe_batched", FunctionDescriptor.of(JAVA_INT, JAVA_BOOLEAN));

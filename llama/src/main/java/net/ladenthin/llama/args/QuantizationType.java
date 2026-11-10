@@ -11,10 +11,10 @@ package net.ladenthin.llama.args;
  * (llama.cpp b9870); the stored integer is the exact native enum value passed to
  * {@code llama_model_quantize}. Only the file types the quantizer produces are constants: NVFP4
  * (39) and OCP FP8 E4M3 (42) name models written by converters, and {@code llama_model_quantize}
- * refuses both as a target ("invalid output file type"). Seven more are missing because they
- * need an importance matrix, which this library cannot pass ("this quantization requires an
- * imatrix!"): IQ2_XXS (19), IQ2_XS (20), Q2_K_S (21), IQ1_S (24), IQ2_S (28), IQ2_M (29) and
- * IQ1_M (31). Enumerators that upstream removed or
+ * refuses both as a target ("invalid output file type"). Nine types need an importance
+ * matrix ({@link #requiresImportanceMatrix()}), which
+ * {@link net.ladenthin.llama.LlamaQuantizer#quantize(String, String, QuantizationType, int, boolean, String)}
+ * takes. Enumerators that upstream removed or
  * commented out are not represented either.
  */
 public enum QuantizationType {
@@ -51,18 +51,32 @@ public enum QuantizationType {
     Q5_K_M(17),
     /** Mostly Q6_K — {@code LLAMA_FTYPE_MOSTLY_Q6_K = 18}. */
     Q6_K(18),
-    /** Mostly IQ3_XS — {@code LLAMA_FTYPE_MOSTLY_IQ3_XS = 22}. */
+    /** Mostly IQ2_XXS — {@code LLAMA_FTYPE_MOSTLY_IQ2_XXS = 19}. Needs an importance matrix. */
+    IQ2_XXS(19),
+    /** Mostly IQ2_XS — {@code LLAMA_FTYPE_MOSTLY_IQ2_XS = 20}. Needs an importance matrix. */
+    IQ2_XS(20),
+    /** Mostly Q2_K, small — {@code LLAMA_FTYPE_MOSTLY_Q2_K_S = 21}. Needs an importance matrix. */
+    Q2_K_S(21),
+    /** Mostly IQ3_XS — {@code LLAMA_FTYPE_MOSTLY_IQ3_XS = 22}. Needs an importance matrix. */
     IQ3_XS(22),
-    /** Mostly IQ3_XXS — {@code LLAMA_FTYPE_MOSTLY_IQ3_XXS = 23}. */
+    /** Mostly IQ3_XXS — {@code LLAMA_FTYPE_MOSTLY_IQ3_XXS = 23}. Needs an importance matrix. */
     IQ3_XXS(23),
+    /** Mostly IQ1_S — {@code LLAMA_FTYPE_MOSTLY_IQ1_S = 24}. Needs an importance matrix. */
+    IQ1_S(24),
     /** Mostly IQ4_NL — {@code LLAMA_FTYPE_MOSTLY_IQ4_NL = 25}. */
     IQ4_NL(25),
     /** Mostly IQ3_S — {@code LLAMA_FTYPE_MOSTLY_IQ3_S = 26}. */
     IQ3_S(26),
     /** Mostly IQ3_M — {@code LLAMA_FTYPE_MOSTLY_IQ3_M = 27}. */
     IQ3_M(27),
+    /** Mostly IQ2_S — {@code LLAMA_FTYPE_MOSTLY_IQ2_S = 28}. Needs an importance matrix. */
+    IQ2_S(28),
+    /** Mostly IQ2_M — {@code LLAMA_FTYPE_MOSTLY_IQ2_M = 29}. Needs an importance matrix. */
+    IQ2_M(29),
     /** Mostly IQ4_XS — {@code LLAMA_FTYPE_MOSTLY_IQ4_XS = 30}. */
     IQ4_XS(30),
+    /** Mostly IQ1_M — {@code LLAMA_FTYPE_MOSTLY_IQ1_M = 31}. Needs an importance matrix. */
+    IQ1_M(31),
     /** Mostly BF16 — {@code LLAMA_FTYPE_MOSTLY_BF16 = 32}. */
     BF16(32),
     /** Mostly TQ1_0 — {@code LLAMA_FTYPE_MOSTLY_TQ1_0 = 36}. */
@@ -89,5 +103,30 @@ public enum QuantizationType {
      */
     public int getFtypeValue() {
         return ftypeValue;
+    }
+
+    /**
+     * Whether llama.cpp refuses to quantize to this type without an importance matrix ("this
+     * quantization requires an imatrix!"): the IQ1 and IQ2 types, IQ3_XS, IQ3_XXS and Q2_K_S.
+     *
+     * @return {@code true} if
+     *     {@link net.ladenthin.llama.LlamaQuantizer#quantize(String, String, QuantizationType, int, boolean, String)}
+     *     must be given one
+     */
+    public boolean requiresImportanceMatrix() {
+        switch (this) {
+            case IQ2_XXS:
+            case IQ2_XS:
+            case Q2_K_S:
+            case IQ3_XS:
+            case IQ3_XXS:
+            case IQ1_S:
+            case IQ2_S:
+            case IQ2_M:
+            case IQ1_M:
+                return true;
+            default:
+                return false;
+        }
     }
 }

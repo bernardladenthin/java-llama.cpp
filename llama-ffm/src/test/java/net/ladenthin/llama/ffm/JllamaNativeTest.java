@@ -209,4 +209,17 @@ class JllamaNativeTest {
             assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
         }
     }
+
+    @Test
+    void quantizeReportsAMissingInputAndAMissingImportanceMatrix() {
+        // both overloads reach the library (jllama_quantize_imatrix; a null matrix is "none")
+        assertThrows(
+                LlamaException.class,
+                () -> Jllama.quantize("/nonexistent/in.gguf", "/nonexistent/out.gguf", 7, 1, false));
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.quantize(
+                        "/nonexistent/in.gguf", "/nonexistent/out.gguf", 19, 1, false, "/nonexistent/imatrix.gguf"));
+        assertThat(e.getMessage(), containsString("importance matrix"));
+    }
 }

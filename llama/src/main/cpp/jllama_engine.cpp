@@ -14,13 +14,16 @@
 #include "server-http.h"
 #include "base64.hpp"
 #include "json-schema-to-grammar.h"
+#include "imatrix-loader.h"
 #include "utils.hpp"
 #include "jllama_engine.hpp"
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -1249,8 +1252,74 @@ std::string json_schema_to_grammar_text(const std::string &schema_json) {
     return json_schema_to_grammar(schema);
 }
 
+namespace {
+
+// The importance of every weight column, per tensor, from an imatrix file (llama-imatrix's GGUF
+// format or the legacy binary one): what upstream's tools/quantize computes from the same loader
+// before it calls llama_model_quantize. Throws when the file cannot be used.
+std::map<std::string, std::vector<float>> load_importance_matrix(const std::string &path, int32_t &chunk_count,
+                                                                 std::string &dataset) {
+    common_imatrix loaded;
+    if (!common_imatrix_load(path, loaded)) {
+        throw std::runtime_error("failed to load the importance matrix '" + path + "'");
+    }
+    if (!loaded.is_legacy && !loaded.has_metadata) {
+        throw std::runtime_error("the importance matrix '" + path + "' lacks its imatrix.* metadata");
+    }
+    std::map<std::string, std::vector<float>> data;
+    for (const auto &[name, entry] : loaded.entries) {
+        std::vector<float> &values = data[name];
+        values.resize(entry.sums.size());
+        if (!loaded.is_legacy) {
+            // GGUF: one count per expert (one for an ordinary tensor), the sums are divided by it
+            const int64_t n_counts = static_cast<int64_t>(entry.counts.size());
+            if (n_counts == 0 || entry.sums.size() % static_cast<size_t>(n_counts) != 0) {
+                throw std::runtime_error("the importance matrix '" + path + "' has mismatched sums and counts for " +
+                                         name);
+            }
+            const int64_t per_count = static_cast<int64_t>(entry.sums.size()) / n_counts;
+            for (int64_t j = 0; j < n_counts; ++j) {
+                const float count = static_cast<float>(entry.counts[j]);
+                for (int64_t i = 0; i < per_count; ++i) {
+                    values[j * per_count + i] = count > 0.0f ? entry.sums[j * per_count + i] / count : 1.0f;
+                }
+            }
+        } else {
+            // legacy: the sums were multiplied by the number of calls
+            const int64_t n_call = entry.counts.empty() ? 0 : entry.counts[0];
+            for (size_t i = 0; i < entry.sums.size(); ++i) {
+                values[i] = n_call > 0 ? entry.sums[i] / static_cast<float>(n_call) : entry.sums[i];
+            }
+        }
+    }
+    if (data.empty()) {
+        throw std::runtime_error("the importance matrix '" + path + "' holds no entries");
+    }
+    chunk_count = loaded.chunk_count;
+    dataset = loaded.datasets.empty() ? std::string() : loaded.datasets.front();
+    return data;
+}
+
+llama_model_kv_override string_override(const char *key, const std::string &value) {
+    llama_model_kv_override kvo{};
+    std::snprintf(kvo.key, sizeof(kvo.key), "%s", key);
+    kvo.tag = LLAMA_KV_OVERRIDE_TYPE_STR;
+    std::snprintf(kvo.val_str, sizeof(kvo.val_str), "%s", value.c_str());
+    return kvo;
+}
+
+llama_model_kv_override int_override(const char *key, int64_t value) {
+    llama_model_kv_override kvo{};
+    std::snprintf(kvo.key, sizeof(kvo.key), "%s", key);
+    kvo.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+    kvo.val_i64 = value;
+    return kvo;
+}
+
+} // namespace
+
 void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
-              bool allow_requantize) {
+              bool allow_requantize, const std::string &imatrix_path) {
     // Idempotent; intentionally never paired with llama_backend_free here -- a model loaded in the
     // same process shares the backend and must not have it freed underneath it.
     llama_backend_init();
@@ -1258,9 +1327,37 @@ void quantize(const std::string &input_path, const std::string &output_path, int
     qparams.ftype = static_cast<llama_ftype>(ftype);
     qparams.nthread = nthread;
     qparams.allow_requantize = allow_requantize;
+
+    // all three outlive the call below, which reads them through qparams
+    std::map<std::string, std::vector<float>> importance;
+    std::vector<llama_model_imatrix_data> imatrix;
+    std::vector<llama_model_kv_override> overrides;
+    if (!imatrix_path.empty()) {
+        int32_t chunk_count = 0;
+        std::string dataset;
+        importance = load_importance_matrix(imatrix_path, chunk_count, dataset);
+        for (const auto &[name, values] : importance) {
+            imatrix.push_back({name.c_str(), values.data(), values.size()});
+        }
+        imatrix.push_back({nullptr, nullptr, 0}); // the terminator llama_model_quantize reads up to
+        qparams.imatrix = imatrix.data();
+        // the metadata upstream's llama-quantize records in the output, under the same keys
+        overrides.push_back(string_override("quantize.imatrix.file", imatrix_path));
+        if (!dataset.empty()) {
+            overrides.push_back(string_override("quantize.imatrix.dataset", dataset));
+        }
+        overrides.push_back(int_override("quantize.imatrix.entries_count", static_cast<int64_t>(importance.size())));
+        overrides.push_back(int_override("quantize.imatrix.chunks_count", chunk_count));
+        overrides.emplace_back();
+        overrides.back().key[0] = 0; // terminator
+        qparams.kv_overrides = overrides.data();
+    }
     const uint32_t rc = llama_model_quantize(input_path.c_str(), output_path.c_str(), &qparams);
     if (rc != 0) {
-        throw std::runtime_error("Quantization of '" + input_path + "' failed with code " + std::to_string(rc));
+        throw std::runtime_error(
+            "Quantization of '" + input_path + "' failed with code " + std::to_string(rc) +
+            (imatrix_path.empty() ? " (the IQ1, IQ2, IQ3_XS, IQ3_XXS and Q2_K_S file types need an importance matrix)"
+                                  : ""));
     }
 }
 

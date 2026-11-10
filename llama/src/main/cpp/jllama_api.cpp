@@ -560,11 +560,17 @@ jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **gram
 
 jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
                               bool allow_requantize) {
+    return jllama_quantize_imatrix(input_path, output_path, ftype, nthread, allow_requantize, nullptr);
+}
+
+jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype, int nthread,
+                                      bool allow_requantize, const char *imatrix_path) {
     if (input_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
     }
     try {
-        jllama::engine::quantize(input_path, output_path, ftype, nthread, allow_requantize);
+        jllama::engine::quantize(input_path, output_path, ftype, nthread, allow_requantize,
+                                 imatrix_path != nullptr ? imatrix_path : "");
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {

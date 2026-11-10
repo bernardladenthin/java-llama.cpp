@@ -244,9 +244,13 @@ void configure(jllama_context *jctx, const std::string &config_json);
 /** A JSON schema as a GBNF grammar; needs no model. */
 [[nodiscard]] std::string json_schema_to_grammar_text(const std::string &schema_json);
 
-/** Quantises a GGUF file (llama_model_quantize); `ftype` is a llama_ftype. Needs no model. */
+/**
+ * Quantises a GGUF file (llama_model_quantize); `ftype` is a llama_ftype. Needs no model. A
+ * non-empty `imatrix_path` names an importance matrix (llama-imatrix's output), which the IQ1, IQ2,
+ * IQ3_XS, IQ3_XXS and Q2_K_S file types need and every other type below Q8 gains from.
+ */
 void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
-              bool allow_requantize);
+              bool allow_requantize, const std::string &imatrix_path = std::string());
 
 } // namespace jllama::engine
 

@@ -19,6 +19,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
   CPU computes instead of uploading them (upstream `--moe-cache-cpu-share`, llama.cpp b12191).
 
+- **Quantizing with an importance matrix**: `LlamaQuantizer.quantize(input, output, type, threads,
+  allowRequantize, importanceMatrixPath)`, `jllama_quantize_imatrix()` in the C API and the same
+  overload of `Jllama.quantize` in `llama-ffm` take the file `llama-imatrix` computed (GGUF or the
+  legacy format) and record it in the output under `quantize.imatrix.*`, as `llama-quantize` does.
+  `QuantizationType.requiresImportanceMatrix()` names the nine types that cannot be written without
+  one (IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S, IQ2_M, IQ3_XXS, IQ3_XS, Q2_K_S); asked for without
+  one, `LlamaQuantizer` throws `IllegalArgumentException` before the native call instead of failing
+  with "code 1".
 - **`ModelParameters.setSpecTypes(SpecType, SpecType...)`** and the enum `SpecType` -- the types
   of speculative decoding (upstream `--spec-type`): `draft-simple`, the n-gram types, `none`.
 
@@ -26,9 +34,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **Enum constants no receiver accepts** (breaking; each could only fail or was silently dropped):
   `PoolingType.UNSPECIFIED` and `RopeScalingType.UNSPECIFIED` (the model's own choice is not calling
   the setter), `RopeScalingType.LONGROPE` and `MAX_VALUE` (not values of `--rope-scaling`),
-  `QuantizationType.NVFP4` (written by converters, refused by the quantizer) and
-  `QuantizationType.IQ2_XXS`, `IQ2_XS`, `Q2_K_S`, `IQ1_S`, `IQ2_S`, `IQ2_M`, `IQ1_M` (need an
-  importance matrix, which `LlamaQuantizer` cannot pass). `RopeScalingType.YARN2` is `YARN`.
+  `QuantizationType.NVFP4` (written by converters, refused by the quantizer).
+  `RopeScalingType.YARN2` is `YARN`.
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed

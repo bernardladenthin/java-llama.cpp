@@ -52,7 +52,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_configure()` | `n_threads`, `n_threads_batch`, `slot_prompt_similarity` at run time |
 | `jllama_systemone()` | a `/v1/systemone` request to a decision model |
 | `jllama_json_schema_to_grammar()` | a JSON schema as GBNF (no model needed) |
-| `jllama_quantize()` | `llama_model_quantize` over a GGUF file (no model needed) |
+| `jllama_quantize()`, `jllama_quantize_imatrix()` | `llama_model_quantize` over a GGUF file (no model needed), the second with an importance matrix |
 | `jllama_set_log_callback()` | every log line of llama.cpp, ggml and the server to a callback; null restores the console after a synchronous flush |
 | `jllama_set_cpu_moe_batched()`, `jllama_get_cpu_moe_batched()` | how the CPU backend runs the expert matmuls of a MoE model over repacked weights: batched per expert with the work handed out dynamically (the default), or upstream's one gemv per token over a static split (`llama/patches/0022`); process-wide, `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment starts it off |
 | `jllama_server_start()`, `jllama_server_start_attached()`, `jllama_server_stop()`, `jllama_server_is_running()`, `jllama_server_set_worker_command()` | the embedded llama-server (`NativeServer`): the full upstream server from an argv, WebUI included, or the HTTP frontend attached to a loaded model; router mode's worker command. Not on Android (server.cpp does not build there) |

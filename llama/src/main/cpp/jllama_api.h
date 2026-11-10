@@ -349,6 +349,16 @@ JLLAMA_API jllama_status jllama_json_schema_to_grammar(const char *schema_json, 
 JLLAMA_API jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
                                          bool allow_requantize);
 
+/**
+ * jllama_quantize() with an importance matrix: `imatrix_path` names the file llama-imatrix wrote
+ * for this model (GGUF or the legacy format), null or "" for none. The file types IQ2_XXS (19),
+ * IQ2_XS (20), Q2_K_S (21), IQ3_XS (22), IQ3_XXS (23), IQ1_S (24), IQ2_S (28), IQ2_M (29) and
+ * IQ1_M (31) cannot be written
+ * without one; the output records the file under quantize.imatrix.*, as llama-quantize does.
+ */
+JLLAMA_API jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype,
+                                                 int nthread, bool allow_requantize, const char *imatrix_path);
+
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
  * worker thread inside this library. Not available on Android (server.cpp does not build there);

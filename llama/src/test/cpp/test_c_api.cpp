@@ -27,12 +27,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -2187,69 +2189,137 @@ TEST_F(CApi, TheLogCallbackSeesTheServersLinesAndNullFlushesSynchronously) {
 // Every value a Java enum can put on the wire, against a real model. test_model_flags.cpp proves the
 // parser accepts each; accepting a value and being able to run with it are two things (a KV cache
 // type parses and then fails the context), so each is loaded and used here. The model is the wide
-// one: quantized types work in blocks of up to 128 values, and a 32-wide model cannot hold one.
+// one: quantized types work in blocks of up to 256 values (IQ1_M), and a 32-wide model cannot hold one.
 // ---------------------------------------------------------------------------------------------------
 
 class CApiEnumSweep : public ::testing::Test {
   protected:
     static void SetUpTestSuite() {
-        path_ = write_tiny_llama_gguf(tiny_model_spec::wide(128));
+        path_ = write_tiny_llama_gguf(model());
         ASSERT_FALSE(path_.empty());
+        imatrix_ = write_tiny_imatrix_gguf(model());
+        ASSERT_FALSE(imatrix_.empty());
     }
     static void TearDownTestSuite() {
         std::error_code ignored;
         std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(imatrix_, ignored);
+    }
+    // The file types llama_model_quantize refuses without an importance matrix; in Java,
+    // QuantizationType.requiresImportanceMatrix() (QuantizationTypeTest holds it to the same nine).
+    // one layer: the IQ types search their codebooks per block, which is slow, and a layer is enough
+    static tiny_model_spec model() {
+        tiny_model_spec spec = tiny_model_spec::wide(256);
+        spec.n_layer = 1;
+        return spec;
+    }
+    static bool needs_imatrix(int ftype) {
+        static const std::set<int> types = {19, 20, 21, 22, 23, 24, 28, 29, 31};
+        return types.count(ftype) != 0;
     }
     static std::string path_;
+    static std::string imatrix_;
 };
 std::string CApiEnumSweep::path_;
+std::string CApiEnumSweep::imatrix_;
 
 TEST_F(CApiEnumSweep, EveryQuantizationTypeOfTheJavaEnumGivesAModelThatLoadsAndAnswers) {
     // QuantizationType is the Java side's list of quantizer targets; CMake reads its constants into
     // JLLAMA_JAVA_FTYPE_*. Each must be a file type llama_model_quantize writes, and what it writes
     // must load -- a constant for a type it refuses is a call that can only fail (NVFP4 was one).
-    ASSERT_GT(JLLAMA_JAVA_FTYPE_COUNT, 20) << "the extractor read implausibly few QuantizationType constants";
+    // Every type is written twice: without an importance matrix, where exactly the nine that need
+    // one are refused, and with one, where all of them work. The width matters: at 128 columns the
+    // IQ3 types fell back to another type and seemed to need none, at 256 they are really written.
+    ASSERT_GT(JLLAMA_JAVA_FTYPE_COUNT, 30) << "the extractor read implausibly few QuantizationType constants";
+    int refused_without = 0;
     for (int i = 0; i < JLLAMA_JAVA_FTYPE_COUNT; ++i) {
         const std::string name = JLLAMA_JAVA_FTYPE_NAMES[i];
-        SCOPED_TRACE("QuantizationType." + name);
-        const std::string out = path_ + ".java-ftype-" + name + ".gguf";
-        const jllama_status quantized =
-            jllama_quantize(path_.c_str(), out.c_str(), JLLAMA_JAVA_FTYPE_VALUES[i], 1, false);
-        EXPECT_EQ(quantized, JLLAMA_STATUS_OK) << jllama_last_error();
-        if (quantized != JLLAMA_STATUS_OK) {
-            continue;
+        const int ftype = JLLAMA_JAVA_FTYPE_VALUES[i];
+        for (const bool with_imatrix : {false, true}) {
+            SCOPED_TRACE("QuantizationType." + name + (with_imatrix ? " with" : " without") + " an importance matrix");
+            const std::string out = path_ + ".java-ftype-" + name + (with_imatrix ? "-im" : "") + ".gguf";
+            const jllama_status quantized = jllama_quantize_imatrix(path_.c_str(), out.c_str(), ftype, 1, false,
+                                                                    with_imatrix ? imatrix_.c_str() : nullptr);
+            std::error_code ec;
+            if (!with_imatrix && needs_imatrix(ftype)) {
+                EXPECT_EQ(quantized, JLLAMA_STATUS_ERROR);
+                EXPECT_NE(std::string(jllama_last_error()).find("importance matrix"), std::string::npos)
+                    << jllama_last_error();
+                ++refused_without;
+                std::filesystem::remove(out, ec);
+                continue;
+            }
+            EXPECT_EQ(quantized, JLLAMA_STATUS_OK) << jllama_last_error();
+            if (quantized != JLLAMA_STATUS_OK) {
+                continue;
+            }
+            jllama_model *model = load_tiny(out, {});
+            EXPECT_NE(model, nullptr) << jllama_last_error();
+            if (model != nullptr) {
+                Owned completion;
+                EXPECT_EQ(jllama_completions(model, R"({"prompt":"Hello there","temperature":0,"n_predict":4})",
+                                             &completion.s),
+                          JLLAMA_STATUS_OK)
+                    << jllama_last_error();
+                jllama_model_free(model);
+            }
+            std::filesystem::remove(out, ec);
         }
-        jllama_model *model = load_tiny(out, {});
-        EXPECT_NE(model, nullptr) << jllama_last_error();
-        if (model != nullptr) {
-            Owned completion;
-            EXPECT_EQ(
-                jllama_completions(model, R"({"prompt":"Hello there","temperature":0,"n_predict":4})", &completion.s),
-                JLLAMA_STATUS_OK)
-                << jllama_last_error();
-            jllama_model_free(model);
-        }
-        std::error_code ec;
-        std::filesystem::remove(out, ec);
     }
+    EXPECT_EQ(refused_without, 9) << "QuantizationType lacks a type that needs an importance matrix";
 }
 
-TEST_F(CApiEnumSweep, TheFileTypesThatNeedAnImportanceMatrixAreNotQuantizationTypes) {
-    // IQ2_XXS, IQ2_XS, Q2_K_S, IQ1_S, IQ2_S, IQ2_M and IQ1_M need an importance matrix for every
-    // tensor but the embeddings, and jllama_quantize has no way to pass one, so each can only fail
-    // ("this quantization requires an imatrix!"). QuantizationType had constants for them until this
-    // sweep ran over a model wide enough to reach the check. Once the C API takes an imatrix, this
-    // goes red and the constants can come back.
-    for (const int ftype : {19, 20, 21, 24, 28, 29, 31}) {
-        SCOPED_TRACE(ftype);
-        EXPECT_EQ(std::find(JLLAMA_JAVA_FTYPE_VALUES, JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT, ftype),
-                  JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT)
-            << "QuantizationType has a constant for a file type that needs an imatrix";
-        const std::string out = path_ + ".imatrix-ftype" + std::to_string(ftype) + ".gguf";
-        EXPECT_EQ(jllama_quantize(path_.c_str(), out.c_str(), ftype, 1, false), JLLAMA_STATUS_ERROR);
+TEST_F(CApiEnumSweep, AnImportanceMatrixChangesTheWeightsAndIsRecorded) {
+    // The matrix must reach the quantizer, not only be accepted: Q4_K_M, which works without one,
+    // writes other bytes with it, and the output names the file the way llama-quantize does.
+    const std::string plain = path_ + ".q4km.gguf";
+    const std::string weighted = path_ + ".q4km-im.gguf";
+    ASSERT_EQ(jllama_quantize(path_.c_str(), plain.c_str(), 15, 1, false), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(jllama_quantize_imatrix(path_.c_str(), weighted.c_str(), 15, 1, false, imatrix_.c_str()),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const auto bytes = [](const std::string &file) {
+        std::ifstream in(file, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    EXPECT_NE(bytes(plain), bytes(weighted));
+
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(weighted.c_str(), no_data);
+    ASSERT_NE(g, nullptr);
+    const int64_t dataset_key = gguf_find_key(g, "quantize.imatrix.dataset");
+    EXPECT_GE(gguf_find_key(g, "quantize.imatrix.file"), 0);
+    EXPECT_GE(gguf_find_key(g, "quantize.imatrix.entries_count"), 0);
+    EXPECT_GE(gguf_find_key(g, "quantize.imatrix.chunks_count"), 0);
+    EXPECT_GE(dataset_key, 0);
+    if (dataset_key >= 0) {
+        EXPECT_STREQ(gguf_get_val_str(g, dataset_key), "random.txt");
+    }
+    gguf_free(g);
+    gguf_context *unweighted = gguf_init_from_file(plain.c_str(), no_data);
+    ASSERT_NE(unweighted, nullptr);
+    EXPECT_LT(gguf_find_key(unweighted, "quantize.imatrix.file"), 0);
+    gguf_free(unweighted);
+    std::error_code ec;
+    std::filesystem::remove(plain, ec);
+    std::filesystem::remove(weighted, ec);
+}
+
+TEST_F(CApiEnumSweep, AnImportanceMatrixThatCannotBeUsedIsRefusedByName) {
+    const std::string out = path_ + ".bad-imatrix.gguf";
+    // a missing file, and a GGUF that is no importance matrix (the model itself)
+    for (const std::string &bad : {std::string("/nonexistent/imatrix.gguf"), path_}) {
+        EXPECT_EQ(jllama_quantize_imatrix(path_.c_str(), out.c_str(), 15, 1, false, bad.c_str()), JLLAMA_STATUS_ERROR);
+        EXPECT_NE(std::string(jllama_last_error()).find("importance matrix"), std::string::npos) << jllama_last_error();
         std::error_code ec;
+        EXPECT_FALSE(std::filesystem::exists(out, ec));
         std::filesystem::remove(out, ec);
     }
+    // an empty path is no matrix, as null is
+    EXPECT_EQ(jllama_quantize_imatrix(path_.c_str(), out.c_str(), 15, 1, false, ""), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
 }
 
 TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
@@ -2339,4 +2409,116 @@ TEST(CApiPooling, AModelThatDeclaresItsPoolingTypeNeedsNoOption) {
     std::error_code ec;
     std::filesystem::remove(with_type, ec);
     std::filesystem::remove(plain, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A second architecture: the random BERT of tiny_llama_gguf.hpp. An encoder is what cls pooling and
+// reranking are for, and the decoder above can only pretend at both.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The embedding rows of one text, each as its JSON text; empty when the call failed. Every row
+// must hold n_embd finite numbers.
+std::vector<std::string> embedding_rows(jllama_model *model, const std::string &text, size_t n_embd) {
+    Owned response;
+    const std::string request = json{{"content", text}}.dump();
+    EXPECT_EQ(jllama_embeddings(model, request.c_str(), false, &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::vector<std::string> rows;
+    if (response.s != nullptr) {
+        const json all = json::parse(response.str()).at(0).at("embedding");
+        for (size_t i = 0; i < all.size(); ++i) {
+            const json row = all.at(i);
+            EXPECT_EQ(row.size(), n_embd);
+            for (size_t j = 0; j < row.size(); ++j) {
+                EXPECT_TRUE(std::isfinite(row.at(j).get<float>()));
+            }
+            rows.push_back(row.dump());
+        }
+    }
+    return rows;
+}
+
+} // namespace
+
+TEST(CApiBert, AnEncoderEmbedsWithEveryPoolingTypeAndItsOwnByDefault) {
+    const std::string path = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */);
+    ASSERT_FALSE(path.empty());
+    const std::string text = "hello there world"; // [CLS] hello there world [SEP]
+    std::map<std::string, std::vector<std::string>> by_pooling;
+    for (const char *pooling : {"", "none", "mean", "cls", "last"}) {
+        SCOPED_TRACE(std::string("--pooling ") + pooling);
+        std::vector<std::string> extra = {"--embedding"};
+        if (*pooling != 0) {
+            extra.insert(extra.end(), {"--pooling", pooling});
+        }
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        by_pooling[pooling] = embedding_rows(model, text, 32);
+        // the same text twice is the same vector: an encoder has no cache to differ over
+        EXPECT_EQ(by_pooling[pooling], embedding_rows(model, text, 32));
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(by_pooling["none"].size(), 5u) << "one row per token, the two special tokens included";
+    for (const char *pooled : {"", "mean", "cls", "last"}) {
+        EXPECT_EQ(by_pooling[pooled].size(), 1u) << pooled;
+    }
+    EXPECT_EQ(by_pooling[""], by_pooling["cls"]) << "without --pooling the model's own type (cls) applies";
+    EXPECT_NE(by_pooling["cls"], by_pooling["mean"]);
+    EXPECT_NE(by_pooling["cls"], by_pooling["last"]);
+    EXPECT_NE(by_pooling["mean"], by_pooling["last"]);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiBert, ARerankerScoresEveryDocumentByItselfAndTheQuery) {
+    const std::string path = write_tiny_bert_gguf(true, 4 /* LLAMA_POOLING_TYPE_RANK */);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--reranking"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto scores = [&](const std::string &query, const std::vector<const char *> &documents) {
+        Owned response;
+        EXPECT_EQ(
+            jllama_rerank(model, query.c_str(), static_cast<int>(documents.size()), documents.data(), &response.s),
+            JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        std::map<std::string, float> by_document;
+        if (response.s != nullptr) {
+            const json results = json::parse(response.str());
+            EXPECT_EQ(results.size(), documents.size());
+            std::set<int> indices;
+            for (size_t i = 0; i < results.size(); ++i) {
+                const json result = results.at(i);
+                const int index = result.at("index").get<int>();
+                indices.insert(index);
+                EXPECT_EQ(result.at("document").get<std::string>(), documents.at(static_cast<size_t>(index)));
+                EXPECT_GT(result.at("tokens_evaluated").get<int>(), 0);
+                const float score = result.at("score").get<float>();
+                EXPECT_TRUE(std::isfinite(score));
+                by_document[documents.at(static_cast<size_t>(index))] = score;
+            }
+            EXPECT_EQ(indices.size(), documents.size()) << "every document is answered once";
+        }
+        return by_document;
+    };
+    const std::string query = "what is the capital of france ?";
+    const auto forward = scores(query, {"paris is the capital of france", "the cat sat on the mat", "berlin"});
+    const auto backward = scores(query, {"berlin", "the cat sat on the mat", "paris is the capital of france"});
+    // a document's score depends on the query and the document, not on its neighbours or its place
+    EXPECT_EQ(forward, backward);
+    const auto alone = scores(query, {"berlin"});
+    EXPECT_EQ(alone.at("berlin"), forward.at("berlin"));
+    EXPECT_NE(forward.at("berlin"), forward.at("the cat sat on the mat"));
+    // and it does depend on the query
+    EXPECT_NE(scores("the dog", {"berlin"}).at("berlin"), alone.at("berlin"));
+
+    // a reranking context computes no logits, so a completion is refused, not answered with noise
+    Owned completion;
+    EXPECT_EQ(jllama_completions(model, R"({"prompt":"hello","n_predict":2})", &completion.s), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("logits"), std::string::npos) << jllama_last_error();
+    // and the model still reranks afterwards
+    EXPECT_EQ(scores(query, {"berlin"}).at("berlin"), alone.at("berlin"));
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }

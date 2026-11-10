@@ -226,6 +226,157 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     return write_tiny_llama_gguf(spec, shard_path);
 }
 
+// A random BERT: an encoder with learned positions, a WordPiece vocabulary of a few words and,
+// with classifier, the pooler and a one-label classification head, which is what makes a model a
+// reranker (--reranking, pooling type rank). The second architecture next to the llama decoder: it
+// has no causal attention, a [CLS] token for cls pooling and no output layer to generate with. Its
+// answers are noise like the decoder's; what a test asserts is that the path runs and the shapes fit.
+// pooling_type is written as bert.pooling_type (llama_pooling_type; -1 writes none).
+inline std::string write_tiny_bert_gguf(bool classifier = false, int pooling_type = 2,
+                                        const std::string &prefix = "jllama-bert") {
+    constexpr int B_EMBD = 32, B_HEAD = 4, B_FF = 64, B_LAYER = 2, B_CTX = 64;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(1234);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "bert";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), B_CTX);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), B_EMBD);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), B_LAYER);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), B_FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), B_HEAD);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_epsilon").c_str(), 1e-12f);
+    gguf_set_val_bool(g, (a + ".attention.causal").c_str(), false);
+    if (pooling_type >= 0) {
+        gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(pooling_type));
+    }
+
+    // WordPiece as the converter stores it: a word start carries U+2581, a continuation nothing
+    const std::string w = "\xE2\x96\x81";
+    std::vector<std::string> tokens = {"[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"};
+    for (const char *word : {"hello", "there", "world",   "the", "cat",    "dog",    "sat",     "on", "mat", "is",
+                             "what",  "paris", "capital", "of",  "france", "berlin", "germany", ".",  "?",   ","}) {
+        tokens.push_back(w + word);
+    }
+    for (char c = 'a'; c <= 'z'; ++c) {
+        tokens.push_back(w + std::string(1, c));
+        tokens.push_back(std::string(1, c));
+    }
+    const int n_vocab = static_cast<int>(tokens.size());
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    std::vector<int32_t> token_types(n_vocab, 1); // LLAMA_TOKEN_TYPE_NORMAL
+    for (int special = 0; special < 5; ++special) {
+        token_types[special] = 3; // LLAMA_TOKEN_TYPE_CONTROL
+    }
+    gguf_set_val_str(g, "tokenizer.ggml.model", "bert");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_val_u32(g, "tokenizer.ggml.token_type_count", 2);
+    gguf_set_val_u32(g, "tokenizer.ggml.padding_token_id", 0);
+    gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 2);
+    gguf_set_val_u32(g, "tokenizer.ggml.cls_token_id", 2);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 3);
+    gguf_set_val_u32(g, "tokenizer.ggml.seperator_token_id", 3);
+    gguf_set_val_u32(g, "tokenizer.ggml.mask_token_id", 4);
+
+    ggml_init_params ip = {8u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    const auto bias = [&](const std::string &name, int n) {
+        ggml_tensor *t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n);
+        std::normal_distribution<float> dist(0.0f, 0.02f);
+        for (int i = 0; i < n; ++i) {
+            ((float *)t->data)[i] = dist(rng);
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {B_EMBD, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "token_types.weight", {B_EMBD, 2}, 0.1f);
+    add_random_tensor(g, ctx, rng, "position_embd.weight", {B_EMBD, B_CTX}, 0.1f);
+    add_random_tensor(g, ctx, rng, "token_embd_norm.weight", {B_EMBD}, 1.0f);
+    bias("token_embd_norm.bias", B_EMBD);
+    for (int il = 0; il < B_LAYER; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        for (const char *t : {"attn_q", "attn_k", "attn_v", "attn_output"}) {
+            add_random_tensor(g, ctx, rng, p + t + ".weight", {B_EMBD, B_EMBD}, 0.1f);
+            bias(p + t + ".bias", B_EMBD);
+        }
+        add_random_tensor(g, ctx, rng, p + "attn_output_norm.weight", {B_EMBD}, 1.0f);
+        bias(p + "attn_output_norm.bias", B_EMBD);
+        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {B_EMBD, B_FF}, 0.1f);
+        bias(p + "ffn_up.bias", B_FF);
+        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {B_FF, B_EMBD}, 0.1f);
+        bias(p + "ffn_down.bias", B_EMBD);
+        add_random_tensor(g, ctx, rng, p + "layer_output_norm.weight", {B_EMBD}, 1.0f);
+        bias(p + "layer_output_norm.bias", B_EMBD);
+    }
+    if (classifier) {
+        add_random_tensor(g, ctx, rng, "cls.weight", {B_EMBD, B_EMBD}, 0.3f);
+        bias("cls.bias", B_EMBD);
+        add_random_tensor(g, ctx, rng, "cls.output.weight", {B_EMBD, 1}, 0.5f);
+        bias("cls.output.bias", 1);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// An importance matrix for the model of spec, in the GGUF format llama-imatrix writes: for every
+// weight matrix a tensor <name>.in_sum2 with one value per column and <name>.counts with the number
+// of tokens they were summed over, plus the imatrix.* metadata. The values are random and positive;
+// what matters to a test is that the quantizer finds an entry of the right size for every tensor.
+inline std::string write_tiny_imatrix_gguf(const tiny_model_spec &spec = tiny_model_spec(),
+                                           const std::string &prefix = "jllama-imatrix") {
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> dist(0.5f, 2.0f);
+    gguf_context *g = gguf_init_empty();
+    const char *datasets[] = {"random.txt"};
+    gguf_set_val_str(g, "general.type", "imatrix");
+    gguf_set_arr_str(g, "imatrix.datasets", datasets, 1);
+    gguf_set_val_u32(g, "imatrix.chunk_count", 3);
+    gguf_set_val_u32(g, "imatrix.chunk_size", 16);
+    ggml_init_params ip = {8u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    const auto add = [&](const std::string &name, int n_columns) {
+        ggml_tensor *sums = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_columns);
+        for (int i = 0; i < n_columns; ++i) {
+            ((float *)sums->data)[i] = 48.0f * dist(rng); // the sum over 48 tokens
+        }
+        ggml_set_name(sums, (name + ".in_sum2").c_str());
+        gguf_add_tensor(g, sums);
+        ggml_tensor *counts = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+        ((float *)counts->data)[0] = 48.0f;
+        ggml_set_name(counts, (name + ".counts").c_str());
+        gguf_add_tensor(g, counts);
+    };
+    for (int il = 0; il < spec.n_layer; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        for (const char *t : {"attn_q.weight", "attn_k.weight", "attn_v.weight", "ffn_gate.weight", "ffn_up.weight"}) {
+            add(p + t, spec.n_embd);
+        }
+        add(p + "attn_output.weight", spec.n_head * spec.head_dim);
+        add(p + "ffn_down.weight", spec.n_ff);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // A random llava-style (MLP) vision projector for the model above: 32x32 images in 16x16 patches,
 // a two-layer encoder of width 16 and a projection to the model's N_EMBD. Loaded with --mmproj it
 // makes the server multimodal, so the image paths run end to end without a download; like the

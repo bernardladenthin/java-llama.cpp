@@ -120,4 +120,32 @@ public class QuantizerIntegrationTest {
                 () -> LlamaQuantizer.quantize(
                         "models/does-not-exist.gguf", output.toString(), QuantizationType.Q8_0, 0, true));
     }
+
+    @Test
+    public void quantize_typeThatNeedsAnImportanceMatrix_isRefusedBeforeTheNativeCall() {
+        assumeDraftModel(); // gates on the native lib being present in this environment
+        Path output = tempDir.resolve("iq2.gguf");
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> LlamaQuantizer.quantize(
+                        TestConstants.DRAFT_MODEL_PATH, output.toString(), QuantizationType.IQ2_XXS, 0, true));
+        assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
+        assertTrue(!Files.exists(output), "a refused quantization left a file behind");
+    }
+
+    @Test
+    public void quantize_missingImportanceMatrix_throwsNamingIt() {
+        assumeDraftModel();
+        Path output = tempDir.resolve("iq2-missing-imatrix.gguf");
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.quantize(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        output.toString(),
+                        QuantizationType.IQ2_XXS,
+                        0,
+                        true,
+                        tempDir.resolve("no-such-imatrix.gguf").toString()));
+        assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
+    }
 }

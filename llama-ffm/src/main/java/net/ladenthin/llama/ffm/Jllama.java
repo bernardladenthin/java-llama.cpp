@@ -169,11 +169,39 @@ public final class Jllama {
      * @throws LlamaException when the quantisation fails
      */
     public static void quantize(String inputPath, String outputPath, int ftype, int nthread, boolean allowRequantize) {
+        quantize(inputPath, outputPath, ftype, nthread, allowRequantize, null);
+    }
+
+    /**
+     * Quantises a GGUF file with an importance matrix ({@code llama-imatrix}'s output), which the
+     * IQ1 and IQ2 file types, IQ3_XS, IQ3_XXS and Q2_K_S need.
+     *
+     * @param inputPath the model to read
+     * @param outputPath the model to write
+     * @param ftype the target {@code llama_ftype} value (e.g. 7 for Q8_0)
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param allowRequantize whether an already quantised tensor may be quantised again
+     * @param importanceMatrixPath the importance matrix, or {@code null} for none
+     * @throws LlamaException when the quantisation fails
+     */
+    public static void quantize(
+            String inputPath,
+            String outputPath,
+            int ftype,
+            int nthread,
+            boolean allowRequantize,
+            String importanceMatrixPath) {
         Objects.requireNonNull(inputPath, "inputPath");
         Objects.requireNonNull(outputPath, "outputPath");
         try (Arena arena = Arena.ofConfined()) {
-            call(JllamaNative.QUANTIZE, cString(arena, inputPath), cString(arena, outputPath), ftype, nthread,
-                    allowRequantize);
+            call(
+                    JllamaNative.QUANTIZE_IMATRIX,
+                    cString(arena, inputPath),
+                    cString(arena, outputPath),
+                    ftype,
+                    nthread,
+                    allowRequantize,
+                    importanceMatrixPath != null ? cString(arena, importanceMatrixPath) : MemorySegment.NULL);
         }
     }
 

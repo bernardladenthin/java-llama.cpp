@@ -74,7 +74,7 @@ String grammar = Jllama.jsonSchemaToGrammar("{\"type\": \"object\"}");
 | `FfmNativeServer` | `jllama_server_*` (classic, attached, the router's worker command) |
 | `FfmRpcServer` | `jllama_rpc_server_*` |
 | `FfmTextToSpeech` | `jllama_tts_*` |
-| `Jllama` | `jllama_api_version`, `jllama_build_info`, `jllama_set_log_callback`, `jllama_json_schema_to_grammar`, `jllama_quantize`, `jllama_finetune` |
+| `Jllama` | `jllama_api_version`, `jllama_build_info`, `jllama_set_log_callback`, `jllama_json_schema_to_grammar`, `jllama_quantize_imatrix`, `jllama_finetune` |
 
 ## Build
 

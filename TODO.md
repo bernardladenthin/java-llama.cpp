@@ -220,20 +220,29 @@ affected; ASCII paths are not affected.
 **Found while writing tests for the bump (2026-11-10), older than it; fixed the same day**
 - A draft model alone did not speculate (upstream's types default to `none`): the engine now uses a
   draft model as `draft-simple` when no type is given, and `ModelParameters.setSpecTypes` writes
-  `--spec-type`. Open: `LlamaModelTest`'s speculative test only counts the generated tokens; it
-  should assert `getDraftTokensTotal() > 0` (model-backed, CI only).
+  `--spec-type`. `LlamaModelTest#testSpeculativeDecoding` asserts `getDraftTokensTotal() > 0`
+  (model-backed, so its first run is CI's: should CodeLlama and AMD-Llama-135m not draft together,
+  that is the finding).
 - Enum constants no receiver accepts are removed: `PoolingType.UNSPECIFIED`,
-  `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`, and seven
-  `QuantizationType`s that need an importance matrix.
-- **Importance matrix for the quantizer.** `jllama_quantize` and `LlamaQuantizer` cannot pass an
-  imatrix (`llama_model_quantize_params::imatrix`; upstream's `tools/quantize` reads the file itself,
-  the code is not in the library). With it IQ2_XXS, IQ2_XS, Q2_K_S, IQ1_S, IQ2_S, IQ2_M and IQ1_M
-  become targets again, and `CApiEnumSweep.TheFileTypesThatNeedAnImportanceMatrixAreNotQuantizationTypes`
-  says where to put the constants back.
-- **More shapes for the random test model.** `tiny_model_spec` (`tiny_llama_gguf.hpp`) names width,
-  heads, layers and the declared pooling type; not yet: other architectures (a BERT-style encoder for
-  `cls`/`rank` pooling with a classifier head, a model with MTP layers for `draft-mtp`), a tokenizer
-  other than the byte one. Each would turn an exception of `CApiEnumSweep` into a tested case.
+  `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`.
+- The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`);
+  nine types need one (`QuantizationType.requiresImportanceMatrix()`). Not built: computing one
+  (upstream's `llama-imatrix` tool, `tools/imatrix`, is not in the library), and the tool's
+  `--include-weights` / `--exclude-weights` filters.
+- **More shapes for the random test model, what is left.** `tiny_model_spec` names width, heads,
+  layers and the declared pooling type, `write_tiny_bert_gguf` is an encoder with an optional
+  classification head. Not built: a model with MTP layers for `--spec-type draft-mtp` -- llama.cpp
+  has them only in its hybrid architectures (Qwen3.5 hybrid, GLM5-Next, Nemotron-H MoE), each a
+  generator of its own size; a MoE decoder (`ffn_gate_inp` + expert tensors) to reach
+  `patches/0022`'s path and the MoE cache through the server; a tokenizer other than the byte and
+  the WordPiece one.
+- **A BERT without a classification head loaded with `--reranking` answers scores**
+  (`jllama_rerank` returned 0.40 for one document of the random encoder): upstream takes the pooled
+  output's first value where the head is missing. Not pinned by a test, since it is upstream's
+  behaviour and arguably its defect; to decide whether the load should refuse it.
+- **The quantization sweep takes 9 s** on x86-64 (the IQ types search codebooks); under qemu
+  (`test-cpp-linux-s390x`) it will take minutes. Watch its first run there; one layer and a
+  256-wide model is the smallest shape that really writes every type.
 - `setMoeCacheMib` on a host without a GPU fails the load ("MoE cache requires a GPU backend"); its
   Javadoc is corrected.
 

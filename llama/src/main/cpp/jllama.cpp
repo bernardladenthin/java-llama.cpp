@@ -1382,13 +1382,16 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJso
 // name -- which the JVM cannot resolve, failing every call with UnsatisfiedLinkError on every
 // platform. Same reason train_engine.cpp marks LlamaTrainer_finetuneNative and native_server.cpp
 // wraps the NativeServer entry points in an extern "C" block.
-extern "C" JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(
-    JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype, jint nthread, jboolean allowRequantize) {
+extern "C" JNIEXPORT void JNICALL
+Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype,
+                                                       jint nthread, jboolean allowRequantize, jstring jimatrix) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         const std::string input_path = parse_jstring(env, jinput);
         const std::string output_path = parse_jstring(env, joutput);
-        const jllama_status status = jllama_quantize(input_path.c_str(), output_path.c_str(), static_cast<int>(ftype),
-                                                     static_cast<int>(nthread), allowRequantize == JNI_TRUE);
+        const std::string imatrix_path = jimatrix != nullptr ? parse_jstring(env, jimatrix) : std::string();
+        const jllama_status status =
+            jllama_quantize_imatrix(input_path.c_str(), output_path.c_str(), static_cast<int>(ftype),
+                                    static_cast<int>(nthread), allowRequantize == JNI_TRUE, imatrix_path.c_str());
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
         }

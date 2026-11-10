@@ -969,6 +969,10 @@ LlamaQuantizer.quantize("model-f16.gguf", "model-q4_k_m.gguf", QuantizationType.
 // Re-quantizing an already-quantized GGUF degrades quality and must be opted into:
 LlamaQuantizer.quantize("model-q8_0.gguf", "model-q4_0.gguf", QuantizationType.Q4_0,
         /* threads */ 0, /* allowRequantize */ true);
+// With an importance matrix (the file llama-imatrix computed for the model), which the smallest
+// types need (QuantizationType.requiresImportanceMatrix()) and the others below Q8 gain from:
+LlamaQuantizer.quantize("model-f16.gguf", "model-iq2_xs.gguf", QuantizationType.IQ2_XS,
+        0, false, "model.imatrix.gguf");
 ```
 
 ### Raw JSON Endpoints
