@@ -4,6 +4,7 @@
 package net.ladenthin.llama.ffm;
 
 import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static net.ladenthin.llama.ffm.JllamaNative.call;
 import static net.ladenthin.llama.ffm.JllamaNative.cString;
 import static net.ladenthin.llama.ffm.JllamaNative.invoke;
@@ -155,6 +156,47 @@ public final class Jllama {
             MemorySegment out = pointerSlot(arena);
             call(JllamaNative.JSON_SCHEMA_TO_GRAMMAR, cString(arena, schemaJson), out);
             return takeString(out);
+        }
+    }
+
+    /**
+     * Computes the importance matrix of a model over a calibration text, as
+     * {@code LlamaQuantizer.computeImportanceMatrix} does.
+     *
+     * @param modelPath the model, best the unquantized one
+     * @param textPath the calibration text (plain UTF-8 text)
+     * @param outputPath the importance matrix to write (GGUF)
+     * @param chunkSize tokens per chunk, at least 16; {@code 0} for 512
+     * @param maxChunks the most chunks to evaluate, {@code 0} for all
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param gpuLayers layers to offload, {@code 0} for none
+     * @return the number of chunks the matrix was computed over
+     * @throws LlamaException when the computation fails
+     */
+    public static int computeImportanceMatrix(
+            String modelPath,
+            String textPath,
+            String outputPath,
+            int chunkSize,
+            int maxChunks,
+            int nthread,
+            int gpuLayers) {
+        Objects.requireNonNull(modelPath, "modelPath");
+        Objects.requireNonNull(textPath, "textPath");
+        Objects.requireNonNull(outputPath, "outputPath");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment chunks = arena.allocate(JAVA_INT);
+            call(
+                    JllamaNative.IMATRIX,
+                    cString(arena, modelPath),
+                    cString(arena, textPath),
+                    cString(arena, outputPath),
+                    chunkSize,
+                    maxChunks,
+                    nthread,
+                    gpuLayers,
+                    chunks);
+            return chunks.get(JAVA_INT, 0);
         }
     }
 

@@ -225,24 +225,26 @@ affected; ASCII paths are not affected.
   that is the finding).
 - Enum constants no receiver accepts are removed: `PoolingType.UNSPECIFIED`,
   `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`.
-- The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`);
-  nine types need one (`QuantizationType.requiresImportanceMatrix()`). Not built: computing one
-  (upstream's `llama-imatrix` tool, `tools/imatrix`, is not in the library), and the tool's
-  `--include-weights` / `--exclude-weights` filters.
-- **More shapes for the random test model, what is left.** `tiny_model_spec` names width, heads,
-  layers and the declared pooling type, `write_tiny_bert_gguf` is an encoder with an optional
-  classification head. Not built: a model with MTP layers for `--spec-type draft-mtp` -- llama.cpp
-  has them only in its hybrid architectures (Qwen3.5 hybrid, GLM5-Next, Nemotron-H MoE), each a
-  generator of its own size; a MoE decoder (`ffn_gate_inp` + expert tensors) to reach
-  `patches/0022`'s path and the MoE cache through the server; a tokenizer other than the byte and
-  the WordPiece one.
-- **A BERT without a classification head loaded with `--reranking` answers scores**
-  (`jllama_rerank` returned 0.40 for one document of the random encoder): upstream takes the pooled
-  output's first value where the head is missing. Not pinned by a test, since it is upstream's
-  behaviour and arguably its defect; to decide whether the load should refuse it.
-- **The quantization sweep takes 9 s** on x86-64 (the IQ types search codebooks); under qemu
-  (`test-cpp-linux-s390x`) it will take minutes. Watch its first run there; one layer and a
-  256-wide model is the smallest shape that really writes every type.
+- The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`),
+  nine types need one (`QuantizationType.requiresImportanceMatrix()`), and
+  `LlamaQuantizer.computeImportanceMatrix` / `jllama_imatrix` compute it. Left out of the port of
+  upstream's `tools/imatrix`: merging existing matrices (`--in-file`), the activation sums
+  (`.in_sum`, statistics only), the legacy output format, `--process-output`, the perplexity report,
+  intermediate saves, and the tool's `--include-weights` / `--exclude-weights` on the quantizer side.
+  A run cannot be cancelled or report progress; for a large model both would be worth a callback.
+- Rank pooling on a model without a classification head is refused at load (upstream answers the
+  first value of the pooled embedding as the score). The check reads the tensor list of the model
+  file and gives a split model the benefit of the doubt.
+- **The random test models, what is left.** `tiny_model_spec` names width, heads, layers, the
+  declared pooling type and a mixture of experts; `write_tiny_bert_gguf` is an encoder with an
+  optional classification head. Not built: a model with MTP layers for `--spec-type draft-mtp` --
+  llama.cpp has them only in its hybrid architectures (Qwen3.5 hybrid, GLM5-Next, Nemotron-H MoE),
+  each a generator of the size of `test_kolibri1.cpp`'s; a tokenizer other than the byte and the
+  WordPiece one (SentencePiece, a BPE with merges).
+- **The quantization sweep takes 9 s on x86-64, and the model is not why.** Measured per type:
+  IQ1_S 2.8 s, IQ3_XXS 1.6 s, IQ2_XS 1.1 s, every other type below 0.7 s -- the one-time
+  construction of ggml's IQ codebook tables, which no smaller model avoids. Under qemu
+  (`test-cpp-linux-s390x`) that will be minutes; watch its first run.
 - `setMoeCacheMib` on a host without a GPU fails the load ("MoE cache requires a GPU backend"); its
   Javadoc is corrected.
 

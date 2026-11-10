@@ -66,8 +66,7 @@ inline std::vector<std::string> byte_tokens() {
 inline ggml_tensor *add_random_tensor(gguf_context *g, ggml_context *ctx, std::mt19937 &rng, const std::string &name,
                                       std::initializer_list<int64_t> ne, float scale) {
     const std::vector<int64_t> d(ne);
-    ggml_tensor *t = d.size() == 1 ? ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d[0])
-                                   : ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d[0], d[1]);
+    ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(d.size()), d.data());
     std::normal_distribution<float> dist(0.0f, scale);
     auto *data = (float *)t->data;
     for (int64_t i = 0; i < ggml_nelements(t); ++i) {
@@ -124,6 +123,10 @@ struct tiny_model_spec {
     int n_layer = N_LAYER;
     int n_ctx_train = N_CTX_TRAIN;
     int pooling_type = -1; // llama_pooling_type written as <arch>.pooling_type; -1 writes none
+    // A mixture of experts when n_expert > 0: every layer's feed-forward is a router
+    // (ffn_gate_inp) over n_expert experts, of which n_expert_used answer each token.
+    int n_expert = 0;
+    int n_expert_used = 0;
 
     // A model whose every weight row is `width` long (width must be a multiple of the head count).
     static tiny_model_spec wide(int width, const std::string &prefix = "jllama-wide") {
@@ -154,6 +157,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
+    if (spec.n_expert > 0) {
+        gguf_set_val_u32(g, (a + ".expert_count").c_str(), static_cast<uint32_t>(spec.n_expert));
+        gguf_set_val_u32(g, (a + ".expert_used_count").c_str(), static_cast<uint32_t>(spec.n_expert_used));
+    }
     if (spec.pooling_type >= 0) {
         gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));
     }
@@ -196,6 +203,14 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+        if (spec.n_expert > 0) {
+            // the router needs spread-out logits, or every token takes the same experts
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, spec.n_expert}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ffn_down_exps.weight", {spec.n_ff, spec.n_embd, spec.n_expert}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ffn_up_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert}, 0.1f);
+            continue;
+        }
         add_random_tensor(to, ctx, rng, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {spec.n_embd, spec.n_ff}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {spec.n_ff, spec.n_embd}, 0.1f);

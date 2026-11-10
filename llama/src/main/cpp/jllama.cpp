@@ -1398,6 +1398,26 @@ Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstr
     });
 }
 
+// Like quantizeNative above: LlamaQuantizer is not in jllama.h, so the C linkage is said here.
+extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_computeImportanceMatrixNative(
+    JNIEnv *env, jclass, jstring jmodel, jstring jtext, jstring joutput, jint chunkSize, jint maxChunks, jint nthread,
+    jint gpuLayers) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        const std::string model_path = parse_jstring(env, jmodel);
+        const std::string text_path = parse_jstring(env, jtext);
+        const std::string output_path = parse_jstring(env, joutput);
+        int chunks = 0;
+        const jllama_status status = jllama_imatrix(model_path.c_str(), text_path.c_str(), output_path.c_str(),
+                                                    static_cast<int>(chunkSize), static_cast<int>(maxChunks),
+                                                    static_cast<int>(nthread), static_cast<int>(gpuLayers), &chunks);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return 0;
+        }
+        return static_cast<jint>(chunks);
+    });
+}
+
 JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                           jstring jconfig) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jboolean {

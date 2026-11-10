@@ -895,6 +895,7 @@ add_library(jllama SHARED
     src/main/cpp/jllama_engine.cpp
     src/main/cpp/jllama_api.cpp
     src/main/cpp/tts_engine.cpp
+    src/main/cpp/imatrix_engine.cpp
     src/main/cpp/train_engine.cpp
     src/main/cpp/rpc_bridge.cpp
     src/main/cpp/utils.hpp
@@ -1398,6 +1399,7 @@ if(BUILD_TESTING)
         src/main/cpp/jllama_api.cpp
         # The engines behind the C API's TTS and trainer functions (test_c_api.cpp drives them).
         src/main/cpp/tts_engine.cpp
+        src/main/cpp/imatrix_engine.cpp
         src/main/cpp/train_engine.cpp
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp

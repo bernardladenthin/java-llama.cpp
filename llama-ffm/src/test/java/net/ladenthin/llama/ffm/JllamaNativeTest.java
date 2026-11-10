@@ -222,4 +222,13 @@ class JllamaNativeTest {
                         "/nonexistent/in.gguf", "/nonexistent/out.gguf", 19, 1, false, "/nonexistent/imatrix.gguf"));
         assertThat(e.getMessage(), containsString("importance matrix"));
     }
+
+    @Test
+    void computeImportanceMatrixReportsAMissingModel() {
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.computeImportanceMatrix(
+                        "/nonexistent/model.gguf", "/nonexistent/text.txt", "/nonexistent/out.gguf", 0, 0, 1, 0));
+        assertThat(e.getMessage(), containsString("calibration text"));
+    }
 }

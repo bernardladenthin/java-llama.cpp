@@ -27,6 +27,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   one (IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S, IQ2_M, IQ3_XXS, IQ3_XS, Q2_K_S); asked for without
   one, `LlamaQuantizer` throws `IllegalArgumentException` before the native call instead of failing
   with "code 1".
+- **Computing an importance matrix**: `LlamaQuantizer.computeImportanceMatrix(modelPath, textPath,
+  outputPath[, chunkSize, maxChunks, threads, gpuLayers])`, `jllama_imatrix()` in the C API and
+  `Jllama.computeImportanceMatrix` in `llama-ffm` -- what the `llama-imatrix` tool does, in the
+  library: the model reads a calibration text in chunks and the file it writes is the one
+  `quantize` takes (and the one upstream's tools read and write).
 - **`ModelParameters.setSpecTypes(SpecType, SpecType...)`** and the enum `SpecType` -- the types
   of speculative decoding (upstream `--spec-type`): `draft-simple`, the n-gram types, `none`.
 
@@ -39,6 +44,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **A model without a classification head is refused as a reranker.** Loading one with
+  `enableReranking()` (or rank pooling) used to work and `rerank` answered the first value of the
+  pooled embedding as the score; the load now fails naming the missing head. A model split into
+  several GGUF files is not checked.
 - **A draft model is used without naming a speculative type.** `setModelDraft` (`--spec-draft-model`)
   alone loaded the second model and drafted nothing, because llama.cpp's speculative types default
   to `none`; the library now uses it as `draft-simple` unless `setSpecTypes` says otherwise

@@ -2328,6 +2328,9 @@ TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
     const std::map<std::string, std::string> expected_load_failure = {
         // needs a model with MTP layers ("context type MTP requested but model doesn't contain MTP layers")
         {"--spec-type draft-mtp", "no MTP layers in the model"},
+        // rank pooling scores with a classification head, which a plain decoder lacks (the engine
+        // refuses the load; CApiBert covers rank pooling on a model that has one)
+        {"--pooling rank", "no classification head"},
     };
     // Fails or loads with the machine: tensor split needs a GPU device, which most test runners lack.
     const std::set<std::string> machine_dependent = {"--split-mode tensor"};
@@ -2519,6 +2522,235 @@ TEST(CApiBert, ARerankerScoresEveryDocumentByItselfAndTheQuery) {
     // and the model still reranks afterwards
     EXPECT_EQ(scores(query, {"berlin"}).at("berlin"), alone.at("berlin"));
     jllama_model_free(model);
+
+    // The same encoder without the classification head is no reranker: llama.cpp would answer the
+    // first value of the pooled embedding as the score, so the load is refused by name -- with
+    // --reranking and with rank pooling asked for directly.
+    const std::string encoder = write_tiny_bert_gguf(false, 2);
+    ASSERT_FALSE(encoder.empty());
+    for (const std::vector<std::string> &extra :
+         {std::vector<std::string>{"--reranking"}, std::vector<std::string>{"--embedding", "--pooling", "rank"}}) {
+        jllama_model *headless = load_tiny(encoder, extra);
+        EXPECT_EQ(headless, nullptr) << "a model without a classification head loaded as a reranker";
+        EXPECT_NE(std::string(jllama_last_error()).find("classification head"), std::string::npos)
+            << jllama_last_error();
+        jllama_model_free(headless);
+    }
+    // and it still loads for what it is
+    jllama_model *embedder = load_tiny(encoder, {"--embedding"});
+    EXPECT_NE(embedder, nullptr) << jllama_last_error();
+    jllama_model_free(embedder);
     std::error_code ec;
     std::filesystem::remove(path, ec);
+    std::filesystem::remove(encoder, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A mixture of experts (tiny_model_spec::n_expert): the decoder whose feed-forward is a router over
+// expert matrices -- the MUL_MAT_ID path, which test_moe_repack.cpp checks as an operation and
+// nothing checked through a model.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+tiny_model_spec moe_spec() {
+    tiny_model_spec spec = tiny_model_spec::wide(64, "jllama-moe");
+    spec.n_expert = 4;
+    spec.n_expert_used = 2;
+    return spec;
+}
+
+} // namespace
+
+TEST(CApiMoe, AMixtureOfExpertsAnswersTheSameOnBothRepackPathsAndInEveryQuantization) {
+    const std::string path = write_tiny_llama_gguf(moe_spec());
+    ASSERT_FALSE(path.empty());
+    bool batched_before = true;
+    ASSERT_EQ(jllama_get_cpu_moe_batched(&batched_before), JLLAMA_STATUS_OK) << jllama_last_error();
+
+    // the experts change the answer: the same shape without them is another model
+    tiny_model_spec dense = tiny_model_spec::wide(64, "jllama-moe-dense");
+    const std::string dense_path = write_tiny_llama_gguf(dense);
+    jllama_model *dense_model = load_tiny(dense_path, {});
+    ASSERT_NE(dense_model, nullptr) << jllama_last_error();
+    const std::string dense_answer = greedy_answer(dense_model, 16);
+    jllama_model_free(dense_model);
+
+    // F32, and the types the CPU backend repacks for MUL_MAT_ID where the CPU supports it
+    // (patches/0022: Q4_0, Q4_K, IQ4_NL; 2 = Q4_0, 15 = Q4_K_M, 25 = IQ4_NL)
+    for (const int ftype : {0, 2, 15, 25}) {
+        SCOPED_TRACE("file type " + std::to_string(ftype));
+        std::string model_path = path;
+        if (ftype != 0) {
+            model_path = path + ".ftype" + std::to_string(ftype) + ".gguf";
+            ASSERT_EQ(jllama_quantize(path.c_str(), model_path.c_str(), ftype, 1, false), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+        }
+        std::map<bool, std::string> answers;
+        for (const bool batched : {true, false}) {
+            ASSERT_EQ(jllama_set_cpu_moe_batched(batched), JLLAMA_STATUS_OK) << jllama_last_error();
+            jllama_model *model = load_tiny(model_path, {});
+            ASSERT_NE(model, nullptr) << jllama_last_error();
+            answers[batched] = greedy_answer(model, 16);
+            jllama_model_free(model);
+        }
+        EXPECT_FALSE(answers[true].empty());
+        EXPECT_FALSE(answers[false].empty());
+        // The batched path and upstream's token-by-token path are the same computation for F32 and
+        // Q4_0; for Q4_K and IQ4_NL the two kernels round differently (measured for Q4_K with real
+        // weights: KLD 0.0075), so a greedy near tie may fall the other way and only F32 and Q4_0
+        // are held to equality.
+        if (ftype == 0 || ftype == 2) {
+            EXPECT_EQ(answers[true], answers[false]);
+        }
+        if (ftype == 0) {
+            EXPECT_NE(answers[true], dense_answer) << "the experts have no effect on the answer";
+        } else {
+            std::error_code ec;
+            std::filesystem::remove(model_path, ec);
+        }
+    }
+    EXPECT_EQ(jllama_set_cpu_moe_batched(batched_before), JLLAMA_STATUS_OK);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(dense_path, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// jllama_imatrix: the importance matrix computed here, not written by the fixture.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A calibration text of about n_tokens byte tokens: words over the printable ASCII the model knows.
+std::string write_calibration_text(const std::string &prefix, size_t n_tokens) {
+    const std::string path = (std::filesystem::temp_directory_path() / (prefix + "-calibration.txt")).string();
+    std::ofstream out(path, std::ios::binary);
+    std::mt19937 rng(99);
+    std::uniform_int_distribution<int> letter('a', 'z');
+    for (size_t i = 0; i < n_tokens; ++i) {
+        out << (i % 6 == 5 ? ' ' : static_cast<char>(letter(rng)));
+    }
+    return path;
+}
+
+// The entries of an importance matrix file: tensor name -> number of values.
+std::map<std::string, int64_t> imatrix_entries(const std::string &path) {
+    std::map<std::string, int64_t> entries;
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), no_data);
+    EXPECT_NE(g, nullptr);
+    if (g != nullptr) {
+        for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+            entries[gguf_get_tensor_name(g, i)] = static_cast<int64_t>(gguf_get_tensor_size(g, i) / sizeof(float));
+        }
+        gguf_free(g);
+    }
+    return entries;
+}
+
+} // namespace
+
+TEST(CApiImatrix, AComputedImportanceMatrixCoversEveryLayerMatrixAndQuantizesTheTypesThatNeedOne) {
+    tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-imatrix-model");
+    spec.n_layer = 1;
+    const std::string model = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(model.empty());
+    const std::string text = write_calibration_text("jllama-imatrix", 200);
+    const std::string imatrix = model + ".imatrix.gguf";
+
+    int chunks = -1;
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, &chunks), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(chunks, 6) << "200 tokens and a BOS in chunks of 32";
+
+    // one .in_sum2 with a value per input column and one .counts per weight matrix of the layer
+    const auto entries = imatrix_entries(imatrix);
+    for (const char *weight : {"attn_q", "attn_k", "attn_v", "ffn_gate", "ffn_up"}) {
+        const std::string name = std::string("blk.0.") + weight + ".weight";
+        ASSERT_EQ(entries.count(name + ".in_sum2"), 1u) << name;
+        EXPECT_EQ(entries.at(name + ".in_sum2"), spec.n_embd) << name;
+        EXPECT_EQ(entries.at(name + ".counts"), 1) << name;
+    }
+    ASSERT_EQ(entries.count("blk.0.ffn_down.weight.in_sum2"), 1u);
+    EXPECT_EQ(entries.at("blk.0.ffn_down.weight.in_sum2"), spec.n_ff);
+    EXPECT_EQ(entries.count("output.weight.in_sum2"), 0u) << "the output layer is not part of the matrix";
+
+    // max_chunks limits the work, and the file says how many chunks it holds
+    const std::string limited = model + ".imatrix-2.gguf";
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), limited.c_str(), 32, 2, 2, 0, &chunks), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(chunks, 2);
+
+    // what it is for: the types that cannot be written without a matrix, written and loaded
+    // (Q2_K_S and IQ1_M: the two whose tables are cheap to build; the sweep above writes all nine)
+    for (const int ftype : {21, 31}) {
+        SCOPED_TRACE("file type " + std::to_string(ftype));
+        const std::string out = model + ".im-ftype" + std::to_string(ftype) + ".gguf";
+        ASSERT_EQ(jllama_quantize_imatrix(model.c_str(), out.c_str(), ftype, 1, false, imatrix.c_str()),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_model *loaded = load_tiny(out, {});
+        EXPECT_NE(loaded, nullptr) << jllama_last_error();
+        if (loaded != nullptr) {
+            EXPECT_FALSE(greedy_answer(loaded, 4).empty());
+            jllama_model_free(loaded);
+        }
+        std::error_code ec;
+        std::filesystem::remove(out, ec);
+    }
+    std::error_code ec;
+    for (const std::string &file : {model, text, imatrix, limited}) {
+        std::filesystem::remove(file, ec);
+    }
+}
+
+TEST(CApiImatrix, AMixtureOfExpertsGetsACountPerExpert) {
+    const tiny_model_spec spec = moe_spec();
+    const std::string model = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(model.empty());
+    const std::string text = write_calibration_text("jllama-imatrix-moe", 200);
+    const std::string imatrix = model + ".imatrix.gguf";
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, nullptr), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const auto entries = imatrix_entries(imatrix);
+    for (int layer = 0; layer < spec.n_layer; ++layer) {
+        const std::string p = "blk." + std::to_string(layer) + ".";
+        ASSERT_EQ(entries.count(p + "ffn_up_exps.weight.in_sum2"), 1u);
+        EXPECT_EQ(entries.at(p + "ffn_up_exps.weight.in_sum2"), int64_t{spec.n_embd} * spec.n_expert);
+        EXPECT_EQ(entries.at(p + "ffn_up_exps.weight.counts"), spec.n_expert);
+        EXPECT_EQ(entries.at(p + "ffn_down_exps.weight.in_sum2"), int64_t{spec.n_ff} * spec.n_expert);
+    }
+    // and the quantizer takes it: a type that needs a matrix, over the expert tensors
+    const std::string out = model + ".iq2.gguf";
+    ASSERT_EQ(jllama_quantize_imatrix(model.c_str(), out.c_str(), 20, 1, false, imatrix.c_str()), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_model *loaded = load_tiny(out, {});
+    EXPECT_NE(loaded, nullptr) << jllama_last_error();
+    jllama_model_free(loaded);
+    std::error_code ec;
+    for (const std::string &file : {model, text, imatrix, out}) {
+        std::filesystem::remove(file, ec);
+    }
+}
+
+TEST(CApiImatrix, WhatCannotBeComputedIsRefusedByName) {
+    const std::string model = write_tiny_llama_gguf("jllama-imatrix-refused");
+    const std::string text = write_calibration_text("jllama-imatrix-refused", 40);
+    const std::string out = model + ".imatrix.gguf";
+    const auto refused = [&](const char *model_path, const char *text_path, int chunk_size, const char *what) {
+        EXPECT_EQ(jllama_imatrix(model_path, text_path, out.c_str(), chunk_size, 0, 1, 0, nullptr), JLLAMA_STATUS_ERROR)
+            << what;
+        EXPECT_NE(std::string(jllama_last_error()).find(what), std::string::npos) << jllama_last_error();
+        std::error_code ec;
+        EXPECT_FALSE(std::filesystem::exists(out, ec)) << what;
+    };
+    refused("/nonexistent/model.gguf", text.c_str(), 32, "could not load the model");
+    refused(model.c_str(), "/nonexistent/text.txt", 32, "calibration text");
+    refused(model.c_str(), text.c_str(), 8, "at least 16");
+    refused(model.c_str(), text.c_str(), 64, "fewer than one chunk");
+    EXPECT_EQ(jllama_imatrix(nullptr, text.c_str(), out.c_str(), 32, 0, 1, 0, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    std::error_code ec;
+    std::filesystem::remove(model, ec);
+    std::filesystem::remove(text, ec);
 }

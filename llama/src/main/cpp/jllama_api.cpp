@@ -17,6 +17,7 @@
 #include "jllama_api.h"
 #include "rpc_support.hpp"
 #include "tts_engine.h"
+#include "imatrix_engine.h"
 #include "train_engine.h"
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 #include "native_server_engine.hpp"
@@ -577,6 +578,32 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
         return fail(JLLAMA_STATUS_ERROR, e.what());
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception during quantization");
+    }
+}
+
+jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
+                             int max_chunks, int nthread, int n_gpu_layers, int *n_chunks) {
+    if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
+    }
+    try {
+        jllama::imatrix::options opts;
+        if (chunk_size != 0) {
+            opts.chunk_size = chunk_size;
+        }
+        opts.max_chunks = max_chunks;
+        opts.n_threads = nthread;
+        opts.n_gpu_layers = n_gpu_layers;
+        const int chunks = jllama::imatrix::compute(model_path, text_path, output_path, opts);
+        if (n_chunks != nullptr) {
+            *n_chunks = chunks;
+        }
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception while computing the importance matrix");
     }
 }
 

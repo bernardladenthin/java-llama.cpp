@@ -973,6 +973,9 @@ LlamaQuantizer.quantize("model-q8_0.gguf", "model-q4_0.gguf", QuantizationType.Q
 // types need (QuantizationType.requiresImportanceMatrix()) and the others below Q8 gain from:
 LlamaQuantizer.quantize("model-f16.gguf", "model-iq2_xs.gguf", QuantizationType.IQ2_XS,
         0, false, "model.imatrix.gguf");
+// The matrix itself, computed from a calibration text (llama-imatrix without the separate binary;
+// the file is interchangeable with that tool's):
+int chunks = LlamaQuantizer.computeImportanceMatrix("model-f16.gguf", "calibration.txt", "model.imatrix.gguf");
 ```
 
 ### Raw JSON Endpoints

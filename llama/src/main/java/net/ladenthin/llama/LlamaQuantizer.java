@@ -106,6 +106,67 @@ public final class LlamaQuantizer {
         quantizeNative(inputPath, outputPath, type.getFtypeValue(), threads, allowRequantize, importanceMatrixPath);
     }
 
+    /**
+     * Compute the importance matrix of a model over a calibration text, as the {@code llama-imatrix}
+     * tool does, with chunks of 512 tokens over the whole text on the CPU.
+     *
+     * @param modelPath path to the model, best the unquantized one
+     * @param textPath path to the calibration text (plain UTF-8 text)
+     * @param outputPath path the importance matrix is written to (GGUF)
+     * @return the number of chunks the matrix was computed over
+     * @throws net.ladenthin.llama.exception.LlamaException if the model or the text cannot be read,
+     *     or the text is shorter than one chunk
+     * @see #computeImportanceMatrix(String, String, String, int, int, int, int)
+     */
+    public static int computeImportanceMatrix(String modelPath, String textPath, String outputPath) {
+        return computeImportanceMatrix(modelPath, textPath, outputPath, 0, 0, 0, 0);
+    }
+
+    /**
+     * Compute the importance matrix of a model over a calibration text: the model reads the text
+     * chunk by chunk, and for every weight matrix of its layers the squared activations entering it
+     * are summed per column. Pass the result to
+     * {@link #quantize(String, String, QuantizationType, int, boolean, String)}; the file is the
+     * one {@code llama-imatrix} writes, so either tool's output works with either quantizer.
+     *
+     * <p>The run loads the model itself and frees it again; it takes about as long as evaluating
+     * the text once. A few hundred chunks of text close to what the model will be used for is the
+     * usual amount.</p>
+     *
+     * @param modelPath path to the model, best the unquantized one
+     * @param textPath path to the calibration text (plain UTF-8 text)
+     * @param outputPath path the importance matrix is written to (GGUF)
+     * @param chunkSize tokens per chunk, at least 16; {@code 0} for 512
+     * @param maxChunks the most chunks to evaluate; {@code 0} for every whole chunk of the text
+     * @param threads number of threads; {@code <= 0} lets llama.cpp pick
+     * @param gpuLayers layers to offload to a GPU; {@code 0} for none
+     * @return the number of chunks the matrix was computed over
+     * @throws net.ladenthin.llama.exception.LlamaException if the model or the text cannot be read,
+     *     the chunk size is below 16, or the text is shorter than one chunk
+     */
+    public static int computeImportanceMatrix(
+            String modelPath,
+            String textPath,
+            String outputPath,
+            int chunkSize,
+            int maxChunks,
+            int threads,
+            int gpuLayers) {
+        Objects.requireNonNull(modelPath, "modelPath");
+        Objects.requireNonNull(textPath, "textPath");
+        Objects.requireNonNull(outputPath, "outputPath");
+        return computeImportanceMatrixNative(modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers);
+    }
+
+    private static native int computeImportanceMatrixNative(
+            String modelPath,
+            String textPath,
+            String outputPath,
+            int chunkSize,
+            int maxChunks,
+            int threads,
+            int gpuLayers);
+
     private static native void quantizeNative(
             String inputPath,
             String outputPath,

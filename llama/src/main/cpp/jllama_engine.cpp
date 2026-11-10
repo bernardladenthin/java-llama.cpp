@@ -4,6 +4,7 @@
 
 #include "arg.h"
 #include "llama.h"
+#include "gguf.h"
 #include "log.h"
 #include "server-context.h"
 #include "server-queue.h"
@@ -22,6 +23,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -148,6 +150,39 @@ std::shared_ptr<server_response_reader> reader_of(jllama_context *jctx, int id_t
 
 } // namespace
 
+namespace {
+
+// Whether the GGUF at path is known to have no classification head. False when it has one, and
+// also when that cannot be told from this file alone: unreadable, or one shard of a split model
+// (the head may be in another one).
+bool gguf_lacks_classification_head(const std::string &path) {
+    if (path.empty()) {
+        return false;
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), no_data);
+    if (g == nullptr) {
+        return false;
+    }
+    // cls.weight, cls.bias, cls.output.weight, cls.norm.weight: any of them is a head
+    bool lacks = true;
+    for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+        if (std::strncmp(gguf_get_tensor_name(g, i), "cls.", 4) == 0) {
+            lacks = false;
+            break;
+        }
+    }
+    const int64_t split_count = gguf_find_key(g, "split.count");
+    if (split_count >= 0 && gguf_get_kv_type(g, split_count) == GGUF_TYPE_UINT16 &&
+        gguf_get_val_u16(g, split_count) > 1) {
+        lacks = false;
+    }
+    gguf_free(g);
+    return lacks;
+}
+
+} // namespace
+
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data) {
     common_params params;
@@ -216,6 +251,16 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     if (params.n_parallel <= N_PARALLEL_AUTO) {
         params.n_parallel = N_PARALLEL_DEFAULT;
         jctx->params.n_parallel = N_PARALLEL_DEFAULT;
+    }
+
+    // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
+    // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
+    // that looks like a relevance and is none. Refused here, by the model file's tensor list.
+    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
+        gguf_lacks_classification_head(params.model.path)) {
+        throw std::runtime_error("'" + params.model.path +
+                                 "' has no classification head (cls / cls.output tensors), so it cannot rerank: "
+                                 "rank pooling needs a reranker model");
     }
 
     LOG_INF("%s: loading model\n", __func__);

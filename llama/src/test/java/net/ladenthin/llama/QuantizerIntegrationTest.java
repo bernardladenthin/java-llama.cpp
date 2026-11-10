@@ -148,4 +148,56 @@ public class QuantizerIntegrationTest {
                         tempDir.resolve("no-such-imatrix.gguf").toString()));
         assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
     }
+
+    /**
+     * The whole route a small quantization takes: an importance matrix computed over a text, then a
+     * type that cannot be written without one, then the result loaded and asked.
+     */
+    @Test
+    public void computeImportanceMatrix_thenQuantizeToATypeThatNeedsIt() throws Exception {
+        assumeDraftModel();
+        Path text = tempDir.resolve("calibration.txt");
+        StringBuilder words = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            words.append("def add(a, b):\n    return a + b\n\nfor value in range(")
+                    .append(i)
+                    .append("):\n    print(add(value, 1))\n\n");
+        }
+        Files.write(text, words.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Path imatrix = tempDir.resolve("draft.imatrix.gguf");
+
+        int chunks = LlamaQuantizer.computeImportanceMatrix(
+                TestConstants.DRAFT_MODEL_PATH, text.toString(), imatrix.toString(), 64, 4, 0, 0);
+        assertTrue(chunks == 4, "expected the four chunks asked for, got " + chunks);
+        assertTrue(Files.size(imatrix) > 0, "the importance matrix is empty");
+
+        Path output = tempDir.resolve("draft-q2_k_s.gguf");
+        LlamaQuantizer.quantize(
+                TestConstants.DRAFT_MODEL_PATH,
+                output.toString(),
+                QuantizationType.Q2_K_S,
+                0,
+                true,
+                imatrix.toString());
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel model = new LlamaModel(new ModelParameters()
+                .setModel(output.toString())
+                .setCtxSize(128)
+                .setGpuLayers(gpuLayers)
+                .setFit(false))) {
+            assertNotNull(model.complete(new InferenceParameters("def main():").withNPredict(4)));
+        }
+    }
+
+    @Test
+    public void computeImportanceMatrix_missingText_throwsNamingIt() {
+        assumeDraftModel();
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.computeImportanceMatrix(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        tempDir.resolve("no-such-text.txt").toString(),
+                        tempDir.resolve("never.gguf").toString()));
+        assertTrue(e.getMessage().contains("calibration text"), e.getMessage());
+    }
 }
