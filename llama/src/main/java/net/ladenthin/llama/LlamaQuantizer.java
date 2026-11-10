@@ -35,6 +35,8 @@ import org.jspecify.annotations.Nullable;
  */
 public final class LlamaQuantizer {
 
+    private static final String OUTPUT_PATH = "outputPath";
+
     static {
         LlamaLoader.initialize();
     }
@@ -70,7 +72,7 @@ public final class LlamaQuantizer {
     public static void quantize(
             String inputPath, String outputPath, QuantizationType type, int threads, boolean allowRequantize) {
         Objects.requireNonNull(inputPath, "inputPath");
-        Objects.requireNonNull(outputPath, "outputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
         quantize(inputPath, outputPath, type, threads, allowRequantize, null);
     }
 
@@ -100,7 +102,7 @@ public final class LlamaQuantizer {
             boolean allowRequantize,
             @Nullable String importanceMatrixPath) {
         Objects.requireNonNull(inputPath, "inputPath");
-        Objects.requireNonNull(outputPath, "outputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
         Objects.requireNonNull(type, "type");
         if (importanceMatrixPath == null && type.requiresImportanceMatrix()) {
             throw new IllegalArgumentException(type + " cannot be quantized to without an importance matrix");
@@ -185,7 +187,7 @@ public final class LlamaQuantizer {
             @Nullable LoadProgressCallback progress) {
         Objects.requireNonNull(modelPath, "modelPath");
         Objects.requireNonNull(textPath, "textPath");
-        Objects.requireNonNull(outputPath, "outputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
         return computeImportanceMatrixNative(
                 modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers, progress);
     }
@@ -221,7 +223,7 @@ public final class LlamaQuantizer {
      */
     public static int mergeImportanceMatrices(List<String> inputPaths, String outputPath, boolean legacyFormat) {
         Objects.requireNonNull(inputPaths, "inputPaths");
-        Objects.requireNonNull(outputPath, "outputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
         if (inputPaths.isEmpty()) {
             throw new IllegalArgumentException("no importance matrix to write to " + outputPath);
         }

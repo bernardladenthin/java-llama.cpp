@@ -8,8 +8,16 @@ import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.UserPrincipal;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import net.ladenthin.llama.TextToSpeech;
 import org.jspecify.annotations.Nullable;
 
@@ -25,9 +33,66 @@ final class TextToSpeechBackend implements SpeechBackend {
     private static final String REFERENCE_PREFIX = "jllama-speaker-ref";
     private static final String REFERENCE_SUFFIX = ".bin";
 
-    private final TextToSpeech speech;
+    /** What this backend needs of a {@link TextToSpeech}; the seam its tests fake. */
+    interface Engine {
 
-    TextToSpeechBackend(TextToSpeech speech) {
+        /**
+         * {@link TextToSpeech#synthesize(String, String, String, String, int, int, int, float)}.
+         *
+         * @param text the text to speak
+         * @param speakerReferenceAudioPath a clip of the voice to clone, or {@code null}
+         * @param language the language, or {@code null}
+         * @param voice a predefined voice, or {@code null}
+         * @param maxFrames the frame cap
+         * @param topK the sampler's top-k
+         * @param seed the sampler's seed
+         * @param temperature the audio frame temperature
+         * @return the WAV bytes
+         */
+        byte[] synthesize(
+                String text,
+                @Nullable String speakerReferenceAudioPath,
+                @Nullable String language,
+                @Nullable String voice,
+                int maxFrames,
+                int topK,
+                int seed,
+                float temperature);
+
+        /**
+         * {@link TextToSpeech#getVoices()}.
+         *
+         * @return the predefined voices
+         */
+        List<String> voices();
+    }
+
+    private final Engine speech;
+
+    TextToSpeechBackend(final TextToSpeech speech) {
+        this(new Engine() {
+            @Override
+            public byte[] synthesize(
+                    String text,
+                    @Nullable String speakerReferenceAudioPath,
+                    @Nullable String language,
+                    @Nullable String voice,
+                    int maxFrames,
+                    int topK,
+                    int seed,
+                    float temperature) {
+                return speech.synthesize(
+                        text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
+            }
+
+            @Override
+            public List<String> voices() {
+                return speech.getVoices();
+            }
+        });
+    }
+
+    TextToSpeechBackend(Engine speech) {
         this.speech = speech;
     }
 
@@ -75,16 +140,10 @@ final class TextToSpeechBackend implements SpeechBackend {
      * @throws IOException when the file cannot be created or written
      */
     static Path writeReferenceFile(byte[] reference) throws IOException {
-        Path file;
-        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
-            file = Files.createTempFile(
-                    REFERENCE_PREFIX,
-                    REFERENCE_SUFFIX,
-                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        } else {
-            // Windows: the temporary directory is the user's own profile, and the file inherits its ACL
-            file = Files.createTempFile(REFERENCE_PREFIX, REFERENCE_SUFFIX);
-        }
+        Path file = Files.createTempFile(
+                REFERENCE_PREFIX,
+                REFERENCE_SUFFIX,
+                ownerOnlyAttributes(FileSystems.getDefault().supportedFileAttributeViews()));
         try {
             Files.write(file, reference);
         } catch (IOException | RuntimeException e) {
@@ -92,6 +151,51 @@ final class TextToSpeechBackend implements SpeechBackend {
             throw e;
         }
         return file;
+    }
+
+    /**
+     * The attributes a file is created with so that only its owner can open it: POSIX permissions
+     * where the file system has them, else an access control list naming the owner alone (Windows),
+     * else none.
+     *
+     * @param views the attribute views the file system supports
+     * @return the attributes for {@link Files#createTempFile(String, String, FileAttribute...)}
+     */
+    static FileAttribute<?>[] ownerOnlyAttributes(Set<String> views) {
+        if (views.contains("posix")) {
+            return new FileAttribute<?>[] {
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+            };
+        }
+        if (views.contains("acl")) {
+            try {
+                UserPrincipal owner = FileSystems.getDefault()
+                        .getUserPrincipalLookupService()
+                        .lookupPrincipalByName(System.getProperty("user.name"));
+                final List<AclEntry> acl = Collections.singletonList(AclEntry.newBuilder()
+                        .setType(AclEntryType.ALLOW)
+                        .setPrincipal(owner)
+                        .setPermissions(EnumSet.allOf(AclEntryPermission.class))
+                        .build());
+                return new FileAttribute<?>[] {
+                    new FileAttribute<List<AclEntry>>() {
+                        @Override
+                        public String name() {
+                            return "acl:acl";
+                        }
+
+                        @Override
+                        public List<AclEntry> value() {
+                            return acl;
+                        }
+                    }
+                };
+            } catch (IOException | RuntimeException e) {
+                // no principal for the user name: the file keeps the ACL its directory hands down
+                return new FileAttribute<?>[0];
+            }
+        }
+        return new FileAttribute<?>[0];
     }
 
     /**
@@ -110,7 +214,7 @@ final class TextToSpeechBackend implements SpeechBackend {
 
     @Override
     public List<String> voices() {
-        return speech.getVoices();
+        return speech.voices();
     }
 
     @Override
