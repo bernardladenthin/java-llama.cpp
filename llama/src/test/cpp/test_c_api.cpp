@@ -1711,11 +1711,12 @@ TEST(CApiMoeCache, TheCpuShareOfTheMoeCacheIsAcceptedAndRangeChecked) {
 TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
     // Since llama.cpp b12131/b12132 upstream builds its paths from plain std::string, which Windows
     // reads in the process's active code page, where it used u8path(); its own executables are UTF-8
-    // there through an app manifest, a library inside java.exe is not. The slot file itself is written
-    // through ggml_fopen (UTF-8), but its appendix -- the state of the draft context -- through a
-    // std::ofstream over that string. So with a draft model and a directory outside ASCII the appendix
-    // has to land in the same file, and the round trip has to work, on every platform. This is the
-    // measurement TODO.md asks for: red on Windows means the appendix went to a mis-decoded path.
+    // there through an app manifest, a library inside java.exe is not. Two sites stood between a UTF-8
+    // slot directory and a working round trip on a code page like 1252: the option's own check
+    // (fs_is_directory, "not a directory" at load; patches/0024) and the draft/checkpoint appendix,
+    // appended through std::ofstream over the narrow string ("incomplete draft state" at save;
+    // patches/0025). So load, save and restore have to work on every code page, with and without a
+    // draft model, and the appendix has to be in the same file.
     const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-utf8");
     ASSERT_FALSE(path.empty());
     const std::string leaf = "jllama-slots-\xC3\xA4-\xE6\x97\xA5\xE6\x9C\xAC-" + std::to_string(std::random_device{}());
@@ -1725,22 +1726,6 @@ TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
     const auto dir_u8 = dir.u8string();
     const std::string dir_arg(dir_u8.begin(), dir_u8.end());
 
-#ifdef _WIN32
-    // Measured on all three Windows jobs of Publish run 42783058488: llama.cpp checks the option
-    // with std::filesystem::is_directory over the plain string (fs_is_directory, common/arg.cpp),
-    // which Windows reads in the process's ANSI code page, so a UTF-8 path outside ASCII is "not a
-    // directory" and the load is refused before any slot file is written. Pinned as it is (README,
-    // "Slot files"): a load that works here means upstream reads the path as UTF-8 now, and this
-    // branch goes. A process whose code page is UTF-8 takes the path of the other platforms.
-    if (GetACP() != CP_UTF8) {
-        EXPECT_EQ(load_tiny(path, {"--slot-save-path", dir_arg}), nullptr)
-            << "loads now: upstream reads the path as UTF-8, run the round trip here too";
-        std::error_code ignored;
-        std::filesystem::remove_all(dir, ignored);
-        std::filesystem::remove(path, ignored);
-        return;
-    }
-#endif
     for (const bool with_draft : {false, true}) {
         SCOPED_TRACE(with_draft ? "with a draft model" : "without a draft model");
         std::vector<std::string> extra = {"--slot-save-path", dir_arg};
@@ -1769,6 +1754,7 @@ TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
         const json restored_json = json::parse(restored.str());
         EXPECT_EQ(restored_json.at("n_restored").get<int>(), saved_json.at("n_saved").get<int>()) << restored.str();
         EXPECT_EQ(restored_json.at("n_read").get<size_t>(), on_disk) << restored.str();
+        EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
         jllama_model_free(model);
     }
     // the draft's file carries the appendix this test is about: without it the case above proves nothing
@@ -1782,6 +1768,62 @@ TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
         ++entries;
     }
     EXPECT_EQ(entries, 2u);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiSlotFiles, ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhole) {
+    // The name half of the test above, in an ASCII directory, where fs_is_directory is no obstacle.
+    // The slot file went through ggml_fopen under its real name, and the draft appendix went through a
+    // std::ofstream into a second file whose name was mis-decoded in the ANSI code page (measured on
+    // code page 1252: 9348 bytes under the real name, 9216 under the mangled one). The save reported
+    // the bytes of both files as n_written, the restore read only the first, without the draft state,
+    // and both said ok (patches/0025). So: exactly one file, and the restore reads what the save wrote.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-utf8-name");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-ascii-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const std::string dir_arg = dir.string(); // ASCII, the same in every encoding
+
+    for (const bool with_draft : {false, true}) {
+        SCOPED_TRACE(with_draft ? "with a draft model" : "without a draft model");
+        std::vector<std::string> extra = {"--slot-save-path", dir_arg};
+        if (with_draft) {
+            extra.insert(extra.end(),
+                         {"--spec-draft-model", path, "--spec-draft-ngl", "0", "--spec-type", "draft-simple"});
+        }
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(model, 48).empty());
+
+        const std::string name = std::string("f-\xC3\xA4-\xE6\x97\xA5-") + (with_draft ? "draft.bin" : "plain.bin");
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json saved_json = json::parse(saved.str());
+        std::vector<std::string> files;
+        for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+            const auto u8 = entry.path().filename().u8string();
+            files.emplace_back(u8.begin(), u8.end());
+        }
+        ASSERT_EQ(files.size(), 1u) << "the slot file and its appendix must be one file";
+        EXPECT_EQ(files[0], name);
+        std::error_code ec;
+        EXPECT_EQ(std::filesystem::file_size(dir / std::filesystem::u8path(name), ec),
+                  saved_json.at("n_written").get<size_t>())
+            << saved.str();
+
+        Owned restored;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &restored.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json restored_json = json::parse(restored.str());
+        EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
+        EXPECT_EQ(restored_json.at("n_restored").get<int>(), saved_json.at("n_saved").get<int>()) << restored.str();
+        jllama_model_free(model);
+        std::filesystem::remove(dir / std::filesystem::u8path(name), ec);
+    }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     std::filesystem::remove_all(dir, ignored);
@@ -3333,4 +3375,165 @@ TEST_F(CApiStructured, AResponseFormatNextToToolsStillConstrainsTheWholeAnswer) 
     // schema now whether or not tools are offered.
     const std::string content = chat_content(model_, std::string(YES_NO_NESTED) + ONE_TOOL);
     EXPECT_TRUE(is_yes_or_no(content)) << content;
+}
+
+namespace {
+
+// The two places a non-ASCII path takes in the tests below: a directory with an ASCII file name, and
+// an ASCII directory with a file name outside ASCII. Both hold an umlaut (in cp1252) and a CJK
+// character (in no single-byte code page). The C API takes the path as UTF-8 on every platform.
+struct non_ascii_place {
+    const char *what;
+    std::filesystem::path dir;
+    std::string stem;
+};
+
+std::vector<non_ascii_place> non_ascii_places(const std::string &prefix) {
+    const std::filesystem::path base =
+        std::filesystem::temp_directory_path() / (prefix + "-" + std::to_string(std::random_device{}()));
+    const std::filesystem::path in_dir = base / std::filesystem::u8path("d-\xC3\xA4-\xE6\x97\xA5");
+    std::filesystem::create_directories(in_dir);
+    return {{"a non-ASCII directory", in_dir, "f"}, {"a non-ASCII file name", base, "f-\xC3\xA4-\xE6\x97\xA5"}};
+}
+
+std::filesystem::path in_place(const non_ascii_place &p, const std::string &suffix) {
+    return p.dir / std::filesystem::u8path(p.stem + suffix);
+}
+
+std::string utf8(const std::filesystem::path &p) {
+    const auto u8 = p.u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
+// A LoRA adapter for write_tiny_llama_gguf()'s model (rank 4 on attn_k and attn_v).
+std::string write_tiny_lora_for_paths() {
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              ("jllama-c-api-utf8-lora-" + std::to_string(std::random_device{}()) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(7);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.type", "adapter");
+    gguf_set_val_str(g, "general.architecture", "llama");
+    gguf_set_val_str(g, "adapter.type", "lora");
+    gguf_set_val_f32(g, "adapter.lora.alpha", 4.0f);
+    ggml_init_params ip = {4u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    for (int il = 0; il < N_LAYER; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        for (const char *name : {"attn_k", "attn_v"}) {
+            add_random_tensor(g, ctx, rng, p + name + ".weight.lora_a", {N_EMBD, 4}, 1.0f);
+            add_random_tensor(g, ctx, rng, p + name + ".weight.lora_b", {4, N_HEAD_KV * HEAD_DIM}, 1.0f);
+        }
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+} // namespace
+
+TEST(CApiNonAsciiPaths, TheModelFilesAreReadUnderANonAsciiPath) {
+    // -m, --shard and --lora are opened through ggml_fopen, and --mmproj through gguf and a wide
+    // std::ifstream. All of them read the path as UTF-8 on Windows: measured to work on code page
+    // 1252, where the narrow-string sites since b12131 fail. This test holds them there.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-model");
+    std::string shard;
+    const std::string split = write_tiny_llama_gguf("jllama-c-api-utf8-split", false, '>', {}, &shard);
+    const std::string mmproj = write_tiny_mmproj_gguf("jllama-c-api-utf8-mmproj");
+    const std::string lora = write_tiny_lora_for_paths();
+    ASSERT_FALSE(model.empty());
+    ASSERT_FALSE(split.empty());
+    ASSERT_FALSE(mmproj.empty());
+    ASSERT_FALSE(lora.empty());
+    for (const auto &place : non_ascii_places("jllama-c-api-utf8-models")) {
+        SCOPED_TRACE(place.what);
+        const auto m = in_place(place, ".gguf");
+        const auto s = in_place(place, ".shard.gguf");
+        const auto v = in_place(place, ".mmproj.gguf");
+        const auto a = in_place(place, ".lora.gguf");
+        std::filesystem::copy_file(model, m);
+        std::filesystem::copy_file(shard, s);
+        std::filesystem::copy_file(mmproj, v);
+        std::filesystem::copy_file(lora, a);
+        struct row {
+            const char *option;
+            std::string model;
+            std::vector<std::string> extra;
+        };
+        for (const row &r :
+             {row{"-m", utf8(m), {}}, row{"--shard", split, {"--shard", utf8(s)}},
+              row{"--mmproj", model, {"-c", "128", "--mmproj", utf8(v)}}, row{"--lora", model, {"--lora", utf8(a)}}}) {
+            SCOPED_TRACE(r.option);
+            jllama_model *loaded = load_tiny(r.model, r.extra);
+            ASSERT_NE(loaded, nullptr) << jllama_last_error();
+            EXPECT_FALSE(greedy_answer(loaded).empty());
+            jllama_model_free(loaded);
+        }
+        std::error_code ignored;
+        for (const auto &f : {m, s, v, a}) {
+            std::filesystem::remove(f, ignored);
+        }
+        std::filesystem::remove_all(place.dir, ignored);
+    }
+    std::error_code ignored;
+    for (const auto &f : {model, split, shard, mmproj, lora}) {
+        std::filesystem::remove(f, ignored);
+    }
+}
+
+TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath) {
+    // The paths of the file tools that go through ggml_fopen or gguf: the model each one reads, the
+    // importance matrix that jllama_imatrix writes as GGUF and the quantizer reads, and the model the
+    // trainer writes. Measured to work on code page 1252. Left out, because they still go through a
+    // narrow std::fstream and fail there: the quantizer's output (src/llama-quant.cpp), the legacy
+    // imatrix format, the calibration text and the trainer's training_file. See
+    // docs/handover/local-agent-report-windows-non-ascii-paths.md.
+    tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-c-api-utf8-tools");
+    spec.n_layer = 1;
+    const std::string model = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(model.empty());
+    const std::string text = write_calibration_text("jllama-c-api-utf8-tools", 200);
+    std::string corpus;
+    for (int i = 0; i < 16; ++i) {
+        corpus += "the quick brown fox jumps over the lazy dog. ";
+    }
+    for (const auto &place : non_ascii_places("jllama-c-api-utf8-tools")) {
+        SCOPED_TRACE(place.what);
+        const auto in = in_place(place, ".gguf");
+        const auto imatrix = in_place(place, ".imatrix.gguf");
+        const auto trained = in_place(place, ".finetuned.gguf");
+        std::filesystem::copy_file(model, in);
+        ASSERT_EQ(jllama_imatrix(utf8(in).c_str(), text.c_str(), utf8(imatrix).c_str(), 32, 0, 2, 0, nullptr, nullptr,
+                                 nullptr),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        std::error_code ec;
+        EXPECT_GT(std::filesystem::file_size(imatrix, ec), 0u) << ec.message();
+
+        const std::string quantized = model + ".utf8-in.gguf"; // ASCII: the output is a narrow site
+        ASSERT_EQ(jllama_quantize_imatrix(utf8(in).c_str(), quantized.c_str(), 15, 1, false, utf8(imatrix).c_str()),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_GT(std::filesystem::file_size(quantized, ec), 0u) << ec.message();
+        std::filesystem::remove(quantized, ec);
+
+        const json config = {{"model_path", utf8(in)},
+                             {"training_text", corpus},
+                             {"output_path", utf8(trained)},
+                             {"epochs", 1},
+                             {"learning_rate", 1e-4},
+                             {"n_ctx", 64},
+                             {"n_gpu_layers", 0},
+                             {"val_split", 0.0}};
+        ASSERT_EQ(jllama_finetune(config.dump().c_str()), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_GT(std::filesystem::file_size(trained, ec), 0u) << ec.message();
+        for (const auto &f : {in, imatrix, trained}) {
+            std::filesystem::remove(f, ec);
+        }
+        std::filesystem::remove_all(place.dir, ec);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(model, ignored);
+    std::filesystem::remove(text, ignored);
 }
