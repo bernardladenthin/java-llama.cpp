@@ -289,8 +289,10 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   TUs 100 % hits, 100 minutes); the next run's table says whether the warm cache pays. Open:
   - whether `option(BUILD_TESTING ... OFF)` before the first `FetchContent_MakeAvailable()` is still
     needed now that ggml no longer fetches CCCL (it stays; removing it is a change of its own);
-  - `jllama-sbom.json` names the bundled CCCL from `cccl/version.h` of the toolkit; the probe was
-    tested against a stand-in directory only, so read the SBOM of the first run that has it.
+  - `jllama-sbom.json` names the bundled CCCL from the toolkit's `cuda/std/__cccl/version.h`
+    (`CCCL_VERSION`, one number). The probe is tested with CCCL's real header in a stand-in
+    directory, not against an installed toolkit; `merge-native-artifacts.sh` fails `package` when
+    a CUDA artifact's BOM names no CCCL version, so the first run says whether the path is right.
   The driver floor moves with the toolkit for GPUs newer than Blackwell only (`121-virtual`, the one
   PTX-only target); README says 13.5.
 - **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,

@@ -64,8 +64,9 @@ function(jllama_first_version_line out_var program)
 endfunction()
 
 # The version of the CCCL copy the CUDA toolkit bundles ("v<major>.<minor>.<patch>", the form of
-# CCCL's own tags), read from its cccl/version.h next to the compiler; empty when the header is not
-# found or does not carry the three numbers.
+# CCCL's own tags), read from CCCL's cuda/std/__cccl/version.h below the toolkit root next to the
+# compiler. The header defines CCCL_VERSION as one number, MMMmmmppp (3004003 = 3.4.3), and derives
+# the three parts from it; empty when no such header is found or it carries no such number.
 function(jllama_bundled_cccl_version out_var)
     set(${out_var} "" PARENT_SCOPE)
     set(roots "")
@@ -79,19 +80,24 @@ function(jllama_bundled_cccl_version out_var)
         list(APPEND roots "${root}")
     endforeach()
     foreach(root IN LISTS roots)
-        file(GLOB headers "${root}/include/cccl/version.h" "${root}/include/cccl/cccl/version.h"
-                          "${root}/targets/*/include/cccl/version.h" "${root}/targets/*/include/cccl/cccl/version.h")
+        # CUDA 13 keeps CCCL under include/cccl; the other spellings are older and split layouts
+        file(GLOB headers "${root}/include/cccl/cuda/std/__cccl/version.h"
+                          "${root}/include/cuda/std/__cccl/version.h"
+                          "${root}/targets/*/include/cccl/cuda/std/__cccl/version.h"
+                          "${root}/targets/*/include/cuda/std/__cccl/version.h")
+        if(NOT headers)
+            file(GLOB_RECURSE headers "${root}/include/version.h")
+            list(FILTER headers INCLUDE REGEX "/__cccl/version\\.h$")
+        endif()
         foreach(header IN LISTS headers)
             file(READ "${header}" text)
-            if(text MATCHES "#[ \t]*define[ \t]+CCCL_MAJOR_VERSION[ \t]+([0-9]+)")
-                set(major "${CMAKE_MATCH_1}")
-                if(text MATCHES "#[ \t]*define[ \t]+CCCL_MINOR_VERSION[ \t]+([0-9]+)")
-                    set(minor "${CMAKE_MATCH_1}")
-                    if(text MATCHES "#[ \t]*define[ \t]+CCCL_PATCH_VERSION[ \t]+([0-9]+)")
-                        set(${out_var} "v${major}.${minor}.${CMAKE_MATCH_1}" PARENT_SCOPE)
-                        return()
-                    endif()
-                endif()
+            if(text MATCHES "#[ \t]*define[ \t]+CCCL_VERSION[ \t]+([0-9]+)")
+                set(number "${CMAKE_MATCH_1}")
+                math(EXPR major "${number} / 1000000")
+                math(EXPR minor "(${number} / 1000) % 1000")
+                math(EXPR patch "${number} % 1000")
+                set(${out_var} "v${major}.${minor}.${patch}" PARENT_SCOPE)
+                return()
             endif()
         endforeach()
     endforeach()

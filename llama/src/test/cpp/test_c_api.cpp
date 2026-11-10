@@ -2625,6 +2625,69 @@ TEST(CApiBert, ARerankerScoresEveryDocumentByItselfAndTheQuery) {
     std::filesystem::remove(encoder, ec);
 }
 
+TEST(CApiBert, ARerankerWhoseClassificationHeadIsInAShardLoadsAndScoresLikeTheWholeModel) {
+    // The refusal of a model without a classification head reads the tensor lists, and since --shard
+    // (b12233) the head may be in a shard: the model file alone then looks like a plain encoder. So
+    // the shards are read too -- a reranker split that way has to load and score like the whole
+    // model, and an encoder stays refused however many shards it comes in.
+    const std::string query = "what is the capital of france ?";
+    const std::vector<const char *> documents = {"paris is the capital of france", "the cat sat on the mat", "berlin"};
+    const auto scores = [&](jllama_model *model) {
+        Owned response;
+        EXPECT_EQ(
+            jllama_rerank(model, query.c_str(), static_cast<int>(documents.size()), documents.data(), &response.s),
+            JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        std::map<std::string, float> by_document;
+        if (response.s != nullptr) {
+            const json results = json::parse(response.str());
+            for (size_t i = 0; i < results.size(); ++i) {
+                const json result = results.at(i);
+                by_document[result.at("document").get<std::string>()] = result.at("score").get<float>();
+            }
+        }
+        return by_document;
+    };
+    const std::string whole = write_tiny_bert_gguf(true, 4 /* LLAMA_POOLING_TYPE_RANK */);
+    std::string head_shard;
+    const std::string split = write_tiny_bert_gguf(true, 4, "jllama-bert-split", &head_shard);
+    ASSERT_FALSE(whole.empty());
+    ASSERT_FALSE(split.empty());
+    ASSERT_FALSE(head_shard.empty());
+
+    jllama_model *whole_model = load_tiny(whole, {"--reranking"});
+    ASSERT_NE(whole_model, nullptr) << jllama_last_error();
+    const auto expected = scores(whole_model);
+    jllama_model_free(whole_model);
+    ASSERT_EQ(expected.size(), documents.size());
+
+    jllama_model *split_model = load_tiny(split, {"--reranking", "--shard", head_shard});
+    ASSERT_NE(split_model, nullptr) << "a reranker with its head in a shard was refused: " << jllama_last_error();
+    EXPECT_EQ(scores(split_model), expected);
+    jllama_model_free(split_model);
+
+    // an encoder without the head, last layer in a shard: no head in either file
+    std::string plain_shard;
+    const std::string encoder = write_tiny_bert_gguf(false, 2, "jllama-bert-split-encoder", &plain_shard);
+    ASSERT_FALSE(encoder.empty());
+    jllama_model *headless = load_tiny(encoder, {"--reranking", "--shard", plain_shard});
+    EXPECT_EQ(headless, nullptr) << "an encoder without a classification head loaded as a reranker";
+    EXPECT_NE(std::string(jllama_last_error()).find("classification head"), std::string::npos) << jllama_last_error();
+    jllama_model_free(headless);
+    // and with its shard it still loads for what it is
+    jllama_model *embedder = load_tiny(encoder, {"--embedding", "--shard", plain_shard});
+    EXPECT_NE(embedder, nullptr) << jllama_last_error();
+    jllama_model_free(embedder);
+
+    std::error_code ec;
+    for (const std::string &f : {whole, split, encoder}) {
+        std::filesystem::remove(f, ec);
+    }
+    for (const std::string &f : {head_shard, plain_shard}) {
+        std::filesystem::remove_all(std::filesystem::path(f).parent_path(), ec);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // A mixture of experts (tiny_model_spec::n_expert): the decoder whose feed-forward is a router over
 // expert matrices -- the MUL_MAT_ID path, which test_moe_repack.cpp checks as an operation and
@@ -3480,6 +3543,30 @@ TEST(CApiNonAsciiPaths, TheModelFilesAreReadUnderANonAsciiPath) {
     for (const auto &f : {model, split, shard, mmproj, lora}) {
         std::filesystem::remove(f, ignored);
     }
+}
+
+TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
+    // --media-path goes through the same directory check as --slot-save-path (fs_is_directory,
+    // patches/0024): a directory outside ASCII has to be accepted on every code page, and one that
+    // does not exist refused (the option's own message goes to the log, the load reports the parse).
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-media");
+    ASSERT_FALSE(model.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::u8path("jllama-media-\xC3\xA4-\xE6\x97\xA5-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *loaded = load_tiny(model, {"--media-path", utf8(dir)});
+    ASSERT_NE(loaded, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(loaded).empty());
+    jllama_model_free(loaded);
+
+    jllama_model *refused = load_tiny(model, {"--media-path", utf8(dir / "missing")});
+    EXPECT_EQ(refused, nullptr) << "a media directory that does not exist was accepted";
+    jllama_model_free(refused);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    std::filesystem::remove(model, ignored);
 }
 
 TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath) {

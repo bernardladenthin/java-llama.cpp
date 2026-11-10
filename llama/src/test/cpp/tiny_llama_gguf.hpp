@@ -394,8 +394,11 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
 // has no causal attention, a [CLS] token for cls pooling and no output layer to generate with. Its
 // answers are noise like the decoder's; what a test asserts is that the path runs and the shapes fit.
 // pooling_type is written as bert.pooling_type (llama_pooling_type; -1 writes none).
+// With shard_path, the tensors of the last layer -- and the classification head, when there is one --
+// are written to a second GGUF in a directory of its own, as --shard takes it. The weights are the
+// same either way, so the split model answers what the whole one answers.
 inline std::string write_tiny_bert_gguf(bool classifier = false, int pooling_type = 2,
-                                        const std::string &prefix = "jllama-bert") {
+                                        const std::string &prefix = "jllama-bert", std::string *shard_path = nullptr) {
     constexpr int B_EMBD = 32, B_HEAD = 4, B_FF = 64, B_LAYER = 2, B_CTX = 64;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -451,6 +454,8 @@ inline std::string write_tiny_bert_gguf(bool classifier = false, int pooling_typ
 
     ggml_init_params ip = {8u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
+    gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
+    gguf_context *to = g; // where the next tensors go
     const auto bias = [&](const std::string &name, int n) {
         ggml_tensor *t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n);
         std::normal_distribution<float> dist(0.0f, 0.02f);
@@ -458,7 +463,7 @@ inline std::string write_tiny_bert_gguf(bool classifier = false, int pooling_typ
             ((float *)t->data)[i] = dist(rng);
         }
         ggml_set_name(t, name.c_str());
-        gguf_add_tensor(g, t);
+        gguf_add_tensor(to, t);
     };
     add_random_tensor(g, ctx, rng, "token_embd.weight", {B_EMBD, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "token_types.weight", {B_EMBD, 2}, 0.1f);
@@ -467,26 +472,37 @@ inline std::string write_tiny_bert_gguf(bool classifier = false, int pooling_typ
     bias("token_embd_norm.bias", B_EMBD);
     for (int il = 0; il < B_LAYER; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
+        if (shard != nullptr && il == B_LAYER - 1) {
+            to = shard; // the last layer and everything after it
+        }
         for (const char *t : {"attn_q", "attn_k", "attn_v", "attn_output"}) {
-            add_random_tensor(g, ctx, rng, p + t + ".weight", {B_EMBD, B_EMBD}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + t + ".weight", {B_EMBD, B_EMBD}, 0.1f);
             bias(p + t + ".bias", B_EMBD);
         }
-        add_random_tensor(g, ctx, rng, p + "attn_output_norm.weight", {B_EMBD}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "attn_output_norm.weight", {B_EMBD}, 1.0f);
         bias(p + "attn_output_norm.bias", B_EMBD);
-        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {B_EMBD, B_FF}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {B_EMBD, B_FF}, 0.1f);
         bias(p + "ffn_up.bias", B_FF);
-        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {B_FF, B_EMBD}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {B_FF, B_EMBD}, 0.1f);
         bias(p + "ffn_down.bias", B_EMBD);
-        add_random_tensor(g, ctx, rng, p + "layer_output_norm.weight", {B_EMBD}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "layer_output_norm.weight", {B_EMBD}, 1.0f);
         bias(p + "layer_output_norm.bias", B_EMBD);
     }
     if (classifier) {
-        add_random_tensor(g, ctx, rng, "cls.weight", {B_EMBD, B_EMBD}, 0.3f);
+        add_random_tensor(to, ctx, rng, "cls.weight", {B_EMBD, B_EMBD}, 0.3f);
         bias("cls.bias", B_EMBD);
-        add_random_tensor(g, ctx, rng, "cls.output.weight", {B_EMBD, 1}, 0.5f);
+        add_random_tensor(to, ctx, rng, "cls.output.weight", {B_EMBD, 1}, 0.5f);
         bias("cls.output.bias", 1);
     }
-    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    bool ok = gguf_write_to_file(g, path.c_str(), false);
+    if (shard != nullptr) {
+        const std::filesystem::path dir = std::filesystem::path(path).replace_extension(".shards");
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        *shard_path = (dir / "last-layer.gguf").string();
+        ok = ok && !ec && gguf_write_to_file(shard, shard_path->c_str(), false);
+        gguf_free(shard);
+    }
     gguf_free(g);
     ggml_free(ctx);
     return ok ? path : std::string();

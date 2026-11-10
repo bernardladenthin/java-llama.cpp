@@ -99,6 +99,14 @@ while IFS=, read -r classifier dir lib _platform kind; do
     echo "::error::artifact '$a' has no $dir/jllama-sbom.json naming pkg:maven/net.ladenthin/llama@<version>?classifier=$classifier" >&2
     exit 1
   fi
+  case "$classifier" in cuda*)
+    # CCCL's headers are compiled into the CUDA module, so its BOM has to name the copy: the one the
+    # toolkit bundles, read from its version header (jllama-build-info.cmake), or the pinned checkout
+    if ! grep -q '"name": "cccl", "version": "v[0-9][0-9.]*"' "$STAGING/$a/$dir/jllama-sbom.json"; then
+      echo "::error::artifact '$a': $dir/jllama-sbom.json names no CCCL component with a version (jllama_bundled_cccl_version found no cuda/std/__cccl/version.h in the toolkit?)" >&2
+      exit 1
+    fi ;;
+  esac
   if [ "$kind" = "module" ]; then
     # a GPU jar is its module and the two list files, nothing else: no second library, no CPU set
     others="$(cd "$STAGING/$a/$dir" && find . -maxdepth 1 -type f ! -name "$lib" ! -name 'jllama-*.txt' ! -name jllama-sbom.json | sed 's|^\./||' || true)"
