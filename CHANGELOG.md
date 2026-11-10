@@ -59,6 +59,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reasoning effort levels of a chat template in `/props` (#31271), qwen3-coder parsing that stops
   before the template separators (#30557); a parse without a model now fails with `--model or -hf is
   required` (#31242, the text only). No patch changed; the request schema is the same.
+- **exec-maven-plugin 3.7.0, animal-sniffer-annotations 1.29.1, Jetty 12.1.15 and
+  `anthropics/claude-code-action` v1.0.271**, in step with the sibling repositories: the plugin in `llama`,
+  `examples/server` and `llama-atmosphere-agent`, Jetty in `llama-atmosphere-agent`. exec-maven-plugin
+  3.7.0 needs Maven 3.9.0, so maven-enforcer requires Maven 3.9.0 instead of 3.6.3 to build; running
+  `examples/server` needs it too.
 - **Dependencies, build plugins and CI pins, in step with the sibling repositories:** Jackson 2.23.0,
   Checker Framework 4.4.0, animal-sniffer-annotations 1.29; in the standalone `llama-atmosphere-agent`
   JLine 4.5.0 and spotless-maven-plugin 3.11.0; Gradle 9.9.0 (`GRADLE_VERSION`) and the Android Gradle
