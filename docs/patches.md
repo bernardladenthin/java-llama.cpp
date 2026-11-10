@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**15 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -35,6 +35,8 @@ match a binary to this page.
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
+| 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
+| 0025 | [`0025-server-slot-appendix-reads-utf8.patch`](#0025-server-slot-appendix-reads-utf8patch) | server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows | 1 | 4 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -646,4 +648,80 @@ a tenth of what the quantization itself costs. Q8_0 itself, z16 against z13: mea
 top token 98.5 %.
 
 Not filed upstream yet (nothing is filed before the owner says so).
+```
+
+## 0024-common-fs-is-directory-reads-utf8.patch
+
+**Files (1):** `common/common.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows
+
+fs_is_directory() (common/common.cpp:944 at b12242) builds the std::filesystem::path it checks from
+the narrow std::string. MSVC's path constructor decodes a narrow string in the process's active
+code page, and since b12131/b12132 nothing converts the argument first. The argument is UTF-8 (the
+C API, and Java through JNI, pass UTF-8 on every platform), so on a code page like 1252 a directory
+outside ASCII does not exist under the decoded name: c3 a4 (a-umlaut) is read as "A-tilde,
+currency sign", e6 97 a5 (U+65E5) as three cp1252 characters. The two callers throw
+"not a directory: <path>" (common/arg.cpp:3647 for --slot-save-path, :3661 for --media-path), and
+the model load fails before anything is written. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest (common/win-app.manifest), and a library loaded into
+java.exe cannot.
+
+The fix reads the string as UTF-8 through std::filesystem::u8path(), which is the identity on
+platforms whose narrow encoding is UTF-8 already.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, a directory "d-<a-umlaut>-<U+65E5>"):
+without the patch the load is refused with "not a directory"; with it, a slot round-trips without a
+draft model (n_written 9348 = size on disk = n_read). With a draft model the save still fails,
+"Unable to save slot: incomplete draft state": the appendix is the subject of 0025, and only the two
+together give the round trip. In a process with an activeCodePage=UTF-8 manifest the unpatched
+check passes. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when fs_is_directory() reads its argument as UTF-8 again (u8path, or a
+wide conversion) -- CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile then
+stays green without it on a Windows job.
+```
+
+## 0025-server-slot-appendix-reads-utf8.patch
+
+**Files (1):** `tools/server/server-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows
+
+A slot save writes the llama state through llama_state_seq_save_file(), i.e. ggml_fopen(), which
+converts the UTF-8 path to UTF-16. Then save_slot_checkpoints() and save_slot_draft() append to the
+same file through std::ofstream(filepath, binary | app), and load_slot_checkpoints() and
+load_slot_draft() read it back through std::ifstream(filepath, binary | ate)
+(tools/server/server-context.cpp:2840, :2872, :2948 and :2974 at b12242). MSVC decodes that narrow
+std::string in the process's active code page, so on a code page like 1252 the appendix of a path
+outside ASCII goes elsewhere:
+
+  - a directory outside ASCII (once 0024 lets it through): the mis-decoded directory does not exist,
+    the stream fails and the save reports "Unable to save slot: incomplete draft state". The
+    9348-byte state without the appendix stays behind, and a restore of it succeeds without the
+    draft state.
+  - an ASCII directory with a file name outside ASCII (no other patch involved): the appendix lands
+    in a second file under the mis-decoded name, next to the real one. Measured:
+    "f-<a-umlaut>-<U+65E5>-draft.bin" 9348 bytes plus its mangled twin 9216 bytes. The save reports
+    ok with n_written 18564, the sum of both files; the restore reports ok with n_read 9348, and the
+    draft state is silently gone.
+
+The fix opens the four streams on std::filesystem::u8path(filepath), which is the identity where the
+narrow encoding is UTF-8.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, tiny llama model with itself as the
+draft model, --spec-type draft-simple): with 0024 and this patch both shapes round-trip, with a single
+18564-byte file each, n_written = size on disk = n_read, and n_restored = n_saved. The checkpoint
+appendix shares these sites but is not exercised by the tiny model (no checkpoints): read, not
+measured. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when the four streams in server-context.cpp no longer take the narrow
+filepath string -- CApiSlotFiles.ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhole then
+stays green without it on a Windows job.
 ```

@@ -159,10 +159,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   on the CPU (#31233, #30966); reference-counted prompt checkpoints in the server (#30137); the
   Hugging Face token is sent to `huggingface.co` hosts only (#31730); cpp-httplib 0.65.0 and
   BoringSSL 0.20261105.0. No source change here. **On Windows**, upstream now reads its secondary
-  paths (download cache, `--models-dir`, the checkpoint appendix of a slot file, the MCP
-  configuration) in the process's active code page, which inside `java.exe` is not UTF-8: such a
-  path with non-ASCII characters is not expected to work until that is measured and decided
-  (TODO.md). The model path itself is unaffected.
+  paths in the process's active code page, which inside `java.exe` is not UTF-8. Measured since:
+  the slot directory and slot files are fixed by patches `0024` and `0025`; `--log-file`, the
+  quantizer's output file and a download target still need an ASCII path there (README, TODO.md).
+  The model path itself is unaffected.
 - **llama.cpp b12079** (from b12078, one upstream commit): the RPC server's COMM_INIT connects
   more than two ranks and can hand the collective to a backend communicator (CUDA with NCCL,
   #28967). Patch `0015` is refreshed over the new peer loop with the same stop contract.
@@ -264,6 +264,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Windows: slot files under a non-ASCII path.** Inside `java.exe` llama.cpp read the slot
+  directory and the checkpoint / draft-state appendix of a slot file in the ANSI code page: a
+  directory outside ASCII failed the model load ("not a directory"), and a file name outside ASCII
+  put the draft state into a second, mis-named file, after which save and restore both reported
+  success without it. Patches `0024` and `0025` read both as UTF-8. The calibration text of an
+  importance matrix, the legacy output of a merge and the trainer's `training_file` are read and
+  written as UTF-8 there too. Still ASCII-only on Windows: `--log-file`, the quantizer's output
+  file and a download target (README).
 - **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
   with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
   pipeline numbers each prompt from position 0 and leaves the KV cache to the caller, and the engine

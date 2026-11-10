@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -226,7 +227,8 @@ void save(const std::map<std::string, stats> &entries, const std::string &output
 // Fields are written in the byte order of the host, as upstream's writer does.
 void save_legacy(const std::map<std::string, stats> &entries, const std::string &output_path,
                  const std::string &dataset, int n_chunks, int chunk_size) {
-    std::ofstream out(output_path, std::ios::binary);
+    // u8path: the path is UTF-8, and a narrow string is read in the ANSI code page on Windows
+    std::ofstream out(std::filesystem::u8path(output_path), std::ios::binary);
     if (!out) {
         throw std::runtime_error("could not write the importance matrix to '" + output_path + "'");
     }
@@ -275,7 +277,7 @@ int compute(const std::string &model_path, const std::string &text_path, const s
         throw std::runtime_error("the chunk size of an importance matrix must be at least " +
                                  std::to_string(MIN_BATCH_TOKENS) + " tokens");
     }
-    std::ifstream in(text_path, std::ios::binary);
+    std::ifstream in(std::filesystem::u8path(text_path), std::ios::binary);
     if (!in) {
         throw std::runtime_error("could not read the calibration text '" + text_path + "'");
     }

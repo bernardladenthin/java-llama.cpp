@@ -188,33 +188,32 @@ and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jl
 `voice` of a synthesis handed over as upstream now wants it), `ModelParameters.addShard`
 (`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`).
 
-**To decide and measure first -- Windows, non-ASCII paths other than the model's.** Since b12131 /
-b12132 (#31682, #31681) upstream builds every `std::filesystem::path` in `common/` and `tools/server/`
-from a plain `std::string`, which Windows reads in the process's **active code page**; before, it used
-`u8path()`. Upstream's executables are UTF-8 there through the app manifest of #31329. `libjllama`
-runs inside `java.exe`, which has no such manifest, so its code page is the system's (1252, 932, ...).
-Expected, **not measured** (no Windows machine at the bump): with a non-ASCII character in the path,
-the download cache and its `.etag` / partial files (`LLAMA_CACHE`, `-hf`, `--model-url`),
-`--models-dir` in router mode, the MCP configuration file and the built-in file tools address a
-mis-decoded name; and the checkpoint / draft-state appendix of a slot file (`--slot-save-path`) is
-appended through `std::ofstream(filepath)` while the slot file itself is written through `ggml_fopen`
-(UTF-8), so the appendix would land in a second, mis-named file and a restore would silently come back
-without its checkpoints. The model, mmproj and LoRA files are opened through `ggml_fopen` and are not
-affected; ASCII paths are not affected.
-  - **A test asks the question now:** `CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile`
-    (`test_c_api.cpp`) saves and restores a slot with a draft model under such a directory and requires
-    the draft-state appendix in the same file. **Measured on 2026-11-10** (Publish run 42783058488,
-    all three Windows C++ jobs, clang, clang-cl and MSVC): it does not get as far as the appendix.
-    The load is refused -- `error while handling argument "--slot-save-path": not a directory:
-    ...\jllama-slots-ä-日本-<n>` -- because the option's own check (`fs_is_directory`,
-    `common/arg.cpp`) reads the string in the ANSI code page. So on Windows a slot directory outside
-    ASCII cannot be used at all, loudly, and the silent second file expected above cannot occur
-    through this option. The test pins that on Windows (a load that works turns it red: upstream
-    reads UTF-8 then, and the round trip is to run there too) and runs the round trip elsewhere and
-    in a process whose code page is UTF-8. README says so under the slot functions.
-  - Measure on Windows with a user name or directory containing `ä` / `日本`: `LlamaModel` with
-    `setSlotSavePath` + save/restore (compare `timings` after the restore), `-hf` into such an
-    `LLAMA_CACHE`, router mode over such a `--models-dir`.
+**Windows, non-ASCII paths: measured, the slot files fixed, four sites open.** Since b12131 /
+b12132 (#31682, #31681) upstream builds its `std::filesystem::path` and `std::fstream` objects in
+`common/` and `tools/server/` from a plain `std::string`, which Windows reads in the process's
+active code page; its own executables are UTF-8 there through an app manifest (#31329), a library
+inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, through
+`jllama_test.exe` and the C API
+([`docs/handover/local-agent-report-windows-non-ascii-paths.md`](docs/handover/local-agent-report-windows-non-ascii-paths.md)):
+  - **Fixed:** the slot directory (`fs_is_directory`, "not a directory" at load; `patches/0024`) and
+    the checkpoint / draft-state appendix of a slot file (`patches/0025`). Without `0025` an ASCII
+    directory with a non-ASCII file name put the appendix into a second, mis-named file: the save
+    and the restore both reported success and the draft state was gone. An earlier version of this
+    entry said that file could not occur; it could, through the file name. Also fixed, in this
+    library's own streams: the calibration text of `jllama_imatrix`, the legacy output of
+    `jllama_imatrix_merge` and the trainer's `training_file`. `CApiSlotFiles` and
+    `CApiNonAsciiPaths` hold all of it, and the paths that worked before (`-m`, `--mmproj`,
+    `--lora`, `--shard`, the GGUF inputs and outputs of the quantizer, imatrix and trainer).
+  - **Open, each one narrow site in llama.cpp, a non-ASCII path fails or lands under a mangled
+    name:** `--log-file` (`common/log.cpp`, a narrow `fopen`), the quantizer's output
+    (`src/llama-quant.cpp`), and the download paths (`-m` as the target of `--model-url`,
+    `LLAMA_CACHE`; several files under `common/`). README names them. A patch each, or upstream:
+    not decided.
+  - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
+    built-in file tools, the checkpoint half of the appendix (the test model writes no
+    checkpoints; it shares the patched sites), reading a legacy imatrix file back from such a path
+    (upstream's `common_imatrix_load`), and everything through the Java layer -- the machine had
+    no Temurin 25, so the measurement went through the C API.
   - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
     lines over `common/{common,download,hf-cache,preset}.cpp` and
     `tools/server/server-{context,mcp,models,tools}.cpp`; upstream removed exactly these, so it has

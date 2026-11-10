@@ -17,6 +17,7 @@
 #include <jni.h>
 
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -31,7 +32,8 @@ bool finetune(const finetune_config &cfg, std::string &err) {
 
     // The corpus is either read from a file or supplied inline.
     if (!cfg.training_file.empty()) {
-        std::ifstream in(cfg.training_file, std::ios::binary);
+        // u8path: the path is UTF-8, and a narrow string is read in the ANSI code page on Windows
+        std::ifstream in(std::filesystem::u8path(cfg.training_file), std::ios::binary);
         if (!in) {
             err = "cannot open training file: " + cfg.training_file;
             return false;

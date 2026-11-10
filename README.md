@@ -1007,8 +1007,12 @@ Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, Str
 `restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
 (`ModelParameters.setSlotSavePath`, `--slot-save-path`), and the `String` is a file name inside it, as
 the server's `/slots` route takes it -- a name with a directory part or `..` is an
-`InvalidRequestException`. On Windows the slot directory has to be an ASCII path: llama.cpp checks it
-in the process's ANSI code page, and a path outside ASCII fails the model load with "not a directory".
+`InvalidRequestException`. The directory and the name are UTF-8 on every platform. **On Windows a
+few other paths still have to be ASCII**, because llama.cpp opens them in the process's ANSI code
+page: `--log-file`, the output file of `LlamaQuantizer.quantize`, the target of a model download
+(`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) and, unmeasured, `--models-dir` in router mode.
+The model, mmproj, LoRA and shard files, the slot files, the importance matrix and the trainer's
+files are read and written under any path.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 

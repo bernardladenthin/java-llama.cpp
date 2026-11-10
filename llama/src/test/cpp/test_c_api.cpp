@@ -3485,9 +3485,10 @@ TEST(CApiNonAsciiPaths, TheModelFilesAreReadUnderANonAsciiPath) {
 TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath) {
     // The paths of the file tools that go through ggml_fopen or gguf: the model each one reads, the
     // importance matrix that jllama_imatrix writes as GGUF and the quantizer reads, and the model the
-    // trainer writes. Measured to work on code page 1252. Left out, because they still go through a
-    // narrow std::fstream and fail there: the quantizer's output (src/llama-quant.cpp), the legacy
-    // imatrix format, the calibration text and the trainer's training_file. See
+    // trainer writes. Measured to work on code page 1252. The calibration text, the trainer's
+    // training_file and the legacy imatrix output are this library's own streams, which failed there
+    // until they read the path as UTF-8. Left out, because it still goes through a narrow
+    // std::ofstream in llama.cpp and fails there: the quantizer's output (src/llama-quant.cpp). See
     // docs/handover/local-agent-report-windows-non-ascii-paths.md.
     tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-c-api-utf8-tools");
     spec.n_layer = 1;
@@ -3503,13 +3504,29 @@ TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiP
         const auto in = in_place(place, ".gguf");
         const auto imatrix = in_place(place, ".imatrix.gguf");
         const auto trained = in_place(place, ".finetuned.gguf");
+        const auto text_here = in_place(place, ".txt");
+        const auto corpus_here = in_place(place, ".corpus.txt");
+        const auto legacy = in_place(place, ".imatrix.dat");
         std::filesystem::copy_file(model, in);
-        ASSERT_EQ(jllama_imatrix(utf8(in).c_str(), text.c_str(), utf8(imatrix).c_str(), 32, 0, 2, 0, nullptr, nullptr,
-                                 nullptr),
+        std::filesystem::copy_file(text, text_here);
+        {
+            std::ofstream out(corpus_here, std::ios::binary);
+            out << corpus;
+        }
+        ASSERT_EQ(jllama_imatrix(utf8(in).c_str(), utf8(text_here).c_str(), utf8(imatrix).c_str(), 32, 0, 2, 0, nullptr,
+                                 nullptr, nullptr),
                   JLLAMA_STATUS_OK)
             << jllama_last_error();
         std::error_code ec;
         EXPECT_GT(std::filesystem::file_size(imatrix, ec), 0u) << ec.message();
+
+        // the legacy format is written by this library, under the path's real name
+        const std::string imatrix_u8 = utf8(imatrix);
+        const char *one[] = {imatrix_u8.c_str()};
+        int chunks = 0;
+        ASSERT_EQ(jllama_imatrix_merge(one, 1, utf8(legacy).c_str(), true, &chunks), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_GT(std::filesystem::file_size(legacy, ec), 0u) << ec.message();
 
         const std::string quantized = model + ".utf8-in.gguf"; // ASCII: the output is a narrow site
         ASSERT_EQ(jllama_quantize_imatrix(utf8(in).c_str(), quantized.c_str(), 15, 1, false, utf8(imatrix).c_str()),
@@ -3519,7 +3536,7 @@ TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiP
         std::filesystem::remove(quantized, ec);
 
         const json config = {{"model_path", utf8(in)},
-                             {"training_text", corpus},
+                             {"training_file", utf8(corpus_here)},
                              {"output_path", utf8(trained)},
                              {"epochs", 1},
                              {"learning_rate", 1e-4},
@@ -3528,7 +3545,7 @@ TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiP
                              {"val_split", 0.0}};
         ASSERT_EQ(jllama_finetune(config.dump().c_str()), JLLAMA_STATUS_OK) << jllama_last_error();
         EXPECT_GT(std::filesystem::file_size(trained, ec), 0u) << ec.message();
-        for (const auto &f : {in, imatrix, trained}) {
+        for (const auto &f : {in, imatrix, trained, text_here, corpus_here, legacy}) {
             std::filesystem::remove(f, ec);
         }
         std::filesystem::remove_all(place.dir, ec);
