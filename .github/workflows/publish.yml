@@ -1910,9 +1910,9 @@ jobs:
     runs-on: windows-2025-vs2026
     env:
       # The CUDA redist manifest (redistrib_<this>.json) the archives are verified against; empty
-      # takes the newest 13.5.x manifest the redist index lists (the run prints which). Empty since
-      # the move to 13.5 (2026-11-10): pin the version the first run prints (TODO.md).
-      CUDA_REDIST_MANIFEST: ""
+      # takes the newest 13.5.x manifest the redist index lists (the run prints which). 13.5.0 is
+      # what the first run with 13.5 took (42783058488, 2026-11-10).
+      CUDA_REDIST_MANIFEST: "13.5.0"
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

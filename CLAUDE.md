@@ -565,7 +565,7 @@ model-backed Java job or a smoke job -- not by the C++ suite alone.
 
 ## Upgrading CUDA Version
 
-Current CUDA version: **13.5** (Linux `cuda-toolkit-13-5` from NVIDIA's rhel8 repo; Windows 13.5 redist archives). Moved from 13.4 on 2026-11-10 without access to NVIDIA's download host: until a Publish run has built both modules, read this section as the intent and the run as the proof (TODO.md, "CUDA 13.5").
+Current CUDA version: **13.5** (Linux `cuda-toolkit-13-5` from NVIDIA's rhel8 repo; Windows 13.5 redist archives). Moved from 13.4 on 2026-11-10; run 42783058488 built both modules (toolkit 13.5.0, the nvcc passes through sccache without an error on a cold cache). Not measured on a GPU (TODO.md, "CUDA 13.5").
 
 To change the CUDA version, update the following places:
 
@@ -583,7 +583,7 @@ To change the CUDA version, update the following places:
    a comment that they rely on the default. On a bump, re-read ggml's list at the new tag and
    **extend** ours rather than dropping it. **The component set follows upstream's
    `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`, the component versions
-   follow NVIDIA's redist manifest** (`CUDA_REDIST_MANIFEST`, e.g. `13.4.3` = `redistrib_13.4.3.json`; empty takes the newest manifest of the minor version, which is what the 13.5 move left it at until a run has printed the version to pin):
+   follow NVIDIA's redist manifest** (`CUDA_REDIST_MANIFEST`, e.g. `13.4.3` = `redistrib_13.4.3.json`; pinned to `13.5.0`, the one the first 13.5 run took; empty takes the newest manifest of the minor version):
    the step reads each component's `relative_path` and `sha256` from the manifest, so the archive it
    downloads and the hash it checks cannot name two different versions. They did once -- the first
    full run of 6.0.0 (38808518362) paired upstream's hand-written `cuda_crt-…-13.4.59` with the newest

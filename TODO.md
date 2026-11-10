@@ -282,19 +282,18 @@ affected; ASCII paths are not affected.
   Javadoc is corrected.
 
 **Build and CI**
-- **CUDA 13.5: moved, not yet run.** Both CUDA jobs install 13.5 (`cuda-toolkit-13-5`; the Windows
-  redist archives) and no longer pass `-DGGML_CUDA_CCCL_VERSION` (13.5 bundles CCCL 3.5), as
-  upstream's release builds since b12169 (#31788). Written without access to NVIDIA's download host,
-  so the first Publish run is the test, and three things are to be read from it:
-  - the Windows job prints which `redistrib_13.5.x.json` it took -- **pin that version in
-    `CUDA_REDIST_MANIFEST`** (it is empty, i.e. "the newest 13.5.x", until then);
-  - the Linux job's sccache table: each of the last two toolkit bumps (13.3, 13.4) broke the nvcc
-    wrapping in a new way; the retry without the cache keeps the job green, the table says whether
-    it paid;
+- **CUDA 13.5: built, not measured on a GPU.** Both CUDA jobs install 13.5 and no longer pass
+  `-DGGML_CUDA_CCCL_VERSION` (13.5 bundles CCCL 3.5), as upstream's release builds since b12169
+  (#31788). Run 42783058488 (2026-11-10) built both modules: Linux `cuda-toolkit-13-5-13.5.0-1`,
+  Windows `redistrib_13.5.0.json`, which `CUDA_REDIST_MANIFEST` pins now. The Linux job's nvcc
+  passes went through sccache without an error or a retry on a cold cache (2622 misses, the C/C++
+  TUs 100 % hits, 100 minutes); the next run's table says whether the warm cache pays. Open:
   - whether `option(BUILD_TESTING ... OFF)` before the first `FetchContent_MakeAvailable()` is still
-    needed now that ggml no longer fetches CCCL (it stays; removing it is a change of its own).
+    needed now that ggml no longer fetches CCCL (it stays; removing it is a change of its own);
+  - `jllama-sbom.json` names the bundled CCCL from `cccl/version.h` of the toolkit; the probe was
+    tested against a stand-in directory only, so read the SBOM of the first run that has it.
   The driver floor moves with the toolkit for GPUs newer than Blackwell only (`121-virtual`, the one
-  PTX-only target); README says 13.5. Not measured on a GPU.
+  PTX-only target); README says 13.5.
 - **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,
   b11980 #31125). Nothing to change; read the first Publish run's two SYCL jobs for a compiler that
   rejects the new kernels, and the module's dependency list for a new import.
