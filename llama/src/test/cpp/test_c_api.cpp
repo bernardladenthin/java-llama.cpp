@@ -3615,6 +3615,22 @@ TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiP
             << jllama_last_error();
         EXPECT_GT(std::filesystem::file_size(legacy, ec), 0u) << ec.message();
 
+        // ... and read back from there (patches/0026: upstream's legacy reader took the narrow path)
+        const std::string legacy_u8 = utf8(legacy);
+        const char *one_legacy[] = {legacy_u8.c_str()};
+        const std::string back = model + ".utf8-legacy-back.imatrix.gguf";
+        int chunks_back = 0;
+        ASSERT_EQ(jllama_imatrix_merge(one_legacy, 1, back.c_str(), false, &chunks_back), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(chunks_back, chunks);
+        const std::string from_legacy = model + ".utf8-legacy-in.gguf";
+        ASSERT_EQ(jllama_quantize_imatrix(model.c_str(), from_legacy.c_str(), 15, 1, false, legacy_u8.c_str()),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_GT(std::filesystem::file_size(from_legacy, ec), 0u) << ec.message();
+        std::filesystem::remove(back, ec);
+        std::filesystem::remove(from_legacy, ec);
+
         const std::string quantized = model + ".utf8-in.gguf"; // ASCII: the output is a narrow site
         ASSERT_EQ(jllama_quantize_imatrix(utf8(in).c_str(), quantized.c_str(), 15, 1, false, utf8(imatrix).c_str()),
                   JLLAMA_STATUS_OK)

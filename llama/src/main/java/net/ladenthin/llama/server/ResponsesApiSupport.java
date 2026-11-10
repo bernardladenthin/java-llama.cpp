@@ -147,8 +147,9 @@ final class ResponsesApiSupport {
                 openAiTool.put("type", "function");
                 ObjectNode function = openAiTool.putObject("function");
                 function.put("name", tool.path("name").asText(""));
-                if (tool.path("description").isTextual()) {
-                    function.put("description", tool.path("description").asText());
+                JsonNode description = tool.path("description");
+                if (description.isTextual()) {
+                    function.put("description", description.asText());
                 }
                 if (tool.path("parameters").isObject()) {
                     function.set("parameters", tool.path("parameters").deepCopy());

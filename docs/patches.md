@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**15 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**16 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -37,6 +37,7 @@ match a binary to this page.
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
 | 0025 | [`0025-server-slot-appendix-reads-utf8.patch`](#0025-server-slot-appendix-reads-utf8patch) | server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows | 1 | 4 |
+| 0026 | [`0026-common-imatrix-legacy-reads-utf8.patch`](#0026-common-imatrix-legacy-reads-utf8patch) | common: open a legacy importance matrix by its UTF-8 path on Windows | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -724,4 +725,34 @@ measured. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
 Drop-check: drop this patch when the four streams in server-context.cpp no longer take the narrow
 filepath string -- CApiSlotFiles.ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhole then
 stays green without it on a Windows job.
+```
+
+## 0026-common-imatrix-legacy-reads-utf8.patch
+
+**Files (1):** `common/imatrix-loader.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: open a legacy importance matrix by its UTF-8 path on Windows
+
+common_imatrix_load_legacy() (common/imatrix-loader.cpp:11 at b12242) opens the file through
+std::ifstream(fname), a narrow string MSVC reads in the process's active code page. The GGUF branch
+of the same loader goes through gguf_init_from_file(), i.e. ggml_fopen(), which converts UTF-8 to
+UTF-16. The argument is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every platform), so
+inside java.exe on a code page like 1252 a legacy matrix under a path outside ASCII is not found:
+the loader logs "failed to open" and the merge or the quantisation that named it fails, while the
+same matrix as GGUF under the same path is read. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 and 0025.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when common_imatrix_load_legacy() no longer opens the narrow fname
+(u8path, a wide conversion, ggml_fopen) --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
 ```

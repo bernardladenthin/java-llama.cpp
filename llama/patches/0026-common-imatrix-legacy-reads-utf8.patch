@@ -1,0 +1,39 @@
+common: open a legacy importance matrix by its UTF-8 path on Windows
+
+common_imatrix_load_legacy() (common/imatrix-loader.cpp:11 at b12242) opens the file through
+std::ifstream(fname), a narrow string MSVC reads in the process's active code page. The GGUF branch
+of the same loader goes through gguf_init_from_file(), i.e. ggml_fopen(), which converts UTF-8 to
+UTF-16. The argument is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every platform), so
+inside java.exe on a code page like 1252 a legacy matrix under a path outside ASCII is not found:
+the loader logs "failed to open" and the merge or the quantisation that named it fails, while the
+same matrix as GGUF under the same path is read. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 and 0025.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when common_imatrix_load_legacy() no longer opens the narrow fname
+(u8path, a wide conversion, ggml_fopen) --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+
+diff --git a/common/imatrix-loader.cpp b/common/imatrix-loader.cpp
+index ec057cac2..7529aca37 100644
+--- a/common/imatrix-loader.cpp
++++ b/common/imatrix-loader.cpp
+@@ -5,10 +5,11 @@
+ 
+ #include <cmath>
+ #include <cstring>
++#include <filesystem>
+ #include <fstream>
+ 
+ static bool common_imatrix_load_legacy(const std::string & fname, common_imatrix & imatrix) {
+-    std::ifstream in(fname, std::ios::binary);
++    std::ifstream in(std::filesystem::u8path(fname), std::ios::binary);
+     if (!in) {
+         LOG_ERR("%s: failed to open %s\n", __func__, fname.c_str());
+         return false;

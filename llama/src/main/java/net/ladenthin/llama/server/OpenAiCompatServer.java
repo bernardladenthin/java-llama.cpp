@@ -155,6 +155,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     /** Ollama-native generate route (prompt completion / fill-in-the-middle). */
     public static final String PATH_OLLAMA_GENERATE = "/api/generate";
 
+    private static final String HEADER_CONTENT_TYPE = "Content-Type";
     private static final String CONTENT_TYPE_NDJSON = "application/x-ndjson";
 
     private static final int HTTP_OK = 200;
@@ -530,7 +531,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 sendError(exchange, HTTP_SERVER_ERROR, ERROR_TYPE_SERVER, message(e));
                 return;
             }
-            exchange.getResponseHeaders().set("Content-Type", contentType);
+            exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, contentType);
             exchange.sendResponseHeaders(HTTP_OK, audio.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(audio);
@@ -788,7 +789,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (OllamaApiSupport.isStreaming(request)) {
                 byte[] bytes = OllamaApiSupport.toOllamaGenerateStream(generated, model)
                         .getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_NDJSON);
+                exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_NDJSON);
                 exchange.sendResponseHeaders(HTTP_OK, bytes.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
@@ -1270,7 +1271,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private void sendJson(HttpExchange exchange, int status, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+        exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
@@ -1351,7 +1352,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     throw new IOException("the " + contentType + " stream failed to start");
                 }
                 started = true;
-                exchange.getResponseHeaders().set("Content-Type", contentType);
+                exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, contentType);
                 exchange.getResponseHeaders().set("Cache-Control", "no-cache");
                 exchange.sendResponseHeaders(HTTP_OK, 0);
                 out = exchange.getResponseBody();
@@ -1436,7 +1437,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 answered = true;
                 byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
                 try {
-                    exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+                    exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
                     exchange.sendResponseHeaders(status, bytes.length);
                     try (OutputStream out = exchange.getResponseBody()) {
                         out.write(bytes);

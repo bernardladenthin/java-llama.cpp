@@ -30,6 +30,8 @@ final class SpeechApiSupport {
     static final String FORMAT_PCM16 = "pcm16";
 
     /** One past the largest magnitude of a signed 16-bit sample. */
+    private static final String FIELD_N_PREDICT = "n_predict";
+
     private static final float PCM16_SCALE = 32768.0f;
 
     /** The {@code Content-Type} of a WAV answer. */
@@ -174,7 +176,7 @@ final class SpeechApiSupport {
                 throw new IllegalArgumentException("\"speaker_ref_b64\" is not valid base64", e);
             }
         }
-        JsonNode frames = request.has("n_predict") ? request.path("n_predict") : request.path("max_tokens");
+        JsonNode frames = request.path(request.has(FIELD_N_PREDICT) ? FIELD_N_PREDICT : "max_tokens");
         JsonNode temperature = request.path("temperature");
         if (temperature.isNumber() && temperature.asDouble() < 0.0) {
             throw new IllegalArgumentException("Field 'temperature': must not be negative");
@@ -188,7 +190,7 @@ final class SpeechApiSupport {
                 format,
                 new SpeechOptions(
                         reference,
-                        integerOrNull(frames, "n_predict"),
+                        integerOrNull(frames, FIELD_N_PREDICT),
                         integerOrNull(request.path("top_k"), "top_k"),
                         integerOrNull(request.path("seed"), "seed"),
                         temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null));

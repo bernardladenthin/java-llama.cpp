@@ -203,7 +203,11 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     library's own streams: the calibration text of `jllama_imatrix`, the legacy output of
     `jllama_imatrix_merge` and the trainer's `training_file`. `CApiSlotFiles` and
     `CApiNonAsciiPaths` hold all of it, and the paths that worked before (`-m`, `--mmproj`,
-    `--lora`, `--shard`, the GGUF inputs and outputs of the quantizer, imatrix and trainer).
+    `--lora`, `--shard`, the model and matrix the quantizer reads, the GGUF outputs of the imatrix
+    run and the trainer -- not the quantizer's own output, which is in the open list below).
+    `patches/0026` adds the last reader: a legacy imatrix file under such a path
+    (`common_imatrix_load_legacy`, a narrow `std::ifstream`; read from the source, first run on
+    CI's Windows jobs).
   - **Open, each one narrow site in llama.cpp, a non-ASCII path fails or lands under a mangled
     name:** `--log-file` (`common/log.cpp`, a narrow `fopen`), the quantizer's output
     (`src/llama-quant.cpp`), and the download paths (`-m` as the target of `--model-url`,
@@ -211,8 +215,7 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     not decided.
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
     built-in file tools, the checkpoint half of the appendix (the test model writes no
-    checkpoints; it shares the patched sites), reading a legacy imatrix file back from such a path
-    (upstream's `common_imatrix_load`), and everything through the Java layer -- the machine had
+    checkpoints; it shares the patched sites), and everything through the Java layer -- the machine had
     no Temurin 25, so the measurement went through the C API.
   - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
     lines over `common/{common,download,hf-cache,preset}.cpp` and
@@ -233,9 +236,8 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 - The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`),
   nine types need one (`QuantizationType.requiresImportanceMatrix()`), and
   `LlamaQuantizer.computeImportanceMatrix` / `jllama_imatrix` compute it, with a progress callback
-  that can cancel. Left out of the port of upstream's `tools/imatrix`: merging existing matrices
-  (`--in-file`), the activation sums (`.in_sum`, statistics only), the legacy output format,
-  `--process-output`, the perplexity report, intermediate saves, and the tool's
+  that can cancel. Left out of the port of upstream's `tools/imatrix`: the activation sums
+  (`.in_sum`, statistics only), `--process-output`, the perplexity report, intermediate saves, and the tool's
   `--include-weights` / `--exclude-weights` on the quantizer side. **Compared with upstream's
   `llama-imatrix`** (b12242, built standalone, the dense and the mixture-of-experts random model,
   the same text and chunk size): the same tensor names, every `.in_sum2` and `.counts` value

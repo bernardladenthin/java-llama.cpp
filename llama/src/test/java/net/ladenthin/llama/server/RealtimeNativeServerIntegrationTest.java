@@ -243,7 +243,6 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
         }
     }
 
-    /** {@code response.create} with one output modality and a token bound. */
     /**
      * {@code session.update} takes {@code instructions}, {@code output_modalities} and
      * {@code max_output_tokens} (llama.cpp b12239, #31978): the session reports them back, and a
@@ -300,6 +299,7 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
         }
     }
 
+    /** {@code response.create} with one output modality and a token bound. */
     private static ObjectNode responseCreate(String modality, int maxOutputTokens) {
         ObjectNode create = MAPPER.createObjectNode().put("type", "response.create");
         ObjectNode response = create.putObject("response");
