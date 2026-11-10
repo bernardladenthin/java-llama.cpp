@@ -171,7 +171,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
   serves it already (classic and attach mode: `server-realtime.cpp` is compiled in since #590 and the route is
   upstream's), and `RealtimeNativeServerIntegrationTest` drives it end to end with LFM3-Audio over the JDK's
   WebSocket client: session formats, a text and an audio response, spoken input, a transcription session and a
-  tool call (b11960, #31287), 6 cases in ~12 s on 16 cores (property-gated, not in CI). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
+  tool call (b11960, #31287), 6 cases in ~12 s on 16 cores (measured locally; in CI since 2026-11-10 with the `realtime` rows). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
   request a response with an output mode (`MTMD_HELPER_GEN_AUDIO_OUT_AUTO` / `TEXT` / `AUDIO` / `MIXED`), receive
   text and PCM events, cancel, clear -- and on the Java transport the same as for transcription above: the JDK's
   `com.sun.net.httpserver` has no WebSocket. The model to test it with is in CI's set (LFM3-Audio, feature `realtime`). Large; decide when
