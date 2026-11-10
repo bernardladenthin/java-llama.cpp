@@ -625,6 +625,25 @@ SPDX-License-Identifier: MIT
         <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
         <Method name="requireTextualPrompt"/>
     </Match>
+    <!--
+        The same shape guards for two more routes: /v1/responses' text.format (not an object, a type
+        that is none of the three) and /v1/audio/speech (no input, a response_format, stream_format
+        or speed the route does not serve; an engine answer that is no WAV file). Each message names
+        the field and the rule, which is all there is to say; the texts follow upstream's.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.server.ResponsesApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Method name="appendResponseFormat"/>
+    </Match>
+    <Match>
+        <Class name="net.ladenthin.llama.server.SpeechApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Or>
+            <Method name="parse"/>
+            <Method name="sampleRate"/>
+        </Or>
+    </Match>
 
     <!--
         OpenAiCompatServer.main blocks the launcher thread forever (Thread.join with no timeout) so the

@@ -411,6 +411,13 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Turns token ids back into text -- the inverse of {@link #encode(String)}.
      *
+     * <p>Not always letter for letter: a model with a SentencePiece vocabulary (LLaMA 2, Mistral,
+     * Gemma, most models converted from a {@code tokenizer.model}) puts a space piece in front of the
+     * first word, and llama.cpp takes it off again only behind the beginning-of-sequence token, which
+     * {@link #encode(String)} does not add. {@code decode(encode("cat"))} is {@code " cat"} there. A
+     * BPE vocabulary (GPT-2 style: Llama 3, Qwen, most recent models) gives the text back as it was.
+     * {@link net.ladenthin.llama.value.ModelMeta#getVocabType()} says which one a model has.</p>
+     *
      * @param tokens the token ids
      * @return their text
      */

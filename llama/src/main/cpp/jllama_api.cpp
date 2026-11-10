@@ -840,6 +840,14 @@ jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char *text, con
 jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text, const char *speaker_reference_path,
                                           const char *lang, const char *voice, int max_frames, int top_k,
                                           unsigned int seed, unsigned char **wav, size_t *length) {
+    return jllama_tts_synthesize_temperature(tts, text, speaker_reference_path, lang, voice, max_frames, top_k, seed,
+                                             -1.0f, wav, length);
+}
+
+jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const char *text,
+                                                const char *speaker_reference_path, const char *lang, const char *voice,
+                                                int max_frames, int top_k, unsigned int seed, float temperature,
+                                                unsigned char **wav, size_t *length) {
     if (tts == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
     }
@@ -854,7 +862,7 @@ jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *tex
         if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text,
                                            speaker_reference_path != nullptr ? speaker_reference_path : "",
                                            lang != nullptr ? lang : "", voice != nullptr ? voice : "", max_frames,
-                                           top_k, seed, bytes, err)) {
+                                           top_k, seed, temperature, bytes, err)) {
             return fail(JLLAMA_STATUS_ERROR, err.c_str());
         }
         auto *out = static_cast<unsigned char *>(std::malloc(std::max<size_t>(bytes.size(), 1)));

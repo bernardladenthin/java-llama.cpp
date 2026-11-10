@@ -740,6 +740,9 @@ std::string model_meta(jllama_context *jctx) {
         {"capabilities",
          {{"chat", m.has_cap_chat}, {"audio_gen", m.has_cap_tts}, {"audio_stream", m.has_audio_stream}}},
     };
+    // The predefined voices of an audio-generating projector (b12061), as upstream's /props lists them
+    // under the same key; an empty array for a model without any.
+    j["voices"] = m.tts_voices;
     // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
     // flattened to the top level because "architecture" above already names the GGUF architecture
     // string. A native decision model reports ["decisions"].

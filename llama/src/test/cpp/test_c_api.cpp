@@ -258,6 +258,9 @@ TEST_F(CApi, ModelMetaReportsTheCapabilities) {
     EXPECT_FALSE(caps.at("audio_gen").get<bool>());
     EXPECT_FALSE(caps.at("audio_stream").get<bool>());
     EXPECT_EQ(caps.size(), 3u) << caps.dump();
+    // and no predefined voices: the key is there and empty, as the list of a model without them
+    ASSERT_TRUE(j.contains("voices")) << meta.str();
+    EXPECT_EQ(j.at("voices").size(), 0u);
 }
 
 TEST_F(CApi, RawCompletionsReturnTheResultObject) {
@@ -2107,6 +2110,14 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
                                           nullptr, 10, 1, 1, &wav, &length),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(wav, nullptr);
+    // The temperature variant (b12233) is the one the other two end in.
+    EXPECT_EQ(jllama_tts_synthesize_temperature(nullptr, "Hi", nullptr, nullptr, "alba", 10, 1, 1, 0.7f, &wav, &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    EXPECT_EQ(jllama_tts_synthesize_temperature(reinterpret_cast<jllama_tts_model *>(&not_a_tts), nullptr, nullptr,
+                                                nullptr, nullptr, 10, 1, 1, -1.0f, &wav, &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(wav, nullptr);
     bool supported = true;
     EXPECT_EQ(jllama_tts_supports_speaker_reference(nullptr, &supported), JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
@@ -2923,4 +2934,82 @@ TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
     jllama_model_free(model);
     std::error_code ec;
     std::filesystem::remove(path, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Structured output on the chat path. A random model writes noise, so an answer that is exactly one
+// of two JSON strings is the grammar's doing -- which makes these checks of what constrains what.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The content of a chat completion over the fixture model; empty when the call failed.
+std::string chat_content(jllama_model *model, const std::string &extra_fields) {
+    Owned response;
+    const std::string request =
+        R"({"messages":[{"role":"user","content":"Answer."}],"temperature":0,"max_tokens":24,"cache_prompt":false)" +
+        extra_fields + "}";
+    EXPECT_EQ(jllama_chat_completions(model, request.c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    if (response.s == nullptr) {
+        return std::string();
+    }
+    const json message = json::parse(response.str()).at("choices").at(0).at("message");
+    return message.contains("content") && !message.at("content").is_null() ? message.at("content").get<std::string>()
+                                                                           : std::string();
+}
+
+bool is_yes_or_no(const std::string &content) { return content == "\"yes\"" || content == "\"no\""; }
+
+const char *const YES_NO_NESTED =
+    R"(,"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"enum":["yes","no"]}}})";
+const char *const YES_NO_TOP_LEVEL = R"(,"response_format":{"type":"json_schema","schema":{"enum":["yes","no"]}})";
+const char *const ONE_TOOL =
+    R"(,"tools":[{"type":"function","function":{"name":"lookup","description":"Look something up.",)"
+    R"("parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}}}])";
+
+} // namespace
+
+// The model of these tests ends its answers with a byte of its own (4). The shared fixture's end
+// token is '>', which the chat template's generation prompt ("<|im_start|>assistant") contains, and
+// llama.cpp feeds that prompt to the grammar first: an end token inside an unfinished grammar is
+// GGML_ABORT("fatal error") in llama_grammar_accept_impl, the whole process. No real model has an
+// end token that the text of its own template tokenizes to, so this is the fixture's trap.
+class CApiStructured : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        tiny_model_spec spec;
+        spec.prefix = "jllama-structured";
+        spec.eos = 4;
+        spec.eos_is_control = true; // or the end byte is part of the answer, which is then no JSON
+        path_ = write_tiny_llama_gguf(spec);
+        ASSERT_FALSE(path_.empty());
+        model_ = load_tiny(path_, {});
+        ASSERT_NE(model_, nullptr) << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+    static jllama_model *model_;
+};
+std::string CApiStructured::path_;
+jllama_model *CApiStructured::model_ = nullptr;
+
+TEST_F(CApiStructured, AResponseFormatConstrainsTheAnswerInBothSpellingsOfTheSchema) {
+    // unconstrained, the random model does not happen to write one of the two strings
+    EXPECT_FALSE(is_yes_or_no(chat_content(model_, "")));
+    EXPECT_TRUE(is_yes_or_no(chat_content(model_, YES_NO_NESTED)));
+    // the schema directly under response_format, which llama.cpp reads since b12229
+    EXPECT_TRUE(is_yes_or_no(chat_content(model_, YES_NO_TOP_LEVEL)));
+}
+
+TEST_F(CApiStructured, AResponseFormatNextToToolsStillConstrainsTheWholeAnswer) {
+    // llama.cpp b12242 (#31956): with tools the grammar used to be lazy -- in force only once the
+    // model began a tool call -- so a request with both got free text. The answer is held to the
+    // schema now whether or not tools are offered.
+    const std::string content = chat_content(model_, std::string(YES_NO_NESTED) + ONE_TOOL);
+    EXPECT_TRUE(is_yes_or_no(content)) << content;
 }

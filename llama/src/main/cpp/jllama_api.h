@@ -498,6 +498,18 @@ JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, cons
                                                      unsigned char **wav, size_t *length);
 
 /**
+ * jllama_tts_synthesize_voice with the audio frame temperature (llama.cpp b12233): a pipeline that
+ * samples its audio frames (Pocket TTS) does so at `temperature`, 0 is greedy and a negative value
+ * the model's default; the other pipelines ignore it. jllama_tts_synthesize_voice is this function
+ * with -1. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const char *text,
+                                                           const char *speaker_reference_path, const char *lang,
+                                                           const char *voice, int max_frames, int top_k,
+                                                           unsigned int seed, float temperature, unsigned char **wav,
+                                                           size_t *length);
+
+/**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
  * mtmd_helper_cap::audio_gen_spk_ref, true for Qwen3-TTS and Pocket TTS. jllama_tts_synthesize
  * refuses a `speaker_reference_path` for a pair that does not.

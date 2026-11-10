@@ -953,7 +953,11 @@ try (TextToSpeech tts = new TextToSpeech(
 }
 ```
 
-`FfmTextToSpeech` (`llama-ffm`) has the same overload, over the C API's `jllama_tts_synthesize_voice`.
+One more overload ends in a `float temperature`: the temperature a pipeline samples its audio
+frames at (Pocket TTS; `0` is greedy, `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` the model's own).
+
+`FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's
+`jllama_tts_synthesize_temperature`.
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS
@@ -1083,6 +1087,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
+| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
 | `GET /slots` | native per-slot token/cache counters (JSON array) |

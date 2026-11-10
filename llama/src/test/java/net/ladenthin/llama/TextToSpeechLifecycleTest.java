@@ -44,6 +44,7 @@ public class TextToSpeechLifecycleTest {
         volatile boolean deletedDuringSynthesize;
         volatile @Nullable String lastLanguage;
         volatile @Nullable String lastVoice;
+        volatile float lastTemperature = Float.NaN;
 
         @Override
         public long load(String modelPath, String mmprojPath, int gpuLayers, int threads) {
@@ -59,7 +60,9 @@ public class TextToSpeechLifecycleTest {
                 @Nullable String voice,
                 int maxFrames,
                 int topK,
-                int seed) {
+                int seed,
+                float temperature) {
+            lastTemperature = temperature;
             lastLanguage = language;
             lastVoice = voice;
             insideSynthesize.incrementAndGet();
@@ -160,6 +163,26 @@ public class TextToSpeechLifecycleTest {
             assertThat(tts.synthesize("hello", null, "de", "male", 64, 4, 0), is(WAV));
             assertThat(backend.lastLanguage, is("de"));
             assertThat(backend.lastVoice, is("male"));
+        }
+    }
+
+    @Test
+    public void synthesize_withTemperature_handsItToTheBackend() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            assertThat(tts.synthesize("hello", null, null, "alba", 64, 4, 0, 0.7f), is(WAV));
+            assertThat(backend.lastTemperature, is(0.7f));
+            assertThat(backend.lastVoice, is("alba"));
+        }
+    }
+
+    @Test
+    public void synthesize_withoutTemperature_leavesItToTheModel() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            tts.synthesize("hello");
+            assertThat(backend.lastTemperature, is(TextToSpeech.MODEL_DEFAULT_TEMPERATURE));
+            assertThat(TextToSpeech.MODEL_DEFAULT_TEMPERATURE < 0.0f, is(true));
         }
     }
 

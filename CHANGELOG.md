@@ -14,6 +14,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   API): the predefined voices of a model that ships some in its projector (llama.cpp b12061: Pocket
   TTS without voice cloning, LFM3-Audio), to pass as `voice` to `synthesize`. Empty for a model
   without them (Qwen3-TTS).
+- **`POST /v1/audio/speech` on `OpenAiCompatServer`** (also `/audio/speech`), OpenAI's speech
+  route as llama.cpp serves it since b12238: `input`, `voice` (a name or `{"id": ...}`), `lang`,
+  `response_format` `wav` or `pcm` (`audio/pcm;rate=<n>;encoding=signed-int;bits=16`). The server
+  takes the engine as a `SpeechBackend`: `new OpenAiCompatServer(model, config, textToSpeech)`, or
+  any implementation of the interface. Without one the route answers `501`; `stream_format` other
+  than `audio`, a `speed` other than 1 and another `response_format` are `400`. `GET /props` lists
+  the engine's `voices`.
+- **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
+  `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
+  frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what
+  the other overloads pass.
+- **`ModelMeta.getVoices()`** and `voices` in the model meta (`jllama_model_meta`): the predefined
+  text-to-speech voices of a model loaded through `LlamaModel`, as upstream's `GET /props` lists
+  them; empty for every other model.
+- **`extra_params` on `/v1/responses`** (`OpenAiCompatServer`): llama.cpp parameters the Responses
+  API has no field for (`{"seed": 42, "min_p": 0.05}`) are merged into the converted request, as
+  upstream does since b12022.
 - **`ModelParameters.addShard(String)`** -- an extra GGUF shard of the model, anywhere on disk
   (upstream `--shard` / `--ple`, llama.cpp b12233); repeatable.
 - **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
@@ -45,6 +62,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **`text.format` of `/v1/responses` is converted as llama.cpp converts it** (b12240): the format
+  object becomes `response_format` with every key but `type` (`strict` and `description` included),
+  it replaces a `response_format` the request also carries, `type` `text` removes one, and a `text`
+  or `format` that is not an object or a `type` other than `text` / `json_object` / `json_schema` is
+  a `400`, where it was ignored.
 - **A model without a classification head is refused as a reranker.** Loading one with
   `enableReranking()` (or rank pooling) used to work and `rerank` answered the first value of the
   pooled embedding as the score; the load now fails naming the missing head. A model split into

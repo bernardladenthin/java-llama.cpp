@@ -51,11 +51,13 @@ const std::vector<std::string> &engine_voices(const tts_engine *engine);
 // the others speak `text` itself. `lang` is the model's language (Qwen3-TTS: "english", "chinese", ...,
 // empty = "english"; LFM3-Audio: "en", "de", ..., empty = the template's default, see upstream
 // tools/tts/README.md) and `voice` a model-dependent preset (LFM3-Audio: "female", "male"), empty for
-// the model's default. Returns false and sets `err` on failure. Thread-compatible but not re-entrant
+// the model's default. `temperature` is the audio frame temperature of a pipeline that samples its
+// frames (Pocket TTS, llama.cpp b12233): negative = the model's default, 0 = greedy; the other
+// pipelines ignore it. Returns false and sets `err` on failure. Thread-compatible but not re-entrant
 // on the same engine instance.
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
                        const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       std::vector<uint8_t> &out_wav, std::string &err);
+                       float temperature, std::vector<uint8_t> &out_wav, std::string &err);
 
 // Release the loaded model/context. Safe on nullptr.
 void engine_free(tts_engine *engine);

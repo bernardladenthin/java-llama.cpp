@@ -31,6 +31,12 @@ import org.jspecify.annotations.Nullable;
 public final class TextToSpeech implements AutoCloseable {
 
     /**
+     * The audio frame temperature that leaves the choice to the model: what every {@code synthesize}
+     * overload without a temperature passes.
+     */
+    public static final float MODEL_DEFAULT_TEMPERATURE = -1.0f;
+
+    /**
      * The native calls behind {@link TextToSpeech}. The JNI methods stay in this class (their symbol
      * names are bound to it); this seam exists so the lifecycle can be tested with a fake that never
      * hands a made-up handle to libjllama.
@@ -58,6 +64,7 @@ public final class TextToSpeech implements AutoCloseable {
          * @param maxFrames                 cap on generated audio frames
          * @param topK                      top-k cutoff
          * @param seed                      sampler seed
+         * @param temperature               audio frame temperature, negative for the model's default
          * @return the WAV bytes
          */
         byte[] synthesize(
@@ -68,7 +75,8 @@ public final class TextToSpeech implements AutoCloseable {
                 @Nullable String voice,
                 int maxFrames,
                 int topK,
-                int seed);
+                int seed,
+                float temperature);
 
         /**
          * Whether the loaded pair clones a voice from a speaker reference.
@@ -111,8 +119,10 @@ public final class TextToSpeech implements AutoCloseable {
                 @Nullable String voice,
                 int maxFrames,
                 int topK,
-                int seed) {
-            return synthesizeNative(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
+                int seed,
+                float temperature) {
+            return synthesizeNative(
+                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
         }
 
         @Override
@@ -308,10 +318,43 @@ public final class TextToSpeech implements AutoCloseable {
             int maxFrames,
             int topK,
             int seed) {
+        return synthesize(
+                text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, MODEL_DEFAULT_TEMPERATURE);
+    }
+
+    /**
+     * Synthesize speech like {@link #synthesize(String, String, String, String, int, int, int)}, with
+     * the temperature the audio frames are sampled at.
+     *
+     * <p>Only a pipeline that samples its audio frames reads it (Pocket TTS, llama.cpp b12233); the
+     * others (Qwen3-TTS, LFM3-Audio) ignore it.</p>
+     *
+     * @param text the text to speak
+     * @param speakerReferenceAudioPath path to a reference audio clip whose voice is cloned, or
+     *     {@code null}/empty for the model's default voice
+     * @param language the model's language, or {@code null}/empty for its default
+     * @param voice a model-dependent voice preset, or {@code null}/empty for the model's default
+     * @param maxFrames cap on generated audio frames (longer = longer audio)
+     * @param topK top-k sampling cutoff for the semantic (backbone) token stream
+     * @param seed sampler seed
+     * @param temperature the audio frame temperature: {@code 0} is greedy, a negative value
+     *     ({@link #MODEL_DEFAULT_TEMPERATURE}) the model's default
+     * @return a mono 16-bit WAV byte stream at the pipeline's sample rate
+     */
+    public byte[] synthesize(
+            String text,
+            @Nullable String speakerReferenceAudioPath,
+            @Nullable String language,
+            @Nullable String voice,
+            int maxFrames,
+            int topK,
+            int seed,
+            float temperature) {
         lifecycleLock.readLock().lock();
         try {
             requireOpen();
-            return backend.synthesize(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
+            return backend.synthesize(
+                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -347,7 +390,8 @@ public final class TextToSpeech implements AutoCloseable {
             @Nullable String voice,
             int maxFrames,
             int topK,
-            int seed);
+            int seed,
+            float temperature);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
 

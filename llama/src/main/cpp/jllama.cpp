@@ -1475,7 +1475,7 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
     JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
-    jstring jvoice, jint max_frames, jint top_k, jint seed) {
+    jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
@@ -1485,10 +1485,10 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
         const std::string voice = jvoice == nullptr ? std::string() : parse_jstring(env, jvoice);
         unsigned char *wav = nullptr;
         size_t length = 0;
-        const jllama_status status = jllama_tts_synthesize_voice(
+        const jllama_status status = jllama_tts_synthesize_temperature(
             reinterpret_cast<jllama_tts_model *>(handle), text.c_str(), speaker_reference_path.c_str(), lang.c_str(),
-            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed), &wav,
-            &length);
+            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed),
+            static_cast<float>(temperature), &wav, &length);
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
             return nullptr;

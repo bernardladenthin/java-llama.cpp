@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.TextToSpeech;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -41,11 +42,13 @@ class FfmTextToSpeechTest {
         final CountDownLatch insideSynthesize = new CountDownLatch(1);
         final CountDownLatch releaseSynthesize = new CountDownLatch(1);
         volatile boolean speakerReference;
+        volatile float lastTemperature = Float.NaN;
         volatile List<String> voices = List.of();
 
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                String voice, int maxFrames, int topK, int seed) {
+                String voice, int maxFrames, int topK, int seed, float temperature) {
+            lastTemperature = temperature;
             events.add("synthesize entered");
             insideSynthesize.countDown();
             try {
@@ -127,6 +130,17 @@ class FfmTextToSpeechTest {
         FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
 
         assertThat(tts.synthesize("hi", null, null, 10, 1, 1), is(WAV));
+        assertThat(backend.lastTemperature, is(TextToSpeech.MODEL_DEFAULT_TEMPERATURE));
+    }
+
+    @Test
+    void synthesizeHandsTheTemperatureToTheBackend() {
+        GatedBackend backend = new GatedBackend();
+        backend.releaseSynthesize.countDown();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+
+        assertThat(tts.synthesize("hi", null, null, "alba", 10, 1, 1, 0.0f), is(WAV));
+        assertThat(backend.lastTemperature, is(0.0f));
     }
 
     @Test

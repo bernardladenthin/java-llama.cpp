@@ -114,6 +114,9 @@ struct tiny_model_spec {
     std::string prefix = "jllama-c-api";
     bool fim = false;
     uint32_t eos = '>';
+    // Declares the end token a control token, as a real model's is: its piece is then not part of
+    // the text (a normal token's is, so an answer of the default fixture ends with the byte).
+    bool eos_is_control = false;
     std::vector<std::string> special = {};
     int n_embd = N_EMBD;
     int n_head = N_HEAD;
@@ -235,6 +238,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     tokens.insert(tokens.end(), spec.special.begin(), spec.special.end());
     const int n_vocab = static_cast<int>(tokens.size());
     token_types.resize(n_vocab, 3);
+    if (spec.eos_is_control && !sentencepiece) {
+        token_types[spec.eos] = 3;
+    }
     scores.resize(sentencepiece ? n_vocab : 0, 0.0f);
     std::vector<const char *> token_ptrs;
     for (const std::string &t : tokens) {

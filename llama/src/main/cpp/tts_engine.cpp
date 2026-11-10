@@ -103,7 +103,7 @@ bool engine_supports_speaker_reference(const tts_engine *engine) {
 
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
                        const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       std::vector<uint8_t> &out_wav, std::string &err) {
+                       float temperature, std::vector<uint8_t> &out_wav, std::string &err) {
     if (engine == nullptr) {
         err = "engine is null";
         return false;
@@ -199,6 +199,10 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = 1.0f;
     inp.seed = seed;
+    // b12233 (#31655): the audio frame temperature, < 0 = the model's default (what the struct starts with)
+    if (temperature >= 0.0f) {
+        inp.temp = temperature;
+    }
     // We do our own WAV framing (pcm_to_wav16_bytes) rather than trust upstream's own writer, so
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;

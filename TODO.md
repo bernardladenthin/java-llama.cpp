@@ -231,8 +231,13 @@ affected; ASCII paths are not affected.
   that can cancel. Left out of the port of upstream's `tools/imatrix`: merging existing matrices
   (`--in-file`), the activation sums (`.in_sum`, statistics only), the legacy output format,
   `--process-output`, the perplexity report, intermediate saves, and the tool's
-  `--include-weights` / `--exclude-weights` on the quantizer side. Not compared yet: a file of
-  this function against one `llama-imatrix` writes for the same model and text.
+  `--include-weights` / `--exclude-weights` on the quantizer side. **Compared with upstream's
+  `llama-imatrix`** (b12242, built standalone, the dense and the mixture-of-experts random model,
+  the same text and chunk size): the same tensor names, every `.in_sum2` and `.counts` value
+  identical (worst relative difference 0.0), the same `imatrix.datasets` / `chunk_count` /
+  `chunk_size`. Upstream's file additionally holds an `.in_sum` and a `.stats` tensor per weight and
+  `imatrix.stats_schema`, which the quantizer does not read. The comparison was done by hand; it is
+  not a test, because no CI job builds upstream's tools.
 - Rank pooling on a model without a classification head is refused at load (upstream answers the
   first value of the pooled embedding as the score). The check reads the tensor list of the model
   file and gives a split model the benefit of the doubt.
@@ -241,12 +246,19 @@ affected; ASCII paths are not affected.
   BPE with merges, SentencePiece). Not built: a WordPiece or SentencePiece vocabulary with byte
   fallback pieces, a Unigram (T5) or RWKV vocabulary, the hybrid architectures.
 - **A SentencePiece round trip comes back behind a space** when the tokens carry no `<s>`
-  (`detokenize(tokenize("cat"))` is `" cat"`): upstream's behaviour, pinned by
-  `CApiTokenizers`. `LlamaModel.decode(encode(text))` therefore differs from `text` for such a
-  model; to decide whether the Javadoc should say so or `decode` should offer the choice.
-- **A model with MTP layers does not draft unless `--spec-type draft-mtp` is given**, the same shape
-  as the draft model before the engine's `draft-simple` default; to decide whether the engine
-  should default to `draft-mtp` for a model whose `n_layer_nextn` is positive.
+  (`detokenize(tokenize("cat"))` is `" cat"`): upstream's behaviour, pinned by `CApiTokenizers`.
+  Decided: `LlamaModel.decode` says so in its Javadoc and stays what upstream answers; a caller who
+  needs the text back strips the one leading space.
+- **A model with MTP layers does not draft unless `--spec-type draft-mtp` is given.** Decided: it
+  stays explicit (`ModelParameters.setSpecTypes(SpecType.DRAFT_MTP)`, said in its Javadoc). A draft
+  model is a file the caller names, so using it is what was asked for; MTP layers come with the
+  model, and turning them on by default would change the speed and memory of every load of such a
+  model without a request for it -- upstream's own default is `none` for the same model.
+- **A grammar aborts the process when the model's end-of-generation byte is part of the generation
+  prompt** (`GGML_ABORT`, `llama-grammar.cpp:1527`), met while writing `CApiStructured`: the random
+  model's default EOS is the byte `>`, which the chat template's prompt contains. The fixture uses
+  another EOS (4, a control token). A real tokenizer does not have a printable EOS, so this is a
+  trap of the test models, not a defect to report.
 - **The quantization sweep takes 9 s on x86-64, and the model is not why.** Measured per type:
   IQ1_S 2.8 s, IQ3_XXS 1.6 s, IQ2_XS 1.1 s, every other type below 0.7 s -- the one-time
   construction of ggml's IQ codebook tables, which no smaller model avoids. Under qemu
@@ -262,7 +274,14 @@ affected; ASCII paths are not affected.
   Version": the two places of the toolkit version, the redist manifest and component list of the
   Windows job, then **drop both CCCL flags** -- and with them, check whether `option(BUILD_TESTING
   ... OFF)` before the first `FetchContent_MakeAvailable()` is still needed for another reason. Needs
-  a Publish run; re-measure the nvcc/sccache hit table on the first warm run.
+  a Publish run; re-measure the nvcc/sccache hit table on the first warm run. **Not done with the
+  rest of this list (2026-11-10), for three reasons that a Publish run alone does not answer:**
+  the module would then need a driver that can JIT CUDA 13.5 PTX for `121-virtual`, a floor the
+  README states as 13.4 and nobody has measured for 13.5; each of the last two toolkit bumps (13.3,
+  13.4) broke sccache's nvcc wrapping in a new way; and NVIDIA's download host was not reachable
+  from the machine the list was worked on, so neither the `cuda-toolkit-13-5` package of the rhel8
+  repository nor the 13.5.x redist manifest to pin could be read. Upstream's 13.5 component set is
+  the one the Windows job already lists.
 - **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,
   b11980 #31125). Nothing to change; read the first Publish run's two SYCL jobs for a compiler that
   rejects the new kernels, and the module's dependency list for a new import.
@@ -276,10 +295,6 @@ affected; ASCII paths are not affected.
   the pairwise path. Only relevant if someone wants multi-node tensor parallelism from Java.
 
 **API surface not exposed yet**
-- **Audio-frame temperature for text to speech** (`mtmd_helper_gen_audio_inp::temp`, b12218 #31655;
-  the `/tts` route's `temperature`). `engine_synthesize` keeps the model's default (`-1`). Would be
-  one more parameter through `engine_synthesize`, a `jllama_tts_synthesize_*` variant, the JNI
-  shell, `TextToSpeech` and `FfmTextToSpeech`. Only Pocket TTS reads it today.
 - **New audio generation pipelines: Chatterbox (b12097 #30993) and Drama-3 (b12116 #31613)**,
   `MTMD_GEN_AUDIO_TYPE_CHATTERBOX` / `DRAMA3`. `TextToSpeech` drives `mtmd_helper::gen_audio`
   generically, so they are expected to work; neither was loaded. A property-gated run of
@@ -289,17 +304,6 @@ affected; ASCII paths are not affected.
   b12061 its `female` / `male` are predefined voices handed over as a voice bitmap *and* named in the
   template, and a synthesis without a voice takes the first of `getVoices()`. The "template's
   defaults" and "two voices differ" cases were written before that.
-- **`voices` in the model meta and on the Java transport.** Upstream lists them in `GET /props`
-  (`server_context_meta::tts_voices`); `NativeServer` serves that. `LlamaModel.getModelMeta()` and
-  `OpenAiSseFormatter.propsJson` do not carry it. Belongs with server-side TTS through `LlamaModel`
-  (the b11800 list above).
-- **`extra_params` on `/v1/responses`** (b12022 #30959): llama.cpp parameters the Responses API has
-  no field for (`{"seed": 42, "min_p": 0.05}`), merged into the converted request. `NativeServer`
-  has it; `ResponsesApiSupport` drops the key. Small, model-free to test.
-- **`response_format` of type `json_schema` with the schema at the top level** (b12229 #28697).
-  `OpenAiRequestMapper` forwards `response_format` verbatim, so the chat route follows upstream;
-  `ResponsesApiSupport` builds the nested form itself and is unaffected. Add one
-  `OpenAiCompatServerHttpTest` row so the forwarding is pinned.
 - **Nemotron 3.5 Transcribe (b12087), MageVL-Cowork (b12192), Qwen3-VL's video prompt format
   (b12098, `MTMD_VIDEO_TEMPLATE_QWEN3VL`)**: upstream-side model support, reached through the
   existing multimodal paths. No code here; candidates for `AudioInputIntegrationTest` /
@@ -313,23 +317,20 @@ affected; ASCII paths are not affected.
 
 **From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
 in the request fields, their limits or the response keys.
-- **`POST /v1/audio/speech`** (b12238 #31763), OpenAI's speech route over `/tts`: `input`, `voice`
-  (a name of `GET /props`' `voices`, or `{"id": ...}`), `response_format` `wav` / `pcm`,
-  `stream_format` `audio`. `NativeServer` serves it, attach mode included (it registers upstream's
-  own route table). `OpenAiCompatServer` has no speech route at all; it belongs with server-side
-  TTS through `LlamaModel` (the b11800 list above), where `/tts` is still missing too.
+- **`POST /tts` on `OpenAiCompatServer`.** `/v1/audio/speech` is served since this list was worked
+  (`SpeechBackend`, over a `TextToSpeech` of its own); upstream's older `/tts` route with its own
+  field names is not, and `NativeServer` has both. The speech route answers `wav` and `pcm` in one
+  piece; `TextToSpeech` has no streaming entry point.
 - **`mtmd_helper_resampler`** (b12236 #31964), a streaming resampler for mono F32 PCM. Upstream uses
   it for realtime input at another rate than the model's. A use here: `TextToSpeech` takes a
   speaker reference only as a file upstream decodes; a caller holding PCM at another rate has no
   entry point. Only worth it with a PCM overload of `synthesize`.
 - **Gemma 4 audio input as a stream** (b12237 #31965): upstream-side, through the realtime route of
   `NativeServer`. A candidate model for `AudioInputIntegrationTest`; nothing to change here.
-- **`text.format.json_schema` on `/v1/responses`** (b12240 #26145): upstream now converts what
-  `ResponsesApiSupport.appendResponseFormat` has converted since 6.0.0. Compare the two once
-  (`strict`, `description`, a schema without a name) so both transports answer one request alike.
-- **No lazy grammar when `response_format` is set next to `tools`** (b12242 #31956): a request with
-  both now constrains the whole answer instead of only the tool call. Reaches every chat path of
-  this library unchanged; `ToolCallingIntegrationTest` has no case with both, add one (model-backed).
+- **`response_format` next to `tools`** (b12242 #31956): `CApiStructured` pins the whole answer
+  being constrained, hermetically. Not written: the model-backed case in
+  `ToolCallingIntegrationTest`, and whether the hermetic test is red before b12242 was not measured
+  (the build tree was already at the new tag).
 - **The realtime route takes `instructions`, `output_modalities` and `max_output_tokens`** in
   `session.update` (b12239 #31978, with LFM3-Audio / LFM3-Omni holding a conversation on it).
   `RealtimeNativeServerIntegrationTest` covers the transcription session only.

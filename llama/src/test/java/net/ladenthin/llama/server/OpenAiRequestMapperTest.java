@@ -458,6 +458,17 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void responseFormatWithTheSchemaAtTheTopLevelIsForwardedVerbatim() throws IOException {
+        // llama.cpp b12229 also reads {"type":"json_schema","schema":{...}} without the json_schema
+        // wrapper; the mapper must hand either form on untouched, or one of them stops constraining.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"response_format\":{\"type\":\"json_schema\",\"schema\":{\"enum\":[\"yes\",\"no\"]}}}");
+        assertThat(out.path("response_format").path("type").asText(), is("json_schema"));
+        assertThat(out.path("response_format").path("schema").path("enum").size(), is(2));
+        assertThat(out.path("response_format").has("json_schema"), is(false));
+    }
+
+    @Test
     public void responseFormatForwardedVerbatim() throws IOException {
         // Structured outputs: json_object / json_schema must reach the native grammar constraint.
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"

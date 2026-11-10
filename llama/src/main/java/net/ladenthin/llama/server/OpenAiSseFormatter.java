@@ -170,7 +170,28 @@ final class OpenAiSseFormatter {
      * @return the props object serialized as JSON
      */
     static String propsJson(String modelId, int nCtx, boolean vision, int totalSlots) {
+        return propsJson(modelId, nCtx, vision, totalSlots, java.util.Collections.<String>emptyList());
+    }
+
+    /**
+     * {@link #propsJson(String, int, boolean, int)} with the predefined voices of the speech engine:
+     * {@code voices}, present only when there are some, as upstream's {@code /props} has it.
+     *
+     * @param modelId the served model id
+     * @param nCtx the advertised context length
+     * @param vision whether image input is supported
+     * @param totalSlots the number of inference slots
+     * @param voices the voice names a speech request can name; empty for none
+     * @return the props object serialized as JSON
+     */
+    static String propsJson(String modelId, int nCtx, boolean vision, int totalSlots, java.util.List<String> voices) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
+        if (!voices.isEmpty()) {
+            com.fasterxml.jackson.databind.node.ArrayNode names = root.putArray("voices");
+            for (String voice : voices) {
+                names.add(voice);
+            }
+        }
         ObjectNode defaults = root.putObject("default_generation_settings");
         defaults.put("n_ctx", nCtx);
         defaults.put("model", modelId);

@@ -1563,6 +1563,13 @@ public final class ModelParameters extends CliParameters {
      * draft model ({@link #setModelDraft(String)}) needs no call of this method, see there.
      * {@link SpecType#NONE} turns speculative decoding off, also for a draft model.</p>
      *
+     * <p>A model that carries multi-token-prediction layers of its own
+     * ({@code <architecture>.nextn_predict_layers} in its metadata) is <em>not</em> used that way by
+     * default: name {@link SpecType#DRAFT_MTP}. Unlike a draft model, which is only ever loaded to
+     * draft, such layers are in files of architectures llama.cpp has no MTP graph for (it loads and
+     * skips them there), so turning the type on from the metadata alone could fail a load that works
+     * today.</p>
+     *
      * @param first the first type
      * @param more further types
      * @return this builder

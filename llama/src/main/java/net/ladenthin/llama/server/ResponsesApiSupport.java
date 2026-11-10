@@ -43,10 +43,6 @@ final class ResponsesApiSupport {
     /** The status of a response (and its message item) cut off by a limit, see {@link #isTruncated}. */
     static final String STATUS_INCOMPLETE = "incomplete";
 
-    /** The keys of a Responses {@code json_schema} format that chat nests under {@code json_schema}. */
-    private static final List<String> JSON_SCHEMA_FORMAT_FIELDS =
-            Collections.unmodifiableList(Arrays.asList("name", "description", "schema", "strict"));
-
     /**
      * Request fields handed on to the chat request unchanged. Upstream's {@code
      * convert_responses_to_chatcmpl} copies the whole body; these are the fields the shared chat mapper
@@ -186,41 +182,67 @@ final class ResponsesApiSupport {
                 openAi.set(field, value.deepCopy());
             }
         }
-        if (!openAi.has("response_format")) {
-            appendResponseFormat(openAi, request.path("text").path("format"));
-        }
+        appendResponseFormat(openAi, request.path("text"));
         // Upstream's converter maps reasoning.effort to the chat field reasoning_effort ("none" turns
         // the model's thinking off); the other reasoning settings have no chat equivalent there either.
         if (request.path("reasoning").path("effort").isTextual()) {
             openAi.put(
                     "reasoning_effort", request.path("reasoning").path("effort").asText());
         }
+        // llama.cpp parameters the Responses API has no field for ({"seed": 42, "min_p": 0.05}) go
+        // under extra_params and are merged into the chat request last, over whatever the translation
+        // set, as upstream's converter does; a value that is not an object is dropped.
+        JsonNode extraParams = request.path("extra_params");
+        if (extraParams.isObject()) {
+            java.util.Iterator<String> names = extraParams.fieldNames();
+            while (names.hasNext()) {
+                String name = names.next();
+                openAi.set(name, extraParams.get(name).deepCopy());
+            }
+        }
         return openAi;
     }
 
     /**
      * Translate Responses' structured-output setting {@code text.format} into chat's {@code
-     * response_format}: {@code json_schema} keeps its name, schema, strict flag and description, now
-     * nested under {@code json_schema}; {@code json_object} carries over; {@code text} needs nothing.
-     * Upstream's converter copies {@code text} unchanged, where the chat parser does not read it.
+     * response_format}, as upstream's converter does since llama.cpp b12240: {@code json_schema}
+     * keeps every key but its type (name, schema, strict flag, description), now nested under {@code
+     * json_schema}; {@code json_object} carries over; {@code text} needs nothing. It replaces a
+     * {@code response_format} the request carries beside it.
      *
      * @param openAi the chat request being built
-     * @param format the request's {@code text.format}
+     * @param text the request's {@code text}
+     * @throws IllegalArgumentException if {@code text} or {@code text.format} is not an object, or the
+     *     format's type is none of the three
      */
-    private static void appendResponseFormat(ObjectNode openAi, JsonNode format) {
+    private static void appendResponseFormat(ObjectNode openAi, JsonNode text) {
+        if (text.isMissingNode() || text.isNull()) {
+            return;
+        }
+        if (!text.isObject()) {
+            throw new IllegalArgumentException("'text' must be an object");
+        }
+        JsonNode format = text.path("format");
+        if (format.isMissingNode() || format.isNull()) {
+            return;
+        }
+        if (!format.isObject()) {
+            throw new IllegalArgumentException("'text.format' must be an object");
+        }
         String type = format.path("type").asText("");
         if ("json_object".equals(type)) {
             openAi.putObject("response_format").put("type", "json_object");
         } else if ("json_schema".equals(type)) {
             ObjectNode responseFormat = openAi.putObject("response_format");
             responseFormat.put("type", "json_schema");
-            ObjectNode jsonSchema = responseFormat.putObject("json_schema");
-            for (String key : JSON_SCHEMA_FORMAT_FIELDS) {
-                JsonNode value = format.path(key);
-                if (!value.isMissingNode() && !value.isNull()) {
-                    jsonSchema.set(key, value.deepCopy());
-                }
-            }
+            ObjectNode jsonSchema = (ObjectNode) format.deepCopy();
+            jsonSchema.remove("type");
+            responseFormat.set("json_schema", jsonSchema);
+        } else if ("text".equals(type)) {
+            openAi.remove("response_format");
+        } else if (!type.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "'text.format.type' must be one of 'text', 'json_object', or 'json_schema'");
         }
     }
 
