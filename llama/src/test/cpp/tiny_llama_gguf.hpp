@@ -127,6 +127,29 @@ struct tiny_model_spec {
     // (ffn_gate_inp) over n_expert experts, of which n_expert_used answer each token.
     int n_expert = 0;
     int n_expert_used = 0;
+    // The architecture. "llama" is the plain decoder; "hy_v3" (dense, no experts) is the smallest
+    // one llama.cpp has a multi-token-prediction graph for: the same decoder with a norm on the
+    // query and key heads, and after the n_layer trunk layers n_layer_nextn MTP blocks -- a decoder
+    // block each, plus the projection that joins a token embedding with the trunk's hidden state.
+    std::string arch = "llama";
+    int n_layer_nextn = 0;
+    // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
+    // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
+    // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
+    // other tokenizer family ("llama"): scored pieces with U+2581 for a space, <unk>/<s>/</s> as
+    // ids 0/1/2, every printable ASCII character as a piece and the pieces that build "hello" and
+    // "world" as words.
+    enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE };
+    tokenizer_kind tokenizer = tokenizer_kind::BYTES;
+
+    // A decoder with one MTP block, which --spec-type draft-mtp drafts with.
+    static tiny_model_spec mtp(const std::string &prefix = "jllama-mtp") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "hy_v3";
+        spec.n_layer_nextn = 1;
+        return spec;
+    }
 
     // A model whose every weight row is `width` long (width must be a multiple of the head count).
     static tiny_model_spec wide(int width, const std::string &prefix = "jllama-wide") {
@@ -147,11 +170,19 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                                  .string();
     std::mt19937 rng(42);
     gguf_context *g = gguf_init_empty();
-    const std::string a = "llama";
+    const std::string a = spec.arch;
+    const bool hy_v3 = spec.arch == "hy_v3";
+    const int n_layer_all = spec.n_layer + spec.n_layer_nextn;
     gguf_set_val_str(g, "general.architecture", a.c_str());
+    if (hy_v3) {
+        gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+    }
+    if (spec.n_layer_nextn > 0) {
+        gguf_set_val_u32(g, (a + ".nextn_predict_layers").c_str(), static_cast<uint32_t>(spec.n_layer_nextn));
+    }
     gguf_set_val_u32(g, (a + ".context_length").c_str(), spec.n_ctx_train);
     gguf_set_val_u32(g, (a + ".embedding_length").c_str(), spec.n_embd);
-    gguf_set_val_u32(g, (a + ".block_count").c_str(), spec.n_layer);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), n_layer_all);
     gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), spec.n_ff);
     gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), spec.n_head);
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
@@ -165,23 +196,69 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));
     }
 
-    std::vector<std::string> tokens = byte_tokens();
+    const bool sentencepiece = spec.tokenizer == tiny_model_spec::tokenizer_kind::SENTENCEPIECE;
+    std::vector<std::string> tokens;
+    std::vector<int32_t> token_types; // 1 normal, 2 unknown, 3 control (llama_token_type)
+    std::vector<float> scores;
+    std::vector<std::string> merges = {"Ġ Ġ"}; // never applies: two spaces are two tokens
+    if (sentencepiece) {
+        const std::string sp = "\xE2\x96\x81"; // U+2581, SentencePiece's space
+        const auto piece = [&](const std::string &text, float score, int32_t type = 1) {
+            tokens.push_back(text);
+            scores.push_back(score);
+            token_types.push_back(type);
+        };
+        piece("<unk>", 0.0f, 2);
+        piece("<s>", 0.0f, 3);
+        piece("</s>", 0.0f, 3);
+        piece(sp, -2.0f);
+        for (char c = '!'; c <= '~'; ++c) {
+            piece(std::string(1, c), -10.0f);
+        }
+        // a word is reached pair by pair, the longer piece always scoring higher
+        for (const std::string word : {"hello", "world"}) {
+            for (size_t n = 1; n <= word.size(); ++n) {
+                piece(sp + word.substr(0, n), -1.0f + 0.1f * static_cast<float>(n));
+            }
+        }
+    } else {
+        tokens = byte_tokens();
+        token_types.assign(tokens.size(), 1);
+        if (spec.tokenizer == tiny_model_spec::tokenizer_kind::BPE_MERGES) {
+            merges = {"h e", "l l", "he ll", "hell o", "Ġ w", "o r", "Ġw or", "l d", "Ġwor ld"};
+            for (const char *merged : {"he", "ll", "hell", "hello", "Ġw", "or", "Ġwor", "ld", "Ġworld"}) {
+                tokens.push_back(merged);
+                token_types.push_back(1);
+            }
+        }
+    }
     tokens.insert(tokens.end(), spec.special.begin(), spec.special.end());
     const int n_vocab = static_cast<int>(tokens.size());
+    token_types.resize(n_vocab, 3);
+    scores.resize(sentencepiece ? n_vocab : 0, 0.0f);
     std::vector<const char *> token_ptrs;
-    for (const std::string &s : tokens) {
-        token_ptrs.push_back(s.c_str());
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
     }
-    std::vector<int32_t> token_types(N_VOCAB, 1); // LLAMA_TOKEN_TYPE_NORMAL
-    token_types.resize(n_vocab, 3);               // LLAMA_TOKEN_TYPE_CONTROL
-    const char *no_merges[] = {"Ġ Ġ"};
-    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
-    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    std::vector<const char *> merge_ptrs;
+    for (const std::string &m : merges) {
+        merge_ptrs.push_back(m.c_str());
+    }
     gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
     gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
-    gguf_set_arr_str(g, "tokenizer.ggml.merges", no_merges, 1);
-    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
-    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);
+    if (sentencepiece) {
+        gguf_set_val_str(g, "tokenizer.ggml.model", "llama");
+        gguf_set_arr_data(g, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, scores.data(), scores.size());
+        gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 0);
+        gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 1);
+        gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 2);
+    } else {
+        gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+        gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+        gguf_set_arr_str(g, "tokenizer.ggml.merges", merge_ptrs.data(), merge_ptrs.size());
+        gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
+        gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);
+    }
     if (spec.fim) {
         gguf_set_val_u32(g, "tokenizer.ggml.fim_pre_token_id", 1);
         gguf_set_val_u32(g, "tokenizer.ggml.fim_suf_token_id", 2);
@@ -192,11 +269,23 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     ggml_context *ctx = ggml_init(ip);
     add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {spec.n_embd}, 1.0f);
-    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f));
+    ggml_tensor *output = add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f);
+    if (!sentencepiece) {
+        confine_output_to_ascii(output); // token ids are bytes there; every SentencePiece piece is printable
+    }
     gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
-    for (int il = 0; il < spec.n_layer; ++il) {
+    for (int il = 0; il < n_layer_all; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
         gguf_context *to = shard != nullptr && il == spec.n_layer - 1 ? shard : g;
+        if (hy_v3) {
+            add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {spec.head_dim}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
+        }
+        if (il >= spec.n_layer) {
+            add_random_tensor(to, ctx, rng, p + "nextn.eh_proj.weight", {2 * spec.n_embd, spec.n_embd}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "nextn.enorm.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "nextn.hnorm.weight", {spec.n_embd}, 1.0f);
+        }
         add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
         add_random_tensor(to, ctx, rng, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);

@@ -582,7 +582,8 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
 }
 
 jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
-                             int max_chunks, int nthread, int n_gpu_layers, int *n_chunks) {
+                             int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
+                             void *progress_user_data, int *n_chunks) {
     if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
     }
@@ -594,6 +595,8 @@ jllama_status jllama_imatrix(const char *model_path, const char *text_path, cons
         opts.max_chunks = max_chunks;
         opts.n_threads = nthread;
         opts.n_gpu_layers = n_gpu_layers;
+        opts.progress = progress;
+        opts.progress_user_data = progress_user_data;
         const int chunks = jllama::imatrix::compute(model_path, text_path, output_path, opts);
         if (n_chunks != nullptr) {
             *n_chunks = chunks;

@@ -1401,15 +1401,31 @@ Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstr
 // Like quantizeNative above: LlamaQuantizer is not in jllama.h, so the C linkage is said here.
 extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_computeImportanceMatrixNative(
     JNIEnv *env, jclass, jstring jmodel, jstring jtext, jstring joutput, jint chunkSize, jint maxChunks, jint nthread,
-    jint gpuLayers) {
+    jint gpuLayers, jobject progress) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jint {
         const std::string model_path = parse_jstring(env, jmodel);
         const std::string text_path = parse_jstring(env, jtext);
         const std::string output_path = parse_jstring(env, joutput);
+        // the callback runs on this thread, between two chunks: the load-progress trampoline fits
+        load_progress_ud progress_ud{};
+        jllama_load_progress_fn progress_fn = nullptr;
+        if (progress != nullptr) {
+            progress_ud.env = env;
+            progress_ud.callback = progress;
+            progress_ud.on_progress = env->GetMethodID(env->GetObjectClass(progress), "onProgress", "(F)Z");
+            if (progress_ud.on_progress == nullptr) {
+                return 0; // NoSuchMethodError is pending
+            }
+            progress_fn = jni_load_progress_trampoline;
+        }
         int chunks = 0;
-        const jllama_status status = jllama_imatrix(model_path.c_str(), text_path.c_str(), output_path.c_str(),
-                                                    static_cast<int>(chunkSize), static_cast<int>(maxChunks),
-                                                    static_cast<int>(nthread), static_cast<int>(gpuLayers), &chunks);
+        const jllama_status status =
+            jllama_imatrix(model_path.c_str(), text_path.c_str(), output_path.c_str(), static_cast<int>(chunkSize),
+                           static_cast<int>(maxChunks), static_cast<int>(nthread), static_cast<int>(gpuLayers),
+                           progress_fn, progress != nullptr ? &progress_ud : nullptr, &chunks);
+        if (env->ExceptionCheck()) {
+            return 0; // what the callback threw is the error
+        }
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
             return 0;

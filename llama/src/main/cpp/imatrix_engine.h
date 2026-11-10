@@ -18,6 +18,10 @@ struct options {
     int max_chunks = 0;   // 0: every whole chunk of the text
     int n_threads = 0;    // 0: llama.cpp's default
     int n_gpu_layers = 0; // layers to offload
+    // Called on the calling thread after every chunk with the fraction done; false stops the run,
+    // which then throws and writes nothing. Null: no report.
+    bool (*progress)(float fraction, void *user_data) = nullptr;
+    void *progress_user_data = nullptr;
 };
 
 // Writes the importance matrix of the model at model_path over the text in text_path to output_path

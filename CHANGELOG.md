@@ -31,7 +31,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   outputPath[, chunkSize, maxChunks, threads, gpuLayers])`, `jllama_imatrix()` in the C API and
   `Jllama.computeImportanceMatrix` in `llama-ffm` -- what the `llama-imatrix` tool does, in the
   library: the model reads a calibration text in chunks and the file it writes is the one
-  `quantize` takes (and the one upstream's tools read and write).
+  `quantize` takes (and the one upstream's tools read and write). An overload takes a
+  `LoadProgressCallback`, called after every chunk with the fraction done; `false` cancels.
 - **`ModelParameters.setSpecTypes(SpecType, SpecType...)`** and the enum `SpecType` -- the types
   of speculative decoding (upstream `--spec-type`): `draft-simple`, the n-gram types, `none`.
 

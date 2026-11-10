@@ -364,11 +364,14 @@ JLLAMA_API jllama_status jllama_quantize_imatrix(const char *input_path, const c
  * `model_path` (best the unquantized one) reads the calibration text of the file `text_path` in
  * chunks of `chunk_size` tokens (0 = 512; at least 16), at most `max_chunks` of them (0 = all whole
  * chunks), and the result is written to `output_path` as GGUF. `nthread` 0 is the default,
- * `n_gpu_layers` the layers to offload. `*n_chunks` (may be null) receives the number of chunks
- * used. Needs no loaded model; loads its own and frees it.
+ * `n_gpu_layers` the layers to offload. `progress` (may be null) is called on the calling thread
+ * after every chunk with the fraction done; returning false cancels the run, which is then an error
+ * with nothing written. `*n_chunks` (may be null) receives the number of chunks used. Needs no
+ * loaded model; loads its own and frees it.
  */
 JLLAMA_API jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path,
-                                        int chunk_size, int max_chunks, int nthread, int n_gpu_layers, int *n_chunks);
+                                        int chunk_size, int max_chunks, int nthread, int n_gpu_layers,
+                                        jllama_load_progress_fn progress, void *progress_user_data, int *n_chunks);
 
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a

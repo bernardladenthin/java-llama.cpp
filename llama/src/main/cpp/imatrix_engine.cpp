@@ -302,6 +302,11 @@ int compute(const std::string &model_path, const std::string &text_path, const s
         if (!collected.error.empty()) {
             throw std::runtime_error("importance matrix: " + collected.error);
         }
+        if (opts.progress != nullptr &&
+            !opts.progress(static_cast<float>(chunk + 1) / static_cast<float>(n_chunks), opts.progress_user_data)) {
+            throw std::runtime_error("the importance matrix was cancelled after chunk " + std::to_string(chunk + 1) +
+                                     " of " + std::to_string(n_chunks));
+        }
     }
     if (collected.entries.empty()) {
         throw std::runtime_error("no weight matrix of '" + model_path + "' was reached by the calibration text");

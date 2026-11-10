@@ -166,9 +166,30 @@ public class QuantizerIntegrationTest {
         Files.write(text, words.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         Path imatrix = tempDir.resolve("draft.imatrix.gguf");
 
+        java.util.List<Float> fractions = new java.util.ArrayList<>();
         int chunks = LlamaQuantizer.computeImportanceMatrix(
-                TestConstants.DRAFT_MODEL_PATH, text.toString(), imatrix.toString(), 64, 4, 0, 0);
+                TestConstants.DRAFT_MODEL_PATH, text.toString(), imatrix.toString(), 64, 4, 0, 0, fraction -> {
+                    fractions.add(fraction);
+                    return true;
+                });
         assertTrue(chunks == 4, "expected the four chunks asked for, got " + chunks);
+        assertTrue(fractions.size() == 4 && fractions.get(3) == 1.0f, "progress per chunk, got " + fractions);
+
+        // a callback that says no cancels the run, and nothing is written
+        Path cancelled = tempDir.resolve("cancelled.imatrix.gguf");
+        LlamaException stopped = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.computeImportanceMatrix(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        text.toString(),
+                        cancelled.toString(),
+                        64,
+                        4,
+                        0,
+                        0,
+                        fraction -> false));
+        assertTrue(stopped.getMessage().contains("cancelled"), stopped.getMessage());
+        assertTrue(!Files.exists(cancelled), "a cancelled run left a file behind");
         assertTrue(Files.size(imatrix) > 0, "the importance matrix is empty");
 
         Path output = tempDir.resolve("draft-q2_k_s.gguf");

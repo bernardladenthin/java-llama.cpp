@@ -6,6 +6,7 @@ package net.ladenthin.llama;
 
 import java.util.Objects;
 import net.ladenthin.llama.args.QuantizationType;
+import net.ladenthin.llama.callback.LoadProgressCallback;
 import net.ladenthin.llama.loader.LlamaLoader;
 import org.jspecify.annotations.Nullable;
 
@@ -152,10 +153,40 @@ public final class LlamaQuantizer {
             int maxChunks,
             int threads,
             int gpuLayers) {
+        return computeImportanceMatrix(modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers, null);
+    }
+
+    /**
+     * Compute the importance matrix of a model over a calibration text, reporting progress: the
+     * callback is called on the calling thread after every chunk with the fraction of the chunks
+     * done, and returning {@code false} cancels the run, which then throws and writes nothing.
+     *
+     * @param modelPath path to the model, best the unquantized one
+     * @param textPath path to the calibration text (plain UTF-8 text)
+     * @param outputPath path the importance matrix is written to (GGUF)
+     * @param chunkSize tokens per chunk, at least 16; {@code 0} for 512
+     * @param maxChunks the most chunks to evaluate; {@code 0} for every whole chunk of the text
+     * @param threads number of threads; {@code <= 0} lets llama.cpp pick
+     * @param gpuLayers layers to offload to a GPU; {@code 0} for none
+     * @param progress called after every chunk, or {@code null}
+     * @return the number of chunks the matrix was computed over
+     * @throws net.ladenthin.llama.exception.LlamaException if the model or the text cannot be read,
+     *     the chunk size is below 16, the text is shorter than one chunk, or the callback cancelled
+     */
+    public static int computeImportanceMatrix(
+            String modelPath,
+            String textPath,
+            String outputPath,
+            int chunkSize,
+            int maxChunks,
+            int threads,
+            int gpuLayers,
+            @Nullable LoadProgressCallback progress) {
         Objects.requireNonNull(modelPath, "modelPath");
         Objects.requireNonNull(textPath, "textPath");
         Objects.requireNonNull(outputPath, "outputPath");
-        return computeImportanceMatrixNative(modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers);
+        return computeImportanceMatrixNative(
+                modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers, progress);
     }
 
     private static native int computeImportanceMatrixNative(
@@ -165,7 +196,8 @@ public final class LlamaQuantizer {
             int chunkSize,
             int maxChunks,
             int threads,
-            int gpuLayers);
+            int gpuLayers,
+            @Nullable LoadProgressCallback progress);
 
     private static native void quantizeNative(
             String inputPath,

@@ -227,20 +227,26 @@ affected; ASCII paths are not affected.
   `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`.
 - The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`),
   nine types need one (`QuantizationType.requiresImportanceMatrix()`), and
-  `LlamaQuantizer.computeImportanceMatrix` / `jllama_imatrix` compute it. Left out of the port of
-  upstream's `tools/imatrix`: merging existing matrices (`--in-file`), the activation sums
-  (`.in_sum`, statistics only), the legacy output format, `--process-output`, the perplexity report,
-  intermediate saves, and the tool's `--include-weights` / `--exclude-weights` on the quantizer side.
-  A run cannot be cancelled or report progress; for a large model both would be worth a callback.
+  `LlamaQuantizer.computeImportanceMatrix` / `jllama_imatrix` compute it, with a progress callback
+  that can cancel. Left out of the port of upstream's `tools/imatrix`: merging existing matrices
+  (`--in-file`), the activation sums (`.in_sum`, statistics only), the legacy output format,
+  `--process-output`, the perplexity report, intermediate saves, and the tool's
+  `--include-weights` / `--exclude-weights` on the quantizer side. Not compared yet: a file of
+  this function against one `llama-imatrix` writes for the same model and text.
 - Rank pooling on a model without a classification head is refused at load (upstream answers the
   first value of the pooled embedding as the score). The check reads the tensor list of the model
   file and gives a split model the benefit of the doubt.
-- **The random test models, what is left.** `tiny_model_spec` names width, heads, layers, the
-  declared pooling type and a mixture of experts; `write_tiny_bert_gguf` is an encoder with an
-  optional classification head. Not built: a model with MTP layers for `--spec-type draft-mtp` --
-  llama.cpp has them only in its hybrid architectures (Qwen3.5 hybrid, GLM5-Next, Nemotron-H MoE),
-  each a generator of the size of `test_kolibri1.cpp`'s; a tokenizer other than the byte and the
-  WordPiece one (SentencePiece, a BPE with merges).
+- The random test models cover a decoder (`llama`), a mixture of experts, an encoder with an optional
+  classification head (`bert`), a decoder with an MTP block (`hy_v3`), and three vocabularies (bytes,
+  BPE with merges, SentencePiece). Not built: a WordPiece or SentencePiece vocabulary with byte
+  fallback pieces, a Unigram (T5) or RWKV vocabulary, the hybrid architectures.
+- **A SentencePiece round trip comes back behind a space** when the tokens carry no `<s>`
+  (`detokenize(tokenize("cat"))` is `" cat"`): upstream's behaviour, pinned by
+  `CApiTokenizers`. `LlamaModel.decode(encode(text))` therefore differs from `text` for such a
+  model; to decide whether the Javadoc should say so or `decode` should offer the choice.
+- **A model with MTP layers does not draft unless `--spec-type draft-mtp` is given**, the same shape
+  as the draft model before the engine's `draft-simple` default; to decide whether the engine
+  should default to `draft-mtp` for a model whose `n_layer_nextn` is positive.
 - **The quantization sweep takes 9 s on x86-64, and the model is not why.** Measured per type:
   IQ1_S 2.8 s, IQ3_XXS 1.6 s, IQ2_XS 1.1 s, every other type below 0.7 s -- the one-time
   construction of ggml's IQ codebook tables, which no smaller model avoids. Under qemu

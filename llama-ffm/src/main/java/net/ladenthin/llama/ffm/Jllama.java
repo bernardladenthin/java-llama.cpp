@@ -19,6 +19,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import net.ladenthin.llama.callback.LoadProgressCallback;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.value.LogLevel;
 
@@ -170,8 +171,10 @@ public final class Jllama {
      * @param maxChunks the most chunks to evaluate, {@code 0} for all
      * @param nthread the threads to use, {@code 0} for the default
      * @param gpuLayers layers to offload, {@code 0} for none
+     * @param progress called on this thread after every chunk with the fraction done; returning
+     *     {@code false} (or throwing) cancels the run. May be {@code null}
      * @return the number of chunks the matrix was computed over
-     * @throws LlamaException when the computation fails
+     * @throws LlamaException when the computation fails or was cancelled
      */
     public static int computeImportanceMatrix(
             String modelPath,
@@ -180,11 +183,14 @@ public final class Jllama {
             int chunkSize,
             int maxChunks,
             int nthread,
-            int gpuLayers) {
+            int gpuLayers,
+            LoadProgressCallback progress) {
         Objects.requireNonNull(modelPath, "modelPath");
         Objects.requireNonNull(textPath, "textPath");
         Objects.requireNonNull(outputPath, "outputPath");
         try (Arena arena = Arena.ofConfined()) {
+            // the callback runs on this thread, so the confined arena of the call holds its stub
+            MemorySegment stub = FfmLlamaModel.progressStub(arena, progress);
             MemorySegment chunks = arena.allocate(JAVA_INT);
             call(
                     JllamaNative.IMATRIX,
@@ -195,6 +201,8 @@ public final class Jllama {
                     maxChunks,
                     nthread,
                     gpuLayers,
+                    stub,
+                    MemorySegment.NULL,
                     chunks);
             return chunks.get(JAVA_INT, 0);
         }

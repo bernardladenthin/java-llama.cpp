@@ -228,7 +228,7 @@ class JllamaNativeTest {
         LlamaException e = assertThrows(
                 LlamaException.class,
                 () -> Jllama.computeImportanceMatrix(
-                        "/nonexistent/model.gguf", "/nonexistent/text.txt", "/nonexistent/out.gguf", 0, 0, 1, 0));
+                        "/nonexistent/model.gguf", "/nonexistent/text.txt", "/nonexistent/out.gguf", 0, 0, 1, 0, null));
         assertThat(e.getMessage(), containsString("calibration text"));
     }
 }

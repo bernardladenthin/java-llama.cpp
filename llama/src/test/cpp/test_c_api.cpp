@@ -2660,7 +2660,8 @@ TEST(CApiImatrix, AComputedImportanceMatrixCoversEveryLayerMatrixAndQuantizesThe
     const std::string imatrix = model + ".imatrix.gguf";
 
     int chunks = -1;
-    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, &chunks), JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, nullptr, nullptr, &chunks),
+              JLLAMA_STATUS_OK)
         << jllama_last_error();
     EXPECT_EQ(chunks, 6) << "200 tokens and a BOS in chunks of 32";
 
@@ -2676,9 +2677,43 @@ TEST(CApiImatrix, AComputedImportanceMatrixCoversEveryLayerMatrixAndQuantizesThe
     EXPECT_EQ(entries.at("blk.0.ffn_down.weight.in_sum2"), spec.n_ff);
     EXPECT_EQ(entries.count("output.weight.in_sum2"), 0u) << "the output layer is not part of the matrix";
 
+    // progress: one call per chunk on this thread with the fraction done, the last one 1
+    std::vector<float> fractions;
+    const auto record = [](float fraction, void *user_data) {
+        static_cast<std::vector<float> *>(user_data)->push_back(fraction);
+        return true;
+    };
+    const std::string reported = model + ".imatrix-progress.gguf";
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), reported.c_str(), 32, 0, 2, 0, record, &fractions, &chunks),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    ASSERT_EQ(fractions.size(), 6u);
+    EXPECT_FLOAT_EQ(fractions.front(), 1.0f / 6.0f);
+    EXPECT_FLOAT_EQ(fractions.back(), 1.0f);
+    // the same input gives the same file, with or without somebody watching
+    const auto file_bytes = [](const std::string &file) {
+        std::ifstream in(file, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    EXPECT_EQ(file_bytes(reported), file_bytes(imatrix));
+
+    // and a callback that says no cancels: an error naming it, and no file
+    int calls = 0;
+    const auto cancel = [](float, void *user_data) { return ++*static_cast<int *>(user_data) < 2; };
+    const std::string cancelled = model + ".imatrix-cancelled.gguf";
+    EXPECT_EQ(jllama_imatrix(model.c_str(), text.c_str(), cancelled.c_str(), 32, 0, 2, 0, cancel, &calls, nullptr),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("cancelled after chunk 2 of 6"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(calls, 2);
+    std::error_code no_file;
+    EXPECT_FALSE(std::filesystem::exists(cancelled, no_file));
+    std::filesystem::remove(reported, no_file);
+
     // max_chunks limits the work, and the file says how many chunks it holds
     const std::string limited = model + ".imatrix-2.gguf";
-    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), limited.c_str(), 32, 2, 2, 0, &chunks), JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), limited.c_str(), 32, 2, 2, 0, nullptr, nullptr, &chunks),
+              JLLAMA_STATUS_OK)
         << jllama_last_error();
     EXPECT_EQ(chunks, 2);
 
@@ -2711,7 +2746,8 @@ TEST(CApiImatrix, AMixtureOfExpertsGetsACountPerExpert) {
     ASSERT_FALSE(model.empty());
     const std::string text = write_calibration_text("jllama-imatrix-moe", 200);
     const std::string imatrix = model + ".imatrix.gguf";
-    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, nullptr), JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, nullptr, nullptr, nullptr),
+              JLLAMA_STATUS_OK)
         << jllama_last_error();
     const auto entries = imatrix_entries(imatrix);
     for (int layer = 0; layer < spec.n_layer; ++layer) {
@@ -2739,7 +2775,8 @@ TEST(CApiImatrix, WhatCannotBeComputedIsRefusedByName) {
     const std::string text = write_calibration_text("jllama-imatrix-refused", 40);
     const std::string out = model + ".imatrix.gguf";
     const auto refused = [&](const char *model_path, const char *text_path, int chunk_size, const char *what) {
-        EXPECT_EQ(jllama_imatrix(model_path, text_path, out.c_str(), chunk_size, 0, 1, 0, nullptr), JLLAMA_STATUS_ERROR)
+        EXPECT_EQ(jllama_imatrix(model_path, text_path, out.c_str(), chunk_size, 0, 1, 0, nullptr, nullptr, nullptr),
+                  JLLAMA_STATUS_ERROR)
             << what;
         EXPECT_NE(std::string(jllama_last_error()).find(what), std::string::npos) << jllama_last_error();
         std::error_code ec;
@@ -2749,8 +2786,141 @@ TEST(CApiImatrix, WhatCannotBeComputedIsRefusedByName) {
     refused(model.c_str(), "/nonexistent/text.txt", 32, "calibration text");
     refused(model.c_str(), text.c_str(), 8, "at least 16");
     refused(model.c_str(), text.c_str(), 64, "fewer than one chunk");
-    EXPECT_EQ(jllama_imatrix(nullptr, text.c_str(), out.c_str(), 32, 0, 1, 0, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(jllama_imatrix(nullptr, text.c_str(), out.c_str(), 32, 0, 1, 0, nullptr, nullptr, nullptr),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
     std::error_code ec;
     std::filesystem::remove(model, ec);
     std::filesystem::remove(text, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Multi-token prediction: tiny_model_spec::mtp() is the smallest architecture llama.cpp has an MTP
+// graph for (hy_v3, dense), a second decoder architecture and the model --spec-type draft-mtp needs.
+// ---------------------------------------------------------------------------------------------------
+
+TEST(CApiMtp, AModelWithAnMtpBlockDraftsWithItAndAnswersTheSameWithout) {
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::mtp());
+    ASSERT_FALSE(path.empty());
+    std::map<std::string, std::string> answers;
+    std::map<std::string, int> drafted;
+    for (const char *type : {"", "none", "draft-mtp"}) {
+        SCOPED_TRACE(std::string("--spec-type ") + type);
+        std::vector<std::string> extra;
+        if (*type != 0) {
+            extra = {"--spec-type", type};
+        }
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        answers[type] = greedy_answer(model, 48);
+        drafted[type] = drafted_tokens(model);
+        jllama_model_free(model);
+    }
+    EXPECT_FALSE(answers[""].empty());
+    // drafts are checked by the model itself, so they change the speed and never the answer
+    EXPECT_EQ(answers["draft-mtp"], answers[""]);
+    EXPECT_EQ(answers["none"], answers[""]);
+    EXPECT_GT(drafted["draft-mtp"], 0) << "the MTP block drafted nothing";
+    EXPECT_EQ(drafted["none"], 0);
+    // an MTP block alone is not used: like a draft model, upstream wants the type named
+    EXPECT_EQ(drafted[""], 0);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The other vocabularies (tiny_model_spec::tokenizer): a BPE whose merges apply, and SentencePiece.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+std::vector<int> token_ids(jllama_model *model, const std::string &text, bool add_special = false) {
+    int *tokens = nullptr;
+    size_t count = 0;
+    EXPECT_EQ(jllama_tokenize(model, text.c_str(), add_special, &tokens, &count), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::vector<int> ids(tokens, tokens + count);
+    jllama_tokens_free(tokens);
+    return ids;
+}
+
+std::string detokenized(jllama_model *model, const std::vector<int> &ids) {
+    Owned text;
+    size_t length = 0;
+    EXPECT_EQ(jllama_detokenize(model, ids.data(), ids.size(), &text.s, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    return text.s != nullptr ? std::string(text.s, length) : std::string();
+}
+
+} // namespace
+
+TEST(CApiTokenizers, ABpeVocabularyAppliesItsMergesAndTheByteVocabularyHasNone) {
+    tiny_model_spec merged;
+    merged.prefix = "jllama-bpe-merges";
+    merged.tokenizer = tiny_model_spec::tokenizer_kind::BPE_MERGES;
+    const std::string merged_path = write_tiny_llama_gguf(merged);
+    const std::string bytes_path = write_tiny_llama_gguf("jllama-bpe-bytes");
+    jllama_model *with_merges = load_tiny(merged_path, {});
+    jllama_model *bytes = load_tiny(bytes_path, {});
+    ASSERT_NE(with_merges, nullptr) << jllama_last_error();
+    ASSERT_NE(bytes, nullptr) << jllama_last_error();
+
+    const std::string text = "hello world";
+    // "hello" and " world" are the fourth and the ninth merged token after the 256 bytes
+    EXPECT_EQ(token_ids(with_merges, text), (std::vector<int>{256 + 3, 256 + 8}));
+    EXPECT_EQ(token_ids(bytes, text).size(), text.size());
+    // a word the merges only partly cover: "hell" merges, the rest stays bytes
+    EXPECT_EQ(token_ids(with_merges, "hells"), (std::vector<int>{256 + 2, 's'}));
+    for (jllama_model *model : {with_merges, bytes}) {
+        for (const std::string &round_trip : {text, std::string("hells"), std::string("Hello, World!")}) {
+            EXPECT_EQ(detokenized(model, token_ids(model, round_trip)), round_trip);
+        }
+        // the model runs over its vocabulary: a merged token has an embedding row of its own
+        EXPECT_FALSE(greedy_answer(model, 4).empty());
+    }
+    jllama_model_free(with_merges);
+    jllama_model_free(bytes);
+    std::error_code ec;
+    std::filesystem::remove(merged_path, ec);
+    std::filesystem::remove(bytes_path, ec);
+}
+
+TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
+    tiny_model_spec spec;
+    spec.prefix = "jllama-spm";
+    spec.tokenizer = tiny_model_spec::tokenizer_kind::SENTENCEPIECE;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    // <unk> <s> </s>, the space piece, 94 printable characters, then the pieces of the two words
+    const int hello = 3 + 1 + 94 + 4;
+    const int world = hello + 5;
+    EXPECT_EQ(token_ids(model, "hello world"), (std::vector<int>{hello, world}));
+    // with the special tokens the text starts with <s>
+    const std::vector<int> with_special = token_ids(model, "hello world", true);
+    ASSERT_FALSE(with_special.empty());
+    EXPECT_EQ(with_special.front(), 1);
+    // a word the vocabulary has no piece for falls apart into the space piece and characters
+    EXPECT_EQ(token_ids(model, "cat"), (std::vector<int>{3, 4 + ('c' - '!'), 4 + ('a' - '!'), 4 + ('t' - '!')}));
+    // The round trip is the text behind a space: SentencePiece puts its space piece in front of the
+    // first word, and llama.cpp takes it off again only behind a <s>, which tokens without the
+    // special ones do not have. A byte or BPE vocabulary gives the text back as it was (above).
+    for (const std::string &round_trip : {std::string("hello world"), std::string("cat"), std::string("hello, cat!")}) {
+        EXPECT_EQ(detokenized(model, token_ids(model, round_trip)), " " + round_trip);
+    }
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json m = json::parse(meta.str());
+    EXPECT_EQ(m.at("n_vocab").get<int>(), 3 + 1 + 94 + 10);
+    EXPECT_EQ(m.at("vocab_type").get<int>(), 1) << "LLAMA_VOCAB_TYPE_SPM";
+
+    Owned completion;
+    EXPECT_EQ(jllama_completions(model, R"({"prompt":"hello world","temperature":0,"n_predict":4})", &completion.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }
