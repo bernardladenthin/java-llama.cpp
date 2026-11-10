@@ -182,7 +182,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
   configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
   flag answers with upstream's "not available" message. No plan to bundle a binary.
 
-### From the b11968–b12233 bump (2026-11-09) -- to implement, to decide, to measure
+### From the b11968–b12242 bumps (2026-11-09/10) -- to implement, to decide, to measure
 
 What the range brought that this library does not use yet, or that changed under it. Done at the bump
 and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jllama_tts_voices`, the
@@ -310,6 +310,29 @@ affected; ASCII paths are not affected.
 - **Speculative decoding state** (b12091 #30141, MTP hidden state saved and restored; b12231's
   functionality test): slot save/restore of a model with a draft carries more state. Whether the suite has a
   slot save/restore round trip with a draft model was not checked; add one if not.
+
+**From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
+in the request fields, their limits or the response keys.
+- **`POST /v1/audio/speech`** (b12238 #31763), OpenAI's speech route over `/tts`: `input`, `voice`
+  (a name of `GET /props`' `voices`, or `{"id": ...}`), `response_format` `wav` / `pcm`,
+  `stream_format` `audio`. `NativeServer` serves it, attach mode included (it registers upstream's
+  own route table). `OpenAiCompatServer` has no speech route at all; it belongs with server-side
+  TTS through `LlamaModel` (the b11800 list above), where `/tts` is still missing too.
+- **`mtmd_helper_resampler`** (b12236 #31964), a streaming resampler for mono F32 PCM. Upstream uses
+  it for realtime input at another rate than the model's. A use here: `TextToSpeech` takes a
+  speaker reference only as a file upstream decodes; a caller holding PCM at another rate has no
+  entry point. Only worth it with a PCM overload of `synthesize`.
+- **Gemma 4 audio input as a stream** (b12237 #31965): upstream-side, through the realtime route of
+  `NativeServer`. A candidate model for `AudioInputIntegrationTest`; nothing to change here.
+- **`text.format.json_schema` on `/v1/responses`** (b12240 #26145): upstream now converts what
+  `ResponsesApiSupport.appendResponseFormat` has converted since 6.0.0. Compare the two once
+  (`strict`, `description`, a schema without a name) so both transports answer one request alike.
+- **No lazy grammar when `response_format` is set next to `tools`** (b12242 #31956): a request with
+  both now constrains the whole answer instead of only the tool call. Reaches every chat path of
+  this library unchanged; `ToolCallingIntegrationTest` has no case with both, add one (model-backed).
+- **The realtime route takes `instructions`, `output_modalities` and `max_output_tokens`** in
+  `session.update` (b12239 #31978, with LFM3-Audio / LFM3-Omni holding a conversation on it).
+  `RealtimeNativeServerIntegrationTest` covers the transcription session only.
 
 **Compatibility notes to carry into the release notes**
 - **RPC protocol 9** (b12217): `RpcServer` and a `--rpc` client must run the same version of this

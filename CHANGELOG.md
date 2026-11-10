@@ -85,6 +85,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
+  `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
+  `text.format.json_schema` on the upstream `/v1/responses`; a request with `response_format` and
+  `tools` constrains the whole answer. No patch and no source of this project changed.
 - **llama.cpp b12233** (from b12217, 16 upstream commits): extra GGUF shards for a model
   (`--shard`, #31185), an unbuffered model load on Windows (#26014), a temperature for the audio
   frames of Pocket TTS (#31655), `response_format` with an unnested `json_schema` (#28697). No
