@@ -47,6 +47,9 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX // or windows.h's min/max macros break std::min / std::max below
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
