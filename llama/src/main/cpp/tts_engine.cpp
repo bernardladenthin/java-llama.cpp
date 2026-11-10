@@ -81,7 +81,11 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         engine_free(engine);
         return nullptr;
     }
-    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref;
+    // The capability names the pipeline (Qwen3-TTS, Pocket TTS), not the file: a Pocket TTS projector
+    // converted without its voice encoder takes no audio in (no input sample rate), and a reference
+    // clip then fails to decode -- found by CI's pair, which ships predefined voices instead.
+    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref &&
+                                mtmd_get_audio_sample_rate(engine->mctx.get()) >= 0;
     for (int32_t i = 0; const char *name = mtmd_gen_audio_voice_name(engine->mctx.get(), i); i++) {
         engine->voices.emplace_back(name);
     }
@@ -103,7 +107,19 @@ bool engine_supports_speaker_reference(const tts_engine *engine) {
 
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
                        const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       float temperature, std::vector<uint8_t> &out_wav, std::string &err) {
+                       float temperature, std::vector<uint8_t> &out_wav, std::string &err, bool *request_fault) {
+    // Set where the request is what was refused (a voice the model does not have, a speaker
+    // reference it cannot use or read): the C API answers those as an invalid request.
+    const auto refuse = [&](const std::string &message) {
+        err = message;
+        if (request_fault != nullptr) {
+            *request_fault = true;
+        }
+        return false;
+    };
+    if (request_fault != nullptr) {
+        *request_fault = false;
+    }
     if (engine == nullptr) {
         err = "engine is null";
         return false;
@@ -115,8 +131,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // set_input, with a message that does not say why.
     const std::string refusal = speaker_reference_refusal(engine->speaker_reference, speaker_reference_path);
     if (!refusal.empty()) {
-        err = refusal;
-        return false;
+        return refuse(refusal);
     }
 
     common_params_sampling sparams;
@@ -138,8 +153,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
                                                          mtmd_helper_init_opt_default());
         if (!wrapper.bitmap) {
             common_sampler_free(smpl);
-            err = "failed to load speaker reference audio: " + speaker_reference_path;
-            return false;
+            return refuse("failed to load speaker reference audio: " + speaker_reference_path);
         }
         speaker_bitmap.reset(wrapper.bitmap);
     }
@@ -154,8 +168,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         break;
     case predefined_voice::CONFLICT:
         common_sampler_free(smpl);
-        err = "a voice and a speaker reference cannot be used together";
-        return false;
+        return refuse("a voice and a speaker reference cannot be used together");
     case predefined_voice::FIRST:
         voice_name = engine->voices.front();
         [[fallthrough]];
@@ -163,11 +176,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
         if (!speaker_bitmap) {
             common_sampler_free(smpl);
-            err = "unknown voice \"" + voice_name + "\", the model has:";
+            std::string message = "unknown voice \"" + voice_name + "\", the model has:";
             for (const std::string &name : engine->voices) {
-                err += " " + name;
+                message += " " + name;
             }
-            return false;
+            return refuse(message);
         }
         break;
     }

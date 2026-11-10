@@ -15,7 +15,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -101,8 +101,9 @@ public abstract class AbstractTtsPipelineContract {
         for (String voice : voices) {
             assertWellFormedAudibleWav(tts.synthesize("Hello.", null, null, voice, MAX_FRAMES, 4, 1));
         }
-        LlamaException unknown = assertThrows(
-                LlamaException.class, () -> tts.synthesize("Hello.", null, null, "nobody", MAX_FRAMES, 4, 1));
+        // the request's fault, so that a server answers 400: InvalidRequestException, not its parent
+        InvalidRequestException unknown = assertThrows(
+                InvalidRequestException.class, () -> tts.synthesize("Hello.", null, null, "nobody", MAX_FRAMES, 4, 1));
         assertTrue(unknown.getMessage().contains(voices.get(0)), unknown.getMessage());
     }
 
@@ -115,7 +116,7 @@ public abstract class AbstractTtsPipelineContract {
                     tts.synthesize("Hello.", TestConstants.DEFAULT_AUDIO_INPUT_PATH, null, MAX_FRAMES, 4, 1));
         } else {
             assertThrows(
-                    LlamaException.class,
+                    InvalidRequestException.class,
                     () -> tts.synthesize("Hello.", TestConstants.DEFAULT_AUDIO_INPUT_PATH, null, MAX_FRAMES, 4, 1));
         }
     }

@@ -501,7 +501,9 @@ JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char
  * function with a null voice. A model with predefined voices in its projector (Pocket TTS without
  * voice cloning, llama.cpp b12061) speaks with the named one, or its first when `voice` and the
  * speaker reference are both null; an unknown name fails naming the model's voices, and a voice next
- * to a speaker reference is refused. Since 6.1.0.
+ * to a speaker reference is refused. What the request asked for and the model cannot do -- such a
+ * voice, a speaker reference the pair cannot use or that cannot be read -- is
+ * JLLAMA_STATUS_INVALID_REQUEST, a failed synthesis JLLAMA_STATUS_ERROR. Since 6.1.0.
  */
 JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text,
                                                      const char *speaker_reference_path, const char *lang,
@@ -522,7 +524,8 @@ JLLAMA_API jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts
 
 /**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
- * mtmd_helper_cap::audio_gen_spk_ref, true for Qwen3-TTS and Pocket TTS. jllama_tts_synthesize
+ * mtmd_helper_cap::audio_gen_spk_ref (Qwen3-TTS, Pocket TTS) for a projector that takes audio in --
+ * one converted without its voice encoder does not, and reports false. jllama_tts_synthesize
  * refuses a `speaker_reference_path` for a pair that does not.
  */
 JLLAMA_API jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts, bool *supported);

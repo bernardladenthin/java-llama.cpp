@@ -73,6 +73,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **A refused speech request is an `InvalidRequestException`** (`JLLAMA_STATUS_INVALID_REQUEST` in the
+  C API, `400` from `/v1/audio/speech` and `/tts` instead of `500`): a voice the model does not have,
+  a voice next to a speaker reference, a reference the pair cannot use or that cannot be read. It is
+  a subclass of `LlamaException`, so existing handlers keep working.
+- **`supportsSpeakerReference()` is `false` for a projector without its voice encoder** (Pocket TTS
+  "without voice cloning"): llama.cpp reports the capability per pipeline, and a reference clip then
+  failed to decode instead of being refused by name.
+- A failed quantization names the importance matrix only for the file types that need one, and a
+  reranker whose classification head lies in a `--shard` file is no longer refused at load.
 - **CI model set: Pocket TTS, Chatterbox and LFM3-Audio** (`.github/models.csv`, features
   `pockettts`, `chatterbox`, `realtime`). `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest`
   run the speech pipeline contract on them, `TtsChatTemplateIntegrationTest` and

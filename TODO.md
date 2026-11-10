@@ -203,8 +203,15 @@ without its checkpoints. The model, mmproj and LoRA files are opened through `gg
 affected; ASCII paths are not affected.
   - **A test asks the question now:** `CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile`
     (`test_c_api.cpp`) saves and restores a slot with a draft model under such a directory and requires
-    the draft-state appendix in the same file. Green on Linux; the three Windows C++ jobs of the next
-    Publish run are the measurement. Red there is this finding, not a test to relax.
+    the draft-state appendix in the same file. **Measured on 2026-11-10** (Publish run 42783058488,
+    all three Windows C++ jobs, clang, clang-cl and MSVC): it does not get as far as the appendix.
+    The load is refused -- `error while handling argument "--slot-save-path": not a directory:
+    ...\jllama-slots-ä-日本-<n>` -- because the option's own check (`fs_is_directory`,
+    `common/arg.cpp`) reads the string in the ANSI code page. So on Windows a slot directory outside
+    ASCII cannot be used at all, loudly, and the silent second file expected above cannot occur
+    through this option. The test pins that on Windows (a load that works turns it red: upstream
+    reads UTF-8 then, and the round trip is to run there too) and runs the round trip elsewhere and
+    in a process whose code page is UTF-8. README says so under the slot functions.
   - Measure on Windows with a user name or directory containing `ä` / `日本`: `LlamaModel` with
     `setSlotSavePath` + save/restore (compare `timings` after the restore), `-hf` into such an
     `LLAMA_CACHE`, router mode over such a `--models-dir`.

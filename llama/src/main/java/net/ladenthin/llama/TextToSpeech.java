@@ -218,7 +218,9 @@ public final class TextToSpeech implements AutoCloseable {
      * {@link #synthesize(String, String, String, int, int, int)} accepts a
      * {@code speakerReferenceAudioPath}. llama.cpp decides it per pipeline
      * ({@code mtmd_helper_cap::audio_gen_spk_ref}, b11901): Qwen3-TTS and Pocket TTS do, a pipeline
-     * without a voice encoder such as Soprano does not.
+     * without a voice encoder such as Soprano does not. A projector of such a pipeline that was
+     * converted without the encoder (Pocket TTS "without voice cloning", which ships predefined
+     * voices instead) takes no audio in and reports {@code false} as well.
      *
      * @return {@code true} if a speaker reference is accepted
      * @throws IllegalStateException if this instance is closed

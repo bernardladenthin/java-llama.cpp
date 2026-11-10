@@ -938,8 +938,8 @@ Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
 voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
-clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
-`LlamaException`). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
+clone a voice (Qwen3-TTS can, Pocket TTS when its projector carries the voice encoder; a pair that
+cannot refuses a reference clip with an `InvalidRequestException`, as it does a voice it does not have). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
 without voice cloning, LFM3-Audio); such a model speaks with the one named as `voice`, or with the
 first of the list. As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
@@ -1007,7 +1007,8 @@ Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, Str
 `restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
 (`ModelParameters.setSlotSavePath`, `--slot-save-path`), and the `String` is a file name inside it, as
 the server's `/slots` route takes it -- a name with a directory part or `..` is an
-`InvalidRequestException`.
+`InvalidRequestException`. On Windows the slot directory has to be an ASCII path: llama.cpp checks it
+in the process's ANSI code page, and a path outside ASCII fails the model load with "not a directory".
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 

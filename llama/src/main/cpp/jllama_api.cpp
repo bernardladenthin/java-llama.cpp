@@ -885,11 +885,12 @@ jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const cha
     try {
         std::vector<uint8_t> bytes;
         std::string err;
+        bool request_fault = false;
         if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text,
                                            speaker_reference_path != nullptr ? speaker_reference_path : "",
                                            lang != nullptr ? lang : "", voice != nullptr ? voice : "", max_frames,
-                                           top_k, seed, temperature, bytes, err)) {
-            return fail(JLLAMA_STATUS_ERROR, err.c_str());
+                                           top_k, seed, temperature, bytes, err, &request_fault)) {
+            return fail(request_fault ? JLLAMA_STATUS_INVALID_REQUEST : JLLAMA_STATUS_ERROR, err.c_str());
         }
         auto *out = static_cast<unsigned char *>(std::malloc(std::max<size_t>(bytes.size(), 1)));
         if (out == nullptr) {

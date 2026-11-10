@@ -53,11 +53,14 @@ const std::vector<std::string> &engine_voices(const tts_engine *engine);
 // tools/tts/README.md) and `voice` a model-dependent preset (LFM3-Audio: "female", "male"), empty for
 // the model's default. `temperature` is the audio frame temperature of a pipeline that samples its
 // frames (Pocket TTS, llama.cpp b12233): negative = the model's default, 0 = greedy; the other
-// pipelines ignore it. Returns false and sets `err` on failure. Thread-compatible but not re-entrant
-// on the same engine instance.
+// pipelines ignore it. Returns false and sets `err` on failure; `request_fault` (may be null) is then
+// set when the request is what was refused -- a voice the model does not have, a voice next to a
+// speaker reference, a reference the pair cannot use or that cannot be read -- and cleared for a
+// failure of the synthesis itself. Thread-compatible but not re-entrant on the same engine instance.
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
                        const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       float temperature, std::vector<uint8_t> &out_wav, std::string &err);
+                       float temperature, std::vector<uint8_t> &out_wav, std::string &err,
+                       bool *request_fault = nullptr);
 
 // Release the loaded model/context. Safe on nullptr.
 void engine_free(tts_engine *engine);

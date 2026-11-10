@@ -100,7 +100,7 @@ option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 # Declared here, before any FetchContent_MakeAvailable(), and not next to the tests below: a
 # subproject that calls include(CTest) creates BUILD_TESTING as a cache variable defaulting to ON,
 # after which this option() would be a no-op. CCCL does exactly that, unconditionally, and ggml
-# fetches it whenever GGML_CUDA_CCCL_VERSION is set (our CUDA builds pin v3.4.3) -- the CUDA job
+# fetches it whenever GGML_CUDA_CCCL_VERSION is set (our CUDA builds pinned v3.4.3 up to CUDA 13.4) -- the CUDA job
 # then built jllama_test, whose gtest discovery needs libcuda.so.1 and failed the build on the
 # GPU-less runner. -DBUILD_TESTING=ON still enables the tests.
 option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)

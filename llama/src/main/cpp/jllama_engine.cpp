@@ -21,6 +21,7 @@
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -255,9 +256,12 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
 
     // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
     // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
-    // that looks like a relevance and is none. Refused here, by the model file's tensor list.
+    // that looks like a relevance and is none. Refused here, by the model file's tensor list -- and
+    // by the lists of its --shard files, any of which may carry the head (b12233).
     if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
-        gguf_lacks_classification_head(params.model.path)) {
+        gguf_lacks_classification_head(params.model.path) &&
+        std::all_of(params.model.shards.begin(), params.model.shards.end(),
+                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
         throw std::runtime_error("'" + params.model.path +
                                  "' has no classification head (cls / cls.output tensors), so it cannot rerank: "
                                  "rank pooling needs a reranker model");
@@ -1402,10 +1406,29 @@ void quantize(const std::string &input_path, const std::string &output_path, int
     }
     const uint32_t rc = llama_model_quantize(input_path.c_str(), output_path.c_str(), &qparams);
     if (rc != 0) {
+        // The hint only where it can be the cause: llama.cpp reports every failure with one code, a
+        // missing input file as much as a file type that needs a matrix.
+        bool needs_imatrix = false;
+        switch (static_cast<llama_ftype>(ftype)) {
+        case LLAMA_FTYPE_MOSTLY_IQ2_XXS:
+        case LLAMA_FTYPE_MOSTLY_IQ2_XS:
+        case LLAMA_FTYPE_MOSTLY_Q2_K_S:
+        case LLAMA_FTYPE_MOSTLY_IQ3_XS:
+        case LLAMA_FTYPE_MOSTLY_IQ3_XXS:
+        case LLAMA_FTYPE_MOSTLY_IQ1_S:
+        case LLAMA_FTYPE_MOSTLY_IQ2_S:
+        case LLAMA_FTYPE_MOSTLY_IQ2_M:
+        case LLAMA_FTYPE_MOSTLY_IQ1_M:
+            needs_imatrix = true;
+            break;
+        default:
+            break;
+        }
         throw std::runtime_error(
             "Quantization of '" + input_path + "' failed with code " + std::to_string(rc) +
-            (imatrix_path.empty() ? " (the IQ1, IQ2, IQ3_XS, IQ3_XXS and Q2_K_S file types need an importance matrix)"
-                                  : ""));
+            (imatrix_path.empty() && needs_imatrix
+                 ? " (the IQ1, IQ2, IQ3_XS, IQ3_XXS and Q2_K_S file types need an importance matrix)"
+                 : ""));
     }
 }
 

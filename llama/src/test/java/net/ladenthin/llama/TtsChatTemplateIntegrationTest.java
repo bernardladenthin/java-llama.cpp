@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -115,8 +116,9 @@ public class TtsChatTemplateIntegrationTest {
     @DisplayName("no voice cloning: the pair reports it and refuses a speaker reference")
     public void refusesASpeakerReference() {
         assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio has no voice encoder");
+        // the request's fault, so that a server answers 400
         assertThrows(
-                LlamaException.class,
+                InvalidRequestException.class,
                 () -> tts.synthesize("Hello.", TestConstants.DEFAULT_AUDIO_INPUT_PATH, "en", null, MAX_FRAMES, 4, 1));
     }
 

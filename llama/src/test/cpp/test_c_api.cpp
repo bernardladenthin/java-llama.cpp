@@ -46,6 +46,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
 
 using nlohmann::json;
@@ -1543,6 +1547,8 @@ TEST_F(CApi, QuantizeWritesAModelThatLoads) {
     jllama_model_free(quantized);
     std::filesystem::remove(out, ec);
     EXPECT_EQ(jllama_quantize("/nonexistent/in.gguf", out.c_str(), 7, 1, false), JLLAMA_STATUS_ERROR);
+    // Q8_0 needs no importance matrix, so the message must not send the caller looking for one
+    EXPECT_EQ(std::string(jllama_last_error()).find("importance matrix"), std::string::npos) << jllama_last_error();
 }
 
 TEST_F(CApi, TheQuantizerRefusesTheFileTypesItDoesNotProduce) {
@@ -1716,6 +1722,22 @@ TEST(CApiSlotFiles, ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile) {
     const auto dir_u8 = dir.u8string();
     const std::string dir_arg(dir_u8.begin(), dir_u8.end());
 
+#ifdef _WIN32
+    // Measured on all three Windows jobs of Publish run 42783058488: llama.cpp checks the option
+    // with std::filesystem::is_directory over the plain string (fs_is_directory, common/arg.cpp),
+    // which Windows reads in the process's ANSI code page, so a UTF-8 path outside ASCII is "not a
+    // directory" and the load is refused before any slot file is written. Pinned as it is (README,
+    // "Slot files"): a load that works here means upstream reads the path as UTF-8 now, and this
+    // branch goes. A process whose code page is UTF-8 takes the path of the other platforms.
+    if (GetACP() != CP_UTF8) {
+        EXPECT_EQ(load_tiny(path, {"--slot-save-path", dir_arg}), nullptr)
+            << "loads now: upstream reads the path as UTF-8, run the round trip here too";
+        std::error_code ignored;
+        std::filesystem::remove_all(dir, ignored);
+        std::filesystem::remove(path, ignored);
+        return;
+    }
+#endif
     for (const bool with_draft : {false, true}) {
         SCOPED_TRACE(with_draft ? "with a draft model" : "without a draft model");
         std::vector<std::string> extra = {"--slot-save-path", dir_arg};
@@ -2343,8 +2365,10 @@ TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
         // refuses the load; CApiBert covers rank pooling on a model that has one)
         {"--pooling rank", "no classification head"},
     };
-    // Fails or loads with the machine: tensor split needs a GPU device, which most test runners lack.
-    const std::set<std::string> machine_dependent = {"--split-mode tensor"};
+    // Fails or loads with the machine: tensor split needs a GPU device, which most test runners lack,
+    // and row split a device with split buffers, which Metal is not ("device MTL0 does not support
+    // split buffers", both macOS jobs of Publish run 42783058488).
+    const std::set<std::string> machine_dependent = {"--split-mode tensor", "--split-mode row"};
     int used = 0;
     for (int i = 0; i < JLLAMA_JAVA_ENUM_COUNT; ++i) {
         const std::string option = JLLAMA_JAVA_ENUM_OPTIONS[i];
