@@ -6,6 +6,7 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
@@ -72,7 +73,8 @@ class TextToSpeechBackendTest {
         assertThat(entries.size(), is(equalTo(1)));
         AclEntry entry = (AclEntry) entries.get(0);
         assertThat(entry.type(), is(equalTo(AclEntryType.ALLOW)));
-        assertThat(entry.principal().getName(), is(equalTo(System.getProperty("user.name"))));
+        // Windows names a principal "<machine or domain>\\<user>"
+        assertThat(entry.principal().getName(), endsWith(System.getProperty("user.name")));
     }
 
     @Test
