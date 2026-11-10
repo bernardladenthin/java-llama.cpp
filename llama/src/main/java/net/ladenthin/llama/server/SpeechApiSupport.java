@@ -149,10 +149,15 @@ final class SpeechApiSupport {
      * @throws IllegalArgumentException if the request is one this route does not serve
      */
     static Request parseTts(JsonNode request) {
-        String input = request.path("input").asText(request.path("prompt").asText(""));
-        if (input.isEmpty()) {
+        // upstream's alias "prompt" stands in for an absent input; neither is coerced from another type
+        JsonNode text = request.path("input");
+        if (text.isMissingNode() || text.isNull()) {
+            text = request.path("prompt");
+        }
+        if (!text.isTextual() || text.asText().isEmpty()) {
             throw new IllegalArgumentException("\"input\" must be a non-empty string");
         }
+        String input = text.asText();
         if (request.path("stream").asBoolean(false)) {
             throw new IllegalArgumentException("\"stream\" is not supported for /tts on this server");
         }

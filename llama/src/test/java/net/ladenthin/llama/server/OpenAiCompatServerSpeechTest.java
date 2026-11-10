@@ -216,6 +216,8 @@ public class OpenAiCompatServerSpeechTest {
             String[] refused = {
                 "{}",
                 "{\"input\":\"\"}",
+                "{\"input\":42}",
+                "{\"prompt\":true}",
                 "{\"input\":\"Hi\",\"stream\":true}",
                 "{\"input\":\"Hi\",\"response_format\":\"mp3\"}",
                 "{\"input\":\"Hi\",\"speaker_ref_b64\":\"not base64!\"}",

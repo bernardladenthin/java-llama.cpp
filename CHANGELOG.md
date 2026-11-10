@@ -271,8 +271,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   success without it. Patches `0024` and `0025` read both as UTF-8. The calibration text of an
   importance matrix, the legacy output of a merge and the trainer's `training_file` are read and
   written as UTF-8 there too, and a legacy importance matrix is read from such a path (patch `0026`).
-  A speaker reference of `POST /tts` crosses to the engine in a temporary file only its owner can
-  read. Still ASCII-only on Windows: `--log-file`, the quantizer's output
+  A speaker reference of `POST /tts` crosses to the engine in a temporary file created for its
+  owner alone: POSIX permissions `rw-------`, on Windows an access control list naming the owner
+  (where the user name resolves to no principal, the file keeps what its directory hands down). Still ASCII-only on Windows: `--log-file`, the quantizer's output
   file and a download target (README).
 - **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
   with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
