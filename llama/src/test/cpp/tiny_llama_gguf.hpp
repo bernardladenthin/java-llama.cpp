@@ -106,29 +106,60 @@ inline void confine_output_to_ascii(ggml_tensor *output) {
 // are written to a second GGUF in a directory of its own instead -- an extra shard as --shard takes
 // it (llama.cpp b12233): tensors only, no metadata, a name the split numbering does not know. The
 // weights are the ones the unsplit model gets (same seed, same order), so both answer alike.
-inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false,
-                                         uint32_t eos = '>', const std::vector<std::string> &special = {},
-                                         std::string *shard_path = nullptr) {
+// The shape of one random model. The defaults are the model every test used before the struct
+// existed, and a default spec writes exactly that file (same seed, same tensor order), so a test
+// that compares answers across models keeps its meaning. A test that needs another shape names only
+// what differs: wider rows for a quantization type with a block size (Q1_0 wants row lengths
+// divisible by 128), a pooling type declared by the model itself, more layers.
+struct tiny_model_spec {
+    std::string prefix = "jllama-c-api";
+    bool fim = false;
+    uint32_t eos = '>';
+    std::vector<std::string> special = {};
+    int n_embd = N_EMBD;
+    int n_head = N_HEAD;
+    int n_head_kv = N_HEAD_KV;
+    int head_dim = HEAD_DIM;
+    int n_ff = N_FF;
+    int n_layer = N_LAYER;
+    int n_ctx_train = N_CTX_TRAIN;
+    int pooling_type = -1; // llama_pooling_type written as <arch>.pooling_type; -1 writes none
+
+    // A model whose every weight row is `width` long (width must be a multiple of the head count).
+    static tiny_model_spec wide(int width, const std::string &prefix = "jllama-wide") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.n_embd = width;
+        spec.head_dim = width / spec.n_head;
+        spec.n_ff = 2 * width;
+        return spec;
+    }
+};
+
+inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::string *shard_path = nullptr) {
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
     const std::string path = (std::filesystem::temp_directory_path() /
-                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                              (spec.prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
                                  .string();
     std::mt19937 rng(42);
     gguf_context *g = gguf_init_empty();
     const std::string a = "llama";
     gguf_set_val_str(g, "general.architecture", a.c_str());
-    gguf_set_val_u32(g, (a + ".context_length").c_str(), N_CTX_TRAIN);
-    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), N_EMBD);
-    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER);
-    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), N_FF);
-    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
-    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV);
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), spec.n_ctx_train);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), spec.n_embd);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), spec.n_layer);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), spec.n_ff);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), spec.n_head);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
-    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD_DIM);
+    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
+    if (spec.pooling_type >= 0) {
+        gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));
+    }
 
     std::vector<std::string> tokens = byte_tokens();
-    tokens.insert(tokens.end(), special.begin(), special.end());
+    tokens.insert(tokens.end(), spec.special.begin(), spec.special.end());
     const int n_vocab = static_cast<int>(tokens.size());
     std::vector<const char *> token_ptrs;
     for (const std::string &s : tokens) {
@@ -143,31 +174,31 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
     gguf_set_arr_str(g, "tokenizer.ggml.merges", no_merges, 1);
     gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
-    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", eos);
-    if (fim) {
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);
+    if (spec.fim) {
         gguf_set_val_u32(g, "tokenizer.ggml.fim_pre_token_id", 1);
         gguf_set_val_u32(g, "tokenizer.ggml.fim_suf_token_id", 2);
         gguf_set_val_u32(g, "tokenizer.ggml.fim_mid_token_id", 3);
     }
 
-    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
-    add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, n_vocab}, 0.1f);
-    add_random_tensor(g, ctx, rng, "output_norm.weight", {N_EMBD}, 1.0f);
-    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, n_vocab}, 0.1f));
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {spec.n_embd}, 1.0f);
+    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f));
     gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
-    for (int il = 0; il < N_LAYER; ++il) {
+    for (int il = 0; il < spec.n_layer; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
-        gguf_context *to = shard != nullptr && il == N_LAYER - 1 ? shard : g;
-        add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(to, ctx, rng, p + "attn_q.weight", {N_EMBD, N_HEAD * HEAD_DIM}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_k.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_v.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD_DIM, N_EMBD}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(to, ctx, rng, p + "ffn_gate.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {N_FF, N_EMBD}, 0.1f);
+        gguf_context *to = shard != nullptr && il == spec.n_layer - 1 ? shard : g;
+        add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+        add_random_tensor(to, ctx, rng, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {spec.n_embd, spec.n_ff}, 0.1f);
+        add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {spec.n_ff, spec.n_embd}, 0.1f);
     }
     bool ok = gguf_write_to_file(g, path.c_str(), false);
     if (shard != nullptr) {
@@ -182,6 +213,17 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     gguf_free(g);
     ggml_free(ctx);
     return ok ? path : std::string();
+}
+
+inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false,
+                                         uint32_t eos = '>', const std::vector<std::string> &special = {},
+                                         std::string *shard_path = nullptr) {
+    tiny_model_spec spec;
+    spec.prefix = prefix;
+    spec.fim = fim;
+    spec.eos = eos;
+    spec.special = special;
+    return write_tiny_llama_gguf(spec, shard_path);
 }
 
 // A random llava-style (MLP) vision projector for the model above: 32x32 images in 16x16 patches,

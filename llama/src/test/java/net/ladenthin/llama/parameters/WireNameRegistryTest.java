@@ -196,8 +196,9 @@ public class WireNameRegistryTest {
      * <p>Only this direction is checkable, and it is the one nothing else covers. The opposite
      * direction — a flagged setter missing from the list — already reds {@code spotbugs:check}, and
      * is not derivable here anyway: SpotBugs raises OCP only when a method uses nothing beyond the
-     * interface, so {@code setPoolingType} (which compares against a concrete constant) and
-     * {@code withMiroStat} (which calls {@code ordinal()}) are legitimately absent. A <em>stale</em>
+     * interface, so {@code withMiroStat} (which calls {@code ordinal()}) is legitimately absent.
+     * A setter counts by its first parameter, so that {@code setSpecTypes(SpecType, SpecType...)}
+     * is one. A <em>stale</em>
      * entry is the silent half: a suppression naming a method that no longer exists simply does
      * nothing, and the next real finding on the renamed method is a surprise. That is exactly how
      * the {@code setTensorReadLazy} to {@code setLazyMode} rename reddened {@code main}.
@@ -210,7 +211,7 @@ public class WireNameRegistryTest {
         Set<String> enumValuedSetters = new TreeSet<>();
         for (Class<?> builder : new Class<?>[] {ModelParameters.class, InferenceParameters.class}) {
             for (Method method : builder.getMethods()) {
-                if (!builder.equals(method.getDeclaringClass()) || method.getParameterCount() != 1) {
+                if (!builder.equals(method.getDeclaringClass()) || method.getParameterCount() == 0) {
                     continue;
                 }
                 Class<?> type = method.getParameterTypes()[0];

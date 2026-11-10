@@ -299,6 +299,9 @@ public enum ModelOption {
     /** CLI option {@code --spec-draft-p-min}. */
     SPEC_DRAFT_P_MIN("--spec-draft-p-min"),
 
+    /** CLI option {@code --spec-type}. */
+    SPEC_TYPE("--spec-type"),
+
     /** CLI option {@code --spec-draft-sampling}. */
     SPEC_DRAFT_SAMPLING("--spec-draft-sampling"),
 

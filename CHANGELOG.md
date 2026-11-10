@@ -19,7 +19,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
   CPU computes instead of uploading them (upstream `--moe-cache-cpu-share`, llama.cpp b12191).
 
+- **`ModelParameters.setSpecTypes(SpecType, SpecType...)`** and the enum `SpecType` -- the types
+  of speculative decoding (upstream `--spec-type`): `draft-simple`, the n-gram types, `none`.
+
+### Removed
+- **Enum constants no receiver accepts** (breaking; each could only fail or was silently dropped):
+  `PoolingType.UNSPECIFIED` and `RopeScalingType.UNSPECIFIED` (the model's own choice is not calling
+  the setter), `RopeScalingType.LONGROPE` and `MAX_VALUE` (not values of `--rope-scaling`),
+  `QuantizationType.NVFP4` (written by converters, refused by the quantizer) and
+  `QuantizationType.IQ2_XXS`, `IQ2_XS`, `Q2_K_S`, `IQ1_S`, `IQ2_S`, `IQ2_M`, `IQ1_M` (need an
+  importance matrix, which `LlamaQuantizer` cannot pass). `RopeScalingType.YARN2` is `YARN`.
+  Tests now feed every enum value to llama.cpp's parser and run it against a model.
+
 ### Changed
+- **A draft model is used without naming a speculative type.** `setModelDraft` (`--spec-draft-model`)
+  alone loaded the second model and drafted nothing, because llama.cpp's speculative types default
+  to `none`; the library now uses it as `draft-simple` unless `setSpecTypes` says otherwise
+  (`SpecType.NONE` keeps it unused). Also for the C API and `llama-ffm`.
 - - **Dependabot: one grouped pull request per ecosystem a week, on Saturday.**
   `.github/dependabot.yml` is the template of bernardladenthin/actions v1.2.1: every minor and
   patch update of Maven, and of the GitHub Actions, comes in one pull request (a major update

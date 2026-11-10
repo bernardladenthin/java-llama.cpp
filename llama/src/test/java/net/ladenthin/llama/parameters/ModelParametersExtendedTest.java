@@ -1106,29 +1106,14 @@ public class ModelParametersExtendedTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void testSetRopeScalingAllValuesTheParserAccepts() {
-        // llama.cpp's --rope-scaling accepts exactly none, linear and yarn (common/arg.cpp) and throws
-        // "invalid value" for anything else, which makes the model fail to load.
-        for (RopeScalingType type :
-                new RopeScalingType[] {RopeScalingType.NONE, RopeScalingType.LINEAR, RopeScalingType.YARN2}) {
+    public void testSetRopeScalingAllValues() {
+        // every constant is a value llama.cpp's --rope-scaling accepts (test_model_flags.cpp feeds
+        // each to the real parser); the model's own choice is "no call", not a constant
+        for (RopeScalingType type : RopeScalingType.values()) {
             ModelParameters p = new ModelParameters().setRopeScaling(type);
             assertThat(p.parameters.get("--rope-scaling"), is(type.getArgValue()));
         }
-    }
-
-    @Test
-    public void testSetRopeScalingUnspecifiedLeavesTheModelDefault() {
-        ModelParameters p = new ModelParameters()
-                .setRopeScaling(RopeScalingType.LINEAR)
-                .setRopeScaling(RopeScalingType.UNSPECIFIED);
-        assertThat(p.parameters.containsKey("--rope-scaling"), is(false));
-    }
-
-    @Test
-    public void testSetRopeScalingRejectsValuesTheParserDoesNotAccept() {
-        for (RopeScalingType type : new RopeScalingType[] {RopeScalingType.LONGROPE, RopeScalingType.MAX_VALUE}) {
-            assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setRopeScaling(type));
-        }
+        assertThat(new ModelParameters().parameters.containsKey("--rope-scaling"), is(false));
     }
 
     // -------------------------------------------------------------------------

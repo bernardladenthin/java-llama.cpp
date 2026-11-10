@@ -42,6 +42,7 @@
 #include "common.h"
 
 #include "jllama_java_cli_flags.h"
+#include "jllama_java_enum_values.h"
 
 #include <gtest/gtest.h>
 
@@ -153,4 +154,71 @@ TEST(JavaCliFlagContract, ProjectPseudoFlagsAreStillUnknownToTheServerParser) {
     EXPECT_EQ(pseudo_count, 1) << "expected exactly one PROJECT_PSEUDO name (--vocab-only); a "
                                   "different count means a contract was added, removed, or the "
                                   "generated contract column is missing";
+}
+
+// ---------------------------------------------------------------------------
+// The values behind the options. The checks above know that llama.cpp registers "--numa"; these
+// know that it takes "numactl". CMake extracts every constant of every enum a ModelParameters setter
+// takes (cmake/extract-java-wire-names.cmake, jllama_extract_java_enum_values) with the option the
+// setter writes, and each pair goes through the real server parser. A value upstream's handler
+// refuses makes the model unloadable for whoever picks the constant, so the constant has to go.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool server_parser_accepts(const std::string &option, const std::string &value, common_params &params) {
+    std::vector<std::string> args = {"jllama", option, value};
+    std::vector<char *> argv;
+    for (auto &arg : args) {
+        argv.push_back(arg.data());
+    }
+    return common_params_parse(static_cast<int>(argv.size()), argv.data(), params, LLAMA_EXAMPLE_SERVER);
+}
+
+} // namespace
+
+TEST(JavaCliEnumContract, GeneratedValueListIsPopulated) {
+    ASSERT_GT(JLLAMA_JAVA_ENUM_COUNT, 50) << "the generated list of enum values is empty or truncated";
+    ASSERT_EQ(JLLAMA_JAVA_ENUM_COUNT,
+              static_cast<int>(sizeof(JLLAMA_JAVA_ENUM_VALUES) / sizeof(JLLAMA_JAVA_ENUM_VALUES[0])));
+}
+
+TEST(JavaCliEnumContract, TheParserRefusesAValueNoEnumHas) {
+    // The oracle has to be able to say no: a parser that accepted anything would pass every
+    // constant, valid or not.
+    common_params params;
+    EXPECT_FALSE(server_parser_accepts("--numa", "jllama-no-such-value", params));
+    common_params other;
+    EXPECT_FALSE(server_parser_accepts("--spec-type", "jllama-no-such-value", other));
+}
+
+TEST(JavaCliEnumContract, EveryEnumConstantIsAValueTheServerParserAccepts) {
+    std::string rejected;
+    for (int i = 0; i < JLLAMA_JAVA_ENUM_COUNT; ++i) {
+        common_params params;
+        if (!server_parser_accepts(JLLAMA_JAVA_ENUM_OPTIONS[i], JLLAMA_JAVA_ENUM_VALUES[i], params)) {
+            rejected += std::string("\n  ") + JLLAMA_JAVA_ENUM_OPTIONS[i] + " " + JLLAMA_JAVA_ENUM_VALUES[i];
+        }
+    }
+    EXPECT_TRUE(rejected.empty())
+        << "llama.cpp's server parser refuses these values of a Java enum; a model configured with "
+           "the matching constant does not load ('Failed to parse model parameters'):"
+        << rejected << "\nRemove the constant, or repoint it at the value upstream takes now.";
+}
+
+TEST(JavaCliEnumContract, EverySamplerConstantNamesASamplerUpstreamKnows) {
+    // --samplers does not refuse an unknown name, it drops it (with a warning), so the parse above
+    // cannot vouch for Sampler: each constant alone has to come out as exactly one sampler.
+    int checked = 0;
+    for (int i = 0; i < JLLAMA_JAVA_ENUM_COUNT; ++i) {
+        if (std::string(JLLAMA_JAVA_ENUM_OPTIONS[i]) != "--samplers") {
+            continue;
+        }
+        ++checked;
+        common_params params;
+        ASSERT_TRUE(server_parser_accepts("--samplers", JLLAMA_JAVA_ENUM_VALUES[i], params));
+        EXPECT_EQ(params.sampling.samplers.size(), 1u)
+            << "Sampler value '" << JLLAMA_JAVA_ENUM_VALUES[i] << "' is not a sampler llama.cpp knows";
+    }
+    EXPECT_GT(checked, 5);
 }

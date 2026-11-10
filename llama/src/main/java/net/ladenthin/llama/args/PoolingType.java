@@ -12,9 +12,9 @@ package net.ladenthin.llama.args;
  * {@code --pooling} CLI argument in llama.cpp (see {@code common/arg.cpp}).  They map 1-to-1 to
  * the {@code llama_pooling_type} enum in {@code include/llama.h}.
  *
- * <p>{@link #UNSPECIFIED} is special: it has no valid CLI string and is therefore never forwarded
- * to the native layer.  Omitting {@code --pooling} entirely lets llama.cpp fall back to the
- * model's built-in default pooling strategy (equivalent to {@code LLAMA_POOLING_TYPE_UNSPECIFIED = -1}).
+ * <p>There is no constant for the model's own default ({@code LLAMA_POOLING_TYPE_UNSPECIFIED = -1}):
+ * it has no CLI string. A model configured without
+ * {@link net.ladenthin.llama.parameters.ModelParameters#setPoolingType(PoolingType)} uses it.
  *
  * @see <a href="https://github.com/ggerganov/llama.cpp/blob/b8609/common/arg.cpp">
  *      llama.cpp b8609 – common/arg.cpp: {@code --pooling} argument registration</a>
@@ -22,16 +22,6 @@ package net.ladenthin.llama.args;
  *      llama.cpp b8609 – include/llama.h: {@code llama_pooling_type} enum</a>
  */
 public enum PoolingType implements CliArg {
-
-    /**
-     * Use the model's built-in default pooling type.
-     *
-     * <p>Maps to {@code LLAMA_POOLING_TYPE_UNSPECIFIED = -1} in {@code include/llama.h}.
-     * This value has no corresponding CLI string; passing it to
-     * {@link net.ladenthin.llama.parameters.ModelParameters#setPoolingType(PoolingType)} intentionally
-     * omits the {@code --pooling} flag so llama.cpp chooses the pooling strategy itself.
-     */
-    UNSPECIFIED("unspecified"),
 
     /**
      * No pooling – returns one embedding vector per input token.
@@ -76,8 +66,6 @@ public enum PoolingType implements CliArg {
 
     /**
      * The CLI string passed to {@code --pooling} in llama.cpp's {@code common/arg.cpp}.
-     * {@link #UNSPECIFIED} carries {@code "unspecified"} as a sentinel but that string is
-     * never forwarded to the native layer.
      */
     private final String argValue;
 

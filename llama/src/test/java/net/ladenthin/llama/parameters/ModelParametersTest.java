@@ -28,6 +28,7 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.args.Sampler;
+import net.ladenthin.llama.args.SpecType;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
@@ -397,35 +398,33 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetPoolingTypeUnspecifiedDoesNotSetParam() {
-        ModelParameters p = new ModelParameters().setPoolingType(PoolingType.UNSPECIFIED);
-        assertThat(
-                "UNSPECIFIED pooling type must not add " + ModelOption.POOLING.getCliOption() + " to parameters",
-                p.parameters,
-                not(hasKey(ModelOption.POOLING.getCliOption())));
+    public void testAFreshModelHasNoPoolingType() {
+        // the model's own pooling type applies until a type is set; there is no constant for "unset"
+        assertThat(new ModelParameters().parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
     }
 
     @Test
-    public void testSetPoolingTypeUnspecifiedLeavesDefaultUntouched() {
-        // A fresh ModelParameters must not have ARG_POOLING set by default either
-        ModelParameters fresh = new ModelParameters();
-        assertThat(fresh.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
-        // Calling setPoolingType(UNSPECIFIED) must leave that invariant intact
-        fresh.setPoolingType(PoolingType.UNSPECIFIED);
-        assertThat(fresh.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
+    public void testSetSpecTypesSingle() {
+        ModelParameters p = new ModelParameters().setSpecTypes(SpecType.DRAFT_SIMPLE);
+        assertThat(p.parameters.get("--spec-type"), is("draft-simple"));
     }
 
     @Test
-    public void testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType() {
-        // UNSPECIFIED must leave the model's own pooling, also after another type was set before
+    public void testSetSpecTypesSeveralAreCommaJoinedInOrder() {
+        ModelParameters p = new ModelParameters().setSpecTypes(SpecType.NGRAM_MOD, SpecType.DRAFT_SIMPLE);
+        assertThat(p.parameters.get("--spec-type"), is("ngram-mod,draft-simple"));
+    }
+
+    @Test
+    public void testSetSpecTypesReplacesAnEarlierCall() {
         ModelParameters p =
-                new ModelParameters().setPoolingType(PoolingType.MEAN).setPoolingType(PoolingType.UNSPECIFIED);
-        assertThat(p.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
+                new ModelParameters().setSpecTypes(SpecType.NGRAM_CACHE).setSpecTypes(SpecType.NONE);
+        assertThat(p.parameters.get("--spec-type"), is("none"));
     }
 
     @Test
     public void testSetRopeScaling() {
-        ModelParameters p = new ModelParameters().setRopeScaling(RopeScalingType.YARN2);
+        ModelParameters p = new ModelParameters().setRopeScaling(RopeScalingType.YARN);
         assertThat(p.parameters.get("--rope-scaling"), is("yarn"));
     }
 

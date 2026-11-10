@@ -217,23 +217,25 @@ affected; ASCII paths are not affected.
     manifest. `setlocale(LC_ALL, ".UTF-8")` would switch MSVC's narrow file APIs to UTF-8 but changes
     the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently.
 
-**Found while writing tests for the bump (2026-11-10), both older than it**
-- **A draft model alone does not speculate.** Upstream's speculative types default to `none`, and a
-  plain draft GGUF infers none (`common_speculative_types_from_gguf` knows MTP, DFlash and DSpark
-  only), so `--spec-draft-model` without `--spec-type draft-simple` loads the second model and
-  drafts nothing. Measured with the random test model, 48 tokens, greedy: `n_draft_tokens_total` 0
-  without the type, 35 (all accepted) with it. `ModelParameters.setModelDraft` writes only the model,
-  and no builder method writes `--spec-type`, so Java callers pay the memory and get no speed-up; the
-  same structure is in upstream at b11400, b11639 and b11968. To decide: a `setSpecTypes(...)` enum
-  setter (registry constant, checked by `test_model_flags`), and whether `setModelDraft` should add
-  `draft-simple` itself when no type is set. `LlamaModelTest`'s speculative test only counts the
-  generated tokens; it should assert `getDraftTokensTotal() > 0`.
-- **`QuantizationType.NVFP4` cannot be quantized to.** `llama_model_quantize` refuses file type 39
-  ("invalid output file type"; it is written by converters), so `LlamaQuantizer.quantize(..., NVFP4)`
-  always throws. Its Javadoc says so now and `CApi.TheQuantizerRefusesTheFileTypesItDoesNotProduce`
-  pins it; removing the constant would break a released enum, so that is the owner's call.
-- **`setMoeCacheMib` on a host without a GPU fails the load** ("MoE cache requires a GPU backend");
-  its Javadoc claimed the option had no effect there and is corrected.
+**Found while writing tests for the bump (2026-11-10), older than it; fixed the same day**
+- A draft model alone did not speculate (upstream's types default to `none`): the engine now uses a
+  draft model as `draft-simple` when no type is given, and `ModelParameters.setSpecTypes` writes
+  `--spec-type`. Open: `LlamaModelTest`'s speculative test only counts the generated tokens; it
+  should assert `getDraftTokensTotal() > 0` (model-backed, CI only).
+- Enum constants no receiver accepts are removed: `PoolingType.UNSPECIFIED`,
+  `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`, and seven
+  `QuantizationType`s that need an importance matrix.
+- **Importance matrix for the quantizer.** `jllama_quantize` and `LlamaQuantizer` cannot pass an
+  imatrix (`llama_model_quantize_params::imatrix`; upstream's `tools/quantize` reads the file itself,
+  the code is not in the library). With it IQ2_XXS, IQ2_XS, Q2_K_S, IQ1_S, IQ2_S, IQ2_M and IQ1_M
+  become targets again, and `CApiEnumSweep.TheFileTypesThatNeedAnImportanceMatrixAreNotQuantizationTypes`
+  says where to put the constants back.
+- **More shapes for the random test model.** `tiny_model_spec` (`tiny_llama_gguf.hpp`) names width,
+  heads, layers and the declared pooling type; not yet: other architectures (a BERT-style encoder for
+  `cls`/`rank` pooling with a classifier head, a model with MTP layers for `draft-mtp`), a tokenizer
+  other than the byte one. Each would turn an exception of `CApiEnumSweep` into a tested case.
+- `setMoeCacheMib` on a host without a GPU fails the load ("MoE cache requires a GPU backend"); its
+  Javadoc is corrected.
 
 **Build and CI**
 - **CUDA 13.5.** Upstream builds its CUDA 13 release binaries with 13.5 since b12169 (#31788) and

@@ -13,6 +13,7 @@
 // pinned here is the behaviour LlamaModel has.
 
 #include "jllama_api.h"
+#include "jllama_java_enum_values.h"
 #include "rpc_support.hpp"
 #include "tiny_llama_gguf.hpp"
 
@@ -26,6 +27,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1541,10 +1543,13 @@ TEST_F(CApi, QuantizeWritesAModelThatLoads) {
 TEST_F(CApi, TheQuantizerRefusesTheFileTypesItDoesNotProduce) {
     // llama_ftype names every file type a GGUF can declare, llama_model_quantize produces most of
     // them: NVFP4 (39) and OCP FP8 E4M3 (42, llama.cpp b12000) are written by converters only and
-    // refused as a target ("invalid output file type"). QuantizationType.NVFP4 says so; a QuantizationType
-    // for 42 was added at the b12233 bump and taken out again when this test showed it could not work.
-    // Should upstream start to quantize to one of them, this goes red and the enum can offer it.
+    // refused as a target ("invalid output file type"), which is why QuantizationType has a constant
+    // for neither. Should upstream start to quantize to one of them, this goes red and the enum can
+    // offer it.
     for (const int ftype : {39, 42}) {
+        EXPECT_EQ(std::find(JLLAMA_JAVA_FTYPE_VALUES, JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT, ftype),
+                  JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT)
+            << "QuantizationType has a constant for the refused file type " << ftype;
         const std::string out = path_ + ".ftype" + std::to_string(ftype) + ".gguf";
         EXPECT_EQ(jllama_quantize(path_.c_str(), out.c_str(), ftype, 1, false), JLLAMA_STATUS_ERROR) << ftype;
         EXPECT_NE(std::strlen(jllama_last_error()), 0u) << ftype;
@@ -1616,6 +1621,57 @@ TEST(CApiShard, AnExtraShardInAnotherDirectoryCompletesTheModel) {
     std::filesystem::remove(whole, ignored);
     std::filesystem::remove(split, ignored);
     std::filesystem::remove_all(std::filesystem::path(shard).parent_path(), ignored);
+}
+
+namespace {
+
+// The tokens the model's draft has proposed so far, from the metrics.
+int drafted_tokens(jllama_model *model) {
+    Owned metrics;
+    EXPECT_EQ(jllama_metrics(model, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    return metrics.s != nullptr ? json::parse(metrics.str()).at("n_draft_tokens_total").get<int>() : -1;
+}
+
+} // namespace
+
+TEST(CApiDraft, ADraftModelIsUsedWithoutASpeculativeTypeAndNotWithNone) {
+    // Upstream's speculative types default to none, and a plain draft GGUF infers none, so
+    // --spec-draft-model alone loaded a second model that drafted nothing: 0 tokens here, against
+    // 35 of 48 with --spec-type draft-simple. The engine now uses such a draft model as
+    // draft-simple; an explicit type stays what the caller named, "none" included.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-draft");
+    ASSERT_FALSE(path.empty());
+    const std::vector<std::string> draft = {"--spec-draft-model", path, "--spec-draft-ngl", "0"};
+    struct row {
+        const char *what;
+        std::vector<std::string> type;
+        bool drafts;
+    };
+    for (const row &r :
+         {row{"no --spec-type", {}, true}, row{"--spec-type draft-simple", {"--spec-type", "draft-simple"}, true},
+          row{"--spec-type none", {"--spec-type", "none"}, false}}) {
+        SCOPED_TRACE(r.what);
+        std::vector<std::string> extra = draft;
+        extra.insert(extra.end(), r.type.begin(), r.type.end());
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(model, 48).empty());
+        if (r.drafts) {
+            // the draft is the model itself, so what it proposes greedily is what the model samples
+            EXPECT_GT(drafted_tokens(model), 0);
+        } else {
+            EXPECT_EQ(drafted_tokens(model), 0);
+        }
+        jllama_model_free(model);
+    }
+    // without a draft model nothing is selected: the default stays upstream's
+    jllama_model *plain = load_tiny(path, {});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(plain, 48).empty());
+    EXPECT_EQ(drafted_tokens(plain), 0);
+    jllama_model_free(plain);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }
 
 TEST(CApiMoeCache, TheCpuShareOfTheMoeCacheIsAcceptedAndRangeChecked) {
@@ -2125,4 +2181,162 @@ TEST_F(CApi, TheLogCallbackSeesTheServersLinesAndNullFlushesSynchronously) {
         EXPECT_GE(level, JLLAMA_LOG_LEVEL_NONE);
         EXPECT_LE(level, JLLAMA_LOG_LEVEL_CONT);
     }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Every value a Java enum can put on the wire, against a real model. test_model_flags.cpp proves the
+// parser accepts each; accepting a value and being able to run with it are two things (a KV cache
+// type parses and then fails the context), so each is loaded and used here. The model is the wide
+// one: quantized types work in blocks of up to 128 values, and a 32-wide model cannot hold one.
+// ---------------------------------------------------------------------------------------------------
+
+class CApiEnumSweep : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf(tiny_model_spec::wide(128));
+        ASSERT_FALSE(path_.empty());
+    }
+    static void TearDownTestSuite() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+    static std::string path_;
+};
+std::string CApiEnumSweep::path_;
+
+TEST_F(CApiEnumSweep, EveryQuantizationTypeOfTheJavaEnumGivesAModelThatLoadsAndAnswers) {
+    // QuantizationType is the Java side's list of quantizer targets; CMake reads its constants into
+    // JLLAMA_JAVA_FTYPE_*. Each must be a file type llama_model_quantize writes, and what it writes
+    // must load -- a constant for a type it refuses is a call that can only fail (NVFP4 was one).
+    ASSERT_GT(JLLAMA_JAVA_FTYPE_COUNT, 20) << "the extractor read implausibly few QuantizationType constants";
+    for (int i = 0; i < JLLAMA_JAVA_FTYPE_COUNT; ++i) {
+        const std::string name = JLLAMA_JAVA_FTYPE_NAMES[i];
+        SCOPED_TRACE("QuantizationType." + name);
+        const std::string out = path_ + ".java-ftype-" + name + ".gguf";
+        const jllama_status quantized =
+            jllama_quantize(path_.c_str(), out.c_str(), JLLAMA_JAVA_FTYPE_VALUES[i], 1, false);
+        EXPECT_EQ(quantized, JLLAMA_STATUS_OK) << jllama_last_error();
+        if (quantized != JLLAMA_STATUS_OK) {
+            continue;
+        }
+        jllama_model *model = load_tiny(out, {});
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model != nullptr) {
+            Owned completion;
+            EXPECT_EQ(
+                jllama_completions(model, R"({"prompt":"Hello there","temperature":0,"n_predict":4})", &completion.s),
+                JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            jllama_model_free(model);
+        }
+        std::error_code ec;
+        std::filesystem::remove(out, ec);
+    }
+}
+
+TEST_F(CApiEnumSweep, TheFileTypesThatNeedAnImportanceMatrixAreNotQuantizationTypes) {
+    // IQ2_XXS, IQ2_XS, Q2_K_S, IQ1_S, IQ2_S, IQ2_M and IQ1_M need an importance matrix for every
+    // tensor but the embeddings, and jllama_quantize has no way to pass one, so each can only fail
+    // ("this quantization requires an imatrix!"). QuantizationType had constants for them until this
+    // sweep ran over a model wide enough to reach the check. Once the C API takes an imatrix, this
+    // goes red and the constants can come back.
+    for (const int ftype : {19, 20, 21, 24, 28, 29, 31}) {
+        SCOPED_TRACE(ftype);
+        EXPECT_EQ(std::find(JLLAMA_JAVA_FTYPE_VALUES, JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT, ftype),
+                  JLLAMA_JAVA_FTYPE_VALUES + JLLAMA_JAVA_FTYPE_COUNT)
+            << "QuantizationType has a constant for a file type that needs an imatrix";
+        const std::string out = path_ + ".imatrix-ftype" + std::to_string(ftype) + ".gguf";
+        EXPECT_EQ(jllama_quantize(path_.c_str(), out.c_str(), ftype, 1, false), JLLAMA_STATUS_ERROR);
+        std::error_code ec;
+        std::filesystem::remove(out, ec);
+    }
+}
+
+TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
+    // The values that cannot work on this model, each with its reason; they must keep failing, so a
+    // reason that no longer holds is noticed. Everything else loads and answers a request.
+    const std::map<std::string, std::string> expected_load_failure = {
+        // needs a model with MTP layers ("context type MTP requested but model doesn't contain MTP layers")
+        {"--spec-type draft-mtp", "no MTP layers in the model"},
+    };
+    // Fails or loads with the machine: tensor split needs a GPU device, which most test runners lack.
+    const std::set<std::string> machine_dependent = {"--split-mode tensor"};
+    int used = 0;
+    for (int i = 0; i < JLLAMA_JAVA_ENUM_COUNT; ++i) {
+        const std::string option = JLLAMA_JAVA_ENUM_OPTIONS[i];
+        const std::string value = JLLAMA_JAVA_ENUM_VALUES[i];
+        if (option == "--numa") {
+            continue; // sets the CPU affinity of the whole test process
+        }
+        SCOPED_TRACE(option + " " + value);
+        std::vector<std::string> extra = {option, value, "--fit", "off"};
+        if (option == "--pooling") {
+            extra.push_back("--embedding");
+        }
+        jllama_model *model = load_tiny(path_, extra);
+        if (expected_load_failure.count(option + " " + value) != 0) {
+            EXPECT_EQ(model, nullptr) << "loads now: take it out of the exceptions";
+            jllama_model_free(model);
+            continue;
+        }
+        if (machine_dependent.count(option + " " + value) == 0) {
+            EXPECT_NE(model, nullptr) << jllama_last_error();
+        }
+        if (model == nullptr) {
+            continue;
+        }
+        Owned response;
+        if (option == "--pooling") {
+            ASSERT_EQ(jllama_embeddings(model, R"({"content":"Hello there"})", false, &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            const json rows = json::parse(response.str()).at(0).at("embedding");
+            // without pooling one vector per token, with any pooling one for the text
+            if (value == "none") {
+                EXPECT_GT(rows.size(), 1u);
+            } else {
+                EXPECT_EQ(rows.size(), 1u);
+            }
+        } else {
+            EXPECT_EQ(
+                jllama_completions(model, R"({"prompt":"Hello there","temperature":0,"n_predict":4})", &response.s),
+                JLLAMA_STATUS_OK)
+                << jllama_last_error();
+        }
+        jllama_model_free(model);
+        ++used;
+    }
+    EXPECT_GT(used, 60) << "the sweep ran over implausibly few values";
+}
+
+TEST(CApiPooling, AModelThatDeclaresItsPoolingTypeNeedsNoOption) {
+    // Why there is no PoolingType constant for "unspecified": without --pooling the model's own
+    // <arch>.pooling_type applies. Two models with the same weights, one declaring mean pooling:
+    // it answers without the option exactly what the other answers with --pooling mean.
+    tiny_model_spec declared;
+    declared.prefix = "jllama-pooling-mean";
+    declared.pooling_type = 1; // LLAMA_POOLING_TYPE_MEAN
+    const std::string with_type = write_tiny_llama_gguf(declared);
+    const std::string plain = write_tiny_llama_gguf("jllama-pooling-plain");
+    ASSERT_FALSE(with_type.empty());
+    ASSERT_FALSE(plain.empty());
+    const auto embedding = [](const std::string &path, const std::vector<std::string> &extra) {
+        jllama_model *model = load_tiny(path, extra);
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        Owned response;
+        if (model != nullptr) {
+            EXPECT_EQ(jllama_embeddings(model, R"({"content":"Hello there"})", false, &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            jllama_model_free(model);
+        }
+        return response.s != nullptr ? json::parse(response.str()).at(0).at("embedding").dump() : std::string();
+    };
+    const std::string by_model = embedding(with_type, {"--embedding"});
+    const std::string by_option = embedding(plain, {"--embedding", "--pooling", "mean"});
+    const std::string by_other_option = embedding(plain, {"--embedding", "--pooling", "last"});
+    EXPECT_FALSE(by_model.empty());
+    EXPECT_EQ(by_model, by_option);
+    EXPECT_NE(by_option, by_other_option) << "mean and last pooling agree: the comparison above proves nothing";
+    std::error_code ec;
+    std::filesystem::remove(with_type, ec);
+    std::filesystem::remove(plain, ec);
 }

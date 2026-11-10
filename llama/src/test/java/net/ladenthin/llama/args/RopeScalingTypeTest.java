@@ -11,12 +11,9 @@ public class RopeScalingTypeTest extends AbstractCliArgEnumTest<RopeScalingType>
 
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-            {RopeScalingType.UNSPECIFIED, "unspecified", 6},
-            {RopeScalingType.NONE, "none", 6},
-            {RopeScalingType.LINEAR, "linear", 6},
-            {RopeScalingType.YARN2, "yarn", 6},
-            {RopeScalingType.LONGROPE, "longrope", 6},
-            {RopeScalingType.MAX_VALUE, "maxvalue", 6},
+            {RopeScalingType.NONE, "none", 3},
+            {RopeScalingType.LINEAR, "linear", 3},
+            {RopeScalingType.YARN, "yarn", 3},
         });
     }
 }

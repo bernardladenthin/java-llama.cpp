@@ -173,6 +173,17 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         throw std::runtime_error("Failed to parse model parameters");
     }
 
+    // A draft model nobody asks: upstream's speculative types default to none, and the parse above
+    // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
+    // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the
+    // type), so it is used as what it is. An explicit --spec-type, "none" included, is not the
+    // default list (the option appends to it) and stays as given.
+    if (params.speculative.has_dft() &&
+        params.speculative.types == std::vector<enum common_speculative_type>{COMMON_SPECULATIVE_TYPE_NONE}) {
+        params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+        SRV_INF("%s", "a draft model without --spec-type: using it as draft-simple\n");
+    }
+
     common_init();
 
     std::unique_ptr<jllama_context> jctx(new jllama_context());

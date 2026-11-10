@@ -1366,6 +1366,31 @@ if(BUILD_TESTING)
         MIN_COUNT        10
         OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_training_fields.h
     )
+    # The values behind the options: every constant of an enum a ModelParameters setter takes, with
+    # the option that setter writes, and the llama_ftype values of QuantizationType. A new
+    # enum-valued setter gets its line here; test_model_flags.cpp and test_c_api.cpp do the rest.
+    set(_jllama_args ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args)
+    jllama_extract_java_enum_values(
+        STRING_ENUMS
+            --cache-type-k=${_jllama_args}/CacheType.java
+            --cache-type-v=${_jllama_args}/CacheType.java
+            --flash-attn=${_jllama_args}/FlashAttn.java
+            --split-mode=${_jllama_args}/GpuSplitMode.java
+            --lazy-mode=${_jllama_args}/LazyMode.java
+            --load-mode=${_jllama_args}/LoadMode.java
+            --mirostat=${_jllama_args}/MiroStat.java
+            --numa=${_jllama_args}/NumaStrategy.java
+            --pooling=${_jllama_args}/PoolingType.java
+            --reasoning-format=${_jllama_args}/ReasoningFormat.java
+            --rope-scaling=${_jllama_args}/RopeScalingType.java
+            --samplers=${_jllama_args}/Sampler.java
+            --spec-draft-sampling=${_jllama_args}/DraftSampling.java
+            --spec-type=${_jllama_args}/SpecType.java
+        ARRAY_PREFIX     JLLAMA_JAVA_ENUM
+        INT_ENUM         ${_jllama_args}/QuantizationType.java
+        INT_ARRAY_PREFIX JLLAMA_JAVA_FTYPE
+        OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_enum_values.h
+    )
 
     add_executable(jllama_test
         src/test/cpp/test_c_api.cpp

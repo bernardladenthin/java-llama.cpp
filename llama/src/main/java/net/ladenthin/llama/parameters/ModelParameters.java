@@ -671,44 +671,25 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set pooling type for embeddings (default: model default if unspecified).
-     * When {@link net.ladenthin.llama.args.PoolingType#UNSPECIFIED} is passed, the parameter is not forwarded
-     * to the native layer (a pooling type set before is removed), leaving the model to use its built-in default
-     * pooling strategy.
+     * Set the pooling type for embeddings. Without a call of this method the model uses the pooling
+     * type it declares itself.
      *
      * @param type the pooling type for embeddings
      * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
-        if (type == PoolingType.UNSPECIFIED) {
-            // unspecified has no CLI string: the model's default pooling type applies
-            removeOption(ModelOption.POOLING);
-            return this;
-        }
-        putString(ModelOption.POOLING, type.getArgValue());
-        return this;
+        return putEnum(ModelOption.POOLING, type);
     }
 
     /**
-     * Set RoPE frequency scaling method (default: linear unless specified by the model).
-     * {@link RopeScalingType#UNSPECIFIED} removes the option, leaving the model's own choice.
-     * llama.cpp's {@code --rope-scaling} accepts only {@code none}, {@code linear} and {@code yarn};
-     * {@link RopeScalingType#LONGROPE} and {@link RopeScalingType#MAX_VALUE} exist in its C API but not
-     * on its command line, and passed through they would make the model fail to load.
+     * Set the RoPE frequency scaling method. Without a call of this method the model's own choice
+     * applies (linear unless the model says otherwise). The constants are the three values
+     * llama.cpp's {@code --rope-scaling} accepts.
      *
      * @param type the RoPE frequency scaling method
      * @return this builder
-     * @throws IllegalArgumentException for {@link RopeScalingType#LONGROPE} or {@link RopeScalingType#MAX_VALUE}
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
-        if (type == RopeScalingType.UNSPECIFIED) {
-            removeOption(ModelOption.ROPE_SCALING);
-            return this;
-        }
-        if (type == RopeScalingType.LONGROPE || type == RopeScalingType.MAX_VALUE) {
-            throw new IllegalArgumentException("--rope-scaling accepts none, linear or yarn; " + type + " (\""
-                    + type.getArgValue() + "\") is rejected by llama.cpp's argument parser");
-        }
         return putEnum(ModelOption.ROPE_SCALING, type);
     }
 
@@ -1560,12 +1541,38 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the draft model for speculative decoding.
      *
+     * <p>llama.cpp's speculative types default to none, and a draft model does not change that by
+     * itself: it would be loaded and never asked. So when no type is set
+     * ({@link #setSpecTypes(SpecType, SpecType...)}) and llama.cpp infers none from the draft file (it does
+     * for an MTP, DFlash or DSpark draft), this library uses the draft model as a plain one,
+     * {@link SpecType#DRAFT_SIMPLE}. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded
+     * and unused.</p>
+     *
      * @param modelDraft the file path of the draft model
      * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
         putString(ModelOption.SPEC_DRAFT_MODEL, modelDraft);
         return this;
+    }
+
+    /**
+     * Set the types of speculative decoding to use ({@code --spec-type}), in the given order.
+     *
+     * <p>Several types can be combined; llama.cpp asks them by its own order of preference. A
+     * draft model ({@link #setModelDraft(String)}) needs no call of this method, see there.
+     * {@link SpecType#NONE} turns speculative decoding off, also for a draft model.</p>
+     *
+     * @param first the first type
+     * @param more further types
+     * @return this builder
+     */
+    public ModelParameters setSpecTypes(SpecType first, SpecType... more) {
+        StringBuilder builder = new StringBuilder(first.getArgValue());
+        for (SpecType type : more) {
+            builder.append(',').append(type.getArgValue());
+        }
+        return putString(ModelOption.SPEC_TYPE, builder.toString());
     }
 
     /**

@@ -5,22 +5,18 @@
 package net.ladenthin.llama.args;
 
 /**
- * RoPE (Rotary Position Embedding) scaling type for {@code --rope-scaling}.
+ * RoPE (Rotary Position Embedding) scaling type for {@code --rope-scaling}: the three values
+ * llama.cpp's argument accepts. The model's own choice is not a constant; it applies when
+ * {@link net.ladenthin.llama.parameters.ModelParameters#setRopeScaling(RopeScalingType)} is not called.
  */
 public enum RopeScalingType implements CliArg {
 
-    /** No scaling type specified; use the model default. */
-    UNSPECIFIED("unspecified"),
     /** No RoPE scaling applied. */
     NONE("none"),
     /** Linear RoPE scaling. */
     LINEAR("linear"),
     /** YaRN (Yet Another RoPE extensioN) scaling. */
-    YARN2("yarn"),
-    /** LongRoPE scaling for extended context. */
-    LONGROPE("longrope"),
-    /** Maximum value sentinel. */
-    MAX_VALUE("maxvalue");
+    YARN("yarn");
 
     private final String argValue;
 

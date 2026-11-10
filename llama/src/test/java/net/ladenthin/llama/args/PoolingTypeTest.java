@@ -11,12 +11,11 @@ public class PoolingTypeTest extends AbstractCliArgEnumTest<PoolingType> {
 
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-            {PoolingType.UNSPECIFIED, "unspecified", 6},
-            {PoolingType.NONE, "none", 6},
-            {PoolingType.MEAN, "mean", 6},
-            {PoolingType.CLS, "cls", 6},
-            {PoolingType.LAST, "last", 6},
-            {PoolingType.RANK, "rank", 6},
+            {PoolingType.NONE, "none", 5},
+            {PoolingType.MEAN, "mean", 5},
+            {PoolingType.CLS, "cls", 5},
+            {PoolingType.LAST, "last", 5},
+            {PoolingType.RANK, "rank", 5},
         });
     }
 }

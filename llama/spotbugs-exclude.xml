@@ -102,6 +102,8 @@ SPDX-License-Identifier: MIT
             <Method name="setNuma"/>
             <Method name="setReasoningFormat"/>
             <Method name="setRopeScaling"/>
+            <Method name="setPoolingType"/>
+            <Method name="setSpecTypes"/>
             <Method name="setSplitMode"/>
         </Or>
     </Match>
