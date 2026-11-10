@@ -69,7 +69,7 @@ SPDX-License-Identifier: MIT
 		<llama.version>${project.version}</llama.version>
 		<atmosphere.version>4.0.76</atmosphere.version>
 		<jline.version>4.5.0</jline.version>
-		<jetty.version>12.1.14</jetty.version>
+		<jetty.version>12.1.15</jetty.version>
 		<acp.version>0.80.0</acp.version>
 		<slf4j.version>2.0.20</slf4j.version>
 		<jspecify.version>1.0.1</jspecify.version>
@@ -83,7 +83,7 @@ SPDX-License-Identifier: MIT
 		<javadoc.plugin.version>3.12.0</javadoc.plugin.version>
 		<gpg.plugin.version>3.2.8</gpg.plugin.version>
 		<central.publishing.version>0.12.0</central.publishing.version>
-		<exec.plugin.version>3.6.4</exec.plugin.version>
+		<exec.plugin.version>3.7.0</exec.plugin.version>
 		<clean.plugin.version>3.5.0</clean.plugin.version>
 		<install.plugin.version>3.2.0</install.plugin.version>
 		<deploy.plugin.version>3.2.0</deploy.plugin.version>
