@@ -5,7 +5,10 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Arrays;
+import java.util.Base64;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -23,6 +26,12 @@ final class SpeechApiSupport {
     /** {@code response_format} of the samples alone, without the WAV header. */
     static final String FORMAT_PCM = "pcm";
 
+    /** {@code response_format} of {@code /tts} for signed 16-bit samples. */
+    static final String FORMAT_PCM16 = "pcm16";
+
+    /** One past the largest magnitude of a signed 16-bit sample. */
+    private static final float PCM16_SCALE = 32768.0f;
+
     /** The {@code Content-Type} of a WAV answer. */
     static final String CONTENT_TYPE_WAV = "audio/wav";
 
@@ -34,18 +43,30 @@ final class SpeechApiSupport {
 
     private SpeechApiSupport() {}
 
+    /** What a request asked the audio to be answered as. */
+    enum Format {
+        /** A whole WAV file. */
+        WAV,
+        /** Signed 16-bit little-endian mono samples. */
+        PCM16,
+        /** 32-bit float little-endian mono samples. */
+        PCM_FLOAT
+    }
+
     /** One parsed speech request. */
     static final class Request {
         private final String input;
         private final @Nullable String voice;
         private final @Nullable String language;
-        private final boolean pcm;
+        private final Format format;
+        private final SpeechOptions options;
 
-        Request(String input, @Nullable String voice, @Nullable String language, boolean pcm) {
+        Request(String input, @Nullable String voice, @Nullable String language, Format format, SpeechOptions options) {
             this.input = input;
             this.voice = voice;
             this.language = language;
-            this.pcm = pcm;
+            this.format = format;
+            this.options = options;
         }
 
         String input() {
@@ -62,8 +83,16 @@ final class SpeechApiSupport {
             return language;
         }
 
+        Format format() {
+            return format;
+        }
+
+        SpeechOptions options() {
+            return options;
+        }
+
         boolean pcm() {
-            return pcm;
+            return format == Format.PCM16;
         }
     }
 
@@ -100,7 +129,133 @@ final class SpeechApiSupport {
                 input.asText(),
                 voiceName.isEmpty() ? null : voiceName,
                 language.isEmpty() ? null : language,
-                FORMAT_PCM.equals(format));
+                FORMAT_PCM.equals(format) ? Format.PCM16 : Format.WAV,
+                SpeechOptions.defaults());
+    }
+
+    /**
+     * Parse a request of llama.cpp's own speech route, {@code POST /tts}: {@code input} (or
+     * {@code prompt}) is the text, {@code voice} and {@code lang} as the model names them,
+     * {@code response_format} {@code wav}, {@code pcm} (32-bit float samples) or {@code pcm16},
+     * {@code speaker_ref_b64} an audio file to clone the voice from, {@code n_predict} (or
+     * {@code max_tokens}) the frame cap, {@code top_k}, {@code seed} and {@code temperature} the
+     * sampling. {@code top_p} and {@code repeat_penalty} are read by upstream's server only and are
+     * ignored here; {@code stream} is refused, this server answers the audio in one piece.
+     *
+     * @param request the request body
+     * @return the parsed request
+     * @throws IllegalArgumentException if the request is one this route does not serve
+     */
+    static Request parseTts(JsonNode request) {
+        String input = request.path("input").asText(request.path("prompt").asText(""));
+        if (input.isEmpty()) {
+            throw new IllegalArgumentException("\"input\" must be a non-empty string");
+        }
+        if (request.path("stream").asBoolean(false)) {
+            throw new IllegalArgumentException("\"stream\" is not supported for /tts on this server");
+        }
+        String name = request.path("response_format").asText(FORMAT_WAV);
+        final Format format;
+        if (FORMAT_WAV.equals(name)) {
+            format = Format.WAV;
+        } else if (FORMAT_PCM.equals(name)) {
+            format = Format.PCM_FLOAT;
+        } else if (FORMAT_PCM16.equals(name)) {
+            format = Format.PCM16;
+        } else {
+            throw new IllegalArgumentException("\"response_format\" must be \"wav\", \"pcm\" or \"pcm16\"");
+        }
+        byte[] reference = null;
+        String encoded = request.path("speaker_ref_b64").asText("");
+        if (!encoded.isEmpty()) {
+            try {
+                reference = Base64.getDecoder().decode(encoded);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("\"speaker_ref_b64\" is not valid base64", e);
+            }
+        }
+        JsonNode frames = request.has("n_predict") ? request.path("n_predict") : request.path("max_tokens");
+        JsonNode temperature = request.path("temperature");
+        if (temperature.isNumber() && temperature.asDouble() < 0.0) {
+            throw new IllegalArgumentException("Field 'temperature': must not be negative");
+        }
+        String voice = request.path("voice").asText("");
+        String language = request.path("lang").asText("");
+        return new Request(
+                input,
+                voice.isEmpty() ? null : voice,
+                language.isEmpty() ? null : language,
+                format,
+                new SpeechOptions(
+                        reference,
+                        integerOrNull(frames, "n_predict"),
+                        integerOrNull(request.path("top_k"), "top_k"),
+                        integerOrNull(request.path("seed"), "seed"),
+                        temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null));
+    }
+
+    /** An absent or null field is unset; anything but an integer is the request's fault. */
+    private static @Nullable Integer integerOrNull(JsonNode node, String name) {
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (!node.isIntegralNumber() || !node.canConvertToInt()) {
+            throw new IllegalArgumentException("Field '" + name + "': must be an integer");
+        }
+        return node.asInt();
+    }
+
+    /**
+     * The body a request's format asks for.
+     *
+     * @param wav the engine's WAV file
+     * @param format the format the request named
+     * @return the file itself, or its samples as that format has them
+     */
+    static byte[] body(byte[] wav, Format format) {
+        switch (format) {
+            case PCM16:
+                return pcm(wav);
+            case PCM_FLOAT:
+                return pcmFloat(wav);
+            default:
+                return wav;
+        }
+    }
+
+    /**
+     * The {@code Content-Type} of {@link #body}.
+     *
+     * @param wav the engine's WAV file
+     * @param format the format the request named
+     * @return the content type, which for raw samples carries their rate and encoding
+     */
+    static String contentType(byte[] wav, Format format) {
+        switch (format) {
+            case PCM16:
+                return pcmContentType(sampleRate(wav));
+            case PCM_FLOAT:
+                return "audio/pcm;rate=" + sampleRate(wav) + ";encoding=float;bits=32";
+            default:
+                return CONTENT_TYPE_WAV;
+        }
+    }
+
+    /**
+     * The samples of a WAV file as 32-bit floats in [-1, 1), little-endian: what {@code /tts}
+     * answers for {@code response_format: pcm}.
+     *
+     * @param wav a 16-bit mono WAV file with the canonical 44-byte header
+     * @return four bytes per sample
+     */
+    static byte[] pcmFloat(byte[] wav) {
+        byte[] samples = pcm(wav);
+        ByteBuffer in = ByteBuffer.wrap(samples).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer out = ByteBuffer.allocate(samples.length / 2 * 4).order(ByteOrder.LITTLE_ENDIAN);
+        while (in.remaining() >= 2) {
+            out.putFloat(in.getShort() / PCM16_SCALE);
+        }
+        return out.array();
     }
 
     /**

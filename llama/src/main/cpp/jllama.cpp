@@ -1434,6 +1434,32 @@ extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_comput
     });
 }
 
+extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_mergeImportanceMatricesNative(
+    JNIEnv *env, jclass, jobjectArray jinputs, jstring joutput, jboolean legacy) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        const jsize n = env->GetArrayLength(jinputs);
+        std::vector<std::string> inputs;
+        for (jsize i = 0; i < n; ++i) {
+            auto element = static_cast<jstring>(env->GetObjectArrayElement(jinputs, i));
+            inputs.push_back(parse_jstring(env, element));
+            env->DeleteLocalRef(element);
+        }
+        std::vector<const char *> paths;
+        for (const std::string &input : inputs) {
+            paths.push_back(input.c_str());
+        }
+        const std::string output_path = parse_jstring(env, joutput);
+        int chunks = 0;
+        const jllama_status status =
+            jllama_imatrix_merge(paths.data(), paths.size(), output_path.c_str(), legacy == JNI_TRUE, &chunks);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return 0;
+        }
+        return static_cast<jint>(chunks);
+    });
+}
+
 JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                           jstring jconfig) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jboolean {

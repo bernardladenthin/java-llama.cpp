@@ -373,6 +373,17 @@ JLLAMA_API jllama_status jllama_imatrix(const char *model_path, const char *text
                                         int chunk_size, int max_chunks, int nthread, int n_gpu_layers,
                                         jllama_load_progress_fn progress, void *progress_user_data, int *n_chunks);
 
+/**
+ * Adds up `n_inputs` importance matrices of one model, computed over different texts, into the one
+ * at `output_path`, as llama-imatrix does with several --in-file and no text. The inputs are GGUF or
+ * the legacy binary format; they must come from the same model and the same chunk size (a legacy
+ * file records none and takes that of the others, 512 without any). The result is GGUF, or with
+ * `legacy_format` the legacy binary format -- so one input converts a file between the two.
+ * `*n_chunks` (may be null) receives the number of chunks the result stands for. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
+                                              bool legacy_format, int *n_chunks);
+
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
  * worker thread inside this library. Not available on Android (server.cpp does not build there);

@@ -86,6 +86,9 @@ final class JllamaNative {
                     JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS,
                     ADDRESS));
 
+    static final MethodHandle IMATRIX_MERGE = downcall(
+            "jllama_imatrix_merge",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS, JAVA_BOOLEAN, ADDRESS));
     static final MethodHandle QUANTIZE_IMATRIX = downcall(
             "jllama_quantize_imatrix",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN, ADDRESS));

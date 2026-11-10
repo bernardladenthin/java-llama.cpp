@@ -17,6 +17,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import net.ladenthin.llama.callback.LoadProgressCallback;
@@ -203,6 +204,36 @@ public final class Jllama {
                     gpuLayers,
                     stub,
                     MemorySegment.NULL,
+                    chunks);
+            return chunks.get(JAVA_INT, 0);
+        }
+    }
+
+    /**
+     * Adds up importance matrices of one model into one file (the C API's
+     * {@code jllama_imatrix_merge}), in GGUF or the legacy binary format; with one input it converts
+     * between the two.
+     *
+     * @param inputPaths the matrices to add up, GGUF or the legacy binary format; at least one
+     * @param outputPath where the result is written
+     * @param legacyFormat {@code true} for the legacy binary format instead of GGUF
+     * @return the number of chunks the result stands for
+     * @throws LlamaException when a file cannot be read or the matrices do not fit together
+     */
+    public static int mergeImportanceMatrices(List<String> inputPaths, String outputPath, boolean legacyFormat) {
+        Objects.requireNonNull(inputPaths, "inputPaths");
+        Objects.requireNonNull(outputPath, "outputPath");
+        if (inputPaths.isEmpty()) {
+            throw new IllegalArgumentException("mergeImportanceMatrices needs at least one importance matrix");
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment chunks = arena.allocate(JAVA_INT);
+            call(
+                    JllamaNative.IMATRIX_MERGE,
+                    JllamaNative.cStrings(arena, inputPaths.toArray(new String[0])),
+                    (long) inputPaths.size(),
+                    cString(arena, outputPath),
+                    legacyFormat,
                     chunks);
             return chunks.get(JAVA_INT, 0);
         }

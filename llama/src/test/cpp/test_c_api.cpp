@@ -2781,6 +2781,158 @@ TEST(CApiImatrix, AMixtureOfExpertsGetsACountPerExpert) {
     }
 }
 
+namespace {
+
+// The values of every tensor of an importance matrix file, and its chunk count and datasets.
+struct imatrix_file {
+    std::map<std::string, std::vector<float>> tensors;
+    uint32_t chunk_count = 0;
+    uint32_t chunk_size = 0;
+    size_t n_datasets = 0;
+};
+
+imatrix_file read_imatrix(const std::string &path) {
+    imatrix_file file;
+    ggml_context *ctx = nullptr;
+    gguf_init_params with_data = {false, &ctx};
+    gguf_context *g = gguf_init_from_file(path.c_str(), with_data);
+    EXPECT_NE(g, nullptr) << path;
+    if (g == nullptr) {
+        return file;
+    }
+    // by the file's tensor list: the context also holds one tensor with the whole data section
+    for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+        const ggml_tensor *t = ggml_get_tensor(ctx, gguf_get_tensor_name(g, i));
+        const float *data = static_cast<const float *>(t->data);
+        file.tensors[t->name].assign(data, data + ggml_nelements(t));
+    }
+    file.chunk_count = gguf_get_val_u32(g, gguf_find_key(g, "imatrix.chunk_count"));
+    file.chunk_size = gguf_get_val_u32(g, gguf_find_key(g, "imatrix.chunk_size"));
+    file.n_datasets = gguf_get_arr_n(g, gguf_find_key(g, "imatrix.datasets"));
+    gguf_free(g);
+    ggml_free(ctx);
+    return file;
+}
+
+} // namespace
+
+TEST(CApiImatrix, MatricesOfOneModelAddUpAndTheLegacyFormatRoundTrips) {
+    tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-imatrix-merge");
+    spec.n_layer = 1;
+    const std::string model = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(model.empty());
+    const std::string text_a = write_calibration_text("jllama-imatrix-merge-a", 200);
+    const std::string text_b = write_calibration_text("jllama-imatrix-merge-b", 400);
+    const std::string a = model + ".a.imatrix.gguf";
+    const std::string b = model + ".b.imatrix.gguf";
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text_a.c_str(), a.c_str(), 32, 0, 2, 0, nullptr, nullptr, nullptr),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text_b.c_str(), b.c_str(), 32, 0, 2, 0, nullptr, nullptr, nullptr),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    // two matrices: every sum and every count is the sum of the two, the chunks and datasets add up
+    const std::string merged = model + ".merged.imatrix.gguf";
+    const char *both[] = {a.c_str(), b.c_str()};
+    int chunks = -1;
+    ASSERT_EQ(jllama_imatrix_merge(both, 2, merged.c_str(), false, &chunks), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(chunks, 18);
+    const imatrix_file fa = read_imatrix(a);
+    const imatrix_file fb = read_imatrix(b);
+    const imatrix_file fm = read_imatrix(merged);
+    EXPECT_EQ(fm.chunk_count, 18u);
+    EXPECT_EQ(fm.chunk_size, 32u);
+    EXPECT_EQ(fm.n_datasets, 2u);
+    ASSERT_EQ(fm.tensors.size(), fa.tensors.size());
+    ASSERT_FALSE(fm.tensors.empty());
+    for (const auto &[name, values] : fm.tensors) {
+        const std::vector<float> &va = fa.tensors.at(name);
+        const std::vector<float> &vb = fb.tensors.at(name);
+        ASSERT_EQ(values.size(), va.size()) << name;
+        for (size_t i = 0; i < values.size(); ++i) {
+            ASSERT_FLOAT_EQ(values[i], va[i] + vb[i]) << name << "[" << i << "]";
+        }
+    }
+
+    // one matrix into the legacy format and back: no GGUF in between, the same mean per column after
+    const std::string legacy = model + ".a.imatrix.dat";
+    const char *only_a[] = {a.c_str()};
+    ASSERT_EQ(jllama_imatrix_merge(only_a, 1, legacy.c_str(), true, &chunks), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(chunks, 6);
+    {
+        std::ifstream in(legacy, std::ios::binary);
+        char magic[4] = {};
+        in.read(magic, 4);
+        EXPECT_NE(std::string(magic, 4), "GGUF");
+    }
+    const std::string back = model + ".a.back.imatrix.gguf";
+    const char *only_legacy[] = {legacy.c_str()};
+    ASSERT_EQ(jllama_imatrix_merge(only_legacy, 1, back.c_str(), false, &chunks), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(chunks, 6);
+    const imatrix_file fback = read_imatrix(back);
+    for (const char *weight : {"attn_q", "ffn_down"}) {
+        const std::string name = std::string("blk.0.") + weight + ".weight";
+        const std::vector<float> &sums = fa.tensors.at(name + ".in_sum2");
+        const std::vector<float> &sums_back = fback.tensors.at(name + ".in_sum2");
+        const float count = fa.tensors.at(name + ".counts").at(0);
+        const float count_back = fback.tensors.at(name + ".counts").at(0);
+        ASSERT_EQ(sums.size(), sums_back.size());
+        ASSERT_GT(count, 0.0f);
+        ASSERT_GT(count_back, 0.0f);
+        for (size_t i = 0; i < sums.size(); ++i) {
+            EXPECT_NEAR(sums_back[i] / count_back, sums[i] / count, 1e-4f * std::abs(sums[i] / count) + 1e-9f)
+                << name << "[" << i << "]";
+        }
+    }
+    // the quantizer reads the legacy file as it reads the GGUF one
+    const std::string quantized = model + ".legacy.iq2.gguf";
+    ASSERT_EQ(jllama_quantize_imatrix(model.c_str(), quantized.c_str(), 20, 1, false, legacy.c_str()), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    // a legacy file next to a GGUF one takes the other's chunk size
+    const std::string mixed = model + ".mixed.imatrix.gguf";
+    const char *legacy_and_b[] = {legacy.c_str(), b.c_str()};
+    ASSERT_EQ(jllama_imatrix_merge(legacy_and_b, 2, mixed.c_str(), false, &chunks), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(chunks, 18);
+    EXPECT_EQ(read_imatrix(mixed).chunk_size, 32u);
+
+    // what does not fit is refused by name, with nothing written
+    const std::string refused = model + ".refused.imatrix.gguf";
+    EXPECT_EQ(jllama_imatrix_merge(nullptr, 0, refused.c_str(), false, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(jllama_imatrix_merge(both, 2, nullptr, false, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    const std::string missing = model + ".missing.imatrix.gguf";
+    const char *with_missing[] = {a.c_str(), missing.c_str()};
+    EXPECT_EQ(jllama_imatrix_merge(with_missing, 2, refused.c_str(), false, nullptr), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find(missing), std::string::npos) << jllama_last_error();
+    const std::string other_size = model + ".c.imatrix.gguf";
+    ASSERT_EQ(jllama_imatrix(model.c_str(), text_b.c_str(), other_size.c_str(), 64, 0, 2, 0, nullptr, nullptr, nullptr),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const char *two_sizes[] = {a.c_str(), other_size.c_str()};
+    EXPECT_EQ(jllama_imatrix_merge(two_sizes, 2, refused.c_str(), false, nullptr), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("different chunk sizes"), std::string::npos) << jllama_last_error();
+    tiny_model_spec narrow = tiny_model_spec::wide(128, "jllama-imatrix-merge-other");
+    narrow.n_layer = 1;
+    const std::string other_model = write_tiny_llama_gguf(narrow);
+    const std::string other = other_model + ".imatrix.gguf";
+    ASSERT_EQ(
+        jllama_imatrix(other_model.c_str(), text_a.c_str(), other.c_str(), 32, 0, 2, 0, nullptr, nullptr, nullptr),
+        JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const char *two_models[] = {a.c_str(), other.c_str()};
+    EXPECT_EQ(jllama_imatrix_merge(two_models, 2, refused.c_str(), false, nullptr), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("not of the same model"), std::string::npos) << jllama_last_error();
+    EXPECT_FALSE(std::filesystem::exists(refused));
+
+    std::error_code ec;
+    for (const std::string &file :
+         {model, text_a, text_b, a, b, merged, legacy, back, quantized, mixed, other_size, other_model, other}) {
+        std::filesystem::remove(file, ec);
+    }
+}
+
 TEST(CApiImatrix, WhatCannotBeComputedIsRefusedByName) {
     const std::string model = write_tiny_llama_gguf("jllama-imatrix-refused");
     const std::string text = write_calibration_text("jllama-imatrix-refused", 40);
@@ -2836,6 +2988,48 @@ TEST(CApiMtp, AModelWithAnMtpBlockDraftsWithItAndAnswersTheSameWithout) {
     EXPECT_EQ(drafted[""], 0);
     std::error_code ec;
     std::filesystem::remove(path, ec);
+}
+
+TEST(CApiMtp, ASlotOfAModelDraftingWithItsMtpBlockIsSavedAndRestoredWhole) {
+    // llama.cpp b12091 (#30141): a slot file carries the state of the speculative decoding next to
+    // the prompt -- for MTP the hidden state the block drafts from. The round trip has to give back
+    // what was written, and the model has to go on drafting and answering as before.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::mtp("jllama-mtp-slot"));
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-mtp-slots-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    std::map<std::string, size_t> written;
+    for (const char *type : {"none", "draft-mtp"}) {
+        SCOPED_TRACE(std::string("--spec-type ") + type);
+        jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string(), "--spec-type", type});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        const std::string before = greedy_answer(model, 48);
+        EXPECT_FALSE(before.empty());
+
+        const std::string name = std::string(type) + ".bin";
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json saved_json = json::parse(saved.str());
+        std::error_code ec;
+        written[type] = std::filesystem::file_size(dir / name, ec);
+        ASSERT_FALSE(ec) << ec.message();
+        EXPECT_EQ(written[type], saved_json.at("n_written").get<size_t>()) << saved.str();
+
+        Owned restored;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &restored.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json restored_json = json::parse(restored.str());
+        EXPECT_EQ(restored_json.at("n_restored").get<int>(), saved_json.at("n_saved").get<int>()) << restored.str();
+        EXPECT_EQ(restored_json.at("n_read").get<size_t>(), written[type]) << restored.str();
+        // the restored slot answers the same request the same way
+        EXPECT_EQ(greedy_answer(model, 48), before);
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2931,6 +3125,106 @@ TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
     EXPECT_EQ(jllama_completions(model, R"({"prompt":"hello world","temperature":0,"n_predict":4})", &completion.s),
               JLLAMA_STATUS_OK)
         << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiTokenizers, ASentencePieceVocabularyWithBytePiecesSpellsOutWhatItHasNoPieceFor) {
+    tiny_model_spec plain;
+    plain.prefix = "jllama-spm-plain";
+    plain.tokenizer = tiny_model_spec::tokenizer_kind::SENTENCEPIECE;
+    tiny_model_spec bytes;
+    bytes.prefix = "jllama-spm-bytes";
+    bytes.tokenizer = tiny_model_spec::tokenizer_kind::SENTENCEPIECE_BYTES;
+    const std::string plain_path = write_tiny_llama_gguf(plain);
+    const std::string bytes_path = write_tiny_llama_gguf(bytes);
+    jllama_model *without = load_tiny(plain_path, {});
+    jllama_model *with = load_tiny(bytes_path, {});
+    ASSERT_NE(without, nullptr) << jllama_last_error();
+    ASSERT_NE(with, nullptr) << jllama_last_error();
+
+    // <unk> <s> </s>, the space piece, 94 characters, 10 word pieces, then <0x00> .. <0xFF>
+    const int space = 3;
+    const int first_byte = 3 + 1 + 94 + 10;
+    const std::string e_acute = "\xC3\xA9"; // U+00E9, no piece of its own
+    // Without byte pieces llama.cpp has nothing to fall back to: the tokenization fails (its lookup of
+    // the byte piece throws, and the message is the map's, "unordered_map::at"). An error, not <unk>
+    // and not a crash; a converted SentencePiece model always has the byte pieces.
+    {
+        int *tokens = nullptr;
+        size_t count = 0;
+        EXPECT_NE(jllama_tokenize(without, e_acute.c_str(), false, &tokens, &count), JLLAMA_STATUS_OK);
+        EXPECT_EQ(tokens, nullptr);
+        EXPECT_FALSE(std::string(jllama_last_error()).empty());
+    }
+    // with them it is its two UTF-8 bytes, and comes back
+    EXPECT_EQ(token_ids(with, e_acute), (std::vector<int>{space, first_byte + 0xC3, first_byte + 0xA9}));
+    EXPECT_EQ(detokenized(with, token_ids(with, e_acute)), " " + e_acute);
+    // a known word is still its piece
+    EXPECT_EQ(token_ids(with, "hello"), (std::vector<int>{3 + 1 + 94 + 4}));
+
+    jllama_model_free(without);
+    jllama_model_free(with);
+    std::error_code ec;
+    std::filesystem::remove(plain_path, ec);
+    std::filesystem::remove(bytes_path, ec);
+}
+
+TEST(CApiTokenizers, AUnigramVocabularyTakesTheBestScoringPiecesAndEndsWithItsEos) {
+    tiny_model_spec spec;
+    spec.prefix = "jllama-unigram";
+    spec.tokenizer = tiny_model_spec::tokenizer_kind::UNIGRAM;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    // <pad> </s> <unk>, the space piece, 94 characters, then the pieces of the two words
+    const int hello = 3 + 1 + 94 + 4;
+    const int world = hello + 5;
+    EXPECT_EQ(token_ids(model, "hello world"), (std::vector<int>{hello, world}));
+    // T5 has no BOS; with the special tokens the text ends with </s>
+    EXPECT_EQ(token_ids(model, "hello world", true), (std::vector<int>{hello, world, 1}));
+    // a word without a piece is the space piece and its characters
+    EXPECT_EQ(token_ids(model, "cat"), (std::vector<int>{3, 4 + ('c' - '!'), 4 + ('a' - '!'), 4 + ('t' - '!')}));
+    // a character outside the vocabulary is <unk>
+    const std::vector<int> unknown = token_ids(model, "\xC3\xA9");
+    EXPECT_NE(std::find(unknown.begin(), unknown.end(), 2), unknown.end());
+    // the round trip comes back behind the space the prefix put in front, as for SentencePiece
+    EXPECT_EQ(detokenized(model, token_ids(model, "hello world")), " hello world");
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("vocab_type").get<int>(), 4) << "LLAMA_VOCAB_TYPE_UGM";
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiTokenizers, AnRwkvVocabularyMatchesTheLongestTokenGreedily) {
+    tiny_model_spec spec;
+    spec.prefix = "jllama-rwkv-vocab";
+    spec.tokenizer = tiny_model_spec::tokenizer_kind::RWKV;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    // 256 byte tokens, then "hello" and " world"
+    EXPECT_EQ(token_ids(model, "hello world"), (std::vector<int>{256, 257}));
+    // the longest match wins and what is left is bytes: "hell" has no token, "o" is one byte
+    EXPECT_EQ(token_ids(model, "hell"), (std::vector<int>{'h', 'e', 'l', 'l'}));
+    EXPECT_EQ(token_ids(model, "helloo"), (std::vector<int>{256, 'o'}));
+    // escaped tokens are the bytes they stand for: a backslash, a newline, a byte above 0x7F
+    EXPECT_EQ(token_ids(model, "\\\n\xC3\xA9"), (std::vector<int>{'\\', '\n', 0xC3, 0xA9}));
+    for (const std::string &text : {std::string("hello world"), std::string("a\\b\nc"), std::string("\xC3\xA9")}) {
+        EXPECT_EQ(detokenized(model, token_ids(model, text)), text);
+    }
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("vocab_type").get<int>(), 5) << "LLAMA_VOCAB_TYPE_RWKV";
     jllama_model_free(model);
     std::error_code ec;
     std::filesystem::remove(path, ec);

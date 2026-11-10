@@ -21,6 +21,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   any implementation of the interface. Without one the route answers `501`; `stream_format` other
   than `audio`, a `speed` other than 1 and another `response_format` are `400`. `GET /props` lists
   the engine's `voices`.
+- **`POST /tts` on `OpenAiCompatServer`**, llama.cpp's own speech route: `input` (or `prompt`),
+  `voice`, `lang`, `speaker_ref_b64` (an audio file whose voice is cloned), `n_predict`, `top_k`,
+  `seed`, `temperature`, and `response_format` `wav`, `pcm` (32-bit float samples) or `pcm16`. The
+  options reach the engine as a `SpeechOptions` (`SpeechBackend.synthesize(text, voice, language,
+  options)`, a default method an engine overrides). `stream` is refused: the audio is answered in
+  one piece.
+- **Merging importance matrices**: `LlamaQuantizer.mergeImportanceMatrices(inputs, output[,
+  legacyFormat])`, `jllama_imatrix_merge()` in the C API and `Jllama.mergeImportanceMatrices` in
+  `llama-ffm` add up matrices of one model computed over different texts, as `llama-imatrix` does
+  with several `--in-file`. Inputs are GGUF or the legacy binary format, the output either; one
+  input converts a file between the two. Matrices of different chunk sizes or models are refused.
 - **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
   frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what
@@ -62,6 +73,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **The CUDA modules are built with CUDA 13.5** (were 13.4), as upstream's release builds, and with
+  the CCCL the toolkit bundles. They still need the CUDA 13 runtime; a GPU newer than Blackwell
+  needs a driver new enough for 13.5.
 - **`text.format` of `/v1/responses` is converted as llama.cpp converts it** (b12240): the format
   object becomes `response_format` with every key but `type` (`strict` and `description` included),
   it replaces a `response_format` the request also carries, `type` `text` removes one, and a `text`

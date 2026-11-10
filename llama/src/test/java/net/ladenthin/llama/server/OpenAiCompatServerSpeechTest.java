@@ -18,9 +18,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import org.jspecify.annotations.Nullable;
@@ -66,6 +69,14 @@ public class OpenAiCompatServerSpeechTest {
                 throw new IllegalStateException("the engine failed");
             }
             return wav(24000, samples);
+        }
+
+        final List<SpeechOptions> options = new ArrayList<>();
+
+        @Override
+        public byte[] synthesize(String text, @Nullable String voice, @Nullable String language, SpeechOptions set) {
+            options.add(set);
+            return synthesize(text, voice, language);
         }
 
         @Override
@@ -134,6 +145,113 @@ public class OpenAiCompatServerSpeechTest {
             }
             assertThat(speech.calls, is(Arrays.asList("Hello there.|male|en", "Hello there.|male|en")));
         }
+    }
+
+    @Test
+    public void ttsHandsTheSamplingAndTheSpeakerReferenceToTheEngine() throws IOException {
+        FakeSpeech speech = new FakeSpeech();
+        byte[] reference = {(byte) 0x52, (byte) 0x00, (byte) 0xFF, (byte) 0x80};
+        try (OpenAiCompatServer server = server(speech)) {
+            Answer answer = send(
+                    server.getPort(),
+                    "POST",
+                    "/tts",
+                    "{\"input\":\"Guten Morgen.\",\"voice\":\"male\",\"lang\":\"de\",\"n_predict\":200,"
+                            + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"speaker_ref_b64\":\""
+                            + Base64.getEncoder().encodeToString(reference) + "\"}");
+            assertThat(answer.text(), answer.code, is(200));
+            assertThat(answer.contentType, is("audio/wav"));
+            assertArrayEquals(wav(24000, speech.samples), answer.body);
+            assertThat(speech.calls, is(Arrays.asList("Guten Morgen.|male|de")));
+            SpeechOptions set = speech.options.get(0);
+            assertThat(set.getMaxFrames(), is(200));
+            assertThat(set.getTopK(), is(7));
+            assertThat(set.getSeed(), is(42));
+            assertThat(set.getTemperature(), is(0.5f));
+            assertArrayEquals(reference, set.getSpeakerReference());
+        }
+    }
+
+    @Test
+    public void ttsTakesPromptAndMaxTokensAsUpstreamsAliasesAndLeavesTheRestUnset() throws IOException {
+        FakeSpeech speech = new FakeSpeech();
+        try (OpenAiCompatServer server = server(speech)) {
+            Answer answer =
+                    send(server.getPort(), "POST", "/tts", "{\"prompt\":\"Hi\",\"max_tokens\":64,\"seed\":null}");
+            assertThat(answer.text(), answer.code, is(200));
+            assertThat(speech.calls, is(Arrays.asList("Hi|null|null")));
+            SpeechOptions set = speech.options.get(0);
+            assertThat(set.getMaxFrames(), is(64));
+            assertThat(set.getTopK(), is((Integer) null));
+            assertThat(set.getSeed(), is((Integer) null));
+            assertThat(set.getTemperature(), is((Float) null));
+            assertThat(set.getSpeakerReference() == null, is(true));
+        }
+    }
+
+    @Test
+    public void ttsAnswersFloatSamplesForPcmAndSixteenBitOnesForPcm16() throws IOException {
+        FakeSpeech speech = new FakeSpeech();
+        try (OpenAiCompatServer server = server(speech)) {
+            Answer floats = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"response_format\":\"pcm\"}");
+            assertThat(floats.code, is(200));
+            assertThat(floats.contentType, is("audio/pcm;rate=24000;encoding=float;bits=32"));
+            ByteBuffer read = ByteBuffer.wrap(floats.body).order(ByteOrder.LITTLE_ENDIAN);
+            // the fake's samples: 0x8000 = -32768, 0x7FFF = 32767, 0x28C3 = 10435
+            assertThat(floats.body.length, is(12));
+            assertThat(read.getFloat(), is(-1.0f));
+            assertThat(read.getFloat(), is(32767 / 32768.0f));
+            assertThat(read.getFloat(), is(10435 / 32768.0f));
+
+            Answer ints = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"response_format\":\"pcm16\"}");
+            assertThat(ints.contentType, is("audio/pcm;rate=24000;encoding=signed-int;bits=16"));
+            assertArrayEquals(speech.samples, ints.body);
+        }
+    }
+
+    @Test
+    public void aTtsRequestThisRouteDoesNotServeIs400AndNeverReachesTheEngine() throws IOException {
+        FakeSpeech speech = new FakeSpeech();
+        try (OpenAiCompatServer server = server(speech)) {
+            String[] refused = {
+                "{}",
+                "{\"input\":\"\"}",
+                "{\"input\":\"Hi\",\"stream\":true}",
+                "{\"input\":\"Hi\",\"response_format\":\"mp3\"}",
+                "{\"input\":\"Hi\",\"speaker_ref_b64\":\"not base64!\"}",
+                "{\"input\":\"Hi\",\"top_k\":\"many\"}",
+                "{\"input\":\"Hi\",\"n_predict\":1.5}",
+                "{\"input\":\"Hi\",\"temperature\":-1}"
+            };
+            for (String body : refused) {
+                Answer answer = send(server.getPort(), "POST", "/tts", body);
+                assertThat(body + " -> " + answer.text(), answer.code, is(400));
+            }
+            assertThat(speech.calls, is(new ArrayList<String>()));
+        }
+        try (OpenAiCompatServer server = server(null)) {
+            assertThat(send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\"}").code, is(501));
+        }
+    }
+
+    @Test
+    public void aBackendThatKnowsNoOptionsIsAskedWithoutThem() throws IOException {
+        List<String> calls = new ArrayList<>();
+        SpeechBackend plain = (text, voice, language) -> {
+            calls.add(text + "|" + voice + "|" + language);
+            return wav(16000, new byte[] {1, 0});
+        };
+        try (OpenAiCompatServer server = server(plain)) {
+            Answer answer = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"top_k\":3,\"voice\":\"alba\"}");
+            assertThat(answer.code, is(200));
+            assertThat(calls, is(Arrays.asList("Hi|alba|null")));
+        }
+        assertThat(
+                SpeechOptions.defaults().toString(),
+                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null}"));
+        assertThat(
+                new SpeechOptions(new byte[3], 1, 2, 3, 0.25f).toString(),
+                is("SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25}"));
     }
 
     @Test

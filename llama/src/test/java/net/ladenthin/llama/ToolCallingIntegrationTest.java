@@ -160,6 +160,39 @@ public class ToolCallingIntegrationTest {
                 is(true));
     }
 
+    /**
+     * A {@code response_format} next to {@code tools} constrains the whole answer (llama.cpp b12242,
+     * #31956). Before it, offering tools made the grammar lazy -- in force only once the model began a
+     * tool call -- so a request with both got free text. The model is asked something it would answer
+     * in a sentence; with the schema in force the content is one of the two words.
+     */
+    @Test
+    public void aResponseFormatNextToToolsConstrainsTheWholeAnswer() throws IOException {
+        ChatRequest request = ChatRequest.empty()
+                .appendMessage("system", "You are a helpful assistant.")
+                .appendMessage("user", "Is water wet? Explain your reasoning in two sentences.")
+                .appendTool(TEST_TOOL)
+                .withInferenceCustomizer(params -> params.withNPredict(64)
+                        .withTemperature(0.0f)
+                        .withTopK(1)
+                        .withTopP(1.0f)
+                        .withResponseFormat("{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"answer\","
+                                + "\"schema\":{\"enum\":[\"yes\",\"no\"]}}}"));
+
+        ChatResponse response = model.chat(request);
+
+        ChatMessage message = response.getFirstMessage().orElseThrow();
+        // What the request must not get is the free text it asks for. A tool call would be the other
+        // constrained answer; the question gives the model no reason for one.
+        if (message.getToolCalls().isEmpty()) {
+            String answer = MAPPER.readTree(message.getContent()).asText();
+            assertThat("content of " + response, answer.equals("yes") || answer.equals("no"), is(true));
+        } else {
+            assertThat("tool calls of " + response, message.getToolCalls(), hasSize(1));
+            assertThat(message.getToolCalls().get(0).getName(), is("test"));
+        }
+    }
+
     private static ChatRequest toolRequest() {
         return ChatRequest.empty()
                 .appendMessage("system", "You are a coding assistant.")

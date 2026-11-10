@@ -270,8 +270,8 @@ iGPU, the example being a Core Ultra 7 165U).
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
 | `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries (with the CPU modules, aarch64 one per ARM feature level) for other Android JVM setups. |
-| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
-| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
+| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). **The driver must be new enough for CUDA 13.5** -- see the note below. |
+| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). **The driver must be new enough for CUDA 13.5** -- see the note below. |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
@@ -315,7 +315,7 @@ iGPU, the example being a Core Ultra 7 165U).
 > reading the code** ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)).
 >
 > **CUDA: the module ships native code for Turing through Blackwell, and a GPU outside that set
-> needs a driver new enough for CUDA 13.4.** `sm_75` (T4, RTX 20xx), `sm_80` (A100), `sm_86`,
+> needs a driver new enough for CUDA 13.5.** `sm_75` (T4, RTX 20xx), `sm_80` (A100), `sm_86`,
 > `sm_89`, `sm_90` (H100), `sm_100` and Blackwell are compiled in, so those GPUs do not depend on
 > the driver at all; anything newer falls back to the module's PTX, which the driver must be able to
 > compile. **A driver too old for that does not fall back to the CPU -- it ends the process**: ggml
@@ -560,6 +560,8 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
 | `net.ladenthin.llama.tts.template.model` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to a TTS backbone GGUF whose chat templates include a `"tts"` one, LFM3-Audio (e.g. `LFM3-Audio-2B-Q4_0.gguf` of `LiquidAI/LFM3-Audio-2B-GGUF`): the synthesis speaks the prompt rendered from that template with language and voice. Not in CI's model set. |
 | `net.ladenthin.llama.tts.template.mmproj` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
+| `net.ladenthin.llama.tts.pipeline.model` | unset (test self-skips) | test | `TtsPipelineIntegrationTest` | Path to the backbone GGUF of any other speech pipeline (Pocket TTS, Chatterbox, Drama-3, Soprano): what every pipeline has to do whatever its sample rate, voices and voice cloning are. |
+| `net.ladenthin.llama.tts.pipeline.mmproj` | unset (test self-skips) | test | `TtsPipelineIntegrationTest` | Path to its mmproj. |
 | `net.ladenthin.llama.realtime.model` | unset (test self-skips) | test | `RealtimeNativeServerIntegrationTest` | Path to a model that holds a spoken conversation on `NativeServer`'s `/v1/realtime` (audio in, text and audio out), e.g. `LFM3-Audio-2B-Q4_0.gguf`. Not in CI's model set. |
 | `net.ladenthin.llama.realtime.mmproj` | unset (test self-skips) | test | `RealtimeNativeServerIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
@@ -980,6 +982,10 @@ LlamaQuantizer.quantize("model-f16.gguf", "model-iq2_xs.gguf", QuantizationType.
 // The matrix itself, computed from a calibration text (llama-imatrix without the separate binary;
 // the file is interchangeable with that tool's):
 int chunks = LlamaQuantizer.computeImportanceMatrix("model-f16.gguf", "calibration.txt", "model.imatrix.gguf");
+// Matrices of one model over different texts add up (llama-imatrix with several --in-file); the
+// inputs are GGUF or the legacy binary format, and "true" as a third argument writes the latter.
+LlamaQuantizer.mergeImportanceMatrices(
+        Arrays.asList("model.code.imatrix.gguf", "model.prose.imatrix.gguf"), "model.imatrix.gguf");
 ```
 
 ### Raw JSON Endpoints
@@ -1088,6 +1094,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
 | `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
+| `POST /tts` | the same `SpeechBackend`, with llama.cpp's own fields: `input` / `prompt`, `voice`, `lang`, `speaker_ref_b64`, `n_predict`, `top_k`, `seed`, `temperature`, `response_format` `wav` / `pcm` (float) / `pcm16`; `stream` is refused |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
 | `GET /slots` | native per-slot token/cache counters (JSON array) |

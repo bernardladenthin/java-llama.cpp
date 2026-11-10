@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 // Computing an importance matrix: what upstream's llama-imatrix tool does, as a library function.
 // The model reads a calibration text chunk by chunk, and for every weight matrix of its layers the
@@ -29,5 +30,13 @@ struct options {
 // it was computed over. Throws std::runtime_error naming what failed.
 int compute(const std::string &model_path, const std::string &text_path, const std::string &output_path,
             const options &opts);
+
+// Adds up importance matrices of one model, computed over different texts, into the one at
+// output_path (GGUF), as llama-imatrix does with several --in-file and no text. The inputs are GGUF
+// or the legacy binary format (which is thereby converted); they must have been computed with the
+// same chunk size. With legacy_format the result is written in the legacy binary format instead,
+// for a tool that reads only that. Returns the number of chunks the result stands for. Throws
+// std::runtime_error naming the file that could not be read or does not fit.
+int merge(const std::vector<std::string> &input_paths, const std::string &output_path, bool legacy_format);
 
 } // namespace jllama::imatrix

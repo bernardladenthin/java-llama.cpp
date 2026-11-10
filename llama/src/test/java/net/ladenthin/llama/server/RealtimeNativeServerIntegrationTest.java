@@ -5,6 +5,7 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -240,6 +241,62 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
     }
 
     /** {@code response.create} with one output modality and a token bound. */
+    /**
+     * {@code session.update} takes {@code instructions}, {@code output_modalities} and
+     * {@code max_output_tokens} (llama.cpp b12239, #31978): the session reports them back, and a
+     * {@code response.create} that names none of them answers under the session's -- text only here.
+     * The response carries no token count, so the limit is pinned through what the session reports.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    public void theSessionsInstructionsModalitiesAndTokenLimitApplyToItsResponses() throws Exception {
+        try (Session session = Session.open(port, "")) {
+            session.await("session.created");
+            ObjectNode update = MAPPER.createObjectNode().put("type", "session.update");
+            ObjectNode settings = update.putObject("session").put("type", "realtime");
+            settings.put("instructions", "You answer in one short sentence.");
+            settings.putArray("output_modalities").add("text");
+            settings.put("max_output_tokens", 24);
+            session.send(update);
+            JsonNode updated = session.await("session.updated").path("session");
+            assertThat(
+                    updated.toString(), updated.path("instructions").asText(), is("You answer in one short sentence."));
+            assertThat(
+                    updated.toString(),
+                    updated.path("output_modalities").path(0).asText(),
+                    is("text"));
+            assertThat(updated.toString(), updated.path("output_modalities").size(), is(1));
+            assertThat(updated.toString(), updated.path("max_output_tokens").asInt(), is(24));
+
+            session.userText("Tell me about the sea.");
+            session.send(MAPPER.createObjectNode().put("type", "response.create"));
+            Response response = session.collectResponse();
+            assertThat("text of " + response.done, response.text.toString().trim(), not(is("")));
+            assertThat("a text-only session sent audio: " + response.done, response.audioBytes, is(0));
+        }
+    }
+
+    /** What the session cannot take is an {@code error} event, not a dropped field. */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    public void aSessionUpdateWithAnUnknownModalityOrABadTokenLimitIsAnError() throws Exception {
+        for (String field : new String[] {"output_modalities", "max_output_tokens"}) {
+            try (Session session = Session.open(port, "")) {
+                session.await("session.created");
+                ObjectNode update = MAPPER.createObjectNode().put("type", "session.update");
+                ObjectNode settings = update.putObject("session").put("type", "realtime");
+                if (field.equals("output_modalities")) {
+                    settings.putArray(field).add("video");
+                } else {
+                    settings.put(field, "many");
+                }
+                session.send(update);
+                JsonNode error = session.awaitAny("error");
+                assertThat(error.toString(), error.toString(), containsString(field));
+            }
+        }
+    }
+
     private static ObjectNode responseCreate(String modality, int maxOutputTokens) {
         ObjectNode create = MAPPER.createObjectNode().put("type", "response.create");
         ObjectNode response = create.putObject("response");
@@ -380,6 +437,22 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
                     fail("error event while waiting for " + type + ": " + event);
                 }
                 if (eventType.equals(type)) {
+                    return event;
+                }
+            }
+        }
+
+        /** The next event of {@code type}, an {@code error} event included; fails after the timeout. */
+        JsonNode awaitAny(String type) throws Exception {
+            long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(EVENT_TIMEOUT_SECONDS);
+            while (true) {
+                long left = deadline - System.currentTimeMillis();
+                JsonNode event = left > 0 ? events.poll(left, TimeUnit.MILLISECONDS) : null;
+                if (event == null) {
+                    fail("no " + type + " within " + EVENT_TIMEOUT_SECONDS + " s; seen: " + types());
+                }
+                seen.add(event);
+                if (event.path("type").asText().equals(type)) {
                     return event;
                 }
             }

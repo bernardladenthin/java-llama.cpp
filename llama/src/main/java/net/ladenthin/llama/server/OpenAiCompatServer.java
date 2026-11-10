@@ -30,6 +30,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
@@ -111,6 +112,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     /** OpenAI's speech route: text to audio, served when the server was given a speech engine. */
     public static final String PATH_AUDIO_SPEECH = "/v1/audio/speech";
+
+    /** llama.cpp's own speech route, with its sampling fields and a speaker reference. */
+    public static final String PATH_TTS = "/tts";
 
     /** Anthropic's token count of a {@code /v1/messages} request, without generating. */
     public static final String PATH_MESSAGES_COUNT_TOKENS = "/v1/messages/count_tokens";
@@ -276,8 +280,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
         register("/v1/reranking", this::handleRerank);
         register(PATH_INFILL, this::handleInfill);
         register("/v1/infill", this::handleInfill);
-        register(PATH_AUDIO_SPEECH, this::handleAudioSpeech);
-        register("/audio/speech", this::handleAudioSpeech);
+        register(PATH_AUDIO_SPEECH, exchange -> handleSpeech(exchange, SpeechApiSupport::parse));
+        register("/audio/speech", exchange -> handleSpeech(exchange, SpeechApiSupport::parse));
+        register(PATH_TTS, exchange -> handleSpeech(exchange, SpeechApiSupport::parseTts));
         register(PATH_MESSAGES, this::handleAnthropicMessages);
         register("/messages", this::handleAnthropicMessages);
         register(PATH_RESPONSES, this::handleResponses);
@@ -494,7 +499,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * {@code response_format: pcm} as its samples alone. A server without a speech engine answers
      * {@code 501}, as llama.cpp's does for a model that generates no audio.
      */
-    private void handleAudioSpeech(HttpExchange exchange) throws IOException {
+    private void handleSpeech(HttpExchange exchange, Function<JsonNode, SpeechApiSupport.Request> parser)
+            throws IOException {
         try {
             JsonNode request = requirePostJson(exchange);
             if (request == null) {
@@ -512,15 +518,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
             final byte[] audio;
             final String contentType;
             try {
-                SpeechApiSupport.Request parsed = SpeechApiSupport.parse(request);
-                byte[] wav = engine.synthesize(parsed.input(), parsed.voice(), parsed.language());
-                if (parsed.pcm()) {
-                    contentType = SpeechApiSupport.pcmContentType(SpeechApiSupport.sampleRate(wav));
-                    audio = SpeechApiSupport.pcm(wav);
-                } else {
-                    contentType = SpeechApiSupport.CONTENT_TYPE_WAV;
-                    audio = wav;
-                }
+                SpeechApiSupport.Request parsed = parser.apply(request);
+                byte[] wav = engine.synthesize(parsed.input(), parsed.voice(), parsed.language(), parsed.options());
+                contentType = SpeechApiSupport.contentType(wav, parsed.format());
+                audio = SpeechApiSupport.body(wav, parsed.format());
             } catch (IllegalArgumentException | InvalidRequestException e) {
                 sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
                 return;

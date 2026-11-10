@@ -243,6 +243,17 @@ public class TestConstants {
     public static final String PROP_TTS_TEMPLATE_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.template.mmproj";
 
     /**
+     * System property holding a path to the backbone GGUF of any other speech pipeline llama.cpp
+     * generates audio with (Pocket TTS, Chatterbox b12097, Drama-3 b12116, Soprano). Consumed by
+     * {@code TtsPipelineIntegrationTest}, which self-skips when this or {@link #PROP_TTS_PIPELINE_MMPROJ}
+     * is unset or missing: no such model is in CI's set.
+     */
+    public static final String PROP_TTS_PIPELINE_MODEL = LlamaSystemProperties.PREFIX + ".tts.pipeline.model";
+
+    /** System property holding a path to the mmproj of {@link #PROP_TTS_PIPELINE_MODEL}. */
+    public static final String PROP_TTS_PIPELINE_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.pipeline.mmproj";
+
+    /**
      * System property holding a path to a model that holds a spoken conversation on the embedded
      * server's {@code /v1/realtime} (audio in, text and audio out: LFM3-Audio, llama.cpp b11946).
      * Consumed by {@code RealtimeNativeServerIntegrationTest}, which self-skips when this or

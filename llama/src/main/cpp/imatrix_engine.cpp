@@ -10,12 +10,14 @@
 #include "imatrix_engine.h"
 
 #include "common.h"
+#include "imatrix-loader.h"
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama.h"
 #include "rpc_support.hpp" // exclude_stale_devices
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -32,6 +34,9 @@ namespace {
 
 // llama-imatrix ignores batches below this many tokens, and so does this
 constexpr int MIN_BATCH_TOKENS = 16;
+
+// the chunk size assumed for files of the legacy format, which does not record one
+constexpr int DEFAULT_CHUNK_SIZE = 512;
 
 struct stats {
     std::vector<float> sums;     // one block of ne0 values per matrix (expert)
@@ -174,10 +179,10 @@ struct collector {
     }
 };
 
-void save(const collector &c, const std::string &output_path, const std::string &dataset, int n_chunks,
-          int chunk_size) {
+void save(const std::map<std::string, stats> &entries, const std::string &output_path,
+          const std::vector<std::string> &dataset_names, int n_chunks, int chunk_size) {
     size_t data_size = 0;
-    for (const auto &[name, e] : c.entries) {
+    for (const auto &[name, e] : entries) {
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * e.sums.size(), GGML_MEM_ALIGN);
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * e.counts.size(), GGML_MEM_ALIGN);
     }
@@ -187,12 +192,15 @@ void save(const collector &c, const std::string &output_path, const std::string 
     if (ctx == nullptr || g == nullptr) {
         throw std::runtime_error("out of memory while writing the importance matrix");
     }
-    const char *datasets[] = {dataset.c_str()};
+    std::vector<const char *> datasets;
+    for (const std::string &name : dataset_names) {
+        datasets.push_back(name.c_str());
+    }
     gguf_set_val_str(g, "general.type", "imatrix");
-    gguf_set_arr_str(g, "imatrix.datasets", datasets, 1);
+    gguf_set_arr_str(g, "imatrix.datasets", datasets.data(), datasets.size());
     gguf_set_val_u32(g, "imatrix.chunk_count", static_cast<uint32_t>(n_chunks));
     gguf_set_val_u32(g, "imatrix.chunk_size", static_cast<uint32_t>(chunk_size));
-    for (const auto &[name, e] : c.entries) {
+    for (const auto &[name, e] : entries) {
         const auto n_mat = static_cast<int64_t>(e.counts.size());
         ggml_tensor *sums = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, static_cast<int64_t>(e.sums.size()) / n_mat, n_mat);
         ggml_tensor *counts = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_mat);
@@ -209,6 +217,52 @@ void save(const collector &c, const std::string &output_path, const std::string 
     gguf_free(g);
     ggml_free(ctx);
     if (!ok) {
+        throw std::runtime_error("could not write the importance matrix to '" + output_path + "'");
+    }
+}
+
+// The binary format llama-imatrix wrote before GGUF and still reads: per entry the name, the number
+// of chunks, and per column the mean times that number; then the chunk count and the dataset name.
+// Fields are written in the byte order of the host, as upstream's writer does.
+void save_legacy(const std::map<std::string, stats> &entries, const std::string &output_path,
+                 const std::string &dataset, int n_chunks, int chunk_size) {
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("could not write the importance matrix to '" + output_path + "'");
+    }
+    auto put = [&out](int32_t v) { out.write(reinterpret_cast<const char *>(&v), sizeof(v)); };
+    int32_t n_entries = 0;
+    for (const auto &[name, e] : entries) {
+        // an entry no chunk reached is left out, as upstream does (an expert set never routed to)
+        n_entries += std::any_of(e.counts.begin(), e.counts.end(), [](int64_t c) { return c != 0; }) ? 1 : 0;
+    }
+    put(n_entries);
+    for (const auto &[name, e] : entries) { // std::map: sorted by name, the order upstream writes
+        if (std::none_of(e.counts.begin(), e.counts.end(), [](int64_t c) { return c != 0; })) {
+            continue;
+        }
+        put(static_cast<int32_t>(name.size()));
+        out.write(name.data(), static_cast<std::streamsize>(name.size()));
+        const int64_t most = *std::max_element(e.counts.begin(), e.counts.end());
+        const auto ncall = static_cast<int32_t>((most + chunk_size - 1) / chunk_size); // rounded up: never zero
+        put(ncall);
+        put(static_cast<int32_t>(e.sums.size()));
+        const size_t per_matrix = e.sums.size() / e.counts.size();
+        std::vector<float> values(e.sums.size());
+        for (size_t i = 0; i < e.sums.size(); ++i) {
+            const int64_t count = e.counts[i / per_matrix];
+            // an expert without data gets the neutral weight 1, as upstream writes it
+            values[i] = count == 0 ? static_cast<float>(ncall)
+                                   : e.sums[i] / static_cast<float>(count) * static_cast<float>(ncall);
+        }
+        out.write(reinterpret_cast<const char *>(values.data()),
+                  static_cast<std::streamsize>(values.size() * sizeof(float)));
+    }
+    put(n_chunks);
+    put(static_cast<int32_t>(dataset.size()));
+    out.write(dataset.data(), static_cast<std::streamsize>(dataset.size()));
+    out.flush();
+    if (!out) {
         throw std::runtime_error("could not write the importance matrix to '" + output_path + "'");
     }
 }
@@ -312,8 +366,94 @@ int compute(const std::string &model_path, const std::string &text_path, const s
         throw std::runtime_error("no weight matrix of '" + model_path + "' was reached by the calibration text");
     }
     const size_t slash = text_path.find_last_of("/\\");
-    save(collected, output_path, slash == std::string::npos ? text_path : text_path.substr(slash + 1), n_chunks,
-         opts.chunk_size);
+    save(collected.entries, output_path, {slash == std::string::npos ? text_path : text_path.substr(slash + 1)},
+         n_chunks, opts.chunk_size);
+    return n_chunks;
+}
+
+int merge(const std::vector<std::string> &input_paths, const std::string &output_path, bool legacy_format) {
+    if (input_paths.empty()) {
+        throw std::runtime_error("no importance matrix to merge");
+    }
+    std::vector<common_imatrix> loaded(input_paths.size());
+    int chunk_size = 0;
+    for (size_t i = 0; i < input_paths.size(); ++i) {
+        if (!common_imatrix_load(input_paths[i], loaded[i])) {
+            throw std::runtime_error("could not read the importance matrix '" + input_paths[i] + "'");
+        }
+        if (loaded[i].entries.empty()) {
+            throw std::runtime_error("the importance matrix '" + input_paths[i] + "' holds no entry");
+        }
+        if (!loaded[i].is_legacy && loaded[i].chunk_size > 0) {
+            if (chunk_size == 0) {
+                chunk_size = loaded[i].chunk_size;
+            } else if (chunk_size != loaded[i].chunk_size) {
+                // the sums of two chunk sizes weigh a token differently only through the context it saw;
+                // llama-imatrix warns and goes on, a library call says what it was given
+                throw std::runtime_error("the importance matrices were computed with different chunk sizes (" +
+                                         std::to_string(chunk_size) + " and " + std::to_string(loaded[i].chunk_size) +
+                                         " in '" + input_paths[i] + "')");
+            }
+        }
+    }
+    if (chunk_size == 0) {
+        chunk_size = DEFAULT_CHUNK_SIZE; // only files of the legacy format, which does not record it
+    }
+
+    std::map<std::string, stats> entries;
+    std::vector<std::string> datasets;
+    int n_chunks = 0;
+    for (size_t i = 0; i < input_paths.size(); ++i) {
+        const common_imatrix &in = loaded[i];
+        // The legacy format holds, per column, the mean times the number of chunks, and that number;
+        // GGUF holds the sums and the number of tokens. The same conversion as llama-imatrix's --in-file.
+        for (const auto &[name, entry] : in.entries) {
+            if (entry.counts.empty() || entry.sums.empty()) {
+                continue;
+            }
+            stats &e = entries[name];
+            if (e.sums.empty()) {
+                e.sums.assign(entry.sums.size(), 0.0f);
+                e.counts.assign(entry.counts.size(), 0);
+            } else if (e.sums.size() != entry.sums.size()) {
+                throw std::runtime_error("'" + name + "' has another shape in '" + input_paths[i] +
+                                         "' than in the matrices before it: they are not of the same model");
+            }
+            if (in.is_legacy) {
+                for (size_t j = 0; j < entry.sums.size(); ++j) {
+                    e.sums[j] += entry.sums[j] * static_cast<float>(chunk_size);
+                }
+                for (int64_t &count : e.counts) {
+                    count += entry.counts[0] * chunk_size;
+                }
+                continue;
+            }
+            if (e.counts.size() == 1 && entry.counts.size() > 1) {
+                e.counts.resize(entry.counts.size(), e.counts[0]); // a legacy file came first: one count for all
+            } else if (e.counts.size() != entry.counts.size()) {
+                throw std::runtime_error("'" + name + "' has another number of experts in '" + input_paths[i] +
+                                         "' than in the matrices before it: they are not of the same model");
+            }
+            for (size_t j = 0; j < entry.sums.size(); ++j) {
+                e.sums[j] += entry.sums[j];
+            }
+            for (size_t j = 0; j < entry.counts.size(); ++j) {
+                e.counts[j] += entry.counts[j];
+            }
+        }
+        n_chunks += in.chunk_count;
+        if (in.datasets.empty()) {
+            const size_t slash = input_paths[i].find_last_of("/\\");
+            datasets.push_back(slash == std::string::npos ? input_paths[i] : input_paths[i].substr(slash + 1));
+        } else {
+            datasets.insert(datasets.end(), in.datasets.begin(), in.datasets.end());
+        }
+    }
+    if (legacy_format) {
+        save_legacy(entries, output_path, datasets.back(), n_chunks, chunk_size);
+    } else {
+        save(entries, output_path, datasets, n_chunks, chunk_size);
+    }
     return n_chunks;
 }
 

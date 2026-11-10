@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# A Cuda 13.4 install script for RHEL8/Rocky8/Manylinux_2.28
+# A Cuda 13.5 install script for RHEL8/Rocky8/Manylinux_2.28
 # Available versions can be found at:
 # https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/
 
@@ -12,7 +12,7 @@ sudo dnf install -y kernel-devel kernel-headers
 sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
 sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 
-sudo dnf install -y cuda-toolkit-13-4
+sudo dnf install -y cuda-toolkit-13-5
 
 # CUDA target architectures — LOCAL-dev build-speed knob.
 #
@@ -44,7 +44,7 @@ sudo dnf install -y cuda-toolkit-13-4
 # as PTX. And the failure is not graceful. Measured on a Tesla T4 with driver 595.91.07 (AWS Deep
 # Learning AMI): the module opened, ggml enumerated the GPU, offloaded 29/29 layers and then
 # ggml_abort killed the JVM with "the provided PTX was compiled with an unsupported toolchain" --
-# the driver's JIT refusing PTX from CUDA 13.4. `-ngl 0` aborts too, so having the jar on the
+# the driver's JIT refusing PTX from CUDA 13.5. `-ngl 0` aborts too, so having the jar on the
 # classpath is enough, and abort() cannot be caught from Java. See
 # docs/benchmarks/gpu-module-jars.md.
 #
@@ -68,7 +68,7 @@ case "${CUDA_FAST_BUILD:-}" in
     ;;
 esac
 
-# CCCL v3.4.3 is fetched instead of the one CUDA 13.4 bundles, as upstream's own CUDA release builds do
-# (llama.cpp #29792): ggml's CUB DeviceTopK path needs >= 3.4.3 (an earlier race, NVIDIA/cccl#10627) and
-# falls back to a sort below it. Drop the flag once the toolkit is 13.5+, which bundles CCCL 3.5.
-exec .github/build.sh $@ -DGGML_CUDA=1 -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc -DGGML_CUDA_CCCL_VERSION=v3.4.3 $CUDA_ARCH_ARGS
+# No GGML_CUDA_CCCL_VERSION: CUDA 13.5 bundles CCCL 3.5, and ggml's CUB DeviceTopK path needs >= 3.4.3
+# (llama.cpp #29792). With 13.4 both CUDA builds fetched v3.4.3; upstream dropped the flag for its 13.5
+# release builds at b12169 (#31788). Add it back if the toolkit ever goes below 13.5.
+exec .github/build.sh $@ -DGGML_CUDA=1 -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.5/bin/nvcc $CUDA_ARCH_ARGS

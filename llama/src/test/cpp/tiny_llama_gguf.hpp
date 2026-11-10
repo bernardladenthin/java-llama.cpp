@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <random>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -142,7 +143,11 @@ struct tiny_model_spec {
     // other tokenizer family ("llama"): scored pieces with U+2581 for a space, <unk>/<s>/</s> as
     // ids 0/1/2, every printable ASCII character as a piece and the pieces that build "hello" and
     // "world" as words.
-    enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE };
+    // SENTENCEPIECE_BYTES adds the 256 byte pieces (<0x00> .. <0xFF>) a real SentencePiece vocabulary
+    // falls back to for a character it has no piece for. UNIGRAM is T5's tokenizer ("t5": the best
+    // scoring segmentation, <pad> </s> <unk> first), RWKV the greedy longest match over byte strings
+    // ("rwkv": escaped tokens, no special ones of its own).
+    enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE, SENTENCEPIECE_BYTES, UNIGRAM, RWKV };
     tokenizer_kind tokenizer = tokenizer_kind::BYTES;
 
     // A decoder with one MTP block, which --spec-type draft-mtp drafts with.
@@ -199,7 +204,12 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));
     }
 
-    const bool sentencepiece = spec.tokenizer == tiny_model_spec::tokenizer_kind::SENTENCEPIECE;
+    using kind = tiny_model_spec::tokenizer_kind;
+    const bool unigram = spec.tokenizer == kind::UNIGRAM;
+    const bool rwkv = spec.tokenizer == kind::RWKV;
+    // the two SentencePiece kinds and the Unigram one are scored pieces over U+2581
+    const bool sentencepiece =
+        spec.tokenizer == kind::SENTENCEPIECE || spec.tokenizer == kind::SENTENCEPIECE_BYTES || unigram;
     std::vector<std::string> tokens;
     std::vector<int32_t> token_types; // 1 normal, 2 unknown, 3 control (llama_token_type)
     std::vector<float> scores;
@@ -211,9 +221,15 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             scores.push_back(score);
             token_types.push_back(type);
         };
-        piece("<unk>", 0.0f, 2);
-        piece("<s>", 0.0f, 3);
-        piece("</s>", 0.0f, 3);
+        if (unigram) {
+            piece("<pad>", 0.0f, 3);
+            piece("</s>", 0.0f, 3);
+            piece("<unk>", 0.0f, 2);
+        } else {
+            piece("<unk>", 0.0f, 2);
+            piece("<s>", 0.0f, 3);
+            piece("</s>", 0.0f, 3);
+        }
         piece(sp, -2.0f);
         for (char c = '!'; c <= '~'; ++c) {
             piece(std::string(1, c), -10.0f);
@@ -224,6 +240,29 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                 piece(sp + word.substr(0, n), -1.0f + 0.1f * static_cast<float>(n));
             }
         }
+        if (spec.tokenizer == kind::SENTENCEPIECE_BYTES) {
+            for (int byte = 0; byte < 256; ++byte) {
+                char name[8];
+                std::snprintf(name, sizeof(name), "<0x%02X>", byte);
+                piece(name, 0.0f, 6); // LLAMA_TOKEN_TYPE_BYTE
+            }
+        }
+    } else if (rwkv) {
+        // one token per byte, written the way the RWKV vocabulary escapes them, then two words
+        for (int byte = 0; byte < 256; ++byte) {
+            char name[8];
+            if (byte == '\\') {
+                std::snprintf(name, sizeof(name), "\\\\");
+            } else if (byte >= 0x20 && byte < 0x7F) {
+                std::snprintf(name, sizeof(name), "%c", byte);
+            } else {
+                std::snprintf(name, sizeof(name), "\\x%02x", byte);
+            }
+            tokens.push_back(name);
+        }
+        tokens.push_back("hello");
+        tokens.push_back(" world");
+        token_types.assign(tokens.size(), 1);
     } else {
         tokens = byte_tokens();
         token_types.assign(tokens.size(), 1);
@@ -252,12 +291,25 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     }
     gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
     gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
-    if (sentencepiece) {
+    if (unigram) {
+        gguf_set_val_str(g, "tokenizer.ggml.model", "t5");
+        gguf_set_arr_data(g, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, scores.data(), scores.size());
+        // what the converter writes for a SentencePiece model with add_dummy_prefix, as T5's has;
+        // llama.cpp's own default for this tokenizer is no space in front of the text
+        gguf_set_val_bool(g, "tokenizer.ggml.add_space_prefix", true);
+        gguf_set_val_u32(g, "tokenizer.ggml.padding_token_id", 0);
+        gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 1);
+        gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 2);
+    } else if (sentencepiece) {
         gguf_set_val_str(g, "tokenizer.ggml.model", "llama");
         gguf_set_arr_data(g, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, scores.data(), scores.size());
         gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 0);
         gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 1);
         gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 2);
+    } else if (rwkv) {
+        gguf_set_val_str(g, "tokenizer.ggml.model", "rwkv");
+        gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
+        gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);
     } else {
         gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
         gguf_set_val_str(g, "tokenizer.ggml.pre", "default");

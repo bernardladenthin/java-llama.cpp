@@ -231,4 +231,16 @@ class JllamaNativeTest {
                         "/nonexistent/model.gguf", "/nonexistent/text.txt", "/nonexistent/out.gguf", 0, 0, 1, 0, null));
         assertThat(e.getMessage(), containsString("calibration text"));
     }
+
+    @Test
+    void mergeImportanceMatricesNamesAMissingFileAndRefusesNone() {
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.mergeImportanceMatrices(
+                        List.of("/nonexistent/a.imatrix.gguf"), "/nonexistent/out.gguf", false));
+        assertThat(e.getMessage(), containsString("/nonexistent/a.imatrix.gguf"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Jllama.mergeImportanceMatrices(List.of(), "/nonexistent/out.gguf", true));
+    }
 }

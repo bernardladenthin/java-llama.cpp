@@ -237,14 +237,23 @@ affected; ASCII paths are not affected.
   identical (worst relative difference 0.0), the same `imatrix.datasets` / `chunk_count` /
   `chunk_size`. Upstream's file additionally holds an `.in_sum` and a `.stats` tensor per weight and
   `imatrix.stats_schema`, which the quantizer does not read. The comparison was done by hand; it is
-  not a test, because no CI job builds upstream's tools.
+  not a test, because no CI job builds upstream's tools. **Merging and the legacy format are in**:
+  `jllama_imatrix_merge` / `LlamaQuantizer.mergeImportanceMatrices` add up matrices of one model
+  (GGUF or legacy in, GGUF or legacy out; one input converts). Different chunk sizes are refused
+  where upstream warns and goes on.
 - Rank pooling on a model without a classification head is refused at load (upstream answers the
   first value of the pooled embedding as the score). The check reads the tensor list of the model
   file and gives a split model the benefit of the doubt.
 - The random test models cover a decoder (`llama`), a mixture of experts, an encoder with an optional
-  classification head (`bert`), a decoder with an MTP block (`hy_v3`), and three vocabularies (bytes,
-  BPE with merges, SentencePiece). Not built: a WordPiece or SentencePiece vocabulary with byte
-  fallback pieces, a Unigram (T5) or RWKV vocabulary, the hybrid architectures.
+  classification head (`bert`), a decoder with an MTP block (`hy_v3`), and six vocabularies: bytes,
+  BPE with merges, SentencePiece without and with byte pieces, Unigram (`t5`) and RWKV. Not built:
+  the PLaMo vocabularies, an encoder-decoder (T5 itself: the Unigram vocabulary sits on the `llama`
+  decoder here), RWKV as an architecture, the hybrid architectures.
+- **A SentencePiece vocabulary without byte pieces cannot tokenize a character it has no piece
+  for**: llama.cpp's lookup of the byte piece throws and the message is the map's
+  (`unordered_map::at`). An error and not a crash, pinned by `CApiTokenizers`; a converted
+  SentencePiece model always has the byte pieces, so this is a trap of hand-made vocabularies. The
+  message could name the cause (catch `std::out_of_range` around the tokenization in the engine).
 - **A SentencePiece round trip comes back behind a space** when the tokens carry no `<s>`
   (`detokenize(tokenize("cat"))` is `" cat"`): upstream's behaviour, pinned by `CApiTokenizers`.
   Decided: `LlamaModel.decode` says so in its Javadoc and stays what upstream answers; a caller who
@@ -267,21 +276,19 @@ affected; ASCII paths are not affected.
   Javadoc is corrected.
 
 **Build and CI**
-- **CUDA 13.5.** Upstream builds its CUDA 13 release binaries with 13.5 since b12169 (#31788) and
-  dropped `-DGGML_CUDA_CCCL_VERSION=v3.4.3` for them (13.5 bundles CCCL 3.5); its
-  `.github/actions/windows-setup-cuda/action.yml` moved with it. This project stays on 13.4 with the
-  pin, which still builds (upstream's 12.4 rows keep the pin). Follow CLAUDE.md "Upgrading CUDA
-  Version": the two places of the toolkit version, the redist manifest and component list of the
-  Windows job, then **drop both CCCL flags** -- and with them, check whether `option(BUILD_TESTING
-  ... OFF)` before the first `FetchContent_MakeAvailable()` is still needed for another reason. Needs
-  a Publish run; re-measure the nvcc/sccache hit table on the first warm run. **Not done with the
-  rest of this list (2026-11-10), for three reasons that a Publish run alone does not answer:**
-  the module would then need a driver that can JIT CUDA 13.5 PTX for `121-virtual`, a floor the
-  README states as 13.4 and nobody has measured for 13.5; each of the last two toolkit bumps (13.3,
-  13.4) broke sccache's nvcc wrapping in a new way; and NVIDIA's download host was not reachable
-  from the machine the list was worked on, so neither the `cuda-toolkit-13-5` package of the rhel8
-  repository nor the 13.5.x redist manifest to pin could be read. Upstream's 13.5 component set is
-  the one the Windows job already lists.
+- **CUDA 13.5: moved, not yet run.** Both CUDA jobs install 13.5 (`cuda-toolkit-13-5`; the Windows
+  redist archives) and no longer pass `-DGGML_CUDA_CCCL_VERSION` (13.5 bundles CCCL 3.5), as
+  upstream's release builds since b12169 (#31788). Written without access to NVIDIA's download host,
+  so the first Publish run is the test, and three things are to be read from it:
+  - the Windows job prints which `redistrib_13.5.x.json` it took -- **pin that version in
+    `CUDA_REDIST_MANIFEST`** (it is empty, i.e. "the newest 13.5.x", until then);
+  - the Linux job's sccache table: each of the last two toolkit bumps (13.3, 13.4) broke the nvcc
+    wrapping in a new way; the retry without the cache keeps the job green, the table says whether
+    it paid;
+  - whether `option(BUILD_TESTING ... OFF)` before the first `FetchContent_MakeAvailable()` is still
+    needed now that ggml no longer fetches CCCL (it stays; removing it is a change of its own).
+  The driver floor moves with the toolkit for GPUs newer than Blackwell only (`121-virtual`, the one
+  PTX-only target); README says 13.5. Not measured on a GPU.
 - **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,
   b11980 #31125). Nothing to change; read the first Publish run's two SYCL jobs for a compiler that
   rejects the new kernels, and the module's dependency list for a new import.
@@ -297,13 +304,8 @@ affected; ASCII paths are not affected.
 **API surface not exposed yet**
 - **New audio generation pipelines: Chatterbox (b12097 #30993) and Drama-3 (b12116 #31613)**,
   `MTMD_GEN_AUDIO_TYPE_CHATTERBOX` / `DRAMA3`. `TextToSpeech` drives `mtmd_helper::gen_audio`
-  generically, so they are expected to work; neither was loaded. A property-gated run of
-  `TtsIntegrationTest`'s shape with each (the WAV header takes its sample rate from
-  `gen_audio::get_output`, so another rate than 24 kHz is carried) is the test.
-- **Re-run `TtsChatTemplateIntegrationTest` with LFM3-Audio** (property-gated, not in CI): since
-  b12061 its `female` / `male` are predefined voices handed over as a voice bitmap *and* named in the
-  template, and a synthesis without a voice takes the first of `getVoices()`. The "template's
-  defaults" and "two voices differ" cases were written before that.
+  generically, so they are expected to work; neither was loaded. `TtsPipelineIntegrationTest` is
+  the test (see "Tests that exist and have not run" below).
 - **Nemotron 3.5 Transcribe (b12087), MageVL-Cowork (b12192), Qwen3-VL's video prompt format
   (b12098, `MTMD_VIDEO_TEMPLATE_QWEN3VL`)**: upstream-side model support, reached through the
   existing multimodal paths. No code here; candidates for `AudioInputIntegrationTest` /
@@ -311,16 +313,17 @@ affected; ASCII paths are not affected.
 - **Reference-counted prompt checkpoints** (b12141 #30137) and **the MoE expert cache's CPU share**
   (b12191): both internal. Whether upstream exports a hit rate
   for the cache that `ServerMetrics` could carry was not looked at.
-- **Speculative decoding state** (b12091 #30141, MTP hidden state saved and restored; b12231's
-  functionality test): slot save/restore of a model with a draft carries more state. Whether the suite has a
-  slot save/restore round trip with a draft model was not checked; add one if not.
+- **Speculative decoding state** (b12091 #30141): covered. `CApiSlotFiles` saves and restores a slot
+  with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
+  answers the same request the same way).
 
 **From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
 in the request fields, their limits or the response keys.
-- **`POST /tts` on `OpenAiCompatServer`.** `/v1/audio/speech` is served since this list was worked
-  (`SpeechBackend`, over a `TextToSpeech` of its own); upstream's older `/tts` route with its own
-  field names is not, and `NativeServer` has both. The speech route answers `wav` and `pcm` in one
-  piece; `TextToSpeech` has no streaming entry point.
+- **`POST /tts` and `/v1/audio/speech` on `OpenAiCompatServer`**: served (`SpeechBackend`, over a
+  `TextToSpeech` of its own; `/tts` with `speaker_ref_b64`, `n_predict`, `top_k`, `seed`,
+  `temperature`, `pcm` as float and `pcm16`). Left out: `stream` (refused -- `TextToSpeech` has no
+  streaming entry point, the audio is answered in one piece), a multipart `speaker_ref` upload, and
+  `top_p` / `repeat_penalty`, which `TextToSpeech` does not take.
 - **`mtmd_helper_resampler`** (b12236 #31964), a streaming resampler for mono F32 PCM. Upstream uses
   it for realtime input at another rate than the model's. A use here: `TextToSpeech` takes a
   speaker reference only as a file upstream decodes; a caller holding PCM at another rate has no
@@ -328,12 +331,23 @@ in the request fields, their limits or the response keys.
 - **Gemma 4 audio input as a stream** (b12237 #31965): upstream-side, through the realtime route of
   `NativeServer`. A candidate model for `AudioInputIntegrationTest`; nothing to change here.
 - **`response_format` next to `tools`** (b12242 #31956): `CApiStructured` pins the whole answer
-  being constrained, hermetically. Not written: the model-backed case in
-  `ToolCallingIntegrationTest`, and whether the hermetic test is red before b12242 was not measured
-  (the build tree was already at the new tag).
-- **The realtime route takes `instructions`, `output_modalities` and `max_output_tokens`** in
-  `session.update` (b12239 #31978, with LFM3-Audio / LFM3-Omni holding a conversation on it).
-  `RealtimeNativeServerIntegrationTest` covers the transcription session only.
+  being constrained, hermetically, and `ToolCallingIntegrationTest` with the tool model (first run:
+  CI's). Whether the hermetic test is red before b12242 was not measured (the build tree was already
+  at the new tag).
+- **The realtime route's `instructions`, `output_modalities` and `max_output_tokens`** in
+  `session.update` (b12239 #31978): `RealtimeNativeServerIntegrationTest` has the cases (the
+  session reports them back, a response without its own settings is text only; an unknown modality
+  and a bad limit are error events). **Written without the model**: the class is property-gated
+  (LFM3-Audio, 1.4 GB, not in CI), so neither case has run.
+- **Tests that exist and have not run, for want of their models** (`.github/models.csv` needs a
+  pinned Hugging Face commit and a SHA-256 per file, and huggingface.co was not reachable when they
+  were written): `TtsPipelineIntegrationTest` (`-Dnet.ladenthin.llama.tts.pipeline.model/.mmproj`:
+  Pocket TTS, Chatterbox, Drama-3, Soprano -- sample rate from the header, every listed voice, a
+  speaker reference cloned or refused as the pipeline reports, the temperature accepted),
+  `TtsChatTemplateIntegrationTest#thePredefinedVoicesAreListedAndTheFirstIsTheDefault` (LFM3-Audio)
+  and the realtime cases above. To have CI run one: add its rows to `models.csv` under a feature
+  of its own, a `features:` entry for the job, and the test's default path
+  (`TestConstantsTest.theModelDefaultsAreExactlyTheCiModelSet` then demands the constant).
 
 **Compatibility notes to carry into the release notes**
 - **RPC protocol 9** (b12217): `RpcServer` and a `--rpc` client must run the same version of this

@@ -4,6 +4,7 @@
 
 package net.ladenthin.llama;
 
+import java.util.List;
 import java.util.Objects;
 import net.ladenthin.llama.args.QuantizationType;
 import net.ladenthin.llama.callback.LoadProgressCallback;
@@ -188,6 +189,50 @@ public final class LlamaQuantizer {
         return computeImportanceMatrixNative(
                 modelPath, textPath, outputPath, chunkSize, maxChunks, threads, gpuLayers, progress);
     }
+
+    /**
+     * Add up importance matrices of one model, computed over different texts, into one GGUF file --
+     * what {@code llama-imatrix} does with several {@code --in-file} and no text.
+     *
+     * @param inputPaths the matrices to add up, GGUF or the legacy binary format
+     * @param outputPath path the result is written to (GGUF)
+     * @return the number of chunks the result stands for
+     * @throws net.ladenthin.llama.exception.LlamaException if a file cannot be read, or the matrices
+     *     are not of the same model or were computed with different chunk sizes
+     * @see #mergeImportanceMatrices(List, String, boolean)
+     */
+    public static int mergeImportanceMatrices(List<String> inputPaths, String outputPath) {
+        return mergeImportanceMatrices(inputPaths, outputPath, false);
+    }
+
+    /**
+     * Add up importance matrices of one model into one file, in GGUF or in the legacy binary format
+     * {@code llama-imatrix} wrote before GGUF. With one input this converts a matrix between the two
+     * formats. A legacy file records no chunk size; it takes that of the GGUF files next to it, 512
+     * without any.
+     *
+     * @param inputPaths the matrices to add up, GGUF or the legacy binary format; at least one
+     * @param outputPath path the result is written to
+     * @param legacyFormat {@code true} to write the legacy binary format instead of GGUF
+     * @return the number of chunks the result stands for
+     * @throws IllegalArgumentException if {@code inputPaths} is empty
+     * @throws net.ladenthin.llama.exception.LlamaException if a file cannot be read, or the matrices
+     *     are not of the same model or were computed with different chunk sizes
+     */
+    public static int mergeImportanceMatrices(List<String> inputPaths, String outputPath, boolean legacyFormat) {
+        Objects.requireNonNull(inputPaths, "inputPaths");
+        Objects.requireNonNull(outputPath, "outputPath");
+        if (inputPaths.isEmpty()) {
+            throw new IllegalArgumentException("no importance matrix to write to " + outputPath);
+        }
+        String[] inputs = inputPaths.toArray(new String[0]);
+        for (String input : inputs) {
+            Objects.requireNonNull(input, "inputPaths element");
+        }
+        return mergeImportanceMatricesNative(inputs, outputPath, legacyFormat);
+    }
+
+    private static native int mergeImportanceMatricesNative(String[] inputPaths, String outputPath, boolean legacy);
 
     private static native int computeImportanceMatrixNative(
             String modelPath,

@@ -15,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.AfterAll;
@@ -114,6 +115,29 @@ public class TtsChatTemplateIntegrationTest {
         assertThrows(
                 LlamaException.class,
                 () -> tts.synthesize("Hello.", TestConstants.DEFAULT_AUDIO_INPUT_PATH, "en", null, MAX_FRAMES, 4, 1));
+    }
+
+    /**
+     * Since llama.cpp b12061 a model lists the voices its projector ships, and one that has some
+     * speaks with one of them: the named one, or the first when the request names none. LFM3-Audio's
+     * {@code female} and {@code male} are such voices (and still named in its template).
+     */
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("predefined voices: listed, the first one is the default, an unknown one is refused by name")
+    public void thePredefinedVoicesAreListedAndTheFirstIsTheDefault() {
+        List<String> voices = tts.getVoices();
+        Assumptions.assumeFalse(voices.isEmpty(), "this model ships no predefined voices");
+        assertTrue(voices.contains("female") && voices.contains("male"), "voices: " + voices);
+
+        byte[] unnamed = tts.synthesize("Good morning.", null, "en", null, MAX_FRAMES, 4, 5);
+        byte[] first = tts.synthesize("Good morning.", null, "en", voices.get(0), MAX_FRAMES, 4, 5);
+        assertWellFormedAudibleWav(unnamed);
+        assertArrayEquals(first, unnamed, "without a voice the model speaks with its first one, " + voices.get(0));
+
+        LlamaException unknown = assertThrows(
+                LlamaException.class, () -> tts.synthesize("Hello.", null, "en", "nobody", MAX_FRAMES, 4, 1));
+        assertTrue(unknown.getMessage().contains(voices.get(0)), unknown.getMessage());
     }
 
     /** RIFF/WAVE, PCM mono 16-bit at a positive rate, consistent sizes and at least one non-zero sample. */

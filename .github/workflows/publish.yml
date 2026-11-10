@@ -1910,8 +1910,9 @@ jobs:
     runs-on: windows-2025-vs2026
     env:
       # The CUDA redist manifest (redistrib_<this>.json) the archives are verified against; empty
-      # takes the newest 13.4.x manifest the redist index lists (the run prints which).
-      CUDA_REDIST_MANIFEST: "13.4.3"
+      # takes the newest 13.5.x manifest the redist index lists (the run prints which). Empty since
+      # the move to 13.5 (2026-11-10): pin the version the first run prints (TODO.md).
+      CUDA_REDIST_MANIFEST: ""
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1925,10 +1926,10 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
-      - name: Install CUDA Toolkit 13.4 (NVIDIA redist archives)
+      - name: Install CUDA Toolkit 13.5 (NVIDIA redist archives)
         # KEEP IN SYNC WITH UPSTREAM: the component set and versions mirror llama.cpp's
-        # .github/actions/windows-setup-cuda ("Install Cuda Toolkit 13.4 for x64") at the pinned
-        # GIT_TAG. Jimver/cuda-toolkit (used here up to CUDA 13.3.1) has no 13.4 in any release or
+        # .github/actions/windows-setup-cuda ("Install Cuda Toolkit 13.5 for x64") at the pinned
+        # GIT_TAG. Jimver/cuda-toolkit (used here up to CUDA 13.3.1) has no 13.4 or 13.5 in any release or
         # on master, so the toolkit is assembled from NVIDIA's per-component redist zips instead —
         # which is also how upstream builds its own Windows CUDA release. cuda_crt is listed
         # explicitly: since 13.x the nvcc crt headers (crt/host_config.h) ship in their own
@@ -1936,7 +1937,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.4"
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.5"
           $base = "https://developer.download.nvidia.com/compute/cuda/redist"
           # Components only: the archive name (component version) and its SHA-256 both come from
           # the redist manifest below, so they cannot disagree. A hand-written archive name checked
@@ -1961,12 +1962,12 @@ jobs:
           # version, and with it every component version (TODO.md, delivery roadmap, item 3).
           $manifestVersion = $env:CUDA_REDIST_MANIFEST
           if (-not $manifestVersion) {
-            # Unpinned: the newest 13.4.x manifest the redist index lists (the index is NVIDIA's
+            # Unpinned: the newest 13.5.x manifest the redist index lists (the index is NVIDIA's
             # own directory page). Pin it in CUDA_REDIST_MANIFEST once a run has printed it.
             $index = (Invoke-WebRequest -Uri "$base/" -UseBasicParsing).Content
-            $manifestVersion = [regex]::Matches($index, 'redistrib_(13\.4\.\d+)\.json') |
+            $manifestVersion = [regex]::Matches($index, 'redistrib_(13\.5\.\d+)\.json') |
               ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique { [version]$_ } | Select-Object -Last 1
-            if (-not $manifestVersion) { throw "no redistrib_13.4.x.json in the index at $base/" }
+            if (-not $manifestVersion) { throw "no redistrib_13.5.x.json in the index at $base/" }
           }
           $manifestUrl = "$base/redistrib_$manifestVersion.json"
           Write-Host "Reading $manifestUrl"
@@ -1987,7 +1988,7 @@ jobs:
           }
           "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CUDA_PATH_V13_4=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CUDA_PATH_V13_5=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1998,15 +1999,15 @@ jobs:
         # suite is CPU-only and fully covered by the `C++ Tests` job + the CPU Windows
         # jobs; a GPU-linked jllama_test.exe cannot be discovered/run on a GPU-less
         # GitHub runner (it errors probing for a CUDA device -> ctest *_NOT_BUILT).
-        # GGML_CUDA_CCCL_VERSION: fetch CCCL v3.4.3 like upstream's windows-cuda release job and the
-        # Linux CUDA build (see build_cuda_linux.sh) -- DeviceTopK needs it; drop it with CUDA 13.5+.
+        # No GGML_CUDA_CCCL_VERSION: CUDA 13.5 bundles CCCL 3.5 (DeviceTopK needs >= 3.4.3), as
+        # upstream's windows-cuda 13.5 release job and the Linux CUDA build (build_cuda_linux.sh).
         # Explicit architectures, same list as .github/build_cuda_linux.sh and for the same reason:
         # ggml's default leaves 75 (T4), 80 (A100) and 90 (H100) as PTX, and a driver too old to JIT
-        # CUDA 13.4 PTX makes ggml abort() the JVM rather than fall back -- measured on a T4, see
+        # CUDA 13.5 PTX makes ggml abort() the JVM rather than fall back -- measured on a T4, see
         # docs/benchmarks/gpu-module-jars.md. Server applications run on exactly those GPUs. Keep the
         # two lists equal; a divergence would ship two jars with different hardware support.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}

@@ -610,6 +610,32 @@ jllama_status jllama_imatrix(const char *model_path, const char *text_path, cons
     }
 }
 
+jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
+                                   bool legacy_format, int *n_chunks) {
+    if (input_paths == nullptr || n_inputs == 0 || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_paths and output_path must not be null or empty");
+    }
+    try {
+        std::vector<std::string> inputs;
+        for (size_t i = 0; i < n_inputs; ++i) {
+            if (input_paths[i] == nullptr) {
+                return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "an input path is null");
+            }
+            inputs.emplace_back(input_paths[i]);
+        }
+        const int chunks = jllama::imatrix::merge(inputs, output_path, legacy_format);
+        if (n_chunks != nullptr) {
+            *n_chunks = chunks;
+        }
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception while merging importance matrices");
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 // The embedded HTTP server (native_server_engine.hpp; not on Android).
 // ------------------------------------------------------------------------------------------------
