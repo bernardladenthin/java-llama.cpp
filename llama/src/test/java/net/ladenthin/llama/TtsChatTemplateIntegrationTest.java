@@ -32,10 +32,11 @@ import org.junit.jupiter.api.Timeout;
  * {@code llama-tts} do. Before, the engine handed the raw text to the pipeline, which is not what
  * such a model expects, and had no way to pass a voice.
  *
- * <p>Not in CI's model set (1.4&nbsp;GB, and Qwen3-TTS already covers the pipeline itself): the test
- * self-skips unless {@link TestConstants#PROP_TTS_TEMPLATE_MODEL} and
- * {@link TestConstants#PROP_TTS_TEMPLATE_MMPROJ} name the pair, e.g. {@code LFM3-Audio-2B-Q4_0.gguf}
- * and {@code mmproj-LFM3-Audio-2B-Q8_0.gguf} of {@code LiquidAI/LFM3-Audio-2B-GGUF}.
+ * <p>Runs with CI's LFM3-Audio pair ({@code .github/models.csv}, feature {@code realtime}:
+ * {@code LFM3-Audio-2B-Q4_0.gguf} and {@code mmproj-LFM3-Audio-2B-Q8_0.gguf} of
+ * {@code LiquidAI/LFM3-Audio-2B-GGUF}) unless {@link TestConstants#PROP_TTS_TEMPLATE_MODEL} and
+ * {@link TestConstants#PROP_TTS_TEMPLATE_MMPROJ} name another, and self-skips when the files are
+ * missing.
  */
 public class TtsChatTemplateIntegrationTest {
 
@@ -48,8 +49,10 @@ public class TtsChatTemplateIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        String model = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_TEMPLATE_MODEL);
-        String mmproj = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_TEMPLATE_MMPROJ);
+        String model = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TTS_TEMPLATE_MODEL, TestConstants.DEFAULT_REALTIME_MODEL_PATH);
+        String mmproj = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TTS_TEMPLATE_MMPROJ, TestConstants.DEFAULT_REALTIME_MMPROJ_PATH);
         Assumptions.assumeTrue(
                 model != null && !model.isEmpty(),
                 "TTS model with a chat template not set (-D" + TestConstants.PROP_TTS_TEMPLATE_MODEL + "=...)");

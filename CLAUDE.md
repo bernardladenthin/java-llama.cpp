@@ -1916,7 +1916,7 @@ callers are unchanged), the JNI `synthesizeNative`, `TextToSpeech.synthesize(tex
 `tts_params.hpp`, unit-tested): a template-rendered prompt leaves an empty language empty, so LFM3-Audio
 uses its template's default `en` (its codes are `en`, `de`, ...), while the pipelines without a template
 keep this library's historical `"english"`. `TtsChatTemplateIntegrationTest` covers LFM3-Audio
-(`-Dnet.ladenthin.llama.tts.template.model/.mmproj`, not in the CI set: 1.4 GB): language and voice, the
+(CI's LFM3-Audio pair, feature `realtime`; `-Dnet.ladenthin.llama.tts.template.model/.mmproj` names another): language and voice, the
 template's defaults, two voices giving different samples for one seed, reproducibility, no voice cloning.
 
 ## Upgrading/Downgrading llama.cpp Version
@@ -2199,6 +2199,10 @@ below covers the model bindings:
 | `net.ladenthin.llama.tts.model` | `TtsIntegrationTest` | `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (any Qwen3-TTS-family model works) |
 | `net.ladenthin.llama.tts.mmproj` | `TtsIntegrationTest` | `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` |
 | `net.ladenthin.llama.train.model` | `LlamaTrainerIntegrationTest` | `stories260K.gguf` (must be **F32**) |
+| `net.ladenthin.llama.tts.pocket.model` / `.mmproj` | `PocketTtsIntegrationTest` (the speech pipeline contract, `AbstractTtsPipelineContract`) | `pocket-tts-english.gguf` + `mmproj-pocket-tts-english.gguf` (predefined voices, no voice cloning) |
+| `net.ladenthin.llama.tts.chatterbox.model` / `.mmproj` | `ChatterboxIntegrationTest` (the same contract) | `chatterbox-Q8_0.gguf` + `mmproj-chatterbox-F16.gguf` |
+| `net.ladenthin.llama.realtime.model` / `.mmproj`, `net.ladenthin.llama.tts.template.model` / `.mmproj` | `RealtimeNativeServerIntegrationTest`, `TtsChatTemplateIntegrationTest` | `LFM3-Audio-2B-Q4_0.gguf` + `mmproj-LFM3-Audio-2B-Q8_0.gguf` |
+| `net.ladenthin.llama.tts.pipeline.model` / `.mmproj` | `TtsPipelineIntegrationTest` (the same contract, for a pair outside the set: Drama-3 is 14.6 GB) | none |
 | `net.ladenthin.llama.decision.model` | `SystemOneIntegrationTest` (decision-model half) | none (not in CI's set) — e.g. upstream's `ggml-org/tinylaya-for-testing-gguf` |
 | `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | none (not in CI's set) — e.g. `ultravox-v0_5-llama-3_2-1b.gguf` |
 | `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | none — e.g. `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
@@ -2766,7 +2770,7 @@ CI download. Half of `SystemOneIntegrationTest` does too (the `/v1/systemone` an
 which is not in the CI set either); its rejection case runs everywhere with the draft model.
 The model set has a **single source of truth: `.github/models.csv`**, one `filename,feature,sha256,url`
 row per model (`#` comments): the **feature** says what the model is in the set for (`text`, `draft`,
-`reasoning`, `tools`, `rerank`, `embedding`, `vision`, `tts`, `train`), the **URL** is pinned to a
+`reasoning`, `tools`, `rerank`, `embedding`, `vision`, `tts`, `pockettts`, `chatterbox`, `realtime`, `train`), the **URL** is pinned to a
 Hugging Face commit (`resolve/<commit>/`, never `main`) and the **SHA-256** is the file's. A job
 gets its models from the composite action **`.github/actions/fetch-models`**, naming the features it
 needs (`features: draft tts`; none = every row); it runs **`.github/fetch-models.sh`**, which downloads

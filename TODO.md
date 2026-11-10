@@ -174,8 +174,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
   tool call (b11960, #31287), 6 cases in ~12 s on 16 cores (property-gated, not in CI). Missing is a Java API: a session type on `LlamaModel` over the C API -- push PCM, append text,
   request a response with an output mode (`MTMD_HELPER_GEN_AUDIO_OUT_AUTO` / `TEXT` / `AUDIO` / `MIXED`), receive
   text and PCM events, cancel, clear -- and on the Java transport the same as for transcription above: the JDK's
-  `com.sun.net.httpserver` has no WebSocket. Needs an audio-out conversation model to test (LFM3-Audio 1.4 GB, not
-  in the CI set; `TtsChatTemplateIntegrationTest` uses it as a property-gated model already). Large; decide when
+  `com.sun.net.httpserver` has no WebSocket. The model to test it with is in CI's set (LFM3-Audio, feature `realtime`). Large; decide when
   someone asks for spoken conversations from Java.
 - **`--connect` / `--connect-code`** (b11744, #28277): the server spawns the separate `llama-connect`
   binary (WebRTC tunnel to a browser outside the LAN). `LLAMA_CONNECT` stays OFF (a prebuilt download at
@@ -338,16 +337,25 @@ in the request fields, their limits or the response keys.
   `session.update` (b12239 #31978): `RealtimeNativeServerIntegrationTest` has the cases (the
   session reports them back, a response without its own settings is text only; an unknown modality
   and a bad limit are error events). **Written without the model**: the class is property-gated
-  (LFM3-Audio, 1.4 GB, not in CI), so neither case has run.
-- **Tests that exist and have not run, for want of their models** (`.github/models.csv` needs a
-  pinned Hugging Face commit and a SHA-256 per file, and huggingface.co was not reachable when they
-  were written): `TtsPipelineIntegrationTest` (`-Dnet.ladenthin.llama.tts.pipeline.model/.mmproj`:
-  Pocket TTS, Chatterbox, Drama-3, Soprano -- sample rate from the header, every listed voice, a
-  speaker reference cloned or refused as the pipeline reports, the temperature accepted),
-  `TtsChatTemplateIntegrationTest#thePredefinedVoicesAreListedAndTheFirstIsTheDefault` (LFM3-Audio)
-  and the realtime cases above. To have CI run one: add its rows to `models.csv` under a feature
-  of its own, a `features:` entry for the job, and the test's default path
-  (`TestConstantsTest.theModelDefaultsAreExactlyTheCiModelSet` then demands the constant).
+  (LFM3-Audio, in CI's set since 2026-11-10), and neither case has run yet.
+- **Speech and realtime tests whose models joined the CI set on 2026-11-10, none of them run yet**
+  (huggingface.co is not reachable from the sandbox they were written in; the first Publish run is
+  the measurement, and a red case there is a finding about the test or the engine, not a flake):
+  `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest` (the pipeline contract of
+  `AbstractTtsPipelineContract`: sample rate from the header, every listed voice, a speaker
+  reference cloned or refused as the pipeline reports, the temperature accepted),
+  `TtsChatTemplateIntegrationTest` and `RealtimeNativeServerIntegrationTest` (LFM3-Audio). The
+  rows are `pockettts`, `chatterbox` and `realtime` in `.github/models.csv`, 2.7 GB more for every
+  job that fetches the whole set; the GGUF headers were checked against b12242's loaders, no model
+  was run. Pocket TTS comes from a community repository (`macolomb/pocket-tts-without-voice-cloning`,
+  cc-by-4.0: neither ggml-org nor Kyutai publishes a GGUF pair with predefined voices).
+  **Drama-3 stays out**: the smallest pair is 14.6 GB (`mradermacher/drama-3-GGUF`, Q2_K backbone
+  12.9 GB + Q8_0 mmproj 1.7 GB, research licence), more than a hosted runner should download in
+  six jobs; `TtsPipelineIntegrationTest` runs the same contract on it by property
+  (`-Dnet.ladenthin.llama.tts.pipeline.model/.mmproj`). The rows, should a runner for it exist:
+  `drama-3.Q2_K.gguf` sha256 `10c87623811b8948806801c8263b3d896f3cd751067d14eeddf5ba6c6732fc75`,
+  `drama-3.mmproj-Q8_0.gguf` sha256 `dc7fe995f67a68f375d86b8f0ad6fe2d8b4761210a73dca9bc49768761edcc2f`,
+  both at commit `690a670e47fb6bdd3ff5683b9f7dca9338aad448`.
 
 **Compatibility notes to carry into the release notes**
 - **RPC protocol 9** (b12217): `RpcServer` and a `--rpc` client must run the same version of this

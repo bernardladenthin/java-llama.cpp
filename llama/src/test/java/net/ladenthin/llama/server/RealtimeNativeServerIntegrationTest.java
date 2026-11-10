@@ -48,8 +48,9 @@ import org.junit.jupiter.api.Timeout;
  * since b11946; this test pins that the embedded server answers it end to end. A Java API over the
  * same session is open (TODO.md, "Realtime conversations").
  *
- * <p>Not in CI's model set (1.4&nbsp;GB): self-skips unless {@link TestConstants#PROP_REALTIME_MODEL}
- * and {@link TestConstants#PROP_REALTIME_MMPROJ} name the pair, e.g. {@code LFM3-Audio-2B-Q4_0.gguf}
+ * <p>Runs with CI's LFM3-Audio pair ({@code .github/models.csv}, feature {@code realtime}) unless
+ * {@link TestConstants#PROP_REALTIME_MODEL} and {@link TestConstants#PROP_REALTIME_MMPROJ} name
+ * another, and self-skips when the files are missing, e.g. {@code LFM3-Audio-2B-Q4_0.gguf}
  * and {@code mmproj-LFM3-Audio-2B-Q8_0.gguf} of {@code LiquidAI/LFM3-Audio-2B-GGUF}. The client is
  * the JDK's {@link java.net.http.WebSocket} (the tests compile for Java 21, the library for 8).</p>
  */
@@ -66,8 +67,10 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
 
     @BeforeAll
     public static void setup() throws Exception {
-        String model = TestConstants.resolveModelProperty(TestConstants.PROP_REALTIME_MODEL);
-        String mmproj = TestConstants.resolveModelProperty(TestConstants.PROP_REALTIME_MMPROJ);
+        String model = TestConstants.resolveModelProperty(
+                TestConstants.PROP_REALTIME_MODEL, TestConstants.DEFAULT_REALTIME_MODEL_PATH);
+        String mmproj = TestConstants.resolveModelProperty(
+                TestConstants.PROP_REALTIME_MMPROJ, TestConstants.DEFAULT_REALTIME_MMPROJ_PATH);
         Assumptions.assumeTrue(
                 model != null && new File(model).exists(),
                 "realtime model not set or missing (-D" + TestConstants.PROP_REALTIME_MODEL + "=...)");

@@ -234,8 +234,8 @@ public class TestConstants {
     /**
      * System property holding a path to a TTS backbone GGUF whose chat templates include a
      * {@code "tts"} one (LFM3-Audio, llama.cpp b11941). Consumed by {@code TtsChatTemplateIntegrationTest},
-     * which self-skips when this or {@link #PROP_TTS_TEMPLATE_MMPROJ} is unset or missing: no such model
-     * is in CI's set.
+     * which uses {@link #DEFAULT_REALTIME_MODEL_PATH} when it is unset and self-skips when the file is
+     * missing.
      */
     public static final String PROP_TTS_TEMPLATE_MODEL = LlamaSystemProperties.PREFIX + ".tts.template.model";
 
@@ -243,10 +243,10 @@ public class TestConstants {
     public static final String PROP_TTS_TEMPLATE_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.template.mmproj";
 
     /**
-     * System property holding a path to the backbone GGUF of any other speech pipeline llama.cpp
-     * generates audio with (Pocket TTS, Chatterbox b12097, Drama-3 b12116, Soprano). Consumed by
-     * {@code TtsPipelineIntegrationTest}, which self-skips when this or {@link #PROP_TTS_PIPELINE_MMPROJ}
-     * is unset or missing: no such model is in CI's set.
+     * System property holding a path to the backbone GGUF of a speech pipeline outside CI's set
+     * (Drama-3 b12116: 14.6 GB; Soprano). Consumed by {@code TtsPipelineIntegrationTest}, which
+     * self-skips when this or {@link #PROP_TTS_PIPELINE_MMPROJ} is unset or missing. CI's own pairs
+     * run the same contract in {@code PocketTtsIntegrationTest} and {@code ChatterboxIntegrationTest}.
      */
     public static final String PROP_TTS_PIPELINE_MODEL = LlamaSystemProperties.PREFIX + ".tts.pipeline.model";
 
@@ -256,13 +256,55 @@ public class TestConstants {
     /**
      * System property holding a path to a model that holds a spoken conversation on the embedded
      * server's {@code /v1/realtime} (audio in, text and audio out: LFM3-Audio, llama.cpp b11946).
-     * Consumed by {@code RealtimeNativeServerIntegrationTest}, which self-skips when this or
-     * {@link #PROP_REALTIME_MMPROJ} is unset or missing: no such model is in CI's set.
+     * Consumed by {@code RealtimeNativeServerIntegrationTest}, which uses
+     * {@link #DEFAULT_REALTIME_MODEL_PATH} when it is unset and self-skips when the file is missing.
      */
     public static final String PROP_REALTIME_MODEL = LlamaSystemProperties.PREFIX + ".realtime.model";
 
     /** System property holding a path to the mmproj of {@link #PROP_REALTIME_MODEL}. */
     public static final String PROP_REALTIME_MMPROJ = LlamaSystemProperties.PREFIX + ".realtime.mmproj";
+
+    /**
+     * CI's audio-in/audio-out conversation model (.github/models.csv, feature {@code realtime}):
+     * LFM3-Audio. The default of {@link #PROP_REALTIME_MODEL} and of {@link #PROP_TTS_TEMPLATE_MODEL},
+     * since its chat templates include the {@code "tts"} one.
+     */
+    public static final String DEFAULT_REALTIME_MODEL_PATH = resolveModelPath("models/LFM3-Audio-2B-Q4_0.gguf");
+
+    /** The mmproj of {@link #DEFAULT_REALTIME_MODEL_PATH}. */
+    public static final String DEFAULT_REALTIME_MMPROJ_PATH = resolveModelPath("models/mmproj-LFM3-Audio-2B-Q8_0.gguf");
+
+    /**
+     * System property overriding the Pocket TTS backbone of {@code PocketTtsIntegrationTest}
+     * ({@link #DEFAULT_POCKET_TTS_MODEL_PATH} when unset): the pair without voice cloning, which
+     * ships predefined voices.
+     */
+    public static final String PROP_POCKET_TTS_MODEL = LlamaSystemProperties.PREFIX + ".tts.pocket.model";
+
+    /** System property overriding the mmproj of {@link #PROP_POCKET_TTS_MODEL}. */
+    public static final String PROP_POCKET_TTS_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.pocket.mmproj";
+
+    /** CI's Pocket TTS backbone (.github/models.csv, feature {@code pockettts}). */
+    public static final String DEFAULT_POCKET_TTS_MODEL_PATH = resolveModelPath("models/pocket-tts-english.gguf");
+
+    /** The mmproj of {@link #DEFAULT_POCKET_TTS_MODEL_PATH}. */
+    public static final String DEFAULT_POCKET_TTS_MMPROJ_PATH =
+            resolveModelPath("models/mmproj-pocket-tts-english.gguf");
+
+    /**
+     * System property overriding the Chatterbox backbone of {@code ChatterboxIntegrationTest}
+     * ({@link #DEFAULT_CHATTERBOX_MODEL_PATH} when unset).
+     */
+    public static final String PROP_CHATTERBOX_MODEL = LlamaSystemProperties.PREFIX + ".tts.chatterbox.model";
+
+    /** System property overriding the mmproj of {@link #PROP_CHATTERBOX_MODEL}. */
+    public static final String PROP_CHATTERBOX_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.chatterbox.mmproj";
+
+    /** CI's Chatterbox backbone, the multilingual one (.github/models.csv, feature {@code chatterbox}). */
+    public static final String DEFAULT_CHATTERBOX_MODEL_PATH = resolveModelPath("models/chatterbox-Q8_0.gguf");
+
+    /** The mmproj of {@link #DEFAULT_CHATTERBOX_MODEL_PATH}. */
+    public static final String DEFAULT_CHATTERBOX_MMPROJ_PATH = resolveModelPath("models/mmproj-chatterbox-F16.gguf");
 
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");

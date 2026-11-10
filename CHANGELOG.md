@@ -73,6 +73,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **CI model set: Pocket TTS, Chatterbox and LFM3-Audio** (`.github/models.csv`, features
+  `pockettts`, `chatterbox`, `realtime`). `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest`
+  run the speech pipeline contract on them, `TtsChatTemplateIntegrationTest` and
+  `RealtimeNativeServerIntegrationTest` default to the LFM3-Audio pair instead of skipping.
+  Drama-3 (14.6 GB) stays a property-gated `TtsPipelineIntegrationTest`.
 - **The CUDA modules are built with CUDA 13.5** (were 13.4), as upstream's release builds, and with
   the CCCL the toolkit bundles. They still need the CUDA 13 runtime; a GPU newer than Blackwell
   needs a driver new enough for 13.5.
