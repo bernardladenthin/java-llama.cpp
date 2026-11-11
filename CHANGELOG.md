@@ -152,7 +152,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   and the WebUI): the 8-bit float KV cache (`CacheType.F8_E4M3`) on CUDA, flash attention for head
   sizes 40 and 72 and for 256/256 on sm70, MMVF for BF16 matrices of few rows. The CUDA module links
   `cublasLt` itself now (`cublasLt64_13.dll` / `libcublasLt.so.13`, part of the CUDA 13 runtime the
-  module already needed). No patch and no API changed.
+  module already needed). No patch and no API changed. New in the C++ suite: the generator writes KV
+  cache scales, and `CApiFp8Cache` runs the 8-bit float cache on such a model (732 tests, 776 cases).
 - **llama.cpp b12283** (from b12242, 41 upstream commits): an 8-bit float KV cache
   (`CacheType.F8_E4M3`, `--cache-type-k` / `-v f8_e4m3`, #28392), a default language and voice for
   the server's speech and realtime routes (`ModelParameters.setTtsLanguage` / `setTtsVoice`,

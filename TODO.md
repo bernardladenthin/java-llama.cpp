@@ -353,7 +353,8 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 
 **From b12283 to b12289 (2026-11-11)** -- 6 upstream commits (CUDA kernels, upstream's tests, two
 WebUI components); 20 patches unchanged, nothing in this library's sources. Not measured: the CUDA
-module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16), and its import
+module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16; on the CPU
+`CApiFp8Cache` runs the cache on a generated model with cache scales), and its import
 list with `cublasLt` linked directly, which the package job of the first run prints.
 
 **From b12242 to b12283 (2026-11-11)** -- 41 upstream commits; 15 patches unchanged, `0015`
