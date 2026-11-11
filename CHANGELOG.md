@@ -148,6 +148,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12292** (from b12289, 3 upstream commits, all in the Vulkan and WebGPU backends and
+  upstream's tests): the Vulkan module converts a quantized KV cache to F16 for flash attention on
+  devices with `VK_NV_cooperative_matrix2` too, once the cache holds 4096 positions and the batch
+  is large enough to pay for it, and passes a buffer for the vendor binary when it reads device
+  fault information. No patch and no API changed.
 - **llama.cpp b12289** (from b12283, 6 upstream commits, all in the CUDA module, upstream's tests
   and the WebUI): the 8-bit float KV cache (`CacheType.F8_E4M3`) on CUDA, flash attention for head
   sizes 40 and 72 and for 256/256 on sm70, MMVF for BF16 matrices of few rows. The CUDA module links

@@ -351,6 +351,11 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12289 to b12292 (2026-11-11)** -- 3 upstream commits (Vulkan, WebGPU, upstream's
+`test-backend-ops`); 20 patches unchanged, nothing in this library's sources. Not measured: the
+Vulkan module on a GPU with `VK_NV_cooperative_matrix2` (the dequantized KV cache in flash
+attention, #31526), which no runner has.
+
 **From b12283 to b12289 (2026-11-11)** -- 6 upstream commits (CUDA kernels, upstream's tests, two
 WebUI components); 20 patches unchanged, nothing in this library's sources. Not measured: the CUDA
 module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16; on the CPU
