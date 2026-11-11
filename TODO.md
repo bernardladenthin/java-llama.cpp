@@ -230,7 +230,9 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     dependent libraries" (the JVM passes the path in `sun.jnu.encoding`; read from the message, not
     from the JDK source). Within the code page (`ü` on 1252) it works. Possible in `LlamaLoader`:
     detect a directory the encoding cannot represent and fall back to another one or to its 8.3
-    name, or at least name the cause in the error. Not implemented.
+    name. Not implemented. The error names the cause since 2026-11-11
+    (`LlamaLoader.unencodablePathHint`: the path is checked against `sun.jnu.encoding` when a load
+    fails; unit-tested, not run on Windows).
   - **Open, found by that measurement: a model's `--log-file` stays attached after `close()`.**
     `common_log_main()` is process-wide, so later models of the same JVM keep writing into the file
     and Windows cannot delete it while the JVM lives. Not a path defect. The C API test detaches it

@@ -10,6 +10,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **The loader explains a natives directory the JVM cannot load from.** When a load fails and the
+  path holds a character the platform encoding (`sun.jnu.encoding`, on Windows the ANSI code page)
+  cannot represent, the `UnsatisfiedLinkError` says so and names `net.ladenthin.llama.tmpdir` /
+  `java.io.tmpdir`, where it used to read "Can't find dependent libraries" only.
 - **`TextToSpeech.getVoices()`** (and `FfmTextToSpeech.getVoices()`, `jllama_tts_voices()` in the C
   API): the predefined voices of a model that ships some in its projector (llama.cpp b12061: Pocket
   TTS without voice cloning, LFM3-Audio), to pass as `voice` to `synthesize`. Empty for a model
