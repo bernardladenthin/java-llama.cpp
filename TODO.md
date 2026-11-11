@@ -351,6 +351,21 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12292 to b12309 (2026-11-11)** -- 17 upstream commits, pinned by commit (no tag yet); 20
+patches unchanged. Done with it: the quantizer records the file name of the importance matrix, not
+its path (as upstream's tool since #32000); `NativeServerCors` holds `--cors-origins` on the
+embedded server (#32098) and `OpenAiCompatServer` applies the same rules (`OriginGuard`); a chat
+template with the Jinja additions (#32072) renders. Open: `OriginGuard` has no browser test (the
+rules are tested over a socket), and unlike upstream it has no page of its own to let a cross-site
+navigation through. Not testable here: the `tts` template normalizer (no generated speech model)
+and the F32 accumulation (needs a context long enough to overflow F16). Not measured: the CUDA,
+ROCm, Vulkan and Metal changes on a GPU.
+
+**From b12289 to b12292 (2026-11-11)** -- 3 upstream commits (Vulkan, WebGPU, upstream's
+`test-backend-ops`); 20 patches unchanged, nothing in this library's sources. Not measured: the
+Vulkan module on a GPU with `VK_NV_cooperative_matrix2` (the dequantized KV cache in flash
+attention, #31526), which no runner has.
+
 **From b12283 to b12289 (2026-11-11)** -- 6 upstream commits (CUDA kernels, upstream's tests, two
 WebUI components); 20 patches unchanged, nothing in this library's sources. Not measured: the CUDA
 module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16; on the CPU

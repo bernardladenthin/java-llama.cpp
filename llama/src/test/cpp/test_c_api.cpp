@@ -1173,6 +1173,51 @@ TEST_F(CApi, ARawCompletionWithMessagesRefusesTheChatOnlyFields) {
     EXPECT_EQ(jllama_completions(model_, allowed.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 
+TEST(CApiTemplate, AChatTemplateMayChainComparisonsAndUnpackArguments) {
+    // Jinja since b12309 (upstream #32072): `a < b < c` is one chained comparison, and a call may
+    // unpack a list or a dict into its arguments. A template that uses either failed to parse
+    // before, which fails the model load.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-jinja");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- macro tag(role, text, close=true) -%}"
+                             "<{{ role }}>{{ text }}{{ '</' ~ role ~ '>' if close else '' }}"
+                             "{%- endmacro -%}"
+                             "{%- for message in messages -%}"
+                             "{{ tag(*[message.role, message.content]) }}"
+                             "{%- endfor -%}"
+                             "[{{ 'few' if 0 < messages|length < 3 else 'many' }}]"
+                             "{%- if add_generation_prompt -%}{{ tag('assistant', **{'text': '', 'close': false}) }}"
+                             "{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned one;
+    EXPECT_EQ(jllama_apply_template(model, R"({"messages":[{"role":"user","content":"Hi"}]})", &one.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(one.str(), "<user>Hi</user>[few]<assistant>");
+
+    Owned three;
+    EXPECT_EQ(jllama_apply_template(model,
+                                    R"({"messages":[{"role":"user","content":"a"},)"
+                                    R"({"role":"assistant","content":"b"},{"role":"user","content":"c"}]})",
+                                    &three.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(three.str(), "<user>a</user><assistant>b</assistant><user>c</user>[many]<assistant>");
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
     // A chat template can add stop strings of its own (upstream's Laguna workaround adds
     // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
@@ -2801,7 +2846,13 @@ TEST_F(CApiEnumSweep, AnImportanceMatrixChangesTheWeightsAndIsRecorded) {
     gguf_context *g = gguf_init_from_file(weighted.c_str(), no_data);
     ASSERT_NE(g, nullptr);
     const int64_t dataset_key = gguf_find_key(g, "quantize.imatrix.dataset");
-    EXPECT_GE(gguf_find_key(g, "quantize.imatrix.file"), 0);
+    // the file's name, not its path: the output is published, the path names this machine's directories
+    const int64_t file_key = gguf_find_key(g, "quantize.imatrix.file");
+    ASSERT_GE(file_key, 0);
+    const std::string recorded = gguf_get_val_str(g, file_key);
+    EXPECT_EQ(recorded, imatrix_.substr(imatrix_.find_last_of("/\\") + 1));
+    EXPECT_EQ(recorded.find_first_of("/\\"), std::string::npos) << recorded;
+    EXPECT_NE(imatrix_.find_first_of("/\\"), std::string::npos) << "the fixture's matrix has no directory part";
     EXPECT_GE(gguf_find_key(g, "quantize.imatrix.entries_count"), 0);
     EXPECT_GE(gguf_find_key(g, "quantize.imatrix.chunks_count"), 0);
     EXPECT_GE(dataset_key, 0);

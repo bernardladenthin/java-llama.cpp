@@ -16,6 +16,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -161,6 +162,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     private static final int HTTP_OK = 200;
     private static final int HTTP_BAD_REQUEST = 400;
     private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_FORBIDDEN = 403;
     private static final int HTTP_NOT_FOUND = 404;
     private static final int HTTP_METHOD_NOT_ALLOWED = 405;
     private static final int HTTP_SERVER_ERROR = 500;
@@ -180,6 +182,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
+    private static final String ERROR_TYPE_PERMISSION = "permission_error";
     /** upstream's error type for a capability the server lacks (HTTP 501). */
     private static final String ERROR_TYPE_NOT_SUPPORTED = "not_supported_error";
     /** Anthropic's error type for a request that is the client's fault (HTTP 400). */
@@ -359,16 +362,26 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     /**
-     * Build a CORS filter that stamps {@code Access-Control-Allow-Origin} on every response and answers
+     * Build a CORS filter that stamps {@code Access-Control-Allow-Origin} on every response, answers
      * {@code OPTIONS} preflights with {@code 204} + the allowed methods/headers — so browser- and
      * webview-based clients (which preflight {@code Authorization}, {@code x-api-key} and their SDK's own
-     * headers) are not blocked.
+     * headers) are not blocked — and, for every configured value but {@code "*"}, refuses a request from
+     * somewhere else with {@code 403} ({@link OriginGuard}): the header alone only hides the response
+     * from a foreign page, the request would still run.
      */
     private static Filter buildCorsFilter(String allowOrigin) {
         return new Filter() {
             @Override
             public void doFilter(HttpExchange exchange, Chain chain) throws IOException {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowOrigin);
+                final String origin = exchange.getRequestHeaders().getFirst("Origin");
+                final String allowHeader = OriginGuard.allowOriginHeader(allowOrigin, origin);
+                if (allowHeader != null) {
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowHeader);
+                }
+                if (!OriginGuard.ANY.equals(allowOrigin)) {
+                    // the answer depends on who asks, so a cache must not hand it to somebody else
+                    exchange.getResponseHeaders().add("Vary", "Origin");
+                }
                 if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                     exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
                     // Allow what the browser asks for: browser SDKs send their own headers (Anthropic's
@@ -384,6 +397,27 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
                     exchange.sendResponseHeaders(204, -1);
                     exchange.close();
+                    return;
+                }
+                final InetSocketAddress local = exchange.getLocalAddress();
+                final InetAddress localAddress = local == null ? null : local.getAddress();
+                final boolean loopback = localAddress != null && localAddress.isLoopbackAddress();
+                if (!OriginGuard.isAllowed(
+                        allowOrigin,
+                        loopback,
+                        exchange.getRequestHeaders().getFirst("Host"),
+                        origin,
+                        exchange.getRequestHeaders().getFirst("Sec-Fetch-Site"))) {
+                    final byte[] body = OpenAiSseFormatter.errorJson(
+                                    "Cross-origin request not allowed (see corsAllowOrigin / --cors-origins)",
+                                    ERROR_TYPE_PERMISSION,
+                                    null)
+                            .getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
+                    exchange.sendResponseHeaders(HTTP_FORBIDDEN, body.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
                     return;
                 }
                 chain.doFilter(exchange);

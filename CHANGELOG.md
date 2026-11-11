@@ -10,6 +10,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`OpenAiCompatServer` refuses requests from somewhere else** once `corsAllowOrigin` is not `*`
+  (new CLI option `--cors-origins`; the values are llama.cpp's: `*`, `localhost`, or a
+  comma-separated list of origins). `OriginGuard` applies the rules of llama.cpp's own server
+  (upstream #32098): a foreign `Origin` or `Sec-Fetch-Site`, and on a loopback connection a `Host`
+  that names neither loopback nor the host of an allowed origin (DNS rebinding), are answered `403`
+  `permission_error` before any route runs. The `Access-Control-Allow-Origin` header alone only hid
+  the response from a foreign page; the request still ran. **Behaviour change for a configured
+  origin:** such a server answered every request before, with the configured value in the header;
+  a list or `localhost` is now answered with the one origin that asked, and `Vary: Origin` is set.
+  The default `*` is unchanged, and so is every client that is no browser.
 - **The loader explains a natives directory the JVM cannot load from.** When a load fails and the
   path holds a character the platform encoding (`sun.jnu.encoding`, on Windows the ANSI code page)
   cannot represent, the `UnsatisfiedLinkError` says so and names `net.ladenthin.llama.tmpdir` /
@@ -148,6 +158,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12309** (from b12292, 17 upstream commits; pinned by commit, upstream has not tagged
+  the number yet): flash attention on the CPU sums an F16 V cache in F32 (no more inf/NaN on a long
+  context), a `tts` template can normalize its text itself (`tts_norm_scan`, `tts_norm_sub`), Jinja
+  templates may chain comparisons and unpack arguments, and the embedded server's `--cors-origins`
+  refuses a foreign `Host` or `Origin` on a loopback connection with `403` (the default `*` is
+  unchanged). cpp-httplib 0.66.0. No patch changed. New in the C++ suite: `NativeServerCors` (the
+  embedded server with and without the option) and a chat template with a chained comparison and
+  unpacked arguments (736 tests, 780 cases).
+- **llama.cpp b12292** (from b12289, 3 upstream commits, all in the Vulkan and WebGPU backends and
+  upstream's tests): the Vulkan module converts a quantized KV cache to F16 for flash attention on
+  devices with `VK_NV_cooperative_matrix2` too, once the cache holds 4096 positions and the batch
+  is large enough to pay for it, and passes a buffer for the vendor binary when it reads device
+  fault information. No patch and no API changed.
 - **llama.cpp b12289** (from b12283, 6 upstream commits, all in the CUDA module, upstream's tests
   and the WebUI): the 8-bit float KV cache (`CacheType.F8_E4M3`) on CUDA, flash attention for head
   sizes 40 and 72 and for 256/256 on sm70, MMVF for BF16 matrices of few rows. The CUDA module links
@@ -300,6 +323,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A quantized model no longer carries the path of its importance matrix.**
+  `LlamaQuantizer` / `jllama_quantize_imatrix` wrote the path they were given into
+  `quantize.imatrix.file` (and passed on a path a matrix carried as its dataset), so a published
+  GGUF named the directories of the machine it was made on. Both keys hold the file name now, as
+  upstream's `llama-quantize` writes them since #32000.
 - **Windows: slot files under a non-ASCII path.** Inside `java.exe` llama.cpp read the slot
   directory and the checkpoint / draft-state appendix of a slot file in the ANSI code page: a
   directory outside ASCII failed the model load ("not a directory"), and a file name outside ASCII

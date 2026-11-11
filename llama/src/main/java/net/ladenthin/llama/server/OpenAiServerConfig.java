@@ -161,7 +161,9 @@ public final class OpenAiServerConfig {
     }
 
     /**
-     * The {@code Access-Control-Allow-Origin} value sent on every response and CORS preflight.
+     * The origins browser pages may call the server from: {@code "*"}, {@code "localhost"} or a
+     * comma-separated list. See {@link Builder#corsAllowOrigin(String)} for what a value other than
+     * {@code "*"} refuses.
      *
      * @return the allowed CORS origin
      */
@@ -368,9 +370,17 @@ public final class OpenAiServerConfig {
         }
 
         /**
-         * Sets the {@code Access-Control-Allow-Origin} value (CORS).
+         * Sets the origins browser pages may call the server from (CORS).
          *
-         * @param corsAllowOrigin the allowed origin (e.g. {@code "*"} or a specific scheme/host/port)
+         * <p>{@code "*"} (the default) serves every origin and checks nothing. Any other value also
+         * <em>refuses</em> a request from somewhere else with {@code 403}, by the rules of llama.cpp's
+         * {@code --cors-origins}: a foreign {@code Origin} or {@code Sec-Fetch-Site}, and on a loopback
+         * connection a {@code Host} that names neither loopback nor the host of an allowed origin (DNS
+         * rebinding). A client that is no browser sends none of these headers and is served as before.
+         *
+         * @param corsAllowOrigin {@code "*"}, {@code "localhost"} (every origin on {@code localhost},
+         *     {@code 127.0.0.1} or {@code ::1}, whatever its port) or a comma-separated list of origins
+         *     ({@code scheme://host[:port]})
          * @return this builder
          */
         public Builder corsAllowOrigin(String corsAllowOrigin) {

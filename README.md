@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12289](https://img.shields.io/badge/llama.cpp-%23b12289-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12289)  
+[![llama.cpp b12309](https://img.shields.io/badge/llama.cpp-%23b12309-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12309)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1206,7 +1206,7 @@ java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`,
+`--model-id`, `--api-key`, `--cors-origins`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`,
 `--tts-model` + `--tts-mmproj` for a speech model, with `--tts-lang` / `--tts-voice` as its defaults). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
@@ -1252,7 +1252,12 @@ GitHub account). On CPU, prefer a smaller model and a modest context window — 
 heartbeats so a long prompt prefill does not trip the client's stream-inactivity timeout. Agent-mode
 tool calling depends on the model's own tool-calling quality. Pass `--api-key` (or `OpenAiServerConfig.builder().apiKey(...)`) to require the key, sent as
 `Authorization: Bearer <key>` (or as `x-api-key`, the header Anthropic clients send); the server binds to
-`127.0.0.1` by default.
+`127.0.0.1` by default. Browser pages of every origin may call it (`corsAllowOrigin` `*`); name the
+origins with `--cors-origins` / `corsAllowOrigin(...)` (`localhost`, or a comma-separated list such as
+`http://localhost:5173,https://app.example`) and the server refuses a request from anywhere else with
+`403` -- a foreign `Origin`, and on a loopback connection a `Host` header that names another machine
+(DNS rebinding) -- by the rules of llama.cpp's own `--cors-origins`. A client that is no browser sends
+neither header and is not affected.
 
 ### Native server with the built-in WebUI (`NativeServer`)
 
