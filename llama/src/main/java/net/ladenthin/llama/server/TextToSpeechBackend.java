@@ -196,7 +196,7 @@ final class TextToSpeechBackend implements SpeechBackend {
             } catch (IOException | RuntimeException e) {
                 // no principal for the user name: without one the file would get whatever its
                 // directory hands down, which in a shared temporary directory may be everybody
-                throw new IOException("cannot restrict the speaker reference file to its owner", e);
+                throw new IOException("cannot restrict the speaker reference file to its owner '" + userName + "'", e);
             }
         }
         return new FileAttribute<?>[0];
