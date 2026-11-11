@@ -2119,6 +2119,12 @@ TEST(CApiSlotFiles, ASlidingWindowModelsSlotFileCarriesItsContextCheckpoints) {
                   },
                   &lines),
               JLLAMA_STATUS_OK);
+    // An ASSERT below returns early, and the callback must not outlive `lines`: left installed, the
+    // next test's first log line went to this frame and ended the run (exit code 3 on Windows), so
+    // every later test went unreported.
+    struct LogCallbackReset {
+        ~LogCallbackReset() { jllama_set_log_callback(nullptr, nullptr); }
+    } log_callback_reset;
 
     jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
     ASSERT_NE(model, nullptr) << jllama_last_error();
