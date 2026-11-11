@@ -209,21 +209,36 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     (`common_imatrix_load_legacy`, a narrow `std::ifstream`), `patches/0027` `--log-file`
     (`common/log.cpp`, a narrow `fopen`) and `patches/0028` the quantizer's output
     (`src/llama-quant.cpp`, a narrow `std::ofstream`), and `patches/0029` a `file://` media URL
-    below `--media-path` (`handle_media`, found by the review of PR #612). **These four are read from the source and
-    green on CI's Windows runners, whose code page and test paths were not checked against a
-    code-page-1252 desktop**: one run of `jllama_test.exe --gtest_filter=CApiNonAsciiPaths.*:CApiSlotFiles.*`
-    on such a machine, without and with the patches, is the measurement that is missing.
+    below `--media-path` (`handle_media`, found by the review of PR #612). **Measured on 2026-11-11 on the same machine
+    ([`docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md`](docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md)):** each of `0025`-`0030` turns exactly its own test red when
+    it is removed, and all are green with the 20 patches.
   - **Open, narrow sites in llama.cpp, a non-ASCII path fails or lands under a mangled name:** the
     download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
     `common/`). README names them. A patch, or upstream: not decided.
   - **Fixed, not a file site:** a value llama.cpp takes from an environment variable
     (`LLAMA_ARG_SLOT_SAVE_PATH`, `LLAMA_ARG_LOG_FILE`, ...) was what `getenv` returns, the ANSI code
     page inside `java.exe`, and failed the load before any argument could override it;
-    `patches/0030` reads it as UTF-16 and converts. Read from the source like `0026`-`0029`: the
-    same missing measurement on a code-page-1252 desktop.
+    `patches/0030` reads it as UTF-16 and converts. Measured with the others (without it: "No mapping for the Unicode
+    character exists in the target multi-byte code page").
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
-    built-in file tools, and everything through the Java layer -- the machine had
-    no Temurin 25, so the measurement went through the C API.
+    built-in file tools. The Java layer was measured on 2026-11-11 with
+    Temurin 25 (model, `--log-file`, slots in both shapes, quantizer, imatrix, legacy merge: all work;
+    `NonAsciiPathIntegrationTest` holds them on the Windows Java jobs).
+  - **Open, found by that measurement: an extraction directory with a character outside the ANSI code
+    page cannot be loaded from.** `java.io.tmpdir` / `net.ladenthin.llama.tmpdir` under `tmp-日` on code
+    page 1252: Java extracts the files, `System.load` then names `tmp-?` and fails with "Can't find
+    dependent libraries" (the JVM passes the path in `sun.jnu.encoding`; read from the message, not
+    from the JDK source). Within the code page (`ü` on 1252) it works. Possible in `LlamaLoader`:
+    detect a directory the encoding cannot represent and fall back to another one or to its 8.3
+    name, or at least name the cause in the error. Not implemented.
+  - **Open, found by that measurement: a model's `--log-file` stays attached after `close()`.**
+    `common_log_main()` is process-wide, so later models of the same JVM keep writing into the file
+    and Windows cannot delete it while the JVM lives. Not a path defect. The C API test detaches it
+    with `common_log_set_file(..., nullptr)`; Java has no call for that.
+  - **A second build directory rewrites the shared natives directory's provenance.** A configure of
+    another build tree (the counter-checks' `build-no00NN`) writes `jllama-build.txt` and
+    `jllama-sbom.json` into `src/main/natives/...` too, so they then name that tree's patch set;
+    reconfigure the main build directory afterwards.
   - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
     lines over `common/{common,download,hf-cache,preset}.cpp` and
     `tools/server/server-{context,mcp,models,tools}.cpp`; upstream removed exactly these, so it has

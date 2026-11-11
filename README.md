@@ -1014,7 +1014,10 @@ unmeasured, `--models-dir` in router mode. The model, mmproj, LoRA and shard fil
 the importance matrix, the trainer's files, `--log-file`, the output of
 `LlamaQuantizer.quantize` and a `file://` media URL below `--media-path` are read and written under
 any path, and so is a value llama.cpp takes from an environment variable
-(`LLAMA_ARG_SLOT_SAVE_PATH`, ...).
+(`LLAMA_ARG_SLOT_SAVE_PATH`, ...). One limit is the JVM's: the directory the natives are extracted
+to (`java.io.tmpdir`, `net.ladenthin.llama.tmpdir`) must be representable in the system's ANSI code
+page -- `System.load` passes the path in it, so `tmp-日` on a code-page-1252 system fails with "Can't
+find dependent libraries", while `Prüfung` works.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 
