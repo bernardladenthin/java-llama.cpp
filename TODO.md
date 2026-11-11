@@ -228,11 +228,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     page cannot be loaded from.** `java.io.tmpdir` / `net.ladenthin.llama.tmpdir` under `tmp-日` on code
     page 1252: Java extracts the files, `System.load` then names `tmp-?` and fails with "Can't find
     dependent libraries" (the JVM passes the path in `sun.jnu.encoding`; read from the message, not
-    from the JDK source). Within the code page (`ü` on 1252) it works. Possible in `LlamaLoader`:
-    detect a directory the encoding cannot represent and fall back to another one or to its 8.3
-    name. Not implemented. The error names the cause since 2026-11-11
+    from the JDK source). Within the code page (`ü` on 1252) it works. The 8.3 short name is no way around it (measured: `System.load` of
+    `C:\Temp\PRFUNG~1\TMP-~1\...\jllama.dll` fails with the long path and the `?` in its message, and a
+    volume may have no short names at all). What is left for `LlamaLoader` is a fallback to a
+    directory inside the encoding; not implemented. The error names the cause since 2026-11-11
     (`LlamaLoader.unencodablePathHint`: the path is checked against `sun.jnu.encoding` when a load
-    fails; unit-tested, not run on Windows).
+    fails) -- measured on the same machine: the hint appears for `tmp-日` with `Cp1252`, and not for
+    a directory with only `ü`, which loads.
   - **Open, found by that measurement: a model's `--log-file` stays attached after `close()`.**
     `common_log_main()` is process-wide, so later models of the same JVM keep writing into the file
     and Windows cannot delete it while the JVM lives. Not a path defect. The C API test detaches it
