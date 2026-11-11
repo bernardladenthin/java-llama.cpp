@@ -18,48 +18,30 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**14 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**20 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
-| 0001 | [`0001-win32-arg-parse-embed-guard.patch`](#0001-win32-arg-parse-embed-guardpatch) | common: parse exactly the argv an embedding caller passes (no GetCommandLineW override) | 35 | 36 |
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable) | 1 | 8 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 7 |
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 30 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
 | 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 2 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
-
-## 0001-win32-arg-parse-embed-guard.patch
-
-**Files (35):** `common/arg.cpp`, `common/arg.h`, `examples/batched/batched.cpp`, `examples/debug/debug.cpp`, `examples/diffusion/diffusion-cli.cpp`, `examples/embedding/embedding.cpp`, `examples/eval-callback/eval-callback.cpp`, `examples/idle/idle.cpp`, `examples/lookahead/lookahead.cpp`, `examples/lookup/lookup-create.cpp`, `examples/lookup/lookup-stats.cpp`, `examples/lookup/lookup.cpp`, `examples/parallel/parallel.cpp`, `examples/passkey/passkey.cpp`, `examples/retrieval/retrieval.cpp`, `examples/speculative-simple/speculative-simple.cpp`, `examples/speculative/speculative.cpp`, `examples/training/finetune.cpp`, `tests/test-arg-parser.cpp`, `tests/test-export-graph-ops.cpp`, `tests/test-thread-safety.cpp`, `tools/batched-bench/batched-bench.cpp`, `tools/cli/cli.cpp`, `tools/completion/completion.cpp`, `tools/cvector-generator/cvector-generator.cpp`, `tools/export-lora/export-lora.cpp`, `tools/fit-params/fit-params.cpp`, `tools/imatrix/imatrix.cpp`, `tools/mtmd/debug/mtmd-debug.cpp`, `tools/mtmd/mtmd-cli.cpp`, `tools/perplexity/perplexity.cpp`, `tools/results/results.cpp`, `tools/server/server.cpp`, `tools/tokenize/tokenize.cpp`, `tools/tts/tts.cpp`
-
-The patch's own header, verbatim:
-
-```text
-common: parse exactly the argv an embedding caller passes (no GetCommandLineW override)
-
-Since llama.cpp #24779 (b9739) common_params_parse re-derives argv from the PROCESS command line on
-Windows and adopts it, so an embedded caller -- java.exe hosting libjllama through JNI -- loses the
-`--model ...` it passed and the load fails with "Failed to parse model parameters". b9789 narrowed
-that to a count guard, which still fires whenever the embedded argv happens to have the length of
-java.exe's own. This patch keeps common_params_parse to the argv it is given and moves the UTF-8
-recovery for the standalone tools into a new common_params_parse_main(), which every tool's main()
-now calls; a regression case in tests/test-arg-parser.cpp pins the contract. The embedded caller
-(jllama.cpp) keeps calling common_params_parse. Reported upstream as ggml-org/llama.cpp#26416;
-carried here until upstream decides which of the two directions it wants.
-
-Touches common/arg.{cpp,h} and the ~34 standalone main() call sites, which this project does not
-compile (LLAMA_BUILD_TOOLS/TESTS are OFF for a FetchContent subproject) but keeps in the patch so it
-can be submitted verbatim.
-```
+| 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
+| 0025 | [`0025-server-slot-appendix-reads-utf8.patch`](#0025-server-slot-appendix-reads-utf8patch) | server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows | 1 | 4 |
+| 0026 | [`0026-common-imatrix-legacy-reads-utf8.patch`](#0026-common-imatrix-legacy-reads-utf8patch) | common: open a legacy importance matrix by its UTF-8 path on Windows | 1 | 1 |
+| 0027 | [`0027-common-log-file-reads-utf8.patch`](#0027-common-log-file-reads-utf8patch) | common: open the --log-file by its UTF-8 path on Windows | 1 | 1 |
+| 0028 | [`0028-llama-quant-output-reads-utf8.patch`](#0028-llama-quant-output-reads-utf8patch) | llama: write the quantizer's output by its UTF-8 path on Windows | 1 | 2 |
+| 0029 | [`0029-server-media-file-reads-utf8.patch`](#0029-server-media-file-reads-utf8patch) | server: open a file:// media URL by its UTF-8 path on Windows | 1 | 1 |
+| 0030 | [`0030-common-arg-env-reads-utf8.patch`](#0030-common-arg-env-reads-utf8patch) | common: read an option's environment variable as UTF-8 on Windows | 1 | 2 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -111,18 +93,16 @@ being refreshed on every version bump.
 The patch's own header, verbatim:
 
 ```text
-server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable)
+server: make llama_server() embeddable in a host process (no signal handlers, stoppable)
 
 b9870 exposes int llama_server(int, char **) with no main() in server.cpp; this patch adds what a
 JVM host needs to run it inside libjllama: a g_llama_server_embedded flag with
 llama_server_set_embedded() / llama_server_request_shutdown() (declared by the host in
 native_server_bridge.h), no process-wide SIGINT/SIGTERM handlers in embedded mode (they would
-hijack the JVM's), common_params_parse instead of common_params_parse_main for the forwarded argv
-(the latter's GetCommandLineW recovery would pick up java.exe's command line, the class of defect
-0001 fixes), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the locals
-it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
-over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
-Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+hijack the JVM's), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the
+locals it captures are destroyed -- a request landing after llama_server() returned used to run the
+lambda over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
+Runnable guard: src/test/cpp/test_native_server_shutdown.cpp.
 
 Refreshed at b11881: #31113 split llama_server() into one function per role (server_run_router,
 server_run_instance, server_run_download) and added server_run_opts. The embedded mode now clears
@@ -130,6 +110,10 @@ server_run_opts::install_signal_handlers (upstream's own switch, which llama-cli
 guarding the sigaction block, and each role function that installs a shutdown handler declares the
 reset after the last local its handler captures: models_routes in the router, ctx_http in the
 instance.
+
+Refreshed at b12014: #31417 removed the Windows argv reconstruction from common_params_parse (the
+defect 0001 carried a fix for, dropped at the same bump), so the forwarded-argv hunk is gone:
+llama_server() calls common_params_parse for every caller, and it parses the argv it is given.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -269,6 +253,33 @@ normal peer setup, socket cleanup and restart. Subprocess deadlines bound failur
 
 Drop-check on each upstream bump: inspect comm_init, the stoppable accept/connect
 paths and stop_server. Drop upstream-fixed hunks instead of mechanically refreshing them.
+
+Refreshed at b12079 (#28967, NCCL for multi-node tensor parallelism): COMM_INIT accepts
+world-1 peers on rank 0 instead of one (comm_state::peers, a vector in rank order), factors
+the capability exchange into comm_caps_handshake(), has every peer send its rank after it, and
+negotiates the communicator over those sockets (comm_bootstrap_exchange) before it answers.
+The cancellation contract is carried over unchanged: every accept of the loop and the
+connect/retry of a higher rank observe the stop flag, and each peer socket is registered with
+rpc_server_track_peer() before its first blocking read, so a stop shuts it down under the
+mutex wherever COMM_INIT blocks on it -- the handshake, the rank, or the bootstrap exchange.
+Not covered: a backend communicator's own init (ggml_backend_comm_init_rank, CUDA with NCCL)
+blocks inside the backend until every rank has joined and has no cancellation.
+
+Refreshed at b12217 (#29413, "RPC: Improve loading times", protocol 9.0.0): the HELLO answer
+carries server feature flags and negotiate_hello() takes the dispatcher's flags to fill; the
+hunk that turns a failed handshake of rpc_dispatcher::start() into a reported failure is
+rewritten over that call. Nothing else moved.
+
+Reduced at b12283 (#30415, "ggml-rpc : fail gracefully on unreachable endpoints and failed
+handshakes"): upstream took the client half -- rpc_dispatcher::start() returns false instead of
+aborting, negotiate_hello() reports a failed exchange, get_dispatcher() returns nullptr and does
+not cache a failed attempt, and every consumer answers nullptr conservatively (device memory
+0/0, device count 0). Those hunks are dropped, with this patch's try_get_dispatcher() /
+aborting get_dispatcher() pair. What stays of the client: an endpoint registered earlier is
+re-checked on the next ggml_backend_rpc_add_server() (upstream returns the cached registration
+of a server that has gone away), and ggml_backend_rpc_init() aborts by name when the
+registration of a reachable server fails. The server half (stop, listening, COMM_INIT bind
+address and cancellation, transport) is unchanged.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
@@ -653,4 +664,228 @@ a tenth of what the quantization itself costs. Q8_0 itself, z16 against z13: mea
 top token 98.5 %.
 
 Not filed upstream yet (nothing is filed before the owner says so).
+```
+
+## 0024-common-fs-is-directory-reads-utf8.patch
+
+**Files (1):** `common/common.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows
+
+fs_is_directory() (common/common.cpp:944 at b12242) builds the std::filesystem::path it checks from
+the narrow std::string. MSVC's path constructor decodes a narrow string in the process's active
+code page, and since b12131/b12132 nothing converts the argument first. The argument is UTF-8 (the
+C API, and Java through JNI, pass UTF-8 on every platform), so on a code page like 1252 a directory
+outside ASCII does not exist under the decoded name: c3 a4 (a-umlaut) is read as "A-tilde,
+currency sign", e6 97 a5 (U+65E5) as three cp1252 characters. The two callers throw
+"not a directory: <path>" (common/arg.cpp:3647 for --slot-save-path, :3661 for --media-path), and
+the model load fails before anything is written. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest (common/win-app.manifest), and a library loaded into
+java.exe cannot.
+
+The fix reads the string as UTF-8 through std::filesystem::u8path(), which is the identity on
+platforms whose narrow encoding is UTF-8 already.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, a directory "d-<a-umlaut>-<U+65E5>"):
+without the patch the load is refused with "not a directory"; with it, a slot round-trips without a
+draft model (n_written 9348 = size on disk = n_read). With a draft model the save still fails,
+"Unable to save slot: incomplete draft state": the appendix is the subject of 0025, and only the two
+together give the round trip. In a process with an activeCodePage=UTF-8 manifest the unpatched
+check passes. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when fs_is_directory() reads its argument as UTF-8 again (u8path, or a
+wide conversion) -- CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile then
+stays green without it on a Windows job.
+```
+
+## 0025-server-slot-appendix-reads-utf8.patch
+
+**Files (1):** `tools/server/server-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows
+
+A slot save writes the llama state through llama_state_seq_save_file(), i.e. ggml_fopen(), which
+converts the UTF-8 path to UTF-16. Then save_slot_checkpoints() and save_slot_draft() append to the
+same file through std::ofstream(filepath, binary | app), and load_slot_checkpoints() and
+load_slot_draft() read it back through std::ifstream(filepath, binary | ate)
+(tools/server/server-context.cpp:2840, :2872, :2948 and :2974 at b12242). MSVC decodes that narrow
+std::string in the process's active code page, so on a code page like 1252 the appendix of a path
+outside ASCII goes elsewhere:
+
+  - a directory outside ASCII (once 0024 lets it through): the mis-decoded directory does not exist,
+    the stream fails and the save reports "Unable to save slot: incomplete draft state". The
+    9348-byte state without the appendix stays behind, and a restore of it succeeds without the
+    draft state.
+  - an ASCII directory with a file name outside ASCII (no other patch involved): the appendix lands
+    in a second file under the mis-decoded name, next to the real one. Measured:
+    "f-<a-umlaut>-<U+65E5>-draft.bin" 9348 bytes plus its mangled twin 9216 bytes. The save reports
+    ok with n_written 18564, the sum of both files; the restore reports ok with n_read 9348, and the
+    draft state is silently gone.
+
+The fix opens the four streams on std::filesystem::u8path(filepath), which is the identity where the
+narrow encoding is UTF-8.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, tiny llama model with itself as the
+draft model, --spec-type draft-simple): with 0024 and this patch both shapes round-trip, with a single
+18564-byte file each, n_written = size on disk = n_read, and n_restored = n_saved. The checkpoint
+appendix shares these sites but is not exercised by the tiny model (no checkpoints): read, not
+measured. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when the four streams in server-context.cpp no longer take the narrow
+filepath string -- CApiSlotFiles.ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhole then
+stays green without it on a Windows job.
+```
+
+## 0026-common-imatrix-legacy-reads-utf8.patch
+
+**Files (1):** `common/imatrix-loader.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: open a legacy importance matrix by its UTF-8 path on Windows
+
+common_imatrix_load_legacy() (common/imatrix-loader.cpp:11 at b12242) opens the file through
+std::ifstream(fname), a narrow string MSVC reads in the process's active code page. The GGUF branch
+of the same loader goes through gguf_init_from_file(), i.e. ggml_fopen(), which converts UTF-8 to
+UTF-16. The argument is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every platform), so
+inside java.exe on a code page like 1252 a legacy matrix under a path outside ASCII is not found:
+the loader logs "failed to open" and the merge or the quantisation that named it fails, while the
+same matrix as GGUF under the same path is read. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 and 0025.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when common_imatrix_load_legacy() no longer opens the narrow fname
+(u8path, a wide conversion, ggml_fopen) --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+```
+
+## 0027-common-log-file-reads-utf8.patch
+
+**Files (1):** `common/log.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: open the --log-file by its UTF-8 path on Windows
+
+common_log::set_file() (common/log.cpp) opens the log file with fopen(path, "w"), which the
+Windows C runtime reads in the process's active code page. The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+--log-file outside ASCII is created under a mangled name. Upstream's own executables do not see
+it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens it with ggml_fopen(), which converts UTF-8 to UTF-16 on Windows and is fopen()
+elsewhere -- the function the model files already go through.
+
+Read from the source and from the measurement of the same class in
+docs/handover/local-agent-report-windows-non-ascii-paths.md (which lists this site as open);
+not measured on Windows with the fix before it was written: CI's Windows C++ jobs are its first
+run there.
+
+Drop-check: drop this patch when set_file() no longer calls the narrow fopen() --
+CApiNonAsciiPaths.TheLogFileIsWrittenUnderItsNonAsciiName then stays green without it on a
+Windows job.
+```
+
+## 0028-llama-quant-output-reads-utf8.patch
+
+**Files (1):** `src/llama-quant.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama: write the quantizer's output by its UTF-8 path on Windows
+
+llama_model_quantize_impl() (src/llama-quant.cpp) opens every output file through
+std::ofstream(fname), a narrow string MSVC reads in the process's active code page, while the
+model it reads goes through ggml_fopen (UTF-8 to UTF-16). The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+quantized model with a name outside ASCII lands under a mangled name, and the caller does not
+find the file it asked for. Upstream's own executables do not see it: they carry an
+activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose
+narrow encoding is UTF-8 already. Same class as 0024, 0025 and 0026.
+
+Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; not measured on
+Windows with the fix before it was written: CI's Windows C++ jobs are its first run there.
+
+Drop-check: drop this patch when the output stream no longer takes the narrow fname --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+```
+
+## 0029-server-media-file-reads-utf8.patch
+
+**Files (1):** `tools/server/server-common.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server: open a file:// media URL by its UTF-8 path on Windows
+
+handle_media() (tools/server/server-common.cpp:1255 at b12283) reads a "file://" URL of a request
+through std::ifstream(media_path + file_path), a narrow string MSVC reads in the process's active
+code page. The media directory is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every
+platform) and 0024 lets the server accept one outside ASCII, so inside java.exe on a code page
+like 1252 the load succeeded and every file below the directory was then "does not exist or cannot
+be opened" -- or, worse, was read from a sibling directory whose name is the mis-decoded one.
+Upstream's own executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a
+library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 to 0028.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
+conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green
+without it on a Windows job.
+```
+
+## 0030-common-arg-env-reads-utf8.patch
+
+**Files (1):** `common/arg.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: read an option's environment variable as UTF-8 on Windows
+
+common_arg::get_value_from_env() (common/arg.cpp:114 at b12283) takes an option's value from
+std::getenv(), which on Windows answers in the process's active code page. Every handler reads its
+value as UTF-8 -- the same handler serves the command line, which the C API and Java pass as UTF-8
+-- and since 0024 to 0029 the paths behind them are opened as UTF-8 too. So inside java.exe on a
+code page like 1252 a LLAMA_ARG_SLOT_SAVE_PATH, LLAMA_ARG_LOG_FILE or LLAMA_ARG_MODEL outside ASCII
+named another string than the same value as an argument: the directory check failed and the model
+did not load. The environment is applied before the arguments, so an argument that would have
+overridden the variable did not help: the load had already failed on it. Upstream's own
+executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into
+java.exe cannot.
+
+The fix reads the variable with _wgetenv() and converts it to UTF-8 (through
+std::filesystem::path, so no <windows.h> in this file); elsewhere it is std::getenv() as before.
+It covers every option with an environment variable, not only the paths: a value is text either
+way.
+
+Read from the source and found by the review of PR #612, not measured on Windows before this patch
+was written: the Windows jobs of CI are its first run there.
+
+Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
+on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it
+on a Windows job.
 ```

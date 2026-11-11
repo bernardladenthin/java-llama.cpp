@@ -9,13 +9,119 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **The loader explains a natives directory the JVM cannot load from.** When a load fails and the
+  path holds a character the platform encoding (`sun.jnu.encoding`, on Windows the ANSI code page)
+  cannot represent, the `UnsatisfiedLinkError` says so and names `net.ladenthin.llama.tmpdir` /
+  `java.io.tmpdir`, where it used to read "Can't find dependent libraries" only.
+- **`TextToSpeech.getVoices()`** (and `FfmTextToSpeech.getVoices()`, `jllama_tts_voices()` in the C
+  API): the predefined voices of a model that ships some in its projector (llama.cpp b12061: Pocket
+  TTS without voice cloning, LFM3-Audio), to pass as `voice` to `synthesize`. Empty for a model
+  without them (Qwen3-TTS).
+- **`POST /v1/audio/speech` on `OpenAiCompatServer`** (also `/audio/speech`), OpenAI's speech
+  route as llama.cpp serves it since b12238: `input`, `voice` (a name or `{"id": ...}`), `lang`,
+  `response_format` `wav` or `pcm` (`audio/pcm;rate=<n>;encoding=signed-int;bits=16`). The server
+  takes the engine as a `SpeechBackend`: `new OpenAiCompatServer(model, config, textToSpeech)`, or
+  any implementation of the interface. Without one the route answers `501`; `stream_format` other
+  than `audio`, a `speed` other than 1 and another `response_format` are `400`. `GET /props` lists
+  the engine's `voices`.
+- **`POST /tts` on `OpenAiCompatServer`**, llama.cpp's own speech route: `input` (or `prompt`),
+  `voice`, `lang`, `speaker_ref_b64` (an audio file whose voice is cloned), `n_predict`, `top_k`,
+  `seed`, `temperature`, and `response_format` `wav`, `pcm` (32-bit float samples) or `pcm16`. The
+  options reach the engine as a `SpeechOptions` (`SpeechBackend.synthesize(text, voice, language,
+  options)`, a default method an engine overrides). `stream` is refused: the audio is answered in
+  one piece.
+- **`OpenAiServerConfig.speechLanguage` / `speechVoice`**: the language and voice the speech routes
+  of `OpenAiCompatServer` use when a request names none, as llama.cpp's `--tts-lang` /
+  `--tts-voice` (b12283). A speaker reference in the request overrides the default voice.
+- **Merging importance matrices**: `LlamaQuantizer.mergeImportanceMatrices(inputs, output[,
+  legacyFormat])`, `jllama_imatrix_merge()` in the C API and `Jllama.mergeImportanceMatrices` in
+  `llama-ffm` add up matrices of one model computed over different texts, as `llama-imatrix` does
+  with several `--in-file`. Inputs are GGUF or the legacy binary format, the output either; one
+  input converts a file between the two. Matrices whose chunk sizes or tensor shapes differ are
+  refused; two models of the same shape are not told apart, so the inputs have to be one model's.
+- **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
+  `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
+  frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what
+  the other overloads pass.
+- **`ModelMeta.getVoices()`** and `voices` in the model meta (`jllama_model_meta`): the predefined
+  text-to-speech voices of a model loaded through `LlamaModel`, as upstream's `GET /props` lists
+  them; empty for every other model.
+- **`extra_params` on `/v1/responses`** (`OpenAiCompatServer`): llama.cpp parameters the Responses
+  API has no field for (`{"seed": 42, "min_p": 0.05}`) are merged into the converted request, as
+  upstream does since b12022.
+- **`ModelParameters.addShard(String)`** -- an extra GGUF shard of the model, anywhere on disk
+  (upstream `--shard` / `--ple`, llama.cpp b12233); repeatable.
+- **`ModelParameters.setMoeCacheCpuShare(float)`** -- the share of the MoE expert cache's misses the
+  CPU computes instead of uploading them (upstream `--moe-cache-cpu-share`, llama.cpp b12191).
+
+- **Quantizing with an importance matrix**: `LlamaQuantizer.quantize(input, output, type, threads,
+  allowRequantize, importanceMatrixPath)`, `jllama_quantize_imatrix()` in the C API and the same
+  overload of `Jllama.quantize` in `llama-ffm` take the file `llama-imatrix` computed (GGUF or the
+  legacy format) and record it in the output under `quantize.imatrix.*`, as `llama-quantize` does.
+  `QuantizationType.requiresImportanceMatrix()` names the nine types that cannot be written without
+  one (IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S, IQ2_M, IQ3_XXS, IQ3_XS, Q2_K_S); asked for without
+  one, `LlamaQuantizer` throws `IllegalArgumentException` before the native call instead of failing
+  with "code 1".
+- **Computing an importance matrix**: `LlamaQuantizer.computeImportanceMatrix(modelPath, textPath,
+  outputPath[, chunkSize, maxChunks, threads, gpuLayers])`, `jllama_imatrix()` in the C API and
+  `Jllama.computeImportanceMatrix` in `llama-ffm` -- what the `llama-imatrix` tool does, in the
+  library: the model reads a calibration text in chunks and the file it writes is the one
+  `quantize` takes (and the one upstream's tools read and write). An overload takes a
+  `LoadProgressCallback`, called after every chunk with the fraction done; `false` cancels.
+- **`ModelParameters.setSpecTypes(SpecType, SpecType...)`** and the enum `SpecType` -- the types
+  of speculative decoding (upstream `--spec-type`): `draft-simple`, the n-gram types, `none`.
+
+### Removed
+- **Enum constants no receiver accepts** (breaking; each could only fail or was silently dropped):
+  `PoolingType.UNSPECIFIED` and `RopeScalingType.UNSPECIFIED` (the model's own choice is not calling
+  the setter), `RopeScalingType.LONGROPE` and `MAX_VALUE` (not values of `--rope-scaling`),
+  `QuantizationType.NVFP4` (written by converters, refused by the quantizer).
+  `RopeScalingType.YARN2` is `YARN`.
+  Tests now feed every enum value to llama.cpp's parser and run it against a model.
+
 ### Changed
+- **A refused speech request is an `InvalidRequestException`** (`JLLAMA_STATUS_INVALID_REQUEST` in the
+  C API, `400` from `/v1/audio/speech` and `/tts` instead of `500`): a voice the model does not have,
+  a voice next to a speaker reference, a reference the pair cannot use or that cannot be read. It is
+  a subclass of `LlamaException`, so existing handlers keep working.
+- **`supportsSpeakerReference()` is `false` for a projector without its voice encoder** (Pocket TTS
+  "without voice cloning"): llama.cpp reports the capability per pipeline, and a reference clip then
+  failed to decode instead of being refused by name.
+- A failed quantization names the importance matrix only for the file types that need one, and a
+  reranker whose classification head lies in a `--shard` file is no longer refused at load.
+- **CI model set: Pocket TTS, Chatterbox and LFM3-Audio** (`.github/models.csv`, features
+  `pockettts`, `chatterbox`, `realtime`). `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest`
+  run the speech pipeline contract on them, `TtsChatTemplateIntegrationTest` and
+  `RealtimeNativeServerIntegrationTest` default to the LFM3-Audio pair instead of skipping.
+  Drama-3 (14.6 GB) stays a property-gated `TtsPipelineIntegrationTest`.
+- **The CUDA modules are built with CUDA 13.5** (were 13.4), as upstream's release builds, and with
+  the CCCL the toolkit bundles. They still need the CUDA 13 runtime; a GPU newer than Blackwell
+  needs a driver new enough for 13.5.
+- **`text.format` of `/v1/responses` is converted as llama.cpp converts it** (b12240): the format
+  object becomes `response_format` with every key but `type` (`strict` and `description` included),
+  it replaces a `response_format` the request also carries, `type` `text` removes one, and a `text`
+  or `format` that is not an object or a `type` other than `text` / `json_object` / `json_schema` is
+  a `400`, where it was ignored.
+- **A model without a classification head is refused as a reranker.** Loading one with
+  `enableReranking()` (or rank pooling) used to work and `rerank` answered the first value of the
+  pooled embedding as the score; the load now fails naming the missing head. A model split into
+  several GGUF files is not checked.
+- **A draft model is used without naming a speculative type.** `setModelDraft` (`--spec-draft-model`)
+  alone loaded the second model and drafted nothing, because llama.cpp's speculative types default
+  to `none`; the library now uses it as `draft-simple` unless `setSpecTypes` says otherwise
+  (`SpecType.NONE` keeps it unused). Also for the C API and `llama-ffm`.
 - - **Dependabot: one grouped pull request per ecosystem a week, on Saturday.**
   `.github/dependabot.yml` is the template of bernardladenthin/actions v1.2.1: every minor and
   patch update of Maven, and of the GitHub Actions, comes in one pull request (a major update
   stays a pull request of its own), on Saturday, so a week of updates is one merge and one run of
   the pipeline on `main`. `common/check-dependabot` in `repository-checks` holds the file to that
   rule, and every action and reusable workflow of bernardladenthin/actions is pinned at v1.2.1.
+- **bernardladenthin/actions v1.2.2.** The snapshot publication no longer deletes the `snapshot` tag
+  when GitHub refuses the workflow token the move (a 403 after a change to a workflow file): the
+  tag stays where it is, the run warns with the command that moves it, and the pre-release is
+  updated all the same. Before, the fallback deleted the tag, could not create it again, and left
+  the pre-release a draft (java-llama.cpp, Publish run 42708115919).
 - **CI: every artifact upload and download step times out**, after the minutes of the repository
   variable `ARTIFACT_TIMEOUT_MINUTES`, else 20 (110 steps in `publish.yml`, `java-tests.yml` and
   `post-release.yml`). In Publish run 42675444364 an `upload-artifact` step hung for hours after a
@@ -42,6 +148,76 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12283** (from b12242, 41 upstream commits): an 8-bit float KV cache
+  (`CacheType.F8_E4M3`, `--cache-type-k` / `-v f8_e4m3`, #28392), a default language and voice for
+  the server's speech and realtime routes (`ModelParameters.setTtsLanguage` / `setTtsVoice`,
+  `--tts-lang` / `--tts-voice`, #31982), the voice and language of a realtime session's spoken
+  answer in `session.update`, Kimi K3.1 vision, a device-side MoE scheduler in the SYCL module.
+  Upstream took the client half of patch `0015` (#30415: an unreachable RPC server is an error, not
+  an abort), which shrinks to the stoppable server and the re-check of a cached registration. The
+  SYCL modules are built with oneAPI 2026.2, oneDNN 2026.1 and Level Zero 1.34.0, as upstream's.
+  The WebUI gained a CodeMirror editor (22 npm packages, all MIT; the license texts are regenerated).
+- **Windows: `--log-file` and the quantizer's output under a non-ASCII path.** Both went through a
+  narrow open in llama.cpp (`fopen` in `common/log.cpp`, `std::ofstream` in `src/llama-quant.cpp`),
+  which inside `java.exe` reads the path in the active code page: the file landed under a mangled
+  name or the call failed. Patches `0027` and `0028` open them as UTF-8, and `0029` a `file://`
+  media URL below a `--media-path` outside ASCII. `0030` reads an option's environment variable
+  (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) as UTF-8 too: in the ANSI code page a path outside ASCII in it
+  failed the model load, whatever the arguments said.
+- **The standalone `OpenAiCompatServer` speaks.** `--tts-model <gguf> --tts-mmproj <gguf>` load a
+  speech model next to the model, and `POST /v1/audio/speech` and `POST /tts` are served; without
+  them both answer `501` as before. `--tts-lang` / `--tts-voice` are the defaults of a request
+  that names none. Of the Windows paths only
+  the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
+- **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
+  `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
+  `text.format.json_schema` on the upstream `/v1/responses`; a request with `response_format` and
+  `tools` constrains the whole answer. No patch and no source of this project changed.
+- **llama.cpp b12233** (from b12217, 16 upstream commits): extra GGUF shards for a model
+  (`--shard`, #31185), an unbuffered model load on Windows (#26014), a temperature for the audio
+  frames of Pocket TTS (#31655), `response_format` with an unnested `json_schema` (#28697). No
+  source change here.
+- **llama.cpp b12217** (from b12216, one upstream commit): **RPC protocol 9** (#29413, faster model
+  loading over RPC: the client sends a tensor's hash first when the server caches tensors). A
+  server and a client of different protocol versions refuse each other, so `RpcServer` and a
+  `--rpc` client must run the same version of this library. Patch `0015` refreshed.
+- **llama.cpp b12216** (from b12079, 137 upstream commits, the last before the RPC patch needs work
+  again): llama.cpp 0.9.0 and ggml 0.29.0; Chatterbox and Drama-3 text to speech, Nemotron 3.5
+  Transcribe, MageVL-Cowork (#30993, #31613, #31471, #31819); Metis-1.6, xing4_0, Ripple and
+  Kimi-K3.1-Pro (#31134, #31589, #31692, #31779); a hybrid MoE expert cache that can compute misses
+  on the CPU (#31233, #30966); reference-counted prompt checkpoints in the server (#30137); the
+  Hugging Face token is sent to `huggingface.co` hosts only (#31730); cpp-httplib 0.65.0 and
+  BoringSSL 0.20261105.0. No source change here. **On Windows**, upstream now reads its secondary
+  paths in the process's active code page, which inside `java.exe` is not UTF-8. Measured since:
+  the slot directory and slot files are fixed by patches `0024` and `0025`, and `--log-file`, the
+  quantizer's output and a `file://` media URL by `0027` to `0029`; a download target still needs
+  an ASCII path there (README, TODO.md).
+  The model path itself is unaffected.
+- **llama.cpp b12079** (from b12078, one upstream commit): the RPC server's COMM_INIT connects
+  more than two ranks and can hand the collective to a backend communicator (CUDA with NCCL,
+  #28967). Patch `0015` is refreshed over the new peer loop with the same stop contract.
+- **llama.cpp b12078** (from b12061, 17 upstream commits, the last before the RPC patch needs
+  work): GLM-5.3's next tensor format (#30499), a constraint type after gpt-oss's final channel
+  (#31556), IQ4_XS on OpenCL, a GGUF split merge that rejects mismatched shards (#31579). No source
+  change here.
+- **llama.cpp b12061** (from b12060, one upstream commit): predefined voices for audio generation
+  models (#31429, Pocket TTS without voice cloning). Upstream removed the `voice` field of the TTS
+  input; `TextToSpeech.synthesize(..., voice, ...)` / `jllama_tts_synthesize_voice` now hand a model
+  with predefined voices the named one (its first when neither a voice nor a speaker reference is
+  given), refuse a voice next to a speaker reference, and name the model's voices for an unknown
+  one. Models without predefined voices behave as before.
+- **llama.cpp b12060** (from b12014, 46 upstream commits, the last before the TTS input changes):
+  a more efficient unified KV cache for several sequences (#29510), Clover (#31306), Gemma 4 images
+  resized without letterbox padding (#30922), `extra_params` on `/v1/responses` (#30959),
+  `map('filter')` in chat templates (#24033), miniaudio 0.11.26. No source change here.
+- **llama.cpp b12014** (from b12013, one upstream commit): upstream removed the Windows argv
+  substitution from `common_params_parse` (#31417, fixing this project's report #26416), so
+  **patch `0001` is dropped** and `0006` lost its forwarded-argv hunk; 13 local patches remain.
+- **llama.cpp b12013** (from b11968, 45 upstream commits, the last before a local patch needs
+  work): the OCP FP8 E4M3 quantization type (#27512), a batched tensor copy API in ggml (#30881),
+  IQ1/IQ2/Q2_0 on OpenCL, a DPAS flash-attention kernel for quantized KV caches in SYCL (#31125),
+  faster MXFP4 on Metal (#31075), Limite 1B and Mistral "le chonk" (#29433, #31376), cpp-httplib
+  0.64.0. No source change here.
 - **llama.cpp b11968** (from b11960, 8 upstream commits): SVE-256 kernels for the Q6_K gemm and the
   MXFP4 gemv on ARM CPUs (#27472, #28141), CUDA's MMQ fuses a MoE's gate/up projections with the GLU
   (#31188), a work-group argmax for short TOP_K rows in SYCL (#31110), DeepSeek-V4's KV cache without
@@ -118,6 +294,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Windows: slot files under a non-ASCII path.** Inside `java.exe` llama.cpp read the slot
+  directory and the checkpoint / draft-state appendix of a slot file in the ANSI code page: a
+  directory outside ASCII failed the model load ("not a directory"), and a file name outside ASCII
+  put the draft state into a second, mis-named file, after which save and restore both reported
+  success without it. Patches `0024` and `0025` read both as UTF-8. The calibration text of an
+  importance matrix, the legacy output of a merge and the trainer's `training_file` are read and
+  written as UTF-8 there too, and a legacy importance matrix is read from such a path (patch `0026`).
+  A speaker reference of `POST /tts` crosses to the engine in a temporary file created for its
+  owner alone: POSIX permissions `rw-------`, on Windows an access control list naming the owner
+  (where the user name resolves to no principal, the request fails rather than writing a file its directory's rules would open to others). Still ASCII-only on Windows: a download target (README).
 - **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
   with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
   pipeline numbers each prompt from position 0 and leaves the KV cache to the caller, and the engine

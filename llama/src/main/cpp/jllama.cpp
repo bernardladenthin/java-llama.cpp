@@ -1382,16 +1382,81 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJso
 // name -- which the JVM cannot resolve, failing every call with UnsatisfiedLinkError on every
 // platform. Same reason train_engine.cpp marks LlamaTrainer_finetuneNative and native_server.cpp
 // wraps the NativeServer entry points in an extern "C" block.
-extern "C" JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(
-    JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype, jint nthread, jboolean allowRequantize) {
+extern "C" JNIEXPORT void JNICALL
+Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype,
+                                                       jint nthread, jboolean allowRequantize, jstring jimatrix) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         const std::string input_path = parse_jstring(env, jinput);
         const std::string output_path = parse_jstring(env, joutput);
-        const jllama_status status = jllama_quantize(input_path.c_str(), output_path.c_str(), static_cast<int>(ftype),
-                                                     static_cast<int>(nthread), allowRequantize == JNI_TRUE);
+        const std::string imatrix_path = jimatrix != nullptr ? parse_jstring(env, jimatrix) : std::string();
+        const jllama_status status =
+            jllama_quantize_imatrix(input_path.c_str(), output_path.c_str(), static_cast<int>(ftype),
+                                    static_cast<int>(nthread), allowRequantize == JNI_TRUE, imatrix_path.c_str());
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
         }
+    });
+}
+
+// Like quantizeNative above: LlamaQuantizer is not in jllama.h, so the C linkage is said here.
+extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_computeImportanceMatrixNative(
+    JNIEnv *env, jclass, jstring jmodel, jstring jtext, jstring joutput, jint chunkSize, jint maxChunks, jint nthread,
+    jint gpuLayers, jobject progress) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        const std::string model_path = parse_jstring(env, jmodel);
+        const std::string text_path = parse_jstring(env, jtext);
+        const std::string output_path = parse_jstring(env, joutput);
+        // the callback runs on this thread, between two chunks: the load-progress trampoline fits
+        load_progress_ud progress_ud{};
+        jllama_load_progress_fn progress_fn = nullptr;
+        if (progress != nullptr) {
+            progress_ud.env = env;
+            progress_ud.callback = progress;
+            progress_ud.on_progress = env->GetMethodID(env->GetObjectClass(progress), "onProgress", "(F)Z");
+            if (progress_ud.on_progress == nullptr) {
+                return 0; // NoSuchMethodError is pending
+            }
+            progress_fn = jni_load_progress_trampoline;
+        }
+        int chunks = 0;
+        const jllama_status status =
+            jllama_imatrix(model_path.c_str(), text_path.c_str(), output_path.c_str(), static_cast<int>(chunkSize),
+                           static_cast<int>(maxChunks), static_cast<int>(nthread), static_cast<int>(gpuLayers),
+                           progress_fn, progress != nullptr ? &progress_ud : nullptr, &chunks);
+        if (env->ExceptionCheck()) {
+            return 0; // what the callback threw is the error
+        }
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return 0;
+        }
+        return static_cast<jint>(chunks);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_mergeImportanceMatricesNative(
+    JNIEnv *env, jclass, jobjectArray jinputs, jstring joutput, jboolean legacy) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        const jsize n = env->GetArrayLength(jinputs);
+        std::vector<std::string> inputs;
+        for (jsize i = 0; i < n; ++i) {
+            auto element = static_cast<jstring>(env->GetObjectArrayElement(jinputs, i));
+            inputs.push_back(parse_jstring(env, element));
+            env->DeleteLocalRef(element);
+        }
+        std::vector<const char *> paths;
+        for (const std::string &input : inputs) {
+            paths.push_back(input.c_str());
+        }
+        const std::string output_path = parse_jstring(env, joutput);
+        int chunks = 0;
+        const jllama_status status =
+            jllama_imatrix_merge(paths.data(), paths.size(), output_path.c_str(), legacy == JNI_TRUE, &chunks);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return 0;
+        }
+        return static_cast<jint>(chunks);
     });
 }
 
@@ -1436,7 +1501,7 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
     JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
-    jstring jvoice, jint max_frames, jint top_k, jint seed) {
+    jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
@@ -1446,10 +1511,10 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
         const std::string voice = jvoice == nullptr ? std::string() : parse_jstring(env, jvoice);
         unsigned char *wav = nullptr;
         size_t length = 0;
-        const jllama_status status = jllama_tts_synthesize_voice(
+        const jllama_status status = jllama_tts_synthesize_temperature(
             reinterpret_cast<jllama_tts_model *>(handle), text.c_str(), speaker_reference_path.c_str(), lang.c_str(),
-            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed), &wav,
-            &length);
+            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed),
+            static_cast<float>(temperature), &wav, &length);
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
             return nullptr;
@@ -1479,6 +1544,34 @@ JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_TextToSpeech_supportsSpeaker
             return JNI_FALSE;
         }
         return supported ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
+JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_TextToSpeech_voicesNative(JNIEnv *env, jclass clazz,
+                                                                                  jlong handle) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jobjectArray {
+        (void)clazz;
+        char **names = nullptr;
+        size_t count = 0;
+        const jllama_status status =
+            jllama_tts_voices(reinterpret_cast<const jllama_tts_model *>(handle), &names, &count);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+            return nullptr;
+        }
+        jclass string_class = env->FindClass("java/lang/String");
+        jobjectArray out =
+            string_class != nullptr ? env->NewObjectArray(static_cast<jsize>(count), string_class, nullptr) : nullptr;
+        if (out != nullptr) {
+            for (size_t i = 0; i < count; ++i) {
+                // a voice name comes out of the GGUF, so it crosses as UTF-8 bytes, not Modified UTF-8
+                jstring name = utf8_to_jstring(env, names[i]);
+                env->SetObjectArrayElement(out, static_cast<jsize>(i), name);
+                env->DeleteLocalRef(name);
+            }
+        }
+        jllama_strings_free(names, count);
+        return out;
     });
 }
 

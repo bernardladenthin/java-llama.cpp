@@ -4,6 +4,7 @@
 package net.ladenthin.llama.ffm;
 
 import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static net.ladenthin.llama.ffm.JllamaNative.call;
 import static net.ladenthin.llama.ffm.JllamaNative.cString;
 import static net.ladenthin.llama.ffm.JllamaNative.invoke;
@@ -16,8 +17,10 @@ import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import net.ladenthin.llama.callback.LoadProgressCallback;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.value.LogLevel;
 
@@ -159,6 +162,84 @@ public final class Jllama {
     }
 
     /**
+     * Computes the importance matrix of a model over a calibration text, as
+     * {@code LlamaQuantizer.computeImportanceMatrix} does.
+     *
+     * @param modelPath the model, best the unquantized one
+     * @param textPath the calibration text (plain UTF-8 text)
+     * @param outputPath the importance matrix to write (GGUF)
+     * @param chunkSize tokens per chunk, at least 16; {@code 0} for 512
+     * @param maxChunks the most chunks to evaluate, {@code 0} for all
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param gpuLayers layers to offload, {@code 0} for none
+     * @param progress called on this thread after every chunk with the fraction done; returning
+     *     {@code false} (or throwing) cancels the run. May be {@code null}
+     * @return the number of chunks the matrix was computed over
+     * @throws LlamaException when the computation fails or was cancelled
+     */
+    public static int computeImportanceMatrix(
+            String modelPath,
+            String textPath,
+            String outputPath,
+            int chunkSize,
+            int maxChunks,
+            int nthread,
+            int gpuLayers,
+            LoadProgressCallback progress) {
+        Objects.requireNonNull(modelPath, "modelPath");
+        Objects.requireNonNull(textPath, "textPath");
+        Objects.requireNonNull(outputPath, "outputPath");
+        try (Arena arena = Arena.ofConfined()) {
+            // the callback runs on this thread, so the confined arena of the call holds its stub
+            MemorySegment stub = FfmLlamaModel.progressStub(arena, progress);
+            MemorySegment chunks = arena.allocate(JAVA_INT);
+            call(
+                    JllamaNative.IMATRIX,
+                    cString(arena, modelPath),
+                    cString(arena, textPath),
+                    cString(arena, outputPath),
+                    chunkSize,
+                    maxChunks,
+                    nthread,
+                    gpuLayers,
+                    stub,
+                    MemorySegment.NULL,
+                    chunks);
+            return chunks.get(JAVA_INT, 0);
+        }
+    }
+
+    /**
+     * Adds up importance matrices of one model into one file (the C API's
+     * {@code jllama_imatrix_merge}), in GGUF or the legacy binary format; with one input it converts
+     * between the two.
+     *
+     * @param inputPaths the matrices to add up, GGUF or the legacy binary format; at least one
+     * @param outputPath where the result is written
+     * @param legacyFormat {@code true} for the legacy binary format instead of GGUF
+     * @return the number of chunks the result stands for
+     * @throws LlamaException when a file cannot be read or the matrices do not fit together
+     */
+    public static int mergeImportanceMatrices(List<String> inputPaths, String outputPath, boolean legacyFormat) {
+        Objects.requireNonNull(inputPaths, "inputPaths");
+        Objects.requireNonNull(outputPath, "outputPath");
+        if (inputPaths.isEmpty()) {
+            throw new IllegalArgumentException("mergeImportanceMatrices needs at least one importance matrix");
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment chunks = arena.allocate(JAVA_INT);
+            call(
+                    JllamaNative.IMATRIX_MERGE,
+                    JllamaNative.cStrings(arena, inputPaths.toArray(new String[0])),
+                    (long) inputPaths.size(),
+                    cString(arena, outputPath),
+                    legacyFormat,
+                    chunks);
+            return chunks.get(JAVA_INT, 0);
+        }
+    }
+
+    /**
      * Quantises a GGUF file, as {@code LlamaQuantizer} does.
      *
      * @param inputPath the model to read
@@ -169,11 +250,39 @@ public final class Jllama {
      * @throws LlamaException when the quantisation fails
      */
     public static void quantize(String inputPath, String outputPath, int ftype, int nthread, boolean allowRequantize) {
+        quantize(inputPath, outputPath, ftype, nthread, allowRequantize, null);
+    }
+
+    /**
+     * Quantises a GGUF file with an importance matrix ({@code llama-imatrix}'s output), which the
+     * IQ1 and IQ2 file types, IQ3_XS, IQ3_XXS and Q2_K_S need.
+     *
+     * @param inputPath the model to read
+     * @param outputPath the model to write
+     * @param ftype the target {@code llama_ftype} value (e.g. 7 for Q8_0)
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param allowRequantize whether an already quantised tensor may be quantised again
+     * @param importanceMatrixPath the importance matrix, or {@code null} for none
+     * @throws LlamaException when the quantisation fails
+     */
+    public static void quantize(
+            String inputPath,
+            String outputPath,
+            int ftype,
+            int nthread,
+            boolean allowRequantize,
+            String importanceMatrixPath) {
         Objects.requireNonNull(inputPath, "inputPath");
         Objects.requireNonNull(outputPath, "outputPath");
         try (Arena arena = Arena.ofConfined()) {
-            call(JllamaNative.QUANTIZE, cString(arena, inputPath), cString(arena, outputPath), ftype, nthread,
-                    allowRequantize);
+            call(
+                    JllamaNative.QUANTIZE_IMATRIX,
+                    cString(arena, inputPath),
+                    cString(arena, outputPath),
+                    ftype,
+                    nthread,
+                    allowRequantize,
+                    importanceMatrixPath != null ? cString(arena, importanceMatrixPath) : MemorySegment.NULL);
         }
     }
 

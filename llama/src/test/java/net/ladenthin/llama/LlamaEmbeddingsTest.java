@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.parameters.ModelParameters;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -27,10 +28,10 @@ import org.junit.jupiter.api.Test;
  *       requesting CLS pooling triggers a native {@code SIGABRT} in llama.cpp.</li>
  * </ul>
  *
- * <p>Tested types (UNSPECIFIED, MEAN, LAST) all produce a single pooled vector whose
+ * <p>Tested types (the model default, MEAN, LAST) all produce a single pooled vector whose
  * dimension equals the model's hidden size (4 096 for CodeLlama-7B).
  *
- * <p><strong>Note on UNSPECIFIED:</strong> CodeLlama's GGUF metadata reports
+ * <p><strong>Note on the model default:</strong> CodeLlama's GGUF metadata reports
  * {@code pooling type = -1}, meaning no pooling is baked into the model file. When
  * {@code --pooling} is omitted, llama.cpp keeps that {@code -1} and the JNI layer
  * returns the first row of the embedding matrix (the BOS-token vector). This is
@@ -40,7 +41,7 @@ import org.junit.jupiter.api.Test;
 @ClaudeGenerated(
         purpose = "Verify that LlamaModel.embed() returns a correctly-sized float[] for every "
                 + "pooling type that is applicable to decoder-only embedding models, and that "
-                + "UNSPECIFIED (= model default) behaves the same way as MEAN for CodeLlama.")
+                + "no pooling type (= model default) behaves the same way as MEAN for CodeLlama.")
 public class LlamaEmbeddingsTest {
 
     /** Expected embedding dimension for codellama-7b (hidden size = 4 096). */
@@ -62,18 +63,21 @@ public class LlamaEmbeddingsTest {
     // Helper
     // -------------------------------------------------------------------------
 
-    private LlamaModel openModel(PoolingType type) {
+    private LlamaModel openModel(@Nullable PoolingType type) {
         Assumptions.assumeTrue(
                 new File(TestConstants.MODEL_PATH).exists(),
                 "Model file not found, skipping " + getClass().getSimpleName());
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
-        return new LlamaModel(new ModelParameters()
+        ModelParameters parameters = new ModelParameters()
                 .setModel(TestConstants.MODEL_PATH)
                 .setCtxSize(128)
                 .setGpuLayers(gpuLayers)
                 .setFit(false)
-                .enableEmbedding()
-                .setPoolingType(type));
+                .enableEmbedding();
+        if (type != null) {
+            parameters.setPoolingType(type);
+        }
+        return new LlamaModel(parameters);
     }
 
     // -------------------------------------------------------------------------
@@ -81,16 +85,16 @@ public class LlamaEmbeddingsTest {
     // -------------------------------------------------------------------------
 
     /**
-     * UNSPECIFIED leaves --pooling unset, so the model applies its built-in default (MEAN for
+     * No pooling type leaves --pooling unset, so the model applies its built-in default (MEAN for
      * CodeLlama). The result must be a valid 4096-dimensional vector.
      */
     @Test
     public void testEmbedUnspecifiedPooling() {
-        model = openModel(PoolingType.UNSPECIFIED);
+        model = openModel(null);
         ModelAssumptions.assumeEmbeddingDimension(model, EXPECTED_DIM);
         float[] embedding = model.embed(TEXT);
         assertEquals(EXPECTED_DIM, embedding.length);
-        assertEmbeddingValid(embedding, PoolingType.UNSPECIFIED);
+        assertEmbeddingValid(embedding, null);
     }
 
     /** MEAN pooling averages all token embeddings into a single vector. */
@@ -186,7 +190,7 @@ public class LlamaEmbeddingsTest {
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private static void assertEmbeddingValid(float[] embedding, PoolingType type) {
+    private static void assertEmbeddingValid(float[] embedding, @Nullable PoolingType type) {
         for (int i = 0; i < embedding.length; i++) {
             assertFalse(Float.isNaN(embedding[i]), type + " embedding[" + i + "] is NaN");
             assertFalse(Float.isInfinite(embedding[i]), type + " embedding[" + i + "] is infinite");

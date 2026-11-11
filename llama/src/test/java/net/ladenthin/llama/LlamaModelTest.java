@@ -1494,6 +1494,13 @@ public class LlamaModelTest {
             String response = specModel.complete(params);
             assertNotNull(response);
             assertFalse(response.isEmpty(), "Expected non-empty response from speculative complete");
+
+            // The draft model must have been asked: a draft model that is loaded and never used
+            // generates the same text, only slower, which is how setModelDraft behaved before the
+            // engine made draft-simple the default for it.
+            assertTrue(
+                    specModel.getMetricsTyped().getDraftTokensTotal() > 0,
+                    "the draft model drafted nothing: speculative decoding is not active");
         }
     }
 

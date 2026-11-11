@@ -4,6 +4,9 @@
 
 package net.ladenthin.llama;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.loader.LlamaLoader;
 import org.jspecify.annotations.Nullable;
@@ -26,6 +29,12 @@ import org.jspecify.annotations.Nullable;
  * }</pre>
  */
 public final class TextToSpeech implements AutoCloseable {
+
+    /**
+     * The audio frame temperature that leaves the choice to the model: what every {@code synthesize}
+     * overload without a temperature passes.
+     */
+    public static final float MODEL_DEFAULT_TEMPERATURE = -1.0f;
 
     /**
      * The native calls behind {@link TextToSpeech}. The JNI methods stay in this class (their symbol
@@ -55,6 +64,7 @@ public final class TextToSpeech implements AutoCloseable {
          * @param maxFrames                 cap on generated audio frames
          * @param topK                      top-k cutoff
          * @param seed                      sampler seed
+         * @param temperature               audio frame temperature, negative for the model's default
          * @return the WAV bytes
          */
         byte[] synthesize(
@@ -65,7 +75,8 @@ public final class TextToSpeech implements AutoCloseable {
                 @Nullable String voice,
                 int maxFrames,
                 int topK,
-                int seed);
+                int seed,
+                float temperature);
 
         /**
          * Whether the loaded pair clones a voice from a speaker reference.
@@ -74,6 +85,14 @@ public final class TextToSpeech implements AutoCloseable {
          * @return {@code true} if a speaker reference is accepted
          */
         boolean supportsSpeakerReference(long handle);
+
+        /**
+         * The names of the predefined voices of the loaded pair.
+         *
+         * @param handle a handle returned by {@link #load}
+         * @return the names, empty for a model without predefined voices
+         */
+        String[] voices(long handle);
 
         /**
          * Frees the pipeline.
@@ -100,13 +119,20 @@ public final class TextToSpeech implements AutoCloseable {
                 @Nullable String voice,
                 int maxFrames,
                 int topK,
-                int seed) {
-            return synthesizeNative(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
+                int seed,
+                float temperature) {
+            return synthesizeNative(
+                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
         }
 
         @Override
         public boolean supportsSpeakerReference(long handle) {
             return supportsSpeakerReferenceNative(handle);
+        }
+
+        @Override
+        public String[] voices(long handle) {
+            return voicesNative(handle);
         }
 
         @Override
@@ -192,7 +218,9 @@ public final class TextToSpeech implements AutoCloseable {
      * {@link #synthesize(String, String, String, int, int, int)} accepts a
      * {@code speakerReferenceAudioPath}. llama.cpp decides it per pipeline
      * ({@code mtmd_helper_cap::audio_gen_spk_ref}, b11901): Qwen3-TTS and Pocket TTS do, a pipeline
-     * without a voice encoder such as Soprano does not.
+     * without a voice encoder such as Soprano does not. A projector of such a pipeline that was
+     * converted without the encoder (Pocket TTS "without voice cloning", which ships predefined
+     * voices instead) takes no audio in and reports {@code false} as well.
      *
      * @return {@code true} if a speaker reference is accepted
      * @throws IllegalStateException if this instance is closed
@@ -202,6 +230,29 @@ public final class TextToSpeech implements AutoCloseable {
         try {
             requireOpen();
             return backend.supportsSpeakerReference(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * The predefined voices of this model pair, to pass as {@code voice} to
+     * {@link #synthesize(String, String, String, String, int, int, int)}. A model that ships voices
+     * in its projector (Pocket TTS without voice cloning, LFM3-Audio; llama.cpp b12061) only speaks
+     * with one of them, and uses the first of this list when a synthesis names neither a voice nor
+     * a speaker reference. llama.cpp's own server lists the same names as {@code voices} in
+     * {@code GET /props}.
+     *
+     * @return the voice names in the model's order, unmodifiable; empty for a model without
+     *     predefined voices (Qwen3-TTS, Soprano)
+     * @throws IllegalStateException if this instance is closed
+     */
+    public List<String> getVoices() {
+        lifecycleLock.readLock().lock();
+        try {
+            requireOpen();
+            return Collections.unmodifiableList(
+                    Arrays.asList(backend.voices(handle).clone()));
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -241,6 +292,11 @@ public final class TextToSpeech implements AutoCloseable {
      * own {@code /tts} route and {@code llama-tts} do (b11941); the other pipelines (Qwen3-TTS, Pocket
      * TTS, Soprano) speak {@code text} itself and ignore an unknown voice.</p>
      *
+     * <p>A model that ships predefined voices in its projector (Pocket TTS without voice cloning,
+     * llama.cpp b12061) only speaks with one of them: {@code voice} names it, an unknown name fails
+     * with the list of the model's voices, a voice next to a speaker reference is refused, and
+     * without either the model's first voice is used.</p>
+     *
      * @param text the text to speak
      * @param speakerReferenceAudioPath path to a reference audio clip whose voice is cloned, or
      *     {@code null}/empty for the model's default voice; refused by a model pair that cannot clone
@@ -264,10 +320,43 @@ public final class TextToSpeech implements AutoCloseable {
             int maxFrames,
             int topK,
             int seed) {
+        return synthesize(
+                text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, MODEL_DEFAULT_TEMPERATURE);
+    }
+
+    /**
+     * Synthesize speech like {@link #synthesize(String, String, String, String, int, int, int)}, with
+     * the temperature the audio frames are sampled at.
+     *
+     * <p>Only a pipeline that samples its audio frames reads it (Pocket TTS, llama.cpp b12233); the
+     * others (Qwen3-TTS, LFM3-Audio) ignore it.</p>
+     *
+     * @param text the text to speak
+     * @param speakerReferenceAudioPath path to a reference audio clip whose voice is cloned, or
+     *     {@code null}/empty for the model's default voice
+     * @param language the model's language, or {@code null}/empty for its default
+     * @param voice a model-dependent voice preset, or {@code null}/empty for the model's default
+     * @param maxFrames cap on generated audio frames (longer = longer audio)
+     * @param topK top-k sampling cutoff for the semantic (backbone) token stream
+     * @param seed sampler seed
+     * @param temperature the audio frame temperature: {@code 0} is greedy, a negative value
+     *     ({@link #MODEL_DEFAULT_TEMPERATURE}) the model's default
+     * @return a mono 16-bit WAV byte stream at the pipeline's sample rate
+     */
+    public byte[] synthesize(
+            String text,
+            @Nullable String speakerReferenceAudioPath,
+            @Nullable String language,
+            @Nullable String voice,
+            int maxFrames,
+            int topK,
+            int seed,
+            float temperature) {
         lifecycleLock.readLock().lock();
         try {
             requireOpen();
-            return backend.synthesize(handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed);
+            return backend.synthesize(
+                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -303,9 +392,12 @@ public final class TextToSpeech implements AutoCloseable {
             @Nullable String voice,
             int maxFrames,
             int topK,
-            int seed);
+            int seed,
+            float temperature);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
+
+    private static native String[] voicesNative(long handle);
 
     private static native void deleteNative(long handle);
 }

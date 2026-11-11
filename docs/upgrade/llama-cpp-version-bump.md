@@ -135,8 +135,9 @@ for each:
   `.github/workflows/release.yml`. Both OpenVINO build jobs (Linux archive, Windows zip) use the pair in
   their download URL and in the `KEEP IN SYNC WITH UPSTREAM` comment; ggml-openvino is developed against
   it, so lagging behind is what eventually breaks the compile.
-- **CUDA's CCCL** -- `GGML_CUDA_CCCL_VERSION` in upstream's CUDA release jobs (`v3.4.3` since #29792);
-  both CUDA builds pass the same value, see CLAUDE.md, "Upgrading CUDA Version".
+- **CUDA's toolkit and CCCL** -- the CUDA version of upstream's CUDA 13 release jobs and their
+  `GGML_CUDA_CCCL_VERSION` (`v3.4.3` since #29792 for a toolkit below 13.5, none from 13.5 on, which
+  bundles CCCL 3.5); both CUDA builds here follow, see CLAUDE.md, "Upgrading CUDA Version".
 - **ROCm** -- the TheRock wheel version of upstream's `ubuntu-rocm` / `windows-rocm` release jobs (see
   CLAUDE.md, "Additional GPU-backend natives").
 - **SYCL (oneAPI)** -- the installer URLs of upstream's `ubuntu-24-sycl` / `windows-sycl` release jobs (Deep

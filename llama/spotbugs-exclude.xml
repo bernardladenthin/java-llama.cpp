@@ -102,6 +102,8 @@ SPDX-License-Identifier: MIT
             <Method name="setNuma"/>
             <Method name="setReasoningFormat"/>
             <Method name="setRopeScaling"/>
+            <Method name="setPoolingType"/>
+            <Method name="setSpecTypes"/>
             <Method name="setSplitMode"/>
         </Or>
     </Match>
@@ -622,6 +624,26 @@ SPDX-License-Identifier: MIT
         <Class name="net.ladenthin.llama.server.OllamaApiSupport"/>
         <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
         <Method name="requireTextualPrompt"/>
+    </Match>
+    <!--
+        The same shape guards for two more routes: /v1/responses' text.format (not an object, a type
+        that is none of the three) and /v1/audio/speech and /tts (no input, a response_format, stream_format
+        or speed the route does not serve; an engine answer that is no WAV file). Each message names
+        the field and the rule, which is all there is to say; the texts follow upstream's.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.server.ResponsesApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Method name="appendResponseFormat"/>
+    </Match>
+    <Match>
+        <Class name="net.ladenthin.llama.server.SpeechApiSupport"/>
+        <Bug pattern="WEM_WEAK_EXCEPTION_MESSAGING"/>
+        <Or>
+            <Method name="parse"/>
+            <Method name="parseTts"/>
+            <Method name="sampleRate"/>
+        </Or>
     </Match>
 
     <!--

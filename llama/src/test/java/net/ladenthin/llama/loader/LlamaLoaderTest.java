@@ -960,4 +960,25 @@ public class LlamaLoaderTest {
             }
         }
     }
+
+    @Test
+    public void aPathOutsideThePlatformEncodingIsExplained() {
+        String hint = LlamaLoader.unencodablePathHint("C:\\Temp\\tmp-\u65e5\\jllama.dll", "windows-1252");
+
+        assertNotNull(hint);
+        assertTrue(hint.contains("windows-1252"), hint);
+        assertTrue(hint.contains("net.ladenthin.llama.tmpdir"), hint);
+    }
+
+    @Test
+    public void aPathInsideThePlatformEncodingGetsNoHint() {
+        assertNull(LlamaLoader.unencodablePathHint("C:\\Temp\\Pr\u00fcfung\\jllama.dll", "windows-1252"));
+        assertNull(LlamaLoader.unencodablePathHint("/tmp/tmp-\u65e5/libjllama.so", "UTF-8"));
+    }
+
+    @Test
+    public void anUnknownPlatformEncodingGetsNoHint() {
+        assertNull(LlamaLoader.unencodablePathHint("/tmp/tmp-\u65e5/libjllama.so", null));
+        assertNull(LlamaLoader.unencodablePathHint("/tmp/tmp-\u65e5/libjllama.so", "no-such-charset"));
+    }
 }

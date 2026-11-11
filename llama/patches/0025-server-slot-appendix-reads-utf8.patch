@@ -1,0 +1,72 @@
+server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows
+
+A slot save writes the llama state through llama_state_seq_save_file(), i.e. ggml_fopen(), which
+converts the UTF-8 path to UTF-16. Then save_slot_checkpoints() and save_slot_draft() append to the
+same file through std::ofstream(filepath, binary | app), and load_slot_checkpoints() and
+load_slot_draft() read it back through std::ifstream(filepath, binary | ate)
+(tools/server/server-context.cpp:2840, :2872, :2948 and :2974 at b12242). MSVC decodes that narrow
+std::string in the process's active code page, so on a code page like 1252 the appendix of a path
+outside ASCII goes elsewhere:
+
+  - a directory outside ASCII (once 0024 lets it through): the mis-decoded directory does not exist,
+    the stream fails and the save reports "Unable to save slot: incomplete draft state". The
+    9348-byte state without the appendix stays behind, and a restore of it succeeds without the
+    draft state.
+  - an ASCII directory with a file name outside ASCII (no other patch involved): the appendix lands
+    in a second file under the mis-decoded name, next to the real one. Measured:
+    "f-<a-umlaut>-<U+65E5>-draft.bin" 9348 bytes plus its mangled twin 9216 bytes. The save reports
+    ok with n_written 18564, the sum of both files; the restore reports ok with n_read 9348, and the
+    draft state is silently gone.
+
+The fix opens the four streams on std::filesystem::u8path(filepath), which is the identity where the
+narrow encoding is UTF-8.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, tiny llama model with itself as the
+draft model, --spec-type draft-simple): with 0024 and this patch both shapes round-trip, with a single
+18564-byte file each, n_written = size on disk = n_read, and n_restored = n_saved. The checkpoint
+appendix shares these sites but is not exercised by the tiny model (no checkpoints): read, not
+measured. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when the four streams in server-context.cpp no longer take the narrow
+filepath string -- CApiSlotFiles.ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhole then
+stays green without it on a Windows job.
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -2864,7 +2864,7 @@
+         if (slot.prompt.checkpoints.empty()) {
+             return true;
+         }
+-        std::ofstream ofs(filepath, std::ios::binary | std::ios::app);
++        std::ofstream ofs(std::filesystem::u8path(filepath), std::ios::binary | std::ios::app);
+         if (!ofs) {
+             SLT_WRN(slot, "failed to append context checkpoints to '%s'\n", filepath.c_str());
+             return false;
+@@ -2896,7 +2896,7 @@
+ 
+     // returns the number of bytes consumed, 0 if there is no usable appendix
+     size_t load_slot_checkpoints(const std::string & filepath, size_t offset, server_slot & slot) const {
+-        std::ifstream ifs(filepath, std::ios::binary | std::ios::ate);
++        std::ifstream ifs(std::filesystem::u8path(filepath), std::ios::binary | std::ios::ate);
+         const size_t file_size = ifs ? (size_t) ifs.tellg() : 0;
+         if (!ifs || file_size < offset || !ifs.seekg(offset)) {
+             return 0;
+@@ -2972,7 +2972,7 @@
+         if (data_dft.empty() && data_spec.empty()) {
+             return true;
+         }
+-        std::ofstream ofs(filepath, std::ios::binary | std::ios::app);
++        std::ofstream ofs(std::filesystem::u8path(filepath), std::ios::binary | std::ios::app);
+         if (!ofs) {
+             SLT_WRN(slot, "failed to append the draft state to '%s'\n", filepath.c_str());
+             return false;
+@@ -2998,7 +2998,7 @@
+         if (ctx_dft != nullptr) {
+             llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
+         }
+-        std::ifstream ifs(filepath, std::ios::binary | std::ios::ate);
++        std::ifstream ifs(std::filesystem::u8path(filepath), std::ios::binary | std::ios::ate);
+         const size_t file_size = ifs ? (size_t) ifs.tellg() : 0;
+         if (!ifs || file_size < offset || !ifs.seekg(offset)) {
+             return 0;

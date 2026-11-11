@@ -57,7 +57,6 @@ public class QuantizationTypeTest {
                 Arguments.of(QuantizationType.TQ1_0, 36),
                 Arguments.of(QuantizationType.TQ2_0, 37),
                 Arguments.of(QuantizationType.MXFP4_MOE, 38),
-                Arguments.of(QuantizationType.NVFP4, 39),
                 Arguments.of(QuantizationType.Q1_0, 40),
                 Arguments.of(QuantizationType.Q2_0, 41));
     }
@@ -81,5 +80,24 @@ public class QuantizationTypeTest {
         for (QuantizationType type : QuantizationType.values()) {
             assertThat("duplicate ftype value " + type.getFtypeValue(), seen.add(type.getFtypeValue()), is(true));
         }
+    }
+
+    /**
+     * The types llama.cpp refuses without an importance matrix. The native side measures the same
+     * nine against a random model ({@code CApiEnumSweep} in {@code test_c_api.cpp}); a tenth there
+     * fails that test, and this one says which constants the flag must name.
+     */
+    @Test
+    public void exactlyTheNineSmallestTypesRequireAnImportanceMatrix() {
+        Set<String> requiring = new java.util.TreeSet<>();
+        for (QuantizationType type : QuantizationType.values()) {
+            if (type.requiresImportanceMatrix()) {
+                requiring.add(type.name());
+            }
+        }
+        assertThat(
+                requiring,
+                is(new java.util.TreeSet<>(java.util.Arrays.asList(
+                        "IQ1_M", "IQ1_S", "IQ2_M", "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ3_XS", "IQ3_XXS", "Q2_K_S"))));
     }
 }

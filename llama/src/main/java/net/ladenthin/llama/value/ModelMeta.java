@@ -159,6 +159,21 @@ public final class ModelMeta {
     }
 
     /**
+     * The predefined voices of a model that generates speech and ships some in its projector (Pocket
+     * TTS, LFM3-Audio; llama.cpp b12061), by the names a {@code voice} of the embedded server's
+     * {@code POST /tts} and {@code POST /v1/audio/speech} takes. The same list as
+     * {@link net.ladenthin.llama.TextToSpeech#getVoices()} for the same pair of files.
+     *
+     * <p>From the native {@code voices} key; empty for a model without predefined voices, for metadata
+     * from a vocab-only load or from a build before 6.1.0.</p>
+     *
+     * @return the voice names, unmodifiable
+     */
+    public List<String> getVoices() {
+        return strings(node.path("voices"));
+    }
+
+    /**
      * Returns true if the model transcribes audio in real time, which the embedded server's
      * {@code /v1/realtime} WebSocket uses ({@link net.ladenthin.llama.server.NativeServer}).
      *

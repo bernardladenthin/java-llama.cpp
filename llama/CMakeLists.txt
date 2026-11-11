@@ -100,7 +100,7 @@ option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 # Declared here, before any FetchContent_MakeAvailable(), and not next to the tests below: a
 # subproject that calls include(CTest) creates BUILD_TESTING as a cache variable defaulting to ON,
 # after which this option() would be a no-op. CCCL does exactly that, unconditionally, and ggml
-# fetches it whenever GGML_CUDA_CCCL_VERSION is set (our CUDA builds pin v3.4.3) -- the CUDA job
+# fetches it whenever GGML_CUDA_CCCL_VERSION is set (our CUDA builds pinned v3.4.3 up to CUDA 13.4) -- the CUDA job
 # then built jllama_test, whose gtest discovery needs libcuda.so.1 and failed the build on the
 # GPU-less runner. -DBUILD_TESTING=ON still enables the tests.
 option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)
@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11968)
-set(JLLAMA_GIT_COMMIT "ac8e1694d837b11ed0aab944a6a2eee34b9c4d80")   # the commit the tag b11968 names; kept as the pin (a tag name can move)
+set(JLLAMA_GIT_TAG    b12283)
+set(JLLAMA_GIT_COMMIT "f3b407ca1bfeeecebf9e9ef19fcd6eed565bd70a")   # the commit the tag b12283 names; kept as the pin (a tag name can move)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -895,6 +895,7 @@ add_library(jllama SHARED
     src/main/cpp/jllama_engine.cpp
     src/main/cpp/jllama_api.cpp
     src/main/cpp/tts_engine.cpp
+    src/main/cpp/imatrix_engine.cpp
     src/main/cpp/train_engine.cpp
     src/main/cpp/rpc_bridge.cpp
     src/main/cpp/utils.hpp
@@ -1366,6 +1367,31 @@ if(BUILD_TESTING)
         MIN_COUNT        10
         OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_training_fields.h
     )
+    # The values behind the options: every constant of an enum a ModelParameters setter takes, with
+    # the option that setter writes, and the llama_ftype values of QuantizationType. A new
+    # enum-valued setter gets its line here; test_model_flags.cpp and test_c_api.cpp do the rest.
+    set(_jllama_args ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args)
+    jllama_extract_java_enum_values(
+        STRING_ENUMS
+            --cache-type-k=${_jllama_args}/CacheType.java
+            --cache-type-v=${_jllama_args}/CacheType.java
+            --flash-attn=${_jllama_args}/FlashAttn.java
+            --split-mode=${_jllama_args}/GpuSplitMode.java
+            --lazy-mode=${_jllama_args}/LazyMode.java
+            --load-mode=${_jllama_args}/LoadMode.java
+            --mirostat=${_jllama_args}/MiroStat.java
+            --numa=${_jllama_args}/NumaStrategy.java
+            --pooling=${_jllama_args}/PoolingType.java
+            --reasoning-format=${_jllama_args}/ReasoningFormat.java
+            --rope-scaling=${_jllama_args}/RopeScalingType.java
+            --samplers=${_jllama_args}/Sampler.java
+            --spec-draft-sampling=${_jllama_args}/DraftSampling.java
+            --spec-type=${_jllama_args}/SpecType.java
+        ARRAY_PREFIX     JLLAMA_JAVA_ENUM
+        INT_ENUM         ${_jllama_args}/QuantizationType.java
+        INT_ARRAY_PREFIX JLLAMA_JAVA_FTYPE
+        OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_enum_values.h
+    )
 
     add_executable(jllama_test
         src/test/cpp/test_c_api.cpp
@@ -1373,6 +1399,7 @@ if(BUILD_TESTING)
         src/main/cpp/jllama_api.cpp
         # The engines behind the C API's TTS and trainer functions (test_c_api.cpp drives them).
         src/main/cpp/tts_engine.cpp
+        src/main/cpp/imatrix_engine.cpp
         src/main/cpp/train_engine.cpp
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp

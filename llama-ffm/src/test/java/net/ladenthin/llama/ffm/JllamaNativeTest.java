@@ -197,4 +197,50 @@ class JllamaNativeTest {
             assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
         }
     }
+
+    /** The voices query resolves and reaches the library without a TTS model, like the one above. */
+    @Test
+    void ttsVoicesRefusesANullHandle() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment names = JllamaNative.pointerSlot(arena);
+            MemorySegment count = JllamaNative.longSlot(arena);
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> JllamaNative.call(JllamaNative.TTS_VOICES, MemorySegment.NULL, names, count));
+            assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
+        }
+    }
+
+    @Test
+    void quantizeReportsAMissingInputAndAMissingImportanceMatrix() {
+        // both overloads reach the library (jllama_quantize_imatrix; a null matrix is "none")
+        assertThrows(
+                LlamaException.class,
+                () -> Jllama.quantize("/nonexistent/in.gguf", "/nonexistent/out.gguf", 7, 1, false));
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.quantize(
+                        "/nonexistent/in.gguf", "/nonexistent/out.gguf", 19, 1, false, "/nonexistent/imatrix.gguf"));
+        assertThat(e.getMessage(), containsString("importance matrix"));
+    }
+
+    @Test
+    void computeImportanceMatrixReportsAMissingModel() {
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.computeImportanceMatrix(
+                        "/nonexistent/model.gguf", "/nonexistent/text.txt", "/nonexistent/out.gguf", 0, 0, 1, 0, null));
+        assertThat(e.getMessage(), containsString("calibration text"));
+    }
+
+    @Test
+    void mergeImportanceMatricesNamesAMissingFileAndRefusesNone() {
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> Jllama.mergeImportanceMatrices(
+                        List.of("/nonexistent/a.imatrix.gguf"), "/nonexistent/out.gguf", false));
+        assertThat(e.getMessage(), containsString("/nonexistent/a.imatrix.gguf"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Jllama.mergeImportanceMatrices(List.of(), "/nonexistent/out.gguf", true));
+    }
 }

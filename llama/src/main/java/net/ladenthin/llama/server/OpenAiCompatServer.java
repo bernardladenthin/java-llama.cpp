@@ -19,6 +19,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -29,9 +30,11 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.TextToSpeech;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.json.ToolCallDeltaAccumulator;
 import net.ladenthin.llama.value.SlotMetrics;
@@ -107,6 +110,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
      */
     public static final String PATH_INFILL = "/infill";
 
+    /** OpenAI's speech route: text to audio, served when the server was given a speech engine. */
+    public static final String PATH_AUDIO_SPEECH = "/v1/audio/speech";
+
+    /** llama.cpp's own speech route, with its sampling fields and a speaker reference. */
+    public static final String PATH_TTS = "/tts";
+
     /** Anthropic's token count of a {@code /v1/messages} request, without generating. */
     public static final String PATH_MESSAGES_COUNT_TOKENS = "/v1/messages/count_tokens";
 
@@ -146,6 +155,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
     /** Ollama-native generate route (prompt completion / fill-in-the-middle). */
     public static final String PATH_OLLAMA_GENERATE = "/api/generate";
 
+    private static final String HEADER_CONTENT_TYPE = "Content-Type";
     private static final String CONTENT_TYPE_NDJSON = "application/x-ndjson";
 
     private static final int HTTP_OK = 200;
@@ -181,6 +191,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private final OpenAiServerConfig config;
     private final OpenAiBackend backend;
+
+    /** The speech engine behind {@link #PATH_AUDIO_SPEECH}, or {@code null} for a server without one. */
+    private final @Nullable SpeechBackend speech;
+
     private final HttpServer http;
     private final Filter corsFilter;
     private final ExecutorService requestExecutor;
@@ -207,8 +221,37 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * @throws IOException if the listening socket cannot be bound
      */
     public OpenAiCompatServer(OpenAiBackend backend, OpenAiServerConfig config) throws IOException {
+        this(backend, config, (SpeechBackend) null);
+    }
+
+    /**
+     * Create a server backed by a loaded model that also speaks: {@code POST /v1/audio/speech}
+     * (OpenAI's speech route, as llama.cpp's own server answers it) is served by {@code speech}.
+     * One synthesis runs at a time, like the engine itself.
+     *
+     * @param model the model to serve completions from (owned by the caller; not closed by the server)
+     * @param config the server configuration
+     * @param speech the text-to-speech engine (owned by the caller; not closed by the server)
+     * @throws IOException if the listening socket cannot be bound
+     */
+    public OpenAiCompatServer(LlamaModel model, OpenAiServerConfig config, TextToSpeech speech) throws IOException {
+        this(new LlamaModelBackend(model, new OpenAiRequestMapper()), config, new TextToSpeechBackend(speech));
+    }
+
+    /**
+     * Create a server backed by an arbitrary {@link OpenAiBackend} and, optionally, a
+     * {@link SpeechBackend}. Without one the speech route answers {@code 501}.
+     *
+     * @param backend the inference engine seam
+     * @param config the server configuration
+     * @param speech the speech engine seam, or {@code null} for none
+     * @throws IOException if the listening socket cannot be bound
+     */
+    public OpenAiCompatServer(OpenAiBackend backend, OpenAiServerConfig config, @Nullable SpeechBackend speech)
+            throws IOException {
         this.config = config;
         this.backend = backend;
+        this.speech = speech;
         this.requestExecutor = Executors.newCachedThreadPool(namedFactory("jllama-openai-http"));
         // Sized for concurrency: a heartbeat write blocks on a slow/stalled client, so a single
         // shared thread would let one such client starve every other stream's keep-alives. Bound
@@ -238,6 +281,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
         register("/v1/reranking", this::handleRerank);
         register(PATH_INFILL, this::handleInfill);
         register("/v1/infill", this::handleInfill);
+        register(PATH_AUDIO_SPEECH, exchange -> handleSpeech(exchange, SpeechApiSupport::parse));
+        register("/audio/speech", exchange -> handleSpeech(exchange, SpeechApiSupport::parse));
+        register(PATH_TTS, exchange -> handleSpeech(exchange, SpeechApiSupport::parseTts));
         register(PATH_MESSAGES, this::handleAnthropicMessages);
         register("/messages", this::handleAnthropicMessages);
         register(PATH_RESPONSES, this::handleResponses);
@@ -443,6 +489,56 @@ public final class OpenAiCompatServer implements AutoCloseable {
             JsonNode request = requirePostJson(exchange);
             if (request != null) {
                 completeNonStreaming(exchange, request, backend::rerank);
+            }
+        } finally {
+            exchange.close();
+        }
+    }
+
+    /**
+     * OpenAI's {@code POST /v1/audio/speech}: the text of {@code input} as a WAV file, or with
+     * {@code response_format: pcm} as its samples alone. A server without a speech engine answers
+     * {@code 501}, as llama.cpp's does for a model that generates no audio.
+     */
+    private void handleSpeech(HttpExchange exchange, Function<JsonNode, SpeechApiSupport.Request> parser)
+            throws IOException {
+        try {
+            JsonNode request = requirePostJson(exchange);
+            if (request == null) {
+                return;
+            }
+            SpeechBackend engine = speech;
+            if (engine == null) {
+                sendError(
+                        exchange,
+                        HTTP_NOT_IMPLEMENTED,
+                        ERROR_TYPE_NOT_SUPPORTED,
+                        "This server does not support speech generation. Start it with a text-to-speech model");
+                return;
+            }
+            final byte[] audio;
+            final String contentType;
+            try {
+                SpeechApiSupport.Request parsed = parser.apply(request);
+                byte[] wav = engine.synthesize(
+                        parsed.input(),
+                        parsed.voiceOr(config.getSpeechVoice()),
+                        parsed.languageOr(config.getSpeechLanguage()),
+                        parsed.options());
+                contentType = SpeechApiSupport.contentType(wav, parsed.format());
+                audio = SpeechApiSupport.body(wav, parsed.format());
+            } catch (IllegalArgumentException | InvalidRequestException e) {
+                sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
+                return;
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("speech request failed", e);
+                sendError(exchange, HTTP_SERVER_ERROR, ERROR_TYPE_SERVER, message(e));
+                return;
+            }
+            exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, contentType);
+            exchange.sendResponseHeaders(HTTP_OK, audio.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(audio);
             }
         } finally {
             exchange.close();
@@ -697,7 +793,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (OllamaApiSupport.isStreaming(request)) {
                 byte[] bytes = OllamaApiSupport.toOllamaGenerateStream(generated, model)
                         .getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_NDJSON);
+                exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_NDJSON);
                 exchange.sendResponseHeaders(HTTP_OK, bytes.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
@@ -1043,7 +1139,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     exchange,
                     HTTP_OK,
                     OpenAiSseFormatter.propsJson(
-                            config.getModelId(), contextLength, config.isSupportsVision(), config.getTotalSlots()));
+                            config.getModelId(),
+                            contextLength,
+                            config.isSupportsVision(),
+                            config.getTotalSlots(),
+                            speech != null ? speech.voices() : Collections.<String>emptyList()));
         } finally {
             exchange.close();
         }
@@ -1175,7 +1275,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private void sendJson(HttpExchange exchange, int status, String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+        exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
@@ -1256,7 +1356,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     throw new IOException("the " + contentType + " stream failed to start");
                 }
                 started = true;
-                exchange.getResponseHeaders().set("Content-Type", contentType);
+                exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, contentType);
                 exchange.getResponseHeaders().set("Cache-Control", "no-cache");
                 exchange.sendResponseHeaders(HTTP_OK, 0);
                 out = exchange.getResponseBody();
@@ -1341,7 +1441,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 answered = true;
                 byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
                 try {
-                    exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+                    exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
                     exchange.sendResponseHeaders(status, bytes.length);
                     try (OutputStream out = exchange.getResponseBody()) {
                         out.write(bytes);
@@ -1467,7 +1567,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
             final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
             OpenAiServerConfig config = options.toServerConfig(
                     model.supportsVision(), model.getModelFtype(), slotContextSize(slots), slots.size());
-            try (OpenAiCompatServer server = new OpenAiCompatServer(model, config)) {
+            // the speech model, when one was named: loaded next to the model, closed after the server
+            final String ttsModel = options.getTtsModel();
+            final String ttsMmproj = options.getTtsMmproj();
+            try (TextToSpeech speech = ttsModel != null && ttsMmproj != null
+                            ? new TextToSpeech(ttsModel, ttsMmproj, options.getGpuLayers(), options.getThreads())
+                            : null;
+                    OpenAiCompatServer server = speech != null
+                            ? new OpenAiCompatServer(model, config, speech)
+                            : new OpenAiCompatServer(model, config)) {
                 server.start();
                 printReady(config, server.getPort());
                 try {

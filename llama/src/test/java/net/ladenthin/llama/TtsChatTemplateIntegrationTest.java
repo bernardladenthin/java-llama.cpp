@@ -15,7 +15,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -31,10 +33,11 @@ import org.junit.jupiter.api.Timeout;
  * {@code llama-tts} do. Before, the engine handed the raw text to the pipeline, which is not what
  * such a model expects, and had no way to pass a voice.
  *
- * <p>Not in CI's model set (1.4&nbsp;GB, and Qwen3-TTS already covers the pipeline itself): the test
- * self-skips unless {@link TestConstants#PROP_TTS_TEMPLATE_MODEL} and
- * {@link TestConstants#PROP_TTS_TEMPLATE_MMPROJ} name the pair, e.g. {@code LFM3-Audio-2B-Q4_0.gguf}
- * and {@code mmproj-LFM3-Audio-2B-Q8_0.gguf} of {@code LiquidAI/LFM3-Audio-2B-GGUF}.
+ * <p>Runs with CI's LFM3-Audio pair ({@code .github/models.csv}, feature {@code realtime}:
+ * {@code LFM3-Audio-2B-Q4_0.gguf} and {@code mmproj-LFM3-Audio-2B-Q8_0.gguf} of
+ * {@code LiquidAI/LFM3-Audio-2B-GGUF}) unless {@link TestConstants#PROP_TTS_TEMPLATE_MODEL} and
+ * {@link TestConstants#PROP_TTS_TEMPLATE_MMPROJ} name another, and self-skips when the files are
+ * missing.
  */
 public class TtsChatTemplateIntegrationTest {
 
@@ -47,8 +50,10 @@ public class TtsChatTemplateIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        String model = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_TEMPLATE_MODEL);
-        String mmproj = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_TEMPLATE_MMPROJ);
+        String model = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TTS_TEMPLATE_MODEL, TestConstants.DEFAULT_REALTIME_MODEL_PATH);
+        String mmproj = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TTS_TEMPLATE_MMPROJ, TestConstants.DEFAULT_REALTIME_MMPROJ_PATH);
         Assumptions.assumeTrue(
                 model != null && !model.isEmpty(),
                 "TTS model with a chat template not set (-D" + TestConstants.PROP_TTS_TEMPLATE_MODEL + "=...)");
@@ -111,9 +116,33 @@ public class TtsChatTemplateIntegrationTest {
     @DisplayName("no voice cloning: the pair reports it and refuses a speaker reference")
     public void refusesASpeakerReference() {
         assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio has no voice encoder");
+        // the request's fault, so that a server answers 400
         assertThrows(
-                LlamaException.class,
+                InvalidRequestException.class,
                 () -> tts.synthesize("Hello.", TestConstants.DEFAULT_AUDIO_INPUT_PATH, "en", null, MAX_FRAMES, 4, 1));
+    }
+
+    /**
+     * Since llama.cpp b12061 a model lists the voices its projector ships, and one that has some
+     * speaks with one of them: the named one, or the first when the request names none. LFM3-Audio's
+     * {@code female} and {@code male} are such voices (and still named in its template).
+     */
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("predefined voices: listed, the first one is the default, an unknown one is refused by name")
+    public void thePredefinedVoicesAreListedAndTheFirstIsTheDefault() {
+        List<String> voices = tts.getVoices();
+        Assumptions.assumeFalse(voices.isEmpty(), "this model ships no predefined voices");
+        assertTrue(voices.contains("female") && voices.contains("male"), "voices: " + voices);
+
+        byte[] unnamed = tts.synthesize("Good morning.", null, "en", null, MAX_FRAMES, 4, 5);
+        byte[] first = tts.synthesize("Good morning.", null, "en", voices.get(0), MAX_FRAMES, 4, 5);
+        assertWellFormedAudibleWav(unnamed);
+        assertArrayEquals(first, unnamed, "without a voice the model speaks with its first one, " + voices.get(0));
+
+        LlamaException unknown = assertThrows(
+                LlamaException.class, () -> tts.synthesize("Hello.", null, "en", "nobody", MAX_FRAMES, 4, 1));
+        assertTrue(unknown.getMessage().contains(voices.get(0)), unknown.getMessage());
     }
 
     /** RIFF/WAVE, PCM mono 16-bit at a positive rate, consistent sizes and at least one non-zero sample. */

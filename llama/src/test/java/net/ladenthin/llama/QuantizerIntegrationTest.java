@@ -4,6 +4,7 @@
 
 package net.ladenthin.llama;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -11,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Collections;
 import net.ladenthin.llama.args.QuantizationType;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.InferenceParameters;
@@ -119,5 +122,149 @@ public class QuantizerIntegrationTest {
                 LlamaException.class,
                 () -> LlamaQuantizer.quantize(
                         "models/does-not-exist.gguf", output.toString(), QuantizationType.Q8_0, 0, true));
+    }
+
+    @Test
+    public void quantize_typeThatNeedsAnImportanceMatrix_isRefusedBeforeTheNativeCall() {
+        assumeDraftModel(); // gates on the native lib being present in this environment
+        Path output = tempDir.resolve("iq2.gguf");
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> LlamaQuantizer.quantize(
+                        TestConstants.DRAFT_MODEL_PATH, output.toString(), QuantizationType.IQ2_XXS, 0, true));
+        assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
+        assertTrue(!Files.exists(output), "a refused quantization left a file behind");
+    }
+
+    @Test
+    public void quantize_missingImportanceMatrix_throwsNamingIt() {
+        assumeDraftModel();
+        Path output = tempDir.resolve("iq2-missing-imatrix.gguf");
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.quantize(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        output.toString(),
+                        QuantizationType.IQ2_XXS,
+                        0,
+                        true,
+                        tempDir.resolve("no-such-imatrix.gguf").toString()));
+        assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
+    }
+
+    /**
+     * The whole route a small quantization takes: an importance matrix computed over a text, then a
+     * type that cannot be written without one, then the result loaded and asked.
+     */
+    @Test
+    public void computeImportanceMatrix_thenQuantizeToATypeThatNeedsIt() throws Exception {
+        assumeDraftModel();
+        Path text = tempDir.resolve("calibration.txt");
+        StringBuilder words = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            words.append("def add(a, b):\n    return a + b\n\nfor value in range(")
+                    .append(i)
+                    .append("):\n    print(add(value, 1))\n\n");
+        }
+        Files.write(text, words.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Path imatrix = tempDir.resolve("draft.imatrix.gguf");
+
+        java.util.List<Float> fractions = new java.util.ArrayList<>();
+        int chunks = LlamaQuantizer.computeImportanceMatrix(
+                TestConstants.DRAFT_MODEL_PATH, text.toString(), imatrix.toString(), 64, 4, 0, 0, fraction -> {
+                    fractions.add(fraction);
+                    return true;
+                });
+        assertTrue(chunks == 4, "expected the four chunks asked for, got " + chunks);
+        assertTrue(fractions.size() == 4 && fractions.get(3) == 1.0f, "progress per chunk, got " + fractions);
+
+        // a callback that says no cancels the run, and nothing is written
+        Path cancelled = tempDir.resolve("cancelled.imatrix.gguf");
+        LlamaException stopped = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.computeImportanceMatrix(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        text.toString(),
+                        cancelled.toString(),
+                        64,
+                        4,
+                        0,
+                        0,
+                        fraction -> false));
+        assertTrue(stopped.getMessage().contains("cancelled"), stopped.getMessage());
+        assertTrue(!Files.exists(cancelled), "a cancelled run left a file behind");
+        assertTrue(Files.size(imatrix) > 0, "the importance matrix is empty");
+
+        Path output = tempDir.resolve("draft-q2_k_s.gguf");
+        LlamaQuantizer.quantize(
+                TestConstants.DRAFT_MODEL_PATH,
+                output.toString(),
+                QuantizationType.Q2_K_S,
+                0,
+                true,
+                imatrix.toString());
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel model = new LlamaModel(new ModelParameters()
+                .setModel(output.toString())
+                .setCtxSize(128)
+                .setGpuLayers(gpuLayers)
+                .setFit(false))) {
+            assertNotNull(model.complete(new InferenceParameters("def main():").withNPredict(4)));
+        }
+
+        // the same matrix twice stands for twice the chunks; one matrix converts to the legacy format
+        // and back, and the quantizer reads the legacy file as it reads the GGUF one
+        Path doubled = tempDir.resolve("draft.doubled.imatrix.gguf");
+        assertEquals(
+                2 * chunks,
+                LlamaQuantizer.mergeImportanceMatrices(
+                        Arrays.asList(imatrix.toString(), imatrix.toString()), doubled.toString()));
+        Path legacy = tempDir.resolve("draft.imatrix.dat");
+        assertEquals(
+                chunks,
+                LlamaQuantizer.mergeImportanceMatrices(
+                        Collections.singletonList(imatrix.toString()), legacy.toString(), true));
+        byte[] head = Arrays.copyOf(Files.readAllBytes(legacy), 4);
+        assertTrue(!Arrays.equals(head, new byte[] {'G', 'G', 'U', 'F'}), "the legacy format is not GGUF");
+        Path back = tempDir.resolve("draft.back.imatrix.gguf");
+        assertEquals(
+                chunks,
+                LlamaQuantizer.mergeImportanceMatrices(Collections.singletonList(legacy.toString()), back.toString()));
+        LlamaQuantizer.quantize(
+                TestConstants.DRAFT_MODEL_PATH,
+                tempDir.resolve("draft-q2_k_s-legacy.gguf").toString(),
+                QuantizationType.Q2_K_S,
+                0,
+                true,
+                legacy.toString());
+    }
+
+    @Test
+    public void mergeImportanceMatrices_refusesNothingAndNamesAMissingFile() {
+        assumeDraftModel();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> LlamaQuantizer.mergeImportanceMatrices(
+                        Collections.<String>emptyList(),
+                        tempDir.resolve("never.gguf").toString()));
+        String missing = tempDir.resolve("no-such.imatrix.gguf").toString();
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.mergeImportanceMatrices(
+                        Collections.singletonList(missing),
+                        tempDir.resolve("never.gguf").toString()));
+        assertTrue(e.getMessage().contains(missing), e.getMessage());
+    }
+
+    @Test
+    public void computeImportanceMatrix_missingText_throwsNamingIt() {
+        assumeDraftModel();
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.computeImportanceMatrix(
+                        TestConstants.DRAFT_MODEL_PATH,
+                        tempDir.resolve("no-such-text.txt").toString(),
+                        tempDir.resolve("never.gguf").toString()));
+        assertTrue(e.getMessage().contains("calibration text"), e.getMessage());
     }
 }

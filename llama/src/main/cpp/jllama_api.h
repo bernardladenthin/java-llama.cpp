@@ -349,6 +349,41 @@ JLLAMA_API jllama_status jllama_json_schema_to_grammar(const char *schema_json, 
 JLLAMA_API jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
                                          bool allow_requantize);
 
+/**
+ * jllama_quantize() with an importance matrix: `imatrix_path` names the file llama-imatrix wrote
+ * for this model (GGUF or the legacy format), null or "" for none. The file types IQ2_XXS (19),
+ * IQ2_XS (20), Q2_K_S (21), IQ3_XS (22), IQ3_XXS (23), IQ1_S (24), IQ2_S (28), IQ2_M (29) and
+ * IQ1_M (31) cannot be written
+ * without one; the output records the file under quantize.imatrix.*, as llama-quantize does.
+ */
+JLLAMA_API jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype,
+                                                 int nthread, bool allow_requantize, const char *imatrix_path);
+
+/**
+ * Computes the importance matrix jllama_quantize_imatrix() takes, as llama-imatrix does: the model at
+ * `model_path` (best the unquantized one) reads the calibration text of the file `text_path` in
+ * chunks of `chunk_size` tokens (0 = 512; at least 16), at most `max_chunks` of them (0 = all whole
+ * chunks), and the result is written to `output_path` as GGUF. `nthread` 0 is the default,
+ * `n_gpu_layers` the layers to offload. `progress` (may be null) is called on the calling thread
+ * after every chunk with the fraction done; returning false cancels the run, which is then an error
+ * with nothing written. `*n_chunks` (may be null) receives the number of chunks used. Needs no
+ * loaded model; loads its own and frees it.
+ */
+JLLAMA_API jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path,
+                                        int chunk_size, int max_chunks, int nthread, int n_gpu_layers,
+                                        jllama_load_progress_fn progress, void *progress_user_data, int *n_chunks);
+
+/**
+ * Adds up `n_inputs` importance matrices of one model, computed over different texts, into the one
+ * at `output_path`, as llama-imatrix does with several --in-file and no text. The inputs are GGUF or
+ * the legacy binary format; they must come from the same model and the same chunk size (a legacy
+ * file records none and takes that of the others, 512 without any). The result is GGUF, or with
+ * `legacy_format` the legacy binary format -- so one input converts a file between the two.
+ * `*n_chunks` (may be null) receives the number of chunks the result stands for. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
+                                              bool legacy_format, int *n_chunks);
+
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
  * worker thread inside this library. Not available on Android (server.cpp does not build there);
@@ -463,7 +498,12 @@ JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char
  * "male" for LFM3-Audio. A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered
  * from it with `text`, `lang` and `voice`, the others `text` itself; for such a model `lang` is its
  * own code ("en", "de", ...) and null leaves the template's default. jllama_tts_synthesize is this
- * function with a null voice. Since 6.1.0.
+ * function with a null voice. A model with predefined voices in its projector (Pocket TTS without
+ * voice cloning, llama.cpp b12061) speaks with the named one, or its first when `voice` and the
+ * speaker reference are both null; an unknown name fails naming the model's voices, and a voice next
+ * to a speaker reference is refused. What the request asked for and the model cannot do -- such a
+ * voice, a speaker reference the pair cannot use or that cannot be read -- is
+ * JLLAMA_STATUS_INVALID_REQUEST, a failed synthesis JLLAMA_STATUS_ERROR. Since 6.1.0.
  */
 JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text,
                                                      const char *speaker_reference_path, const char *lang,
@@ -471,11 +511,32 @@ JLLAMA_API jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, cons
                                                      unsigned char **wav, size_t *length);
 
 /**
+ * jllama_tts_synthesize_voice with the audio frame temperature (llama.cpp b12233): a pipeline that
+ * samples its audio frames (Pocket TTS) does so at `temperature`, 0 is greedy and a negative value
+ * the model's default; the other pipelines ignore it. jllama_tts_synthesize_voice is this function
+ * with -1. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const char *text,
+                                                           const char *speaker_reference_path, const char *lang,
+                                                           const char *voice, int max_frames, int top_k,
+                                                           unsigned int seed, float temperature, unsigned char **wav,
+                                                           size_t *length);
+
+/**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
- * mtmd_helper_cap::audio_gen_spk_ref, true for Qwen3-TTS and Pocket TTS. jllama_tts_synthesize
+ * mtmd_helper_cap::audio_gen_spk_ref (Qwen3-TTS, Pocket TTS) for a projector that takes audio in --
+ * one converted without its voice encoder does not, and reports false. jllama_tts_synthesize
  * refuses a `speaker_reference_path` for a pair that does not.
  */
 JLLAMA_API jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts, bool *supported);
+
+/**
+ * The predefined voices of the loaded pair: *count names in *names (jllama_strings_free), to pass
+ * as `voice` to jllama_tts_synthesize_voice. llama.cpp b12061: a model that ships voices in its
+ * projector (Pocket TTS without voice cloning, LFM3-Audio) only speaks with one of them. *count is 0
+ * for a model without predefined voices. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_voices(const jllama_tts_model *tts, char ***names, size_t *count);
 
 /** Frees the model pair; null is ignored. */
 JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);

@@ -11,6 +11,25 @@ themselves. Moved here from `CLAUDE.md`, which lists only the patches still carr
 records why the patch went and what guard, if any, stays behind -- read the matching note before
 reintroducing a patch for the same defect.
 
+**`0001` was dropped at the b12014 bump.** Upstream [#31417](https://github.com/ggml-org/llama.cpp/pull/31417)
+("common : drop the Windows argv reconstruction", `aa588a346`, 2026-10-30, "Fixes #26416" -- the issue this
+project filed) deleted the 61 lines of `common/arg.cpp` that re-derived `argv` from `GetCommandLineW` and
+adopted it whenever the element counts matched; since #31329 (b12010) every Windows executable of llama.cpp
+embeds an app manifest that makes its `argv` UTF-8, so the standalone tools no longer need the recovery, and
+`common_params_parse` parses exactly the argv it is given on every platform -- direction (1) of the two the
+issue offered, without the `common_params_parse_main()` wrapper the patch added for the tools. **Here the
+applier fired** (the patch's `common/arg.cpp` hunk has nothing left to change, and its call-site flips in the tools name a
+function upstream does not have). The drop-check, read rather than counted: `git show b12014:common/arg.cpp |
+grep -n GetCommandLineW` prints nothing, and the only `_WIN32` block left in the file (line 712) is unrelated
+to parsing; at b12013 the count-guarded `argv = utf8.ptrs.data()` was still there. `0006` lost its
+forwarded-argv hunk at the same bump (its embedded mode chose `common_params_parse` over
+`common_params_parse_main`, which no longer exists). **Guard that stays:** the model-backed Windows Java
+jobs load every model through an argv built in the JVM (`java.exe`'s own command line has another length
+and other content), which is what failed when the substitution struck; no C++ guard existed for the patch,
+since its regression case lived in upstream's `tests/test-arg-parser.cpp`, which a FetchContent subproject
+never compiles. A manifest is a property of an *executable*: `libjllama` inside `java.exe` gets none and
+needs none, because the JNI layer hands over UTF-8 bytes it converted itself.
+
 **`0019` was dropped at the b11761 bump** (the first number that carries the fix is b11761). Upstream merged
 this project's own [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505) (commit
 [`119f68d7d`](https://github.com/ggml-org/llama.cpp/commit/119f68d7d441d66bdf8ebd117ca0deee2119fbcc),

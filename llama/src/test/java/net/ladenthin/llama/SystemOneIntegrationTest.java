@@ -30,9 +30,10 @@ import org.junit.jupiter.api.Test;
  * that the handler is reachable from a loaded model, that its answer comes back verbatim, and that an
  * error body turns into a {@link LlamaException} carrying upstream's message.
  *
- * <p>The rejection case runs with the cached draft model on every CI job. The answering cases need a
- * decision model, which is not in the CI set; they self-skip unless
- * {@link TestConstants#PROP_DECISION_MODEL_PATH} names one.</p>
+ * <p>The rejection case runs with the draft model. The answering cases run with
+ * {@link TestConstants#DEFAULT_DECISION_MODEL_PATH}, upstream's own test model for the route (CI's
+ * model set), or the model {@link TestConstants#PROP_DECISION_MODEL_PATH} names; they self-skip
+ * while the file is missing.</p>
  */
 @ClaudeGenerated(
         purpose = "Pin the JNI bridge to llama.cpp's /v1/systemone handler: a non-decision model is "
@@ -103,11 +104,11 @@ public class SystemOneIntegrationTest {
 
     private static LlamaModel loadDecisionModel() {
         assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath");
-        String path = TestConstants.resolveModelProperty(TestConstants.PROP_DECISION_MODEL_PATH);
+        String path = TestConstants.resolveModelProperty(
+                TestConstants.PROP_DECISION_MODEL_PATH, TestConstants.DEFAULT_DECISION_MODEL_PATH);
         assumeTrue(
-                path != null && !path.isEmpty(),
-                "decision model not set (-D" + TestConstants.PROP_DECISION_MODEL_PATH + "=...)");
-        assumeTrue(new File(path).exists(), "decision model file missing: " + path);
+                new File(path).exists(),
+                "decision model missing: " + path + " (or set -D" + TestConstants.PROP_DECISION_MODEL_PATH + ")");
         return new LlamaModel(new ModelParameters()
                 .setModel(path)
                 .setCtxSize(1024)

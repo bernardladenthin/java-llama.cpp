@@ -13,6 +13,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -898,12 +899,43 @@ public class LlamaLoader {
             System.load(absolutePath);
             return true;
         } catch (UnsatisfiedLinkError e) {
-            lastLoadFailure = e.getMessage();
-            System.err.println(e.getMessage());
+            String hint = unencodablePathHint(absolutePath, System.getProperty("sun.jnu.encoding"));
+            String message = hint == null ? e.getMessage() : e.getMessage() + " -- " + hint;
+            lastLoadFailure = message;
+            System.err.println(message);
             System.err.println("Failed to load native library: " + absolutePath + ". osinfo: "
                     + OSInfo.getNativeLibFolderPathForCurrentOS());
             return false;
         }
+    }
+
+    /**
+     * Explains a failed load of a path the JVM cannot hand to the operating system.
+     *
+     * <p>{@code System.load} passes the path in the platform encoding ({@code sun.jnu.encoding}, on
+     * Windows the ANSI code page). A character outside it becomes {@code ?}, the path then names a
+     * directory that does not exist, and the error reads "Can't find dependent libraries" although
+     * every file is in place (measured on Windows, code page 1252, with a CJK character in the
+     * extraction directory).
+     *
+     * @param path the absolute path that failed to load
+     * @param encoding the platform encoding's name, or {@code null} when it is not known
+     * @return the explanation, or {@code null} when the encoding can represent the path or is unknown
+     */
+    static @Nullable String unencodablePathHint(String path, @Nullable String encoding) {
+        if (encoding == null) {
+            return null;
+        }
+        try {
+            if (Charset.forName(encoding).newEncoder().canEncode(path)) {
+                return null;
+            }
+        } catch (IllegalArgumentException | UnsupportedOperationException e) {
+            return null;
+        }
+        return "the path holds a character the platform encoding (" + encoding + ") cannot represent, so the JVM"
+                + " cannot pass it to the operating system; move the extraction directory to a path inside that"
+                + " encoding with -Dnet.ladenthin.llama.tmpdir=<dir> or -Djava.io.tmpdir=<dir>";
     }
 
     /**

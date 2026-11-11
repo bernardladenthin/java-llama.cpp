@@ -1,0 +1,34 @@
+server: open a file:// media URL by its UTF-8 path on Windows
+
+handle_media() (tools/server/server-common.cpp:1255 at b12283) reads a "file://" URL of a request
+through std::ifstream(media_path + file_path), a narrow string MSVC reads in the process's active
+code page. The media directory is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every
+platform) and 0024 lets the server accept one outside ASCII, so inside java.exe on a code page
+like 1252 the load succeeded and every file below the directory was then "does not exist or cannot
+be opened" -- or, worse, was read from a sibling directory whose name is the mis-decoded one.
+Upstream's own executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a
+library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 to 0028.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
+conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green
+without it on a Windows job.
+
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+index 5bf2ec12a..6aa332e84 100644
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1252,7 +1252,7 @@ void handle_media(
+             throw std::invalid_argument("file path is not allowed: " + file_path);
+         }
+         SRV_INF("loading image from local file '%s'\n", (media_path + file_path).c_str());
+-        std::ifstream file(media_path + file_path, std::ios::binary);
++        std::ifstream file(std::filesystem::u8path(media_path + file_path), std::ios::binary);
+         if (!file) {
+             throw std::invalid_argument("file does not exist or cannot be opened: " + file_path);
+         }

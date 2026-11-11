@@ -1,1 +1,1 @@
-miniaudio.h-LICENSE.txt: verbatim lines 95816-95864 of https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/miniaudio/miniaudio.h
+miniaudio.h-LICENSE.txt: verbatim lines 96901-96949 of https://github.com/ggml-org/llama.cpp/blob/e4b6c8ca6a6e8da70248da30709e897e7cc8615e/vendor/miniaudio/miniaudio.h (miniaudio 0.11.26; the text is unchanged from 0.11.25)

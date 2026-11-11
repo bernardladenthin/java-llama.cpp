@@ -32,6 +32,8 @@ struct tts_engine {
     int n_batch = 2048;
     // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
     bool speaker_reference = false;
+    // The predefined voices of the projector (b12061, #31429), read once at load; empty for most models.
+    std::vector<std::string> voices;
     // The model's chat templates: a "tts" one (LFM3-Audio, b11941) renders the prompt to speak.
     common_chat_templates_ptr templates;
     // Serializes engine_synthesize: it drives llama_decode (via mtmd_helper::gen_audio) on the
@@ -79,12 +81,24 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         engine_free(engine);
         return nullptr;
     }
-    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref;
+    // The capability names the pipeline (Qwen3-TTS, Pocket TTS), not the file: a Pocket TTS projector
+    // converted without its voice encoder takes no audio in (no input sample rate), and a reference
+    // clip then fails to decode -- found by CI's pair, which ships predefined voices instead.
+    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref &&
+                                mtmd_get_audio_sample_rate(engine->mctx.get()) >= 0;
+    for (int32_t i = 0; const char *name = mtmd_gen_audio_voice_name(engine->mctx.get(), i); i++) {
+        engine->voices.emplace_back(name);
+    }
     // As llama-tts: the model's own templates, no override. A backbone without a chat template gets
     // the library's fallback, which has no "tts" variant, so its text is spoken as given.
     engine->templates = common_chat_templates_init(engine->model, "");
 
     return engine;
+}
+
+const std::vector<std::string> &engine_voices(const tts_engine *engine) {
+    static const std::vector<std::string> none;
+    return engine != nullptr ? engine->voices : none;
 }
 
 bool engine_supports_speaker_reference(const tts_engine *engine) {
@@ -93,7 +107,19 @@ bool engine_supports_speaker_reference(const tts_engine *engine) {
 
 bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
                        const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       std::vector<uint8_t> &out_wav, std::string &err) {
+                       float temperature, std::vector<uint8_t> &out_wav, std::string &err, bool *request_fault) {
+    // Set where the request is what was refused (a voice the model does not have, a speaker
+    // reference it cannot use or read): the C API answers those as an invalid request.
+    const auto refuse = [&](const std::string &message) {
+        err = message;
+        if (request_fault != nullptr) {
+            *request_fault = true;
+        }
+        return false;
+    };
+    if (request_fault != nullptr) {
+        *request_fault = false;
+    }
     if (engine == nullptr) {
         err = "engine is null";
         return false;
@@ -105,8 +131,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // set_input, with a message that does not say why.
     const std::string refusal = speaker_reference_refusal(engine->speaker_reference, speaker_reference_path);
     if (!refusal.empty()) {
-        err = refusal;
-        return false;
+        return refuse(refusal);
     }
 
     common_params_sampling sparams;
@@ -128,10 +153,36 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
                                                          mtmd_helper_init_opt_default());
         if (!wrapper.bitmap) {
             common_sampler_free(smpl);
-            err = "failed to load speaker reference audio: " + speaker_reference_path;
-            return false;
+            return refuse("failed to load speaker reference audio: " + speaker_reference_path);
         }
         speaker_bitmap.reset(wrapper.bitmap);
+    }
+
+    // b12061 (#31429): mtmd_helper_gen_audio_inp lost its `voice`; a model with predefined voices
+    // takes one as its speaker reference instead (see choose_predefined_voice), every other model
+    // keeps naming the voice in the prompt its "tts" template renders below.
+    std::string voice_name = voice;
+    switch (
+        choose_predefined_voice(static_cast<int>(engine->voices.size()), !voice.empty(), speaker_bitmap != nullptr)) {
+    case predefined_voice::NOT_USED:
+        break;
+    case predefined_voice::CONFLICT:
+        common_sampler_free(smpl);
+        return refuse("a voice and a speaker reference cannot be used together");
+    case predefined_voice::FIRST:
+        voice_name = engine->voices.front();
+        [[fallthrough]];
+    case predefined_voice::NAMED:
+        speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
+        if (!speaker_bitmap) {
+            common_sampler_free(smpl);
+            std::string message = "unknown voice \"" + voice_name + "\", the model has:";
+            for (const std::string &name : engine->voices) {
+                message += " " + name;
+            }
+            return refuse(message);
+        }
+        break;
     }
 
     // b11796 (#30902): the helper is default-constructed and initialised explicitly; init() leaves it
@@ -148,7 +199,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
     // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
     // template error, which the C API reports.
-    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice);
+    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
     const std::string &prompt = rendered.empty() ? text : rendered;
     const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
 
@@ -158,10 +209,13 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
-    inp.voice = voice.empty() ? nullptr : voice.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = 1.0f;
     inp.seed = seed;
+    // b12233 (#31655): the audio frame temperature, < 0 = the model's default (what the struct starts with)
+    if (temperature >= 0.0f) {
+        inp.temp = temperature;
+    }
     // We do our own WAV framing (pcm_to_wav16_bytes) rather than trust upstream's own writer, so
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;

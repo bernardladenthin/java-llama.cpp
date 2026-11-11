@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11968](https://img.shields.io/badge/llama.cpp-%23b11968-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11968)  
+[![llama.cpp b12283](https://img.shields.io/badge/llama.cpp-%23b12283-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12283)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -270,8 +270,8 @@ iGPU, the example being a Core Ultra 7 165U).
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
 | `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries (with the CPU modules, aarch64 one per ARM feature level) for other Android JVM setups. |
-| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
-| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
+| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). **The driver must be new enough for CUDA 13.5** -- see the note below. |
+| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). **The driver must be new enough for CUDA 13.5** -- see the note below. |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
@@ -315,7 +315,7 @@ iGPU, the example being a Core Ultra 7 165U).
 > reading the code** ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)).
 >
 > **CUDA: the module ships native code for Turing through Blackwell, and a GPU outside that set
-> needs a driver new enough for CUDA 13.4.** `sm_75` (T4, RTX 20xx), `sm_80` (A100), `sm_86`,
+> needs a driver new enough for CUDA 13.5.** `sm_75` (T4, RTX 20xx), `sm_80` (A100), `sm_86`,
 > `sm_89`, `sm_90` (H100), `sm_100` and Blackwell are compiled in, so those GPUs do not depend on
 > the driver at all; anything newer falls back to the module's PTX, which the driver must be able to
 > compile. **A driver too old for that does not fall back to the CPU -- it ends the process**: ggml
@@ -552,16 +552,22 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
-| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
+| `net.ladenthin.llama.decision.model` | `models/tinylaya-for-testing-Q8_0.gguf` | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; the default is upstream's own test model (`ggml-org/tinylaya-for-testing-gguf`, in CI's set). While the file is missing only the rejection of a non-decision model runs. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
 | `net.ladenthin.llama.tts.model` | `models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
 | `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
-| `net.ladenthin.llama.tts.template.model` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to a TTS backbone GGUF whose chat templates include a `"tts"` one, LFM3-Audio (e.g. `LFM3-Audio-2B-Q4_0.gguf` of `LiquidAI/LFM3-Audio-2B-GGUF`): the synthesis speaks the prompt rendered from that template with language and voice. Not in CI's model set. |
-| `net.ladenthin.llama.tts.template.mmproj` | unset (test self-skips) | test | `TtsChatTemplateIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
-| `net.ladenthin.llama.realtime.model` | unset (test self-skips) | test | `RealtimeNativeServerIntegrationTest` | Path to a model that holds a spoken conversation on `NativeServer`'s `/v1/realtime` (audio in, text and audio out), e.g. `LFM3-Audio-2B-Q4_0.gguf`. Not in CI's model set. |
-| `net.ladenthin.llama.realtime.mmproj` | unset (test self-skips) | test | `RealtimeNativeServerIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
+| `net.ladenthin.llama.tts.template.model` | `models/LFM3-Audio-2B-Q4_0.gguf` (test self-skips if missing) | test | `TtsChatTemplateIntegrationTest` | Path to a TTS backbone GGUF whose chat templates include a `"tts"` one, LFM3-Audio (e.g. `LFM3-Audio-2B-Q4_0.gguf` of `LiquidAI/LFM3-Audio-2B-GGUF`): the synthesis speaks the prompt rendered from that template with language and voice. |
+| `net.ladenthin.llama.tts.template.mmproj` | `models/mmproj-LFM3-Audio-2B-Q8_0.gguf` (test self-skips if missing) | test | `TtsChatTemplateIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
+| `net.ladenthin.llama.tts.pipeline.model` | unset (test self-skips) | test | `TtsPipelineIntegrationTest` | Path to the backbone GGUF of a speech pipeline outside CI's set (Drama-3, Soprano): what every pipeline has to do whatever its sample rate, voices and voice cloning are. |
+| `net.ladenthin.llama.tts.pipeline.mmproj` | unset (test self-skips) | test | `TtsPipelineIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.tts.pocket.model` | `models/pocket-tts-english.gguf` (test self-skips if missing) | test | `PocketTtsIntegrationTest` | Path to a Pocket TTS backbone; CI's is the pair without voice cloning of `macolomb/pocket-tts-without-voice-cloning`, which ships predefined voices. The same contract as `TtsPipelineIntegrationTest`. |
+| `net.ladenthin.llama.tts.pocket.mmproj` | `models/mmproj-pocket-tts-english.gguf` (test self-skips if missing) | test | `PocketTtsIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.tts.chatterbox.model` | `models/chatterbox-Q8_0.gguf` (test self-skips if missing) | test | `ChatterboxIntegrationTest` | Path to a Chatterbox backbone; CI's is the multilingual `ggml-org/chatterbox-GGUF`. The same contract. |
+| `net.ladenthin.llama.tts.chatterbox.mmproj` | `models/mmproj-chatterbox-F16.gguf` (test self-skips if missing) | test | `ChatterboxIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.realtime.model` | `models/LFM3-Audio-2B-Q4_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to a model that holds a spoken conversation on `NativeServer`'s `/v1/realtime` (audio in, text and audio out), CI's is LFM3-Audio. |
+| `net.ladenthin.llama.realtime.mmproj` | `models/mmproj-LFM3-Audio-2B-Q8_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
 | `net.ladenthin.llama.model.path` | the `reasoning.model` path (`models/Qwen3-0.6B-Q4_K_M.gguf`; tests self-skip if missing) | test | `IdleSleepWakeIntegrationTest`, `SessionForkRewindIntegrationTest` | Path to the model these two tests load; unset, they use the reasoning model. |
 | `net.ladenthin.llama.server.model` | the `text.model` path (`models/codellama-7b.Q2_K.gguf`) | test | `examples.OpenAiServerExample` (a `@Disabled` demo, run by hand) | GGUF the demo's OpenAI-compatible endpoint serves. |
@@ -932,8 +938,10 @@ Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
 voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
-clone a voice (Qwen3-TTS and Pocket TTS can; a pair that cannot refuses a reference clip with a
-`LlamaException`). As with `LlamaModel`, native memory is not GC-managed — use
+clone a voice (Qwen3-TTS can, Pocket TTS when its projector carries the voice encoder; a pair that
+cannot refuses a reference clip with an `InvalidRequestException`, as it does a voice it does not have). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
+without voice cloning, LFM3-Audio); such a model speaks with the one named as `voice`, or with the
+first of the list. As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
 
 A model whose GGUF carries a `"tts"` chat template, **LFM3-Audio** (`LiquidAI/LFM3-Audio-2B-GGUF`,
@@ -951,7 +959,11 @@ try (TextToSpeech tts = new TextToSpeech(
 }
 ```
 
-`FfmTextToSpeech` (`llama-ffm`) has the same overload, over the C API's `jllama_tts_synthesize_voice`.
+One more overload ends in a `float temperature`: the temperature a pipeline samples its audio
+frames at (Pocket TTS; `0` is greedy, `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` the model's own).
+
+`FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's
+`jllama_tts_synthesize_temperature`.
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS
@@ -967,6 +979,17 @@ LlamaQuantizer.quantize("model-f16.gguf", "model-q4_k_m.gguf", QuantizationType.
 // Re-quantizing an already-quantized GGUF degrades quality and must be opted into:
 LlamaQuantizer.quantize("model-q8_0.gguf", "model-q4_0.gguf", QuantizationType.Q4_0,
         /* threads */ 0, /* allowRequantize */ true);
+// With an importance matrix (the file llama-imatrix computed for the model), which the smallest
+// types need (QuantizationType.requiresImportanceMatrix()) and the others below Q8 gain from:
+LlamaQuantizer.quantize("model-f16.gguf", "model-iq2_xs.gguf", QuantizationType.IQ2_XS,
+        0, false, "model.imatrix.gguf");
+// The matrix itself, computed from a calibration text (llama-imatrix without the separate binary;
+// the file is interchangeable with that tool's):
+int chunks = LlamaQuantizer.computeImportanceMatrix("model-f16.gguf", "calibration.txt", "model.imatrix.gguf");
+// Matrices of one model over different texts add up (llama-imatrix with several --in-file); the
+// inputs are GGUF or the legacy binary format, and "true" as a third argument writes the latter.
+LlamaQuantizer.mergeImportanceMatrices(
+        Arrays.asList("model.code.imatrix.gguf", "model.prose.imatrix.gguf"), "model.imatrix.gguf");
 ```
 
 ### Raw JSON Endpoints
@@ -984,7 +1007,18 @@ Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, Str
 `restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
 (`ModelParameters.setSlotSavePath`, `--slot-save-path`), and the `String` is a file name inside it, as
 the server's `/slots` route takes it -- a name with a directory part or `..` is an
-`InvalidRequestException`.
+`InvalidRequestException`. The directory and the name are UTF-8 on every platform. **On Windows the
+download paths still have to be ASCII**, because llama.cpp opens them in the process's ANSI code
+page: the target of a model download (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) and,
+unmeasured, `--models-dir` in router mode. The model, mmproj, LoRA and shard files, the slot files,
+the importance matrix, the trainer's files, `--log-file`, the output of
+`LlamaQuantizer.quantize` and a `file://` media URL below `--media-path` are read and written under
+any path, and so is a value llama.cpp takes from an environment variable
+(`LLAMA_ARG_SLOT_SAVE_PATH`, ...). One limit is the JVM's: the directory the natives are extracted
+to (`java.io.tmpdir`, `net.ladenthin.llama.tmpdir`) must be representable in the system's ANSI code
+page -- `System.load` passes the path in it, so `tmp-日` on a code-page-1252 system fails with "Can't
+find dependent libraries", while `Prüfung` works; the loader's error then says so and names the two
+properties.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 
@@ -1074,6 +1108,8 @@ built-in WebUI" below). It serves:
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
+| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`; on the command line `--tts-model <gguf> --tts-mmproj <gguf>`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
+| `POST /tts` | the same `SpeechBackend`, with llama.cpp's own fields: `input` / `prompt`, `voice`, `lang`, `speaker_ref_b64`, `n_predict`, `top_k`, `seed`, `temperature`, `response_format` `wav` / `pcm` (float) / `pcm16`; `stream` is refused |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
 | `GET /slots` | native per-slot token/cache counters (JSON array) |
@@ -1170,7 +1206,8 @@ java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`). The tuning flags mirror
+`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`,
+`--tts-model` + `--tts-mmproj` for a speech model, with `--tts-lang` / `--tts-voice` as its defaults). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
 works directly.

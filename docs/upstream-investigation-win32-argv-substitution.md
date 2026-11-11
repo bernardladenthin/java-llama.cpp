@@ -17,6 +17,12 @@ Reported upstream as [ggml-org/llama.cpp#26416](https://github.com/ggml-org/llam
 (2026-08-01), which links back to this document and asks which of the two directions below the
 maintainers prefer before a pull request is opened.
 
+**Resolved upstream at b12014** (2026-10-30): [#31417](https://github.com/ggml-org/llama.cpp/pull/31417)
+("common : drop the Windows argv reconstruction", `aa588a346`, "Fixes #26416") deleted the substitution
+from `common_params_parse`; the standalone tools get a UTF-8 `argv` from the app manifest #31329 embeds
+in every Windows executable instead. Patch `0001` was dropped at that bump; the text below is the
+record of the defect as it stood.
+
 ## Summary
 
 On Windows, `common_params_parse` replaces the `argv` it was passed with one

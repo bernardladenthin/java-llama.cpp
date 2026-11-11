@@ -17,6 +17,7 @@
 #include "jllama_api.h"
 #include "rpc_support.hpp"
 #include "tts_engine.h"
+#include "imatrix_engine.h"
 #include "train_engine.h"
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 #include "native_server_engine.hpp"
@@ -560,17 +561,78 @@ jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **gram
 
 jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
                               bool allow_requantize) {
+    return jllama_quantize_imatrix(input_path, output_path, ftype, nthread, allow_requantize, nullptr);
+}
+
+jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype, int nthread,
+                                      bool allow_requantize, const char *imatrix_path) {
     if (input_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
     }
     try {
-        jllama::engine::quantize(input_path, output_path, ftype, nthread, allow_requantize);
+        jllama::engine::quantize(input_path, output_path, ftype, nthread, allow_requantize,
+                                 imatrix_path != nullptr ? imatrix_path : "");
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception during quantization");
+    }
+}
+
+jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
+                             int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
+                             void *progress_user_data, int *n_chunks) {
+    if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
+    }
+    try {
+        jllama::imatrix::options opts;
+        if (chunk_size != 0) {
+            opts.chunk_size = chunk_size;
+        }
+        opts.max_chunks = max_chunks;
+        opts.n_threads = nthread;
+        opts.n_gpu_layers = n_gpu_layers;
+        opts.progress = progress;
+        opts.progress_user_data = progress_user_data;
+        const int chunks = jllama::imatrix::compute(model_path, text_path, output_path, opts);
+        if (n_chunks != nullptr) {
+            *n_chunks = chunks;
+        }
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception while computing the importance matrix");
+    }
+}
+
+jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
+                                   bool legacy_format, int *n_chunks) {
+    if (input_paths == nullptr || n_inputs == 0 || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_paths and output_path must not be null or empty");
+    }
+    try {
+        std::vector<std::string> inputs;
+        for (size_t i = 0; i < n_inputs; ++i) {
+            if (input_paths[i] == nullptr) {
+                return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "an input path is null");
+            }
+            inputs.emplace_back(input_paths[i]);
+        }
+        const int chunks = jllama::imatrix::merge(inputs, output_path, legacy_format);
+        if (n_chunks != nullptr) {
+            *n_chunks = chunks;
+        }
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception while merging importance matrices");
     }
 }
 
@@ -804,6 +866,14 @@ jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char *text, con
 jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *text, const char *speaker_reference_path,
                                           const char *lang, const char *voice, int max_frames, int top_k,
                                           unsigned int seed, unsigned char **wav, size_t *length) {
+    return jllama_tts_synthesize_temperature(tts, text, speaker_reference_path, lang, voice, max_frames, top_k, seed,
+                                             -1.0f, wav, length);
+}
+
+jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const char *text,
+                                                const char *speaker_reference_path, const char *lang, const char *voice,
+                                                int max_frames, int top_k, unsigned int seed, float temperature,
+                                                unsigned char **wav, size_t *length) {
     if (tts == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
     }
@@ -815,11 +885,12 @@ jllama_status jllama_tts_synthesize_voice(jllama_tts_model *tts, const char *tex
     try {
         std::vector<uint8_t> bytes;
         std::string err;
+        bool request_fault = false;
         if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text,
                                            speaker_reference_path != nullptr ? speaker_reference_path : "",
                                            lang != nullptr ? lang : "", voice != nullptr ? voice : "", max_frames,
-                                           top_k, seed, bytes, err)) {
-            return fail(JLLAMA_STATUS_ERROR, err.c_str());
+                                           top_k, seed, temperature, bytes, err, &request_fault)) {
+            return fail(request_fault ? JLLAMA_STATUS_INVALID_REQUEST : JLLAMA_STATUS_ERROR, err.c_str());
         }
         auto *out = static_cast<unsigned char *>(std::malloc(std::max<size_t>(bytes.size(), 1)));
         if (out == nullptr) {
@@ -847,6 +918,35 @@ jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts,
     *supported = jllama_tts::engine_supports_speaker_reference(reinterpret_cast<const jllama_tts::tts_engine *>(tts));
     t_last_error.clear();
     return JLLAMA_STATUS_OK;
+}
+
+jllama_status jllama_tts_voices(const jllama_tts_model *tts, char ***names, size_t *count) {
+    if (tts == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
+    }
+    if (names == nullptr || count == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "names and count must not be null");
+    }
+    *names = nullptr;
+    *count = 0;
+    try {
+        const auto &voices = jllama_tts::engine_voices(reinterpret_cast<const jllama_tts::tts_engine *>(tts));
+        auto **out = static_cast<char **>(std::calloc(std::max<size_t>(voices.size(), 1), sizeof(char *)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (size_t i = 0; i < voices.size(); ++i) {
+            out[i] = copy_out(voices[i]);
+        }
+        *names = out;
+        *count = voices.size();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
 }
 
 void jllama_tts_free(jllama_tts_model *tts) {

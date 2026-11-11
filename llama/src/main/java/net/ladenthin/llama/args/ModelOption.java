@@ -194,6 +194,9 @@ public enum ModelOption {
     /** CLI option {@code --model-url}. */
     MODEL_URL("--model-url"),
 
+    /** CLI option {@code --moe-cache-cpu-share}. */
+    MOE_CACHE_CPU_SHARE("--moe-cache-cpu-share"),
+
     /** CLI option {@code --moe-cache-mib}. */
     MOE_CACHE_MIB("--moe-cache-mib"),
 
@@ -266,6 +269,9 @@ public enum ModelOption {
     /** CLI option {@code --seed}. */
     SEED("--seed"),
 
+    /** CLI option {@code --shard}. */
+    SHARD("--shard"),
+
     /** CLI option {@code --sleep-idle-seconds}. */
     SLEEP_IDLE_SECONDS("--sleep-idle-seconds"),
 
@@ -293,6 +299,9 @@ public enum ModelOption {
     /** CLI option {@code --spec-draft-p-min}. */
     SPEC_DRAFT_P_MIN("--spec-draft-p-min"),
 
+    /** CLI option {@code --spec-type}. */
+    SPEC_TYPE("--spec-type"),
+
     /** CLI option {@code --spec-draft-sampling}. */
     SPEC_DRAFT_SAMPLING("--spec-draft-sampling"),
 
@@ -313,6 +322,12 @@ public enum ModelOption {
 
     /** CLI option {@code --top-k}. */
     TOP_K("--top-k"),
+
+    /** CLI option {@code --tts-lang}. */
+    TTS_LANG("--tts-lang"),
+
+    /** CLI option {@code --tts-voice}. */
+    TTS_VOICE("--tts-voice"),
 
     /** CLI option {@code --top-p}. */
     TOP_P("--top-p"),

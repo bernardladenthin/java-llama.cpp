@@ -89,6 +89,14 @@ public class ModelMetaTest {
     }
 
     @Test
+    public void voicesAreReadFromTheirKeyAndEmptyWithoutIt() throws Exception {
+        ModelMeta with = parse("{\"voices\":[\"female\",\"male\"],\"output_modalities\":[\"audio\"]}");
+        assertThat(with.getVoices(), is(java.util.Arrays.asList("female", "male")));
+        assertThat(parse("{\"output_modalities\":[\"audio\"]}").getVoices(), is(java.util.Collections.emptyList()));
+        assertThrows(UnsupportedOperationException.class, () -> with.getVoices().add("other"));
+    }
+
+    @Test
     public void eachCapabilityGetterReadsItsOwnKey() throws Exception {
         // One key true at a time, so a getter wired to a sibling key fails here.
         assertThat(parse(capabilities("true", "false", "false")).supportsChat(), is(true));

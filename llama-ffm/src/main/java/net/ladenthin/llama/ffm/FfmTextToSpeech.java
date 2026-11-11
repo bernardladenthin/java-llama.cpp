@@ -11,11 +11,14 @@ import static net.ladenthin.llama.ffm.JllamaNative.invoke;
 import static net.ladenthin.llama.ffm.JllamaNative.longSlot;
 import static net.ladenthin.llama.ffm.JllamaNative.pointerSlot;
 import static net.ladenthin.llama.ffm.JllamaNative.takeBytes;
+import static net.ladenthin.llama.ffm.JllamaNative.takeStrings;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import net.ladenthin.llama.TextToSpeech;
 import net.ladenthin.llama.exception.LlamaException;
 
 /**
@@ -38,10 +41,11 @@ public final class FfmTextToSpeech implements AutoCloseable {
          * @param maxFrames the bound on the generated frames
          * @param topK the sampling top-k
          * @param seed the sampling seed
+         * @param temperature the audio frame temperature, negative for the model's default
          * @return the WAV bytes
          */
         byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                String voice, int maxFrames, int topK, int seed);
+                String voice, int maxFrames, int topK, int seed, float temperature);
 
         /**
          * Whether the pair on {@code handle} clones a voice from a speaker reference.
@@ -50,6 +54,14 @@ public final class FfmTextToSpeech implements AutoCloseable {
          * @return {@code true} if a speaker reference is accepted
          */
         boolean supportsSpeakerReference(MemorySegment handle);
+
+        /**
+         * The names of the predefined voices of the pair on {@code handle}.
+         *
+         * @param handle the loaded pair
+         * @return the names, empty for a model without predefined voices
+         */
+        List<String> voices(MemorySegment handle);
 
         /**
          * Frees {@code handle}, the engine with it.
@@ -63,13 +75,13 @@ public final class FfmTextToSpeech implements AutoCloseable {
     private static final Backend NATIVE = new Backend() {
         @Override
         public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                String voice, int maxFrames, int topK, int seed) {
+                String voice, int maxFrames, int topK, int seed, float temperature) {
             try (Arena arena = Arena.ofConfined()) {
                 MemorySegment wav = pointerSlot(arena);
                 MemorySegment length = longSlot(arena);
                 JllamaNative.call(JllamaNative.TTS_SYNTHESIZE, handle, cString(arena, text),
                         cString(arena, speakerReferencePath), cString(arena, language), cString(arena, voice),
-                        maxFrames, topK, seed, wav, length);
+                        maxFrames, topK, seed, temperature, wav, length);
                 return takeBytes(wav, length);
             }
         }
@@ -80,6 +92,16 @@ public final class FfmTextToSpeech implements AutoCloseable {
                 MemorySegment supported = booleanSlot(arena);
                 JllamaNative.call(JllamaNative.TTS_SUPPORTS_SPEAKER_REFERENCE, handle, supported);
                 return supported.get(JAVA_BOOLEAN, 0);
+            }
+        }
+
+        @Override
+        public List<String> voices(MemorySegment handle) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment names = pointerSlot(arena);
+                MemorySegment count = longSlot(arena);
+                JllamaNative.call(JllamaNative.TTS_VOICES, handle, names, count);
+                return takeStrings(names, count);
             }
         }
 
@@ -161,6 +183,28 @@ public final class FfmTextToSpeech implements AutoCloseable {
     }
 
     /**
+     * The predefined voices of this pair, to pass as {@code voice} to {@link #synthesize}: a model
+     * that ships voices in its projector (Pocket TTS without voice cloning, LFM3-Audio; llama.cpp
+     * b12061) only speaks with one of them, and with the first when a synthesis names neither a
+     * voice nor a speaker reference.
+     *
+     * @return the voice names in the model's order, unmodifiable; empty for a model without
+     *     predefined voices
+     * @throws IllegalStateException when the pair is closed
+     */
+    public List<String> getVoices() {
+        lifecycleLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("the model is closed");
+            }
+            return List.copyOf(backend.voices(handle));
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
      * Synthesises text.
      *
      * @param text the text to speak
@@ -198,13 +242,37 @@ public final class FfmTextToSpeech implements AutoCloseable {
      */
     public byte[] synthesize(String text, String speakerReferencePath, String language, String voice, int maxFrames,
             int topK, int seed) {
+        return synthesize(text, speakerReferencePath, language, voice, maxFrames, topK, seed,
+                TextToSpeech.MODEL_DEFAULT_TEMPERATURE);
+    }
+
+    /**
+     * Synthesises text with a voice preset and the temperature the audio frames are sampled at (the
+     * C API's {@code jllama_tts_synthesize_temperature}). Only a pipeline that samples its audio
+     * frames reads the temperature (Pocket TTS, llama.cpp b12233).
+     *
+     * @param text the text to speak
+     * @param speakerReferencePath a WAV to clone the voice from, or {@code null}
+     * @param language the model's language, or {@code null} for its default
+     * @param voice a model-dependent preset, or {@code null} for the model's default
+     * @param maxFrames the bound on the generated frames
+     * @param topK the sampling top-k
+     * @param seed the sampling seed
+     * @param temperature the audio frame temperature: {@code 0} is greedy, a negative value the
+     *     model's default
+     * @return the WAV bytes
+     * @throws LlamaException when the synthesis fails
+     */
+    public byte[] synthesize(String text, String speakerReferencePath, String language, String voice, int maxFrames,
+            int topK, int seed, float temperature) {
         Objects.requireNonNull(text, "text");
         lifecycleLock.readLock().lock();
         try {
             if (closed) {
                 throw new IllegalStateException("the model is closed");
             }
-            return backend.synthesize(handle, text, speakerReferencePath, language, voice, maxFrames, topK, seed);
+            return backend.synthesize(handle, text, speakerReferencePath, language, voice, maxFrames, topK, seed,
+                    temperature);
         } finally {
             lifecycleLock.readLock().unlock();
         }

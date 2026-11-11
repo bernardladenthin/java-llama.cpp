@@ -63,6 +63,46 @@ function(jllama_first_version_line out_var program)
     set(${out_var} "${first}" PARENT_SCOPE)
 endfunction()
 
+# The version of the CCCL copy the CUDA toolkit bundles ("v<major>.<minor>.<patch>", the form of
+# CCCL's own tags), read from CCCL's cuda/std/__cccl/version.h below the toolkit root next to the
+# compiler. The header defines CCCL_VERSION as one number, MMMmmmppp (3004003 = 3.4.3), and derives
+# the three parts from it; empty when no such header is found or it carries no such number.
+function(jllama_bundled_cccl_version out_var)
+    set(${out_var} "" PARENT_SCOPE)
+    set(roots "")
+    if(CMAKE_CUDA_COMPILER)
+        get_filename_component(bin_dir "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+        get_filename_component(root "${bin_dir}" DIRECTORY)
+        list(APPEND roots "${root}")
+    endif()
+    foreach(dir IN LISTS CUDAToolkit_INCLUDE_DIRS)
+        get_filename_component(root "${dir}" DIRECTORY)
+        list(APPEND roots "${root}")
+    endforeach()
+    foreach(root IN LISTS roots)
+        # CUDA 13 keeps CCCL under include/cccl; the other spellings are older and split layouts
+        file(GLOB headers "${root}/include/cccl/cuda/std/__cccl/version.h"
+                          "${root}/include/cuda/std/__cccl/version.h"
+                          "${root}/targets/*/include/cccl/cuda/std/__cccl/version.h"
+                          "${root}/targets/*/include/cuda/std/__cccl/version.h")
+        if(NOT headers)
+            file(GLOB_RECURSE headers "${root}/include/version.h")
+            list(FILTER headers INCLUDE REGEX "/__cccl/version\\.h$")
+        endif()
+        foreach(header IN LISTS headers)
+            file(READ "${header}" text)
+            if(text MATCHES "#[ \t]*define[ \t]+CCCL_VERSION[ \t]+([0-9]+)")
+                set(number "${CMAKE_MATCH_1}")
+                math(EXPR major "${number} / 1000000")
+                math(EXPR minor "(${number} / 1000) % 1000")
+                math(EXPR patch "${number} % 1000")
+                set(${out_var} "v${major}.${minor}.${patch}" PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+    endforeach()
+endfunction()
+
 # The vendor toolkit a GPU module is built against, as "<name> <version>", or "none" for a CPU
 # build and "<name> unknown" where the version cannot be read. Each probe is guarded: a missing
 # answer is written as unknown, never as a configure error -- the build itself has already proven
@@ -244,8 +284,19 @@ signed=no
     if(DEFINED BORINGSSL_VERSION AND LLAMA_BUILD_BORINGSSL)
         string(APPEND components ",\n    {\"type\": \"library\", \"name\": \"boringssl\", \"version\": \"${BORINGSSL_VERSION}\", \"purl\": \"pkg:generic/boringssl@${BORINGSSL_VERSION}\"}")
     endif()
-    if(GGML_CUDA AND GGML_CUDA_CCCL_VERSION)
-        string(APPEND components ",\n    {\"type\": \"library\", \"name\": \"cccl\", \"version\": \"${GGML_CUDA_CCCL_VERSION}\", \"purl\": \"pkg:github/NVIDIA/cccl@${GGML_CUDA_CCCL_VERSION}\"}")
+    if(GGML_CUDA)
+        # CCCL's headers are compiled into the module either way: the pinned checkout ggml fetches
+        # when GGML_CUDA_CCCL_VERSION is set, else the copy the toolkit bundles (CUDA 13.5).
+        set(cccl_version "${GGML_CUDA_CCCL_VERSION}")
+        if(NOT cccl_version)
+            jllama_bundled_cccl_version(cccl_version)
+        endif()
+        if(cccl_version)
+            string(APPEND components ",\n    {\"type\": \"library\", \"name\": \"cccl\", \"version\": \"${cccl_version}\", \"purl\": \"pkg:github/NVIDIA/cccl@${cccl_version}\"}")
+        else()
+            message(WARNING "jllama-build-info: the CUDA toolkit's cccl/version.h was not found; "
+                            "jllama-sbom.json names no CCCL component")
+        endif()
     endif()
     if(NOT toolkit STREQUAL "none")
         string(REGEX REPLACE " .*" "" toolkit_name "${toolkit}")

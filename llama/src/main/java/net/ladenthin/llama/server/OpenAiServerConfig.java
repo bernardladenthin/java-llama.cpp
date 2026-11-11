@@ -60,6 +60,8 @@ public final class OpenAiServerConfig {
     private final int maxRequestBodyBytes;
     private final String modelFtype;
     private final int totalSlots;
+    private final @Nullable String speechLanguage;
+    private final @Nullable String speechVoice;
 
     private OpenAiServerConfig(Builder builder) {
         this.host = builder.host;
@@ -74,6 +76,8 @@ public final class OpenAiServerConfig {
         this.maxRequestBodyBytes = builder.maxRequestBodyBytes;
         this.modelFtype = builder.modelFtype;
         this.totalSlots = builder.totalSlots;
+        this.speechLanguage = builder.speechLanguage;
+        this.speechVoice = builder.speechVoice;
     }
 
     /**
@@ -206,6 +210,26 @@ public final class OpenAiServerConfig {
     }
 
     /**
+     * The language the speech routes speak in when a request names none, as llama.cpp's
+     * {@code --tts-lang} (b12283).
+     *
+     * @return the default language, or {@code null} for the model's own default
+     */
+    public @Nullable String getSpeechLanguage() {
+        return speechLanguage;
+    }
+
+    /**
+     * The voice the speech routes speak with when a request names none and carries no speaker
+     * reference, as llama.cpp's {@code --tts-voice} (b12283).
+     *
+     * @return the default voice, or {@code null} for the model's own default
+     */
+    public @Nullable String getSpeechVoice() {
+        return speechVoice;
+    }
+
+    /**
      * Whether bearer-token authentication is enabled (an API key is configured).
      *
      * @return {@code true} if requests must present a matching bearer token
@@ -255,6 +279,8 @@ public final class OpenAiServerConfig {
         private int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         private String modelFtype = "";
         private int totalSlots = 1;
+        private @Nullable String speechLanguage;
+        private @Nullable String speechVoice;
 
         private Builder() {}
 
@@ -372,6 +398,29 @@ public final class OpenAiServerConfig {
          */
         public Builder modelFtype(@Nullable String modelFtype) {
             this.modelFtype = modelFtype == null ? "" : modelFtype;
+            return this;
+        }
+
+        /**
+         * Sets the language the speech routes speak in when a request names none.
+         *
+         * @param speechLanguage the language as the model names it, or {@code null} for its default
+         * @return this builder
+         */
+        public Builder speechLanguage(@Nullable String speechLanguage) {
+            this.speechLanguage = speechLanguage;
+            return this;
+        }
+
+        /**
+         * Sets the voice the speech routes speak with when a request names none and carries no
+         * speaker reference.
+         *
+         * @param speechVoice one of the model's predefined voices, or {@code null} for its default
+         * @return this builder
+         */
+        public Builder speechVoice(@Nullable String speechVoice) {
+            this.speechVoice = speechVoice;
             return this;
         }
 

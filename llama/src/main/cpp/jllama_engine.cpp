@@ -4,6 +4,7 @@
 
 #include "arg.h"
 #include "llama.h"
+#include "gguf.h"
 #include "log.h"
 #include "server-context.h"
 #include "server-queue.h"
@@ -14,13 +15,18 @@
 #include "server-http.h"
 #include "base64.hpp"
 #include "json-schema-to-grammar.h"
+#include "imatrix-loader.h"
 #include "utils.hpp"
 #include "jllama_engine.hpp"
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -145,6 +151,39 @@ std::shared_ptr<server_response_reader> reader_of(jllama_context *jctx, int id_t
 
 } // namespace
 
+namespace {
+
+// Whether the GGUF at path is known to have no classification head. False when it has one, and
+// also when that cannot be told from this file alone: unreadable, or one shard of a split model
+// (the head may be in another one).
+bool gguf_lacks_classification_head(const std::string &path) {
+    if (path.empty()) {
+        return false;
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), no_data);
+    if (g == nullptr) {
+        return false;
+    }
+    // cls.weight, cls.bias, cls.output.weight, cls.norm.weight: any of them is a head
+    bool lacks = true;
+    for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+        if (std::strncmp(gguf_get_tensor_name(g, i), "cls.", 4) == 0) {
+            lacks = false;
+            break;
+        }
+    }
+    const int64_t split_count = gguf_find_key(g, "split.count");
+    if (split_count >= 0 && gguf_get_kv_type(g, split_count) == GGUF_TYPE_UINT16 &&
+        gguf_get_val_u16(g, split_count) > 1) {
+        lacks = false;
+    }
+    gguf_free(g);
+    return lacks;
+}
+
+} // namespace
+
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data) {
     common_params params;
@@ -171,6 +210,17 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     }
     if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
         throw std::runtime_error("Failed to parse model parameters");
+    }
+
+    // A draft model nobody asks: upstream's speculative types default to none, and the parse above
+    // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
+    // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the
+    // type), so it is used as what it is. An explicit --spec-type, "none" included, is not the
+    // default list (the option appends to it) and stays as given.
+    if (params.speculative.has_dft() &&
+        params.speculative.types == std::vector<enum common_speculative_type>{COMMON_SPECULATIVE_TYPE_NONE}) {
+        params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+        SRV_INF("%s", "a draft model without --spec-type: using it as draft-simple\n");
     }
 
     common_init();
@@ -202,6 +252,19 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     if (params.n_parallel <= N_PARALLEL_AUTO) {
         params.n_parallel = N_PARALLEL_DEFAULT;
         jctx->params.n_parallel = N_PARALLEL_DEFAULT;
+    }
+
+    // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
+    // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
+    // that looks like a relevance and is none. Refused here, by the model file's tensor list -- and
+    // by the lists of its --shard files, any of which may carry the head (b12233).
+    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
+        gguf_lacks_classification_head(params.model.path) &&
+        std::all_of(params.model.shards.begin(), params.model.shards.end(),
+                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
+        throw std::runtime_error("'" + params.model.path +
+                                 "' has no classification head (cls / cls.output tensors), so it cannot rerank: "
+                                 "rank pooling needs a reranker model");
     }
 
     LOG_INF("%s: loading model\n", __func__);
@@ -681,6 +744,9 @@ std::string model_meta(jllama_context *jctx) {
         {"capabilities",
          {{"chat", m.has_cap_chat}, {"audio_gen", m.has_cap_tts}, {"audio_stream", m.has_audio_stream}}},
     };
+    // The predefined voices of an audio-generating projector (b12061), as upstream's /props lists them
+    // under the same key; an empty array for a model without any.
+    j["voices"] = m.tts_voices;
     // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
     // flattened to the top level because "architecture" above already names the GGUF architecture
     // string. A native decision model reports ["decisions"].
@@ -1238,8 +1304,74 @@ std::string json_schema_to_grammar_text(const std::string &schema_json) {
     return json_schema_to_grammar(schema);
 }
 
+namespace {
+
+// The importance of every weight column, per tensor, from an imatrix file (llama-imatrix's GGUF
+// format or the legacy binary one): what upstream's tools/quantize computes from the same loader
+// before it calls llama_model_quantize. Throws when the file cannot be used.
+std::map<std::string, std::vector<float>> load_importance_matrix(const std::string &path, int32_t &chunk_count,
+                                                                 std::string &dataset) {
+    common_imatrix loaded;
+    if (!common_imatrix_load(path, loaded)) {
+        throw std::runtime_error("failed to load the importance matrix '" + path + "'");
+    }
+    if (!loaded.is_legacy && !loaded.has_metadata) {
+        throw std::runtime_error("the importance matrix '" + path + "' lacks its imatrix.* metadata");
+    }
+    std::map<std::string, std::vector<float>> data;
+    for (const auto &[name, entry] : loaded.entries) {
+        std::vector<float> &values = data[name];
+        values.resize(entry.sums.size());
+        if (!loaded.is_legacy) {
+            // GGUF: one count per expert (one for an ordinary tensor), the sums are divided by it
+            const int64_t n_counts = static_cast<int64_t>(entry.counts.size());
+            if (n_counts == 0 || entry.sums.size() % static_cast<size_t>(n_counts) != 0) {
+                throw std::runtime_error("the importance matrix '" + path + "' has mismatched sums and counts for " +
+                                         name);
+            }
+            const int64_t per_count = static_cast<int64_t>(entry.sums.size()) / n_counts;
+            for (int64_t j = 0; j < n_counts; ++j) {
+                const float count = static_cast<float>(entry.counts[j]);
+                for (int64_t i = 0; i < per_count; ++i) {
+                    values[j * per_count + i] = count > 0.0f ? entry.sums[j * per_count + i] / count : 1.0f;
+                }
+            }
+        } else {
+            // legacy: the sums were multiplied by the number of calls
+            const int64_t n_call = entry.counts.empty() ? 0 : entry.counts[0];
+            for (size_t i = 0; i < entry.sums.size(); ++i) {
+                values[i] = n_call > 0 ? entry.sums[i] / static_cast<float>(n_call) : entry.sums[i];
+            }
+        }
+    }
+    if (data.empty()) {
+        throw std::runtime_error("the importance matrix '" + path + "' holds no entries");
+    }
+    chunk_count = loaded.chunk_count;
+    dataset = loaded.datasets.empty() ? std::string() : loaded.datasets.front();
+    return data;
+}
+
+llama_model_kv_override string_override(const char *key, const std::string &value) {
+    llama_model_kv_override kvo{};
+    std::snprintf(kvo.key, sizeof(kvo.key), "%s", key);
+    kvo.tag = LLAMA_KV_OVERRIDE_TYPE_STR;
+    std::snprintf(kvo.val_str, sizeof(kvo.val_str), "%s", value.c_str());
+    return kvo;
+}
+
+llama_model_kv_override int_override(const char *key, int64_t value) {
+    llama_model_kv_override kvo{};
+    std::snprintf(kvo.key, sizeof(kvo.key), "%s", key);
+    kvo.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+    kvo.val_i64 = value;
+    return kvo;
+}
+
+} // namespace
+
 void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
-              bool allow_requantize) {
+              bool allow_requantize, const std::string &imatrix_path) {
     // Idempotent; intentionally never paired with llama_backend_free here -- a model loaded in the
     // same process shares the backend and must not have it freed underneath it.
     llama_backend_init();
@@ -1247,9 +1379,56 @@ void quantize(const std::string &input_path, const std::string &output_path, int
     qparams.ftype = static_cast<llama_ftype>(ftype);
     qparams.nthread = nthread;
     qparams.allow_requantize = allow_requantize;
+
+    // all three outlive the call below, which reads them through qparams
+    std::map<std::string, std::vector<float>> importance;
+    std::vector<llama_model_imatrix_data> imatrix;
+    std::vector<llama_model_kv_override> overrides;
+    if (!imatrix_path.empty()) {
+        int32_t chunk_count = 0;
+        std::string dataset;
+        importance = load_importance_matrix(imatrix_path, chunk_count, dataset);
+        for (const auto &[name, values] : importance) {
+            imatrix.push_back({name.c_str(), values.data(), values.size()});
+        }
+        imatrix.push_back({nullptr, nullptr, 0}); // the terminator llama_model_quantize reads up to
+        qparams.imatrix = imatrix.data();
+        // the metadata upstream's llama-quantize records in the output, under the same keys
+        overrides.push_back(string_override("quantize.imatrix.file", imatrix_path));
+        if (!dataset.empty()) {
+            overrides.push_back(string_override("quantize.imatrix.dataset", dataset));
+        }
+        overrides.push_back(int_override("quantize.imatrix.entries_count", static_cast<int64_t>(importance.size())));
+        overrides.push_back(int_override("quantize.imatrix.chunks_count", chunk_count));
+        overrides.emplace_back();
+        overrides.back().key[0] = 0; // terminator
+        qparams.kv_overrides = overrides.data();
+    }
     const uint32_t rc = llama_model_quantize(input_path.c_str(), output_path.c_str(), &qparams);
     if (rc != 0) {
-        throw std::runtime_error("Quantization of '" + input_path + "' failed with code " + std::to_string(rc));
+        // The hint only where it can be the cause: llama.cpp reports every failure with one code, a
+        // missing input file as much as a file type that needs a matrix.
+        bool needs_imatrix = false;
+        switch (static_cast<llama_ftype>(ftype)) {
+        case LLAMA_FTYPE_MOSTLY_IQ2_XXS:
+        case LLAMA_FTYPE_MOSTLY_IQ2_XS:
+        case LLAMA_FTYPE_MOSTLY_Q2_K_S:
+        case LLAMA_FTYPE_MOSTLY_IQ3_XS:
+        case LLAMA_FTYPE_MOSTLY_IQ3_XXS:
+        case LLAMA_FTYPE_MOSTLY_IQ1_S:
+        case LLAMA_FTYPE_MOSTLY_IQ2_S:
+        case LLAMA_FTYPE_MOSTLY_IQ2_M:
+        case LLAMA_FTYPE_MOSTLY_IQ1_M:
+            needs_imatrix = true;
+            break;
+        default:
+            break;
+        }
+        throw std::runtime_error(
+            "Quantization of '" + input_path + "' failed with code " + std::to_string(rc) +
+            (imatrix_path.empty() && needs_imatrix
+                 ? " (the IQ1, IQ2, IQ3_XS, IQ3_XXS and Q2_K_S file types need an importance matrix)"
+                 : ""));
     }
 }
 

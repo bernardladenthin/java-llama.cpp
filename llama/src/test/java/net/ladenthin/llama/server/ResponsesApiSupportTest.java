@@ -416,6 +416,61 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void textFormatJsonSchemaKeepsEveryKeyButItsType() throws IOException {
+        // upstream nests the whole format object (llama.cpp b12240), so a key this code does not know
+        // reaches the chat parser as it would there
+        JsonNode jsonSchema = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                        + "\"text\":{\"format\":{\"type\":\"json_schema\",\"name\":\"answer\","
+                        + "\"description\":\"d\",\"future_key\":1,\"schema\":{\"type\":\"object\"}}}}"))
+                .path("response_format")
+                .path("json_schema");
+        assertThat(jsonSchema.has("type"), is(false));
+        assertThat(jsonSchema.path("description").asText(), is("d"));
+        assertThat(jsonSchema.path("future_key").asInt(), is(1));
+    }
+
+    @Test
+    public void textFormatReplacesAResponseFormatBesideIt() throws IOException {
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"other\"}},"
+                + "\"text\":{\"format\":{\"type\":\"json_object\"}}}"));
+        assertThat(openAi.path("response_format").path("type").asText(), is("json_object"));
+        assertThat(openAi.path("response_format").has("json_schema"), is(false));
+    }
+
+    @Test
+    public void aTextOrFormatThatIsNoObjectAndAnUnknownFormatTypeAreRefused() {
+        for (String text : new String[] {"\"plain\"", "{\"format\":\"json\"}", "{\"format\":{\"type\":\"xml\"}}"}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ResponsesApiSupport.toOpenAiChatRequest(
+                            read("{\"model\":\"m\",\"input\":\"hi\",\"text\":" + text + "}")),
+                    text);
+            assertThat(e.getMessage(), containsString("text"));
+        }
+    }
+
+    @Test
+    public void extraParamsAreMergedIntoTheChatRequestLast() throws IOException {
+        // llama.cpp parameters the Responses API has no field for (llama.cpp b12022)
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"temperature\":0.9,\"max_output_tokens\":7,"
+                + "\"extra_params\":{\"seed\":42,\"mirostat\":2,\"temperature\":0.1,\"max_tokens\":3}}"));
+        assertThat(openAi.path("seed").asInt(), is(42));
+        assertThat(openAi.path("mirostat").asInt(), is(2));
+        assertThat(openAi.path("temperature").asDouble(), is(0.1));
+        assertThat(openAi.path("max_tokens").asInt(), is(3));
+        assertThat(openAi.has("extra_params"), is(false));
+    }
+
+    @Test
+    public void extraParamsThatAreNoObjectAreDropped() throws IOException {
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(
+                read("{\"model\":\"m\",\"input\":\"hi\",\"extra_params\":[1,2]}"));
+        assertThat(openAi.has("extra_params"), is(false));
+    }
+
+    @Test
     public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
         // Responses names a tool as {"type":"function","name":...}; the chat side only knows strings.
         JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","

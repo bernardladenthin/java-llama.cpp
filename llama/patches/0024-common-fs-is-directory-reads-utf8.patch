@@ -1,0 +1,40 @@
+common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows
+
+fs_is_directory() (common/common.cpp:944 at b12242) builds the std::filesystem::path it checks from
+the narrow std::string. MSVC's path constructor decodes a narrow string in the process's active
+code page, and since b12131/b12132 nothing converts the argument first. The argument is UTF-8 (the
+C API, and Java through JNI, pass UTF-8 on every platform), so on a code page like 1252 a directory
+outside ASCII does not exist under the decoded name: c3 a4 (a-umlaut) is read as "A-tilde,
+currency sign", e6 97 a5 (U+65E5) as three cp1252 characters. The two callers throw
+"not a directory: <path>" (common/arg.cpp:3647 for --slot-save-path, :3661 for --media-path), and
+the model load fails before anything is written. Upstream's own executables do not see it: they
+carry an activeCodePage=UTF-8 manifest (common/win-app.manifest), and a library loaded into
+java.exe cannot.
+
+The fix reads the string as UTF-8 through std::filesystem::u8path(), which is the identity on
+platforms whose narrow encoding is UTF-8 already.
+
+Measured on 2026-11-10 (Windows 11, MSVC 19.44, GetACP() 1252, a directory "d-<a-umlaut>-<U+65E5>"):
+without the patch the load is refused with "not a directory"; with it, a slot round-trips without a
+draft model (n_written 9348 = size on disk = n_read). With a draft model the save still fails,
+"Unable to save slot: incomplete draft state": the appendix is the subject of 0025, and only the two
+together give the round trip. In a process with an activeCodePage=UTF-8 manifest the unpatched
+check passes. See docs/handover/local-agent-report-windows-non-ascii-paths.md.
+
+Drop-check: drop this patch when fs_is_directory() reads its argument as UTF-8 again (u8path, or a
+wide conversion) -- CApiSlotFiles.ASlotDirectoryWithNonAsciiCharactersHoldsTheWholeSlotFile then
+stays green without it on a Windows job.
+
+diff --git a/common/common.cpp b/common/common.cpp
+index 657dcdbf5..47e6613bb 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -942,7 +942,7 @@ void fs_write_atomic(const std::filesystem::path & path, const std::string & dat
+ }
+ 
+ bool fs_is_directory(const std::string & path) {
+-    std::filesystem::path dir(path);
++    std::filesystem::path dir = std::filesystem::u8path(path);
+     return std::filesystem::exists(dir) && std::filesystem::is_directory(dir);
+ }
+ 

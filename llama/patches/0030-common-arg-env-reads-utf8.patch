@@ -1,0 +1,73 @@
+common: read an option's environment variable as UTF-8 on Windows
+
+common_arg::get_value_from_env() (common/arg.cpp:114 at b12283) takes an option's value from
+std::getenv(), which on Windows answers in the process's active code page. Every handler reads its
+value as UTF-8 -- the same handler serves the command line, which the C API and Java pass as UTF-8
+-- and since 0024 to 0029 the paths behind them are opened as UTF-8 too. So inside java.exe on a
+code page like 1252 a LLAMA_ARG_SLOT_SAVE_PATH, LLAMA_ARG_LOG_FILE or LLAMA_ARG_MODEL outside ASCII
+named another string than the same value as an argument: the directory check failed and the model
+did not load. The environment is applied before the arguments, so an argument that would have
+overridden the variable did not help: the load had already failed on it. Upstream's own
+executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into
+java.exe cannot.
+
+The fix reads the variable with _wgetenv() and converts it to UTF-8 (through
+std::filesystem::path, so no <windows.h> in this file); elsewhere it is std::getenv() as before.
+It covers every option with an environment variable, not only the paths: a value is text either
+way.
+
+Read from the source and found by the review of PR #612, not measured on Windows before this patch
+was written: the Windows jobs of CI are its first run there.
+
+Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
+on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it
+on a Windows job.
+
+diff --git a/common/arg.cpp b/common/arg.cpp
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -99,6 +99,30 @@
+     return excludes.find(ex) != excludes.end();
+ }
+ 
++// The value of an environment variable as UTF-8, which is what every option handler reads. On
++// Windows std::getenv() answers in the process's active code page, so a value outside ASCII was a
++// different string than the same value given as an argument (an embedding host has no UTF-8
++// manifest); there it is read as UTF-16 and converted.
++static bool get_env_utf8(const char * name, std::string & output) {
++#if defined(_WIN32)
++    const std::wstring wname(name, name + std::string(name).size()); // option names are ASCII
++    const wchar_t * wide = _wgetenv(wname.c_str());
++    if (wide == nullptr) {
++        return false;
++    }
++    const auto u8 = std::filesystem::path(wide).u8string();
++    output.assign(u8.begin(), u8.end());
++    return true;
++#else
++    const char * value = std::getenv(name);
++    if (value == nullptr) {
++        return false;
++    }
++    output = value;
++    return true;
++#endif
++}
++
+ bool common_arg::get_value_from_env(std::string & output) const {
+     if (env == nullptr) return false;
+     if (!args_neg.empty()) {
+@@ -111,12 +135,7 @@
+             return true;
+         }
+     }
+-    char * value = std::getenv(env);
+-    if (value) {
+-        output = value;
+-        return true;
+-    }
+-    return false;
++    return get_env_utf8(env, output);
+ }
+ 
+ bool common_arg::has_value_from_env() const {

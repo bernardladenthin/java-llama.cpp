@@ -20,7 +20,7 @@
 #       - dirty tree  -> already patched; skip when the stamp matches this exact commit + patch
 #                        set, and fail loudly when it does not.
 #     A per-patch `git apply --reverse --check` cannot do this: `--check` never mutates the tree,
-#     so an earlier patch whose region a later patch rewrote (today 0001 vs 0006/0007 in
+#     so an earlier patch whose region a later patch rewrote (0006 vs 0007, and until b12014 0001, in
 #     tools/server/server.cpp) always reverse-checks as "not applied" and the forward re-apply
 #     then aborts an otherwise harmless reconfigure. The stamp is state, but it is state derived
 #     from — and invalidated by — both inputs that matter.

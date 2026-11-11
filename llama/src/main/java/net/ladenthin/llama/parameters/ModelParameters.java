@@ -671,44 +671,25 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set pooling type for embeddings (default: model default if unspecified).
-     * When {@link net.ladenthin.llama.args.PoolingType#UNSPECIFIED} is passed, the parameter is not forwarded
-     * to the native layer (a pooling type set before is removed), leaving the model to use its built-in default
-     * pooling strategy.
+     * Set the pooling type for embeddings. Without a call of this method the model uses the pooling
+     * type it declares itself.
      *
      * @param type the pooling type for embeddings
      * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
-        if (type == PoolingType.UNSPECIFIED) {
-            // unspecified has no CLI string: the model's default pooling type applies
-            removeOption(ModelOption.POOLING);
-            return this;
-        }
-        putString(ModelOption.POOLING, type.getArgValue());
-        return this;
+        return putEnum(ModelOption.POOLING, type);
     }
 
     /**
-     * Set RoPE frequency scaling method (default: linear unless specified by the model).
-     * {@link RopeScalingType#UNSPECIFIED} removes the option, leaving the model's own choice.
-     * llama.cpp's {@code --rope-scaling} accepts only {@code none}, {@code linear} and {@code yarn};
-     * {@link RopeScalingType#LONGROPE} and {@link RopeScalingType#MAX_VALUE} exist in its C API but not
-     * on its command line, and passed through they would make the model fail to load.
+     * Set the RoPE frequency scaling method. Without a call of this method the model's own choice
+     * applies (linear unless the model says otherwise). The constants are the three values
+     * llama.cpp's {@code --rope-scaling} accepts.
      *
      * @param type the RoPE frequency scaling method
      * @return this builder
-     * @throws IllegalArgumentException for {@link RopeScalingType#LONGROPE} or {@link RopeScalingType#MAX_VALUE}
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
-        if (type == RopeScalingType.UNSPECIFIED) {
-            removeOption(ModelOption.ROPE_SCALING);
-            return this;
-        }
-        if (type == RopeScalingType.LONGROPE || type == RopeScalingType.MAX_VALUE) {
-            throw new IllegalArgumentException("--rope-scaling accepts none, linear or yarn; " + type + " (\""
-                    + type.getArgValue() + "\") is rejected by llama.cpp's argument parser");
-        }
         return putEnum(ModelOption.ROPE_SCALING, type);
     }
 
@@ -962,7 +943,8 @@ public final class ModelParameters extends CliParameters {
      * used experts on the device up to this budget; with several GPUs the budget is split among
      * them like the layers ({@link #setTensorSplit(String)}). Upstream {@code --moe-cache-mib}
      * (llama.cpp b11480, marked EXPERIMENTAL there); {@code 0}, the default, disables the cache.
-     * Without a GPU backend the option has no effect.</p>
+     * A cache needs a GPU backend: without one the model does not load (llama.cpp: "MoE cache
+     * requires a GPU backend").</p>
      *
      * @param mib the cache size in MiB, {@code 0} to disable
      * @return this builder
@@ -973,6 +955,29 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid moe-cache-mib value: " + mib + " (must be >= 0; 0 = disabled)");
         }
         return putScalar(ModelOption.MOE_CACHE_MIB, mib);
+    }
+
+    /**
+     * Let the CPU compute a share of the MoE expert cache's misses instead of uploading them.
+     *
+     * <p>Once the cache of {@link #setMoeCacheMib(int)} is full, every expert that is not in it is
+     * uploaded to the GPU, replacing another one. With a share above {@code 0} llama.cpp computes
+     * that fraction of the misses on the CPU, from the experts in host memory, and leaves the
+     * cache as it is. Upstream {@code --moe-cache-cpu-share} (llama.cpp b12191, EXPERIMENTAL
+     * there); {@code 0}, the default, uploads every miss. Without a cache the option has no
+     * effect.</p>
+     *
+     * @param share the share of the misses the CPU computes, from {@code 0} to {@code 1}
+     * @return this builder
+     * @throws IllegalArgumentException if {@code share} is not a number from 0 to 1 (upstream
+     *     rejects it as well)
+     */
+    public ModelParameters setMoeCacheCpuShare(float share) {
+        if (!(share >= 0.0f && share <= 1.0f)) {
+            throw new IllegalArgumentException(
+                    "Invalid moe-cache-cpu-share value: " + share + " (must be from 0 to 1)");
+        }
+        return putScalar(ModelOption.MOE_CACHE_CPU_SHARE, share);
     }
 
     /**
@@ -1086,6 +1091,23 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
         return appendCsvValue(ModelOption.LORA_SCALED, scaledField(ModelOption.LORA_SCALED, fname, scale));
+    }
+
+    /**
+     * Add an extra GGUF shard of the model (can be repeated to add several).
+     *
+     * <p>A model split into several GGUF files normally finds its parts next to the first one, by
+     * their names. A shard named here is loaded with the model wherever it lies, also on another
+     * drive, and in addition to the parts found by name. Upstream {@code --shard} (alias
+     * {@code --ple}), llama.cpp b12233. Upstream reads the option as a comma-separated list; a
+     * path with a comma in it is quoted here, so it is passed as given.</p>
+     *
+     * @param fname the file path of the shard
+     * @return this builder
+     * @throws IllegalArgumentException if {@code fname} is empty
+     */
+    public ModelParameters addShard(String fname) {
+        return appendCsvValue(ModelOption.SHARD, fname);
     }
 
     /**
@@ -1273,6 +1295,32 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setCacheReuse(int cacheReuse) {
         return putScalar(ModelOption.CACHE_REUSE, cacheReuse);
+    }
+
+    /**
+     * Set the language the embedded server speaks in when a request names none (llama.cpp b12283):
+     * the default of {@code POST /tts} and {@code /v1/audio/speech} and of a {@code /v1/realtime}
+     * session. A model without the setting uses its own default.
+     *
+     * @param language the language, as the model names it (LFM3-Audio: {@code en}, {@code de}, ...)
+     * @return this builder
+     */
+    public ModelParameters setTtsLanguage(String language) {
+        putString(ModelOption.TTS_LANG, language);
+        return this;
+    }
+
+    /**
+     * Set the voice the embedded server speaks with when a request names none and carries no speaker
+     * reference (llama.cpp b12283): one of the model's predefined voices, which
+     * {@code GET /props} lists.
+     *
+     * @param voice the voice name
+     * @return this builder
+     */
+    public ModelParameters setTtsVoice(String voice) {
+        putString(ModelOption.TTS_VOICE, voice);
+        return this;
     }
 
     /**
@@ -1519,12 +1567,45 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the draft model for speculative decoding.
      *
+     * <p>llama.cpp's speculative types default to none, and a draft model does not change that by
+     * itself: it would be loaded and never asked. So when no type is set
+     * ({@link #setSpecTypes(SpecType, SpecType...)}) and llama.cpp infers none from the draft file (it does
+     * for an MTP, DFlash or DSpark draft), this library uses the draft model as a plain one,
+     * {@link SpecType#DRAFT_SIMPLE}. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded
+     * and unused.</p>
+     *
      * @param modelDraft the file path of the draft model
      * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
         putString(ModelOption.SPEC_DRAFT_MODEL, modelDraft);
         return this;
+    }
+
+    /**
+     * Set the types of speculative decoding to use ({@code --spec-type}), in the given order.
+     *
+     * <p>Several types can be combined; llama.cpp asks them by its own order of preference. A
+     * draft model ({@link #setModelDraft(String)}) needs no call of this method, see there.
+     * {@link SpecType#NONE} turns speculative decoding off, also for a draft model.</p>
+     *
+     * <p>A model that carries multi-token-prediction layers of its own
+     * ({@code <architecture>.nextn_predict_layers} in its metadata) is <em>not</em> used that way by
+     * default: name {@link SpecType#DRAFT_MTP}. Unlike a draft model, which is only ever loaded to
+     * draft, such layers are in files of architectures llama.cpp has no MTP graph for (it loads and
+     * skips them there), so turning the type on from the metadata alone could fail a load that works
+     * today.</p>
+     *
+     * @param first the first type
+     * @param more further types
+     * @return this builder
+     */
+    public ModelParameters setSpecTypes(SpecType first, SpecType... more) {
+        StringBuilder builder = new StringBuilder(first.getArgValue());
+        for (SpecType type : more) {
+            builder.append(',').append(type.getArgValue());
+        }
+        return putString(ModelOption.SPEC_TYPE, builder.toString());
     }
 
     /**

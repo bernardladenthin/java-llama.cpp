@@ -82,19 +82,8 @@ public final class FfmLlamaModel implements AutoCloseable {
     public static FfmLlamaModel load(String[] argv, LoadProgressCallback progress) {
         Objects.requireNonNull(argv, "argv");
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment stub = MemorySegment.NULL;
-            if (progress != null) {
-                try {
-                    MethodHandle target = MethodHandles.lookup()
-                            .findStatic(FfmLlamaModel.class, "onProgress", MethodType.methodType(boolean.class,
-                                    LoadProgressCallback.class, float.class, MemorySegment.class))
-                            .bindTo(progress);
-                    // The callback runs on the loading thread, i.e. this one: a confined arena suffices.
-                    stub = JllamaNative.LINKER.upcallStub(target, JllamaNative.LOAD_PROGRESS_FN, arena);
-                } catch (NoSuchMethodException | IllegalAccessException e) {
-                    throw new IllegalStateException(e);
-                }
-            }
+            // The callback runs on the loading thread, i.e. this one: a confined arena suffices.
+            MemorySegment stub = progressStub(arena, progress);
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(JllamaNative.MODEL_LOAD, argv.length, cStrings(arena, argv), stub, MemorySegment.NULL,
                     out);
@@ -102,7 +91,23 @@ public final class FfmLlamaModel implements AutoCloseable {
         }
     }
 
-    @SuppressWarnings("unused") // the upcall target of load
+    /** The upcall stub of a progress callback in {@code arena}, or the null pointer for none. */
+    static MemorySegment progressStub(Arena arena, LoadProgressCallback progress) {
+        if (progress == null) {
+            return MemorySegment.NULL;
+        }
+        try {
+            MethodHandle target = MethodHandles.lookup()
+                    .findStatic(FfmLlamaModel.class, "onProgress", MethodType.methodType(boolean.class,
+                            LoadProgressCallback.class, float.class, MemorySegment.class))
+                    .bindTo(progress);
+            return JllamaNative.LINKER.upcallStub(target, JllamaNative.LOAD_PROGRESS_FN, arena);
+        } catch (NoSuchMethodException | IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @SuppressWarnings("unused") // the upcall target of progressStub
     private static boolean onProgress(LoadProgressCallback callback, float progress, MemorySegment userData) {
         try {
             return callback.onProgress(progress);

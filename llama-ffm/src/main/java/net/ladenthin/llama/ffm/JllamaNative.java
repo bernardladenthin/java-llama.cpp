@@ -80,8 +80,18 @@ final class JllamaNative {
             downcall("jllama_set_log_callback", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     static final MethodHandle JSON_SCHEMA_TO_GRAMMAR =
             downcall("jllama_json_schema_to_grammar", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-    static final MethodHandle QUANTIZE = downcall(
-            "jllama_quantize", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN));
+    static final MethodHandle IMATRIX = downcall(
+            "jllama_imatrix",
+            FunctionDescriptor.of(
+                    JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS,
+                    ADDRESS));
+
+    static final MethodHandle IMATRIX_MERGE = downcall(
+            "jllama_imatrix_merge",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS, JAVA_BOOLEAN, ADDRESS));
+    static final MethodHandle QUANTIZE_IMATRIX = downcall(
+            "jllama_quantize_imatrix",
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN, ADDRESS));
     static final MethodHandle FINETUNE = downcall("jllama_finetune", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     static final MethodHandle SET_CPU_MOE_BATCHED =
             downcall("jllama_set_cpu_moe_batched", FunctionDescriptor.of(JAVA_INT, JAVA_BOOLEAN));
@@ -146,10 +156,13 @@ final class JllamaNative {
     // -- text to speech -------------------------------------------------------------------------------
     static final MethodHandle TTS_LOAD = downcall("jllama_tts_load", json(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
     static final MethodHandle TTS_SYNTHESIZE = downcall(
-            "jllama_tts_synthesize_voice",
-            json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
+            "jllama_tts_synthesize_temperature",
+            json(
+                    ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_FLOAT, ADDRESS,
+                    ADDRESS));
     static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
             downcall("jllama_tts_supports_speaker_reference", json(ADDRESS, ADDRESS));
+    static final MethodHandle TTS_VOICES = downcall("jllama_tts_voices", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle TTS_FREE = downcall("jllama_tts_free", FunctionDescriptor.ofVoid(ADDRESS));
 
     private JllamaNative() {}
