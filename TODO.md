@@ -352,11 +352,14 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   answers the same request the same way).
 
 **From b12292 to b12309 (2026-11-11)** -- 17 upstream commits, pinned by commit (no tag yet); 20
-patches unchanged. Open from this range: the quantizer of this library still writes the whole path
-of the importance matrix into `quantize.imatrix.file` (upstream's tool writes the file name since
-#32000; `jllama_engine.cpp`); no test of `--cors-origins` on `NativeServer` (#32098) or of the
-Jinja additions (#32072); `OpenAiCompatServer` has no Host/Origin check of its own. Not measured:
-the CUDA, ROCm, Vulkan and Metal changes on a GPU.
+patches unchanged. Done with it: the quantizer records the file name of the importance matrix, not
+its path (as upstream's tool since #32000); `NativeServerCors` holds `--cors-origins` on the
+embedded server (#32098) and `OpenAiCompatServer` applies the same rules (`OriginGuard`); a chat
+template with the Jinja additions (#32072) renders. Open: `OriginGuard` has no browser test (the
+rules are tested over a socket), and unlike upstream it has no page of its own to let a cross-site
+navigation through. Not testable here: the `tts` template normalizer (no generated speech model)
+and the F32 accumulation (needs a context long enough to overflow F16). Not measured: the CUDA,
+ROCm, Vulkan and Metal changes on a GPU.
 
 **From b12289 to b12292 (2026-11-11)** -- 3 upstream commits (Vulkan, WebGPU, upstream's
 `test-backend-ops`); 20 patches unchanged, nothing in this library's sources. Not measured: the

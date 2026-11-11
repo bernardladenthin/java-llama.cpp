@@ -1459,6 +1459,7 @@ if(BUILD_TESTING)
     if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
         target_sources(jllama_test PRIVATE
             src/test/cpp/test_native_server_shutdown.cpp
+            src/test/cpp/test_native_server_cors.cpp
             src/main/cpp/native_server_engine.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-connect.cpp

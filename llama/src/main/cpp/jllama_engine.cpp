@@ -1393,10 +1393,17 @@ void quantize(const std::string &input_path, const std::string &output_path, int
         }
         imatrix.push_back({nullptr, nullptr, 0}); // the terminator llama_model_quantize reads up to
         qparams.imatrix = imatrix.data();
-        // the metadata upstream's llama-quantize records in the output, under the same keys
-        overrides.push_back(string_override("quantize.imatrix.file", imatrix_path));
+        // The metadata upstream's llama-quantize records in the output, under the same keys -- the
+        // file names, not the paths (upstream since #32000): the output is a file people publish,
+        // and a path names the directories of the machine it was made on. A matrix another tool
+        // wrote may carry its dataset as a path, hence the second call.
+        const auto file_name = [](const std::string &path) {
+            const size_t slash = path.find_last_of("/\\");
+            return slash == std::string::npos ? path : path.substr(slash + 1);
+        };
+        overrides.push_back(string_override("quantize.imatrix.file", file_name(imatrix_path)));
         if (!dataset.empty()) {
-            overrides.push_back(string_override("quantize.imatrix.dataset", dataset));
+            overrides.push_back(string_override("quantize.imatrix.dataset", file_name(dataset)));
         }
         overrides.push_back(int_override("quantize.imatrix.entries_count", static_cast<int64_t>(importance.size())));
         overrides.push_back(int_override("quantize.imatrix.chunks_count", chunk_count));
