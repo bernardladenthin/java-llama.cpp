@@ -351,6 +351,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12292 to b12309 (2026-11-11)** -- 17 upstream commits, pinned by commit (no tag yet); 20
+patches unchanged. Open from this range: the quantizer of this library still writes the whole path
+of the importance matrix into `quantize.imatrix.file` (upstream's tool writes the file name since
+#32000; `jllama_engine.cpp`); no test of `--cors-origins` on `NativeServer` (#32098) or of the
+Jinja additions (#32072); `OpenAiCompatServer` has no Host/Origin check of its own. Not measured:
+the CUDA, ROCm, Vulkan and Metal changes on a GPU.
+
 **From b12289 to b12292 (2026-11-11)** -- 3 upstream commits (Vulkan, WebGPU, upstream's
 `test-backend-ops`); 20 patches unchanged, nothing in this library's sources. Not measured: the
 Vulkan module on a GPU with `VK_NV_cooperative_matrix2` (the dequantized KV cache in flash

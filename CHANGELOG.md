@@ -148,6 +148,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12309** (from b12292, 17 upstream commits; pinned by commit, upstream has not tagged
+  the number yet): flash attention on the CPU sums an F16 V cache in F32 (no more inf/NaN on a long
+  context), a `tts` template can normalize its text itself (`tts_norm_scan`, `tts_norm_sub`), Jinja
+  templates may chain comparisons and unpack arguments, and the embedded server's `--cors-origins`
+  refuses a foreign `Host` or `Origin` on a loopback connection with `403` (the default `*` is
+  unchanged). cpp-httplib 0.66.0. No patch and no API changed.
 - **llama.cpp b12292** (from b12289, 3 upstream commits, all in the Vulkan and WebGPU backends and
   upstream's tests): the Vulkan module converts a quantized KV cache to F16 for flash attention on
   devices with `VK_NV_cooperative_matrix2` too, once the cache holds 4096 positions and the batch
