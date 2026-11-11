@@ -351,6 +351,12 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12283 to b12289 (2026-11-11)** -- 6 upstream commits (CUDA kernels, upstream's tests, two
+WebUI components); 20 patches unchanged, nothing in this library's sources. Not measured: the CUDA
+module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16; on the CPU
+`CApiFp8Cache` runs the cache on a generated model with cache scales), and its import
+list with `cublasLt` linked directly, which the package job of the first run prints.
+
 **From b12242 to b12283 (2026-11-11)** -- 41 upstream commits; 15 patches unchanged, `0015`
 reduced, `0027` and `0028` new.
 - **8-bit float KV cache** (`--cache-type-k/-v f8_e4m3`, #31922): `CacheType.F8_E4M3`; the enum

@@ -152,6 +152,13 @@ struct tiny_model_spec {
     // is the type a plain decoder can be: the answer is the distribution over the label tokens A, B,
     // ... at the end of the prompt, one single-byte token each in this vocabulary.
     std::string decision_type = {};
+    // KV cache scales: one F32 scalar per layer and side (blk.N.attn_k.k_scale, attn_v.v_scale), which
+    // an 8-bit float cache (--cache-type-k/-v f8_e4m3) divides K and V by before it stores them and
+    // multiplies back in the attention, so the stored values fit the format's range. No other cache
+    // type reads them. A scale that is zero or not finite fails the context with such a cache.
+    bool cache_scales = false;
+    float k_cache_scale = 1.0f;
+    float v_cache_scale = 1.0f;
     // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
     // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
     // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
@@ -432,6 +439,16 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 0.1f);
+        if (spec.cache_scales) {
+            // constants, so the random weights are those of the same model without scales
+            for (const auto &scale : {std::pair<const char *, float>{"attn_k.k_scale", spec.k_cache_scale},
+                                      std::pair<const char *, float>{"attn_v.v_scale", spec.v_cache_scale}}) {
+                ggml_tensor *t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+                *static_cast<float *>(t->data) = scale.second;
+                ggml_set_name(t, (p + scale.first).c_str());
+                gguf_add_tensor(to, t);
+            }
+        }
         if (!cohere2) {
             add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
         }

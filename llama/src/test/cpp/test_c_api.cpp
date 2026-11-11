@@ -1955,6 +1955,104 @@ TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
     std::filesystem::remove(mmproj, ignored);
 }
 
+TEST(CApiFp8Cache, AModelWithCacheScalesRunsAnEightBitFloatCache) {
+    // The 8-bit float KV cache (--cache-type-k/-v f8_e4m3, b12283; on CUDA since b12289) stores K and
+    // V divided by a per-layer scale the model may carry and multiplies it back in the attention. The
+    // enum sweep runs the type on a model without scales; this is the model with them. It has to
+    // answer with the cache on both sides and on one, with flash attention on and off, the same again
+    // from a saved and restored slot, and exactly like the model without scales under an F16 cache,
+    // which never reads them.
+    tiny_model_spec scaled;
+    scaled.prefix = "jllama-c-api-fp8-scaled";
+    scaled.cache_scales = true;
+    scaled.k_cache_scale = 0.5f;
+    scaled.v_cache_scale = 0.25f;
+    const std::string with_scales = write_tiny_llama_gguf(scaled);
+    tiny_model_spec plain_spec;
+    plain_spec.prefix = "jllama-c-api-fp8-plain";
+    const std::string plain = write_tiny_llama_gguf(plain_spec);
+    ASSERT_FALSE(with_scales.empty());
+    ASSERT_FALSE(plain.empty());
+
+    const auto answer_of = [](const std::string &path, const std::vector<std::string> &args) {
+        jllama_model *model = load_tiny(path, args);
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return std::string();
+        }
+        const std::string answer = greedy_answer(model, 16);
+        jllama_model_free(model);
+        return answer;
+    };
+
+    const std::string f16_scaled = answer_of(with_scales, {"--cache-type-k", "f16", "--cache-type-v", "f16"});
+    EXPECT_FALSE(f16_scaled.empty());
+    EXPECT_EQ(f16_scaled, answer_of(plain, {"--cache-type-k", "f16", "--cache-type-v", "f16"}))
+        << "an F16 cache read the cache scales";
+
+    for (const char *flash : {"on", "off"}) {
+        SCOPED_TRACE(flash);
+        EXPECT_FALSE(
+            answer_of(with_scales, {"--cache-type-k", "f8_e4m3", "--cache-type-v", "f8_e4m3", "--flash-attn", flash})
+                .empty());
+        EXPECT_FALSE(answer_of(with_scales, {"--cache-type-k", "f8_e4m3", "--flash-attn", flash}).empty());
+        EXPECT_FALSE(answer_of(with_scales, {"--cache-type-v", "f8_e4m3", "--flash-attn", flash}).empty());
+    }
+
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-fp8-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *model = load_tiny(
+        with_scales, {"--cache-type-k", "f8_e4m3", "--cache-type-v", "f8_e4m3", "--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model, 16).empty());
+    const std::string second = greedy_answer(model, 16);
+    const std::string third = greedy_answer(model, 16);
+    EXPECT_EQ(second, third); // both over the cached prompt
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "fp8.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "fp8.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(restored.str()).at("n_read").get<size_t>(),
+              json::parse(saved.str()).at("n_written").get<size_t>())
+        << restored.str();
+    EXPECT_EQ(greedy_answer(model, 16), third);
+    jllama_model_free(model);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    std::filesystem::remove(with_scales, ignored);
+    std::filesystem::remove(plain, ignored);
+}
+
+TEST(CApiFp8Cache, ACacheScaleOfZeroIsRefusedOnlyByTheEightBitFloatCache) {
+    // llama.cpp refuses a context whose 8-bit float cache would divide by zero; the same file is a
+    // usable model for every other cache type, which does not read the scale.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-fp8-zero";
+    spec.cache_scales = true;
+    spec.k_cache_scale = 0.0f;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+
+    jllama_model *refused = load_tiny(path, {"--cache-type-k", "f8_e4m3", "--cache-type-v", "f8_e4m3"});
+    EXPECT_EQ(refused, nullptr) << "a cache scale of zero was accepted";
+    jllama_model_free(refused);
+
+    jllama_model *loaded = load_tiny(path, {});
+    ASSERT_NE(loaded, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(loaded).empty());
+    jllama_model_free(loaded);
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiRecurrent, ARecurrentModelAnswersTheSameFromACachedPromptAndARestoredSlot) {
     // The second kind of memory llama.cpp has: Mamba keeps no rows per token but one state per
     // layer, which every token overwrites. A prefix cannot be cut out of that, so the server works
