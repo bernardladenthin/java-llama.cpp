@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12242](https://img.shields.io/badge/llama.cpp-%23b12242-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12242)  
+[![llama.cpp b12283](https://img.shields.io/badge/llama.cpp-%23b12283-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12283)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1007,12 +1007,12 @@ Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, Str
 `restoreSlot(int, String)`, and `getModelMeta()`. Saving and restoring a slot need a slot directory
 (`ModelParameters.setSlotSavePath`, `--slot-save-path`), and the `String` is a file name inside it, as
 the server's `/slots` route takes it -- a name with a directory part or `..` is an
-`InvalidRequestException`. The directory and the name are UTF-8 on every platform. **On Windows a
-few other paths still have to be ASCII**, because llama.cpp opens them in the process's ANSI code
-page: `--log-file`, the output file of `LlamaQuantizer.quantize`, the target of a model download
-(`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) and, unmeasured, `--models-dir` in router mode.
-The model, mmproj, LoRA and shard files, the slot files, the importance matrix and the trainer's
-files are read and written under any path.
+`InvalidRequestException`. The directory and the name are UTF-8 on every platform. **On Windows the
+download paths still have to be ASCII**, because llama.cpp opens them in the process's ANSI code
+page: the target of a model download (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) and,
+unmeasured, `--models-dir` in router mode. The model, mmproj, LoRA and shard files, the slot files,
+the importance matrix, the trainer's files, `--log-file` and the output of
+`LlamaQuantizer.quantize` are read and written under any path.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 

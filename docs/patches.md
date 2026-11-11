@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**16 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**18 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -28,7 +28,7 @@ match a binary to this page.
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 31 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
@@ -38,6 +38,8 @@ match a binary to this page.
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
 | 0025 | [`0025-server-slot-appendix-reads-utf8.patch`](#0025-server-slot-appendix-reads-utf8patch) | server: open the slot file's checkpoint and draft-state appendix as UTF-8 on Windows | 1 | 4 |
 | 0026 | [`0026-common-imatrix-legacy-reads-utf8.patch`](#0026-common-imatrix-legacy-reads-utf8patch) | common: open a legacy importance matrix by its UTF-8 path on Windows | 1 | 1 |
+| 0027 | [`0027-common-log-file-reads-utf8.patch`](#0027-common-log-file-reads-utf8patch) | common: open the --log-file by its UTF-8 path on Windows | 1 | 1 |
+| 0028 | [`0028-llama-quant-output-reads-utf8.patch`](#0028-llama-quant-output-reads-utf8patch) | llama: write the quantizer's output by its UTF-8 path on Windows | 1 | 2 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -265,6 +267,17 @@ Refreshed at b12217 (#29413, "RPC: Improve loading times", protocol 9.0.0): the 
 carries server feature flags and negotiate_hello() takes the dispatcher's flags to fill; the
 hunk that turns a failed handshake of rpc_dispatcher::start() into a reported failure is
 rewritten over that call. Nothing else moved.
+
+Reduced at b12283 (#30415, "ggml-rpc : fail gracefully on unreachable endpoints and failed
+handshakes"): upstream took the client half -- rpc_dispatcher::start() returns false instead of
+aborting, negotiate_hello() reports a failed exchange, get_dispatcher() returns nullptr and does
+not cache a failed attempt, and every consumer answers nullptr conservatively (device memory
+0/0, device count 0). Those hunks are dropped, with this patch's try_get_dispatcher() /
+aborting get_dispatcher() pair. What stays of the client: an endpoint registered earlier is
+re-checked on the next ggml_backend_rpc_add_server() (upstream returns the cached registration
+of a server that has gone away), and ggml_backend_rpc_init() aborts by name when the
+registration of a reachable server fails. The server half (stop, listening, COMM_INIT bind
+address and cancellation, transport) is unchanged.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
@@ -753,6 +766,62 @@ CI are its first run there.
 
 Drop-check: drop this patch when common_imatrix_load_legacy() no longer opens the narrow fname
 (u8path, a wide conversion, ggml_fopen) --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+```
+
+## 0027-common-log-file-reads-utf8.patch
+
+**Files (1):** `common/log.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: open the --log-file by its UTF-8 path on Windows
+
+common_log::set_file() (common/log.cpp) opens the log file with fopen(path, "w"), which the
+Windows C runtime reads in the process's active code page. The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+--log-file outside ASCII is created under a mangled name. Upstream's own executables do not see
+it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens it with ggml_fopen(), which converts UTF-8 to UTF-16 on Windows and is fopen()
+elsewhere -- the function the model files already go through.
+
+Read from the source and from the measurement of the same class in
+docs/handover/local-agent-report-windows-non-ascii-paths.md (which lists this site as open);
+not measured on Windows with the fix before it was written: CI's Windows C++ jobs are its first
+run there.
+
+Drop-check: drop this patch when set_file() no longer calls the narrow fopen() --
+CApiNonAsciiPaths.TheLogFileIsWrittenUnderItsNonAsciiName then stays green without it on a
+Windows job.
+```
+
+## 0028-llama-quant-output-reads-utf8.patch
+
+**Files (1):** `src/llama-quant.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama: write the quantizer's output by its UTF-8 path on Windows
+
+llama_model_quantize_impl() (src/llama-quant.cpp) opens every output file through
+std::ofstream(fname), a narrow string MSVC reads in the process's active code page, while the
+model it reads goes through ggml_fopen (UTF-8 to UTF-16). The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+quantized model with a name outside ASCII lands under a mangled name, and the caller does not
+find the file it asked for. Upstream's own executables do not see it: they carry an
+activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose
+narrow encoding is UTF-8 already. Same class as 0024, 0025 and 0026.
+
+Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; not measured on
+Windows with the fix before it was written: CI's Windows C++ jobs are its first run there.
+
+Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
 without it on a Windows job.
 ```

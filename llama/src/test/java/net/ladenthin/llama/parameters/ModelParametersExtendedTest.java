@@ -952,6 +952,13 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
+    public void testSetTtsLanguageAndVoice() {
+        ModelParameters p = new ModelParameters().setTtsLanguage("de").setTtsVoice("female");
+        assertThat(p.parameters.get("--tts-lang"), is("de"));
+        assertThat(p.parameters.get("--tts-voice"), is("female"));
+    }
+
+    @Test
     public void testSetSlotPromptSimilarity() {
         ModelParameters p = new ModelParameters().setSlotPromptSimilarity(0.8f);
         assertThat(p.parameters.get("--slot-prompt-similarity"), is("0.8"));

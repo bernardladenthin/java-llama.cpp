@@ -18,6 +18,7 @@
 #include "tiny_llama_gguf.hpp"
 
 #include "build-info.h"
+#include "log.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama.h"
@@ -3569,14 +3570,37 @@ TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
     std::filesystem::remove(model, ignored);
 }
 
+TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {
+    // --log-file went through the C runtime's narrow fopen (patches/0027): on Windows the file was
+    // created under the path as the active code page reads it. The log is the process's, so the
+    // file is detached again before it is looked at.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-log");
+    ASSERT_FALSE(model.empty());
+    for (const auto &place : non_ascii_places("jllama-c-api-utf8-log")) {
+        SCOPED_TRACE(place.what);
+        const auto log = in_place(place, ".log");
+        jllama_model *loaded = load_tiny(model, {"--log-file", utf8(log)});
+        ASSERT_NE(loaded, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(loaded).empty());
+        jllama_model_free(loaded);
+        common_log_set_file(common_log_main(), nullptr);
+        std::error_code ec;
+        EXPECT_TRUE(std::filesystem::exists(log, ec)) << "no log file under the name that was asked for";
+        EXPECT_GT(std::filesystem::file_size(log, ec), 0u) << ec.message();
+        std::filesystem::remove(log, ec);
+        std::filesystem::remove_all(place.dir, ec);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(model, ignored);
+}
+
 TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath) {
     // The paths of the file tools that go through ggml_fopen or gguf: the model each one reads, the
     // importance matrix that jllama_imatrix writes as GGUF and the quantizer reads, and the model the
     // trainer writes. Measured to work on code page 1252. The calibration text, the trainer's
     // training_file and the legacy imatrix output are this library's own streams, which failed there
-    // until they read the path as UTF-8. Left out, because it still goes through a narrow
-    // std::ofstream in llama.cpp and fails there: the quantizer's output (src/llama-quant.cpp). See
-    // docs/handover/local-agent-report-windows-non-ascii-paths.md.
+    // until they read the path as UTF-8, and so did the quantizer's output, a narrow std::ofstream
+    // in llama.cpp (patches/0028). See docs/handover/local-agent-report-windows-non-ascii-paths.md.
     tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-c-api-utf8-tools");
     spec.n_layer = 1;
     const std::string model = write_tiny_llama_gguf(spec);
@@ -3631,9 +3655,11 @@ TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiP
         std::filesystem::remove(back, ec);
         std::filesystem::remove(from_legacy, ec);
 
-        const std::string quantized = model + ".utf8-in.gguf"; // ASCII: the output is a narrow site
-        ASSERT_EQ(jllama_quantize_imatrix(utf8(in).c_str(), quantized.c_str(), 15, 1, false, utf8(imatrix).c_str()),
-                  JLLAMA_STATUS_OK)
+        // the quantizer's output too (patches/0028: a narrow std::ofstream in llama.cpp before)
+        const auto quantized = in_place(place, ".q4.gguf");
+        ASSERT_EQ(
+            jllama_quantize_imatrix(utf8(in).c_str(), utf8(quantized).c_str(), 15, 1, false, utf8(imatrix).c_str()),
+            JLLAMA_STATUS_OK)
             << jllama_last_error();
         EXPECT_GT(std::filesystem::file_size(quantized, ec), 0u) << ec.message();
         std::filesystem::remove(quantized, ec);

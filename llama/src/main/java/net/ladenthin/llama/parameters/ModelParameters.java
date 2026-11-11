@@ -1298,6 +1298,32 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Set the language the embedded server speaks in when a request names none (llama.cpp b12283):
+     * the default of {@code POST /tts} and {@code /v1/audio/speech} and of a {@code /v1/realtime}
+     * session. A model without the setting uses its own default.
+     *
+     * @param language the language, as the model names it (LFM3-Audio: {@code en}, {@code de}, ...)
+     * @return this builder
+     */
+    public ModelParameters setTtsLanguage(String language) {
+        putString(ModelOption.TTS_LANG, language);
+        return this;
+    }
+
+    /**
+     * Set the voice the embedded server speaks with when a request names none and carries no speaker
+     * reference (llama.cpp b12283): one of the model's predefined voices, which
+     * {@code GET /props} lists.
+     *
+     * @param voice the voice name
+     * @return this builder
+     */
+    public ModelParameters setTtsVoice(String voice) {
+        putString(ModelOption.TTS_VOICE, voice);
+        return this;
+    }
+
+    /**
      * Set the path to save the slot kv cache.
      *
      * @param slotSavePath the directory path for saving slot KV cache

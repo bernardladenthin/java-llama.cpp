@@ -27,6 +27,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   options reach the engine as a `SpeechOptions` (`SpeechBackend.synthesize(text, voice, language,
   options)`, a default method an engine overrides). `stream` is refused: the audio is answered in
   one piece.
+- **`OpenAiServerConfig.speechLanguage` / `speechVoice`**: the language and voice the speech routes
+  of `OpenAiCompatServer` use when a request names none, as llama.cpp's `--tts-lang` /
+  `--tts-voice` (b12283). A speaker reference in the request overrides the default voice.
 - **Merging importance matrices**: `LlamaQuantizer.mergeImportanceMatrices(inputs, output[,
   legacyFormat])`, `jllama_imatrix_merge()` in the C API and `Jllama.mergeImportanceMatrices` in
   `llama-ffm` add up matrices of one model computed over different texts, as `llama-imatrix` does
@@ -140,6 +143,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12283** (from b12242, 41 upstream commits): an 8-bit float KV cache
+  (`CacheType.F8_E4M3`, `--cache-type-k` / `-v f8_e4m3`, #28392), a default language and voice for
+  the server's speech and realtime routes (`ModelParameters.setTtsLanguage` / `setTtsVoice`,
+  `--tts-lang` / `--tts-voice`, #31982), the voice and language of a realtime session's spoken
+  answer in `session.update`, Kimi K3.1 vision, a device-side MoE scheduler in the SYCL module.
+  Upstream took the client half of patch `0015` (#30415: an unreachable RPC server is an error, not
+  an abort), which shrinks to the stoppable server and the re-check of a cached registration. The
+  SYCL modules are built with oneAPI 2026.2, oneDNN 2026.1 and Level Zero 1.34.0, as upstream's.
+  The WebUI gained a CodeMirror editor (22 npm packages, all MIT; the license texts are regenerated).
+- **Windows: `--log-file` and the quantizer's output under a non-ASCII path.** Both went through a
+  narrow open in llama.cpp (`fopen` in `common/log.cpp`, `std::ofstream` in `src/llama-quant.cpp`),
+  which inside `java.exe` reads the path in the active code page: the file landed under a mangled
+  name or the call failed. Patches `0027` and `0028` open them as UTF-8. Of the Windows paths only
+  the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
 - **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
   `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
   `text.format.json_schema` on the upstream `/v1/responses`; a request with `response_format` and
@@ -273,8 +290,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   written as UTF-8 there too, and a legacy importance matrix is read from such a path (patch `0026`).
   A speaker reference of `POST /tts` crosses to the engine in a temporary file created for its
   owner alone: POSIX permissions `rw-------`, on Windows an access control list naming the owner
-  (where the user name resolves to no principal, the file keeps what its directory hands down). Still ASCII-only on Windows: `--log-file`, the quantizer's output
-  file and a download target (README).
+  (where the user name resolves to no principal, the file keeps what its directory hands down). Still ASCII-only on Windows: a download target (README).
 - **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
   with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
   pipeline numbers each prompt from position 0 and leaves the KV cache to the caller, and the engine

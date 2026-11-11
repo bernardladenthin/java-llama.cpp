@@ -96,6 +96,32 @@ final class SpeechApiSupport {
         boolean pcm() {
             return format == Format.PCM16;
         }
+
+        /**
+         * The language to speak in: the request's, else the server's default.
+         *
+         * @param serverDefault the server's default language, or {@code null}
+         * @return the language, or {@code null} for the model's own default
+         */
+        @Nullable
+        String languageOr(@Nullable String serverDefault) {
+            return language != null ? language : serverDefault;
+        }
+
+        /**
+         * The voice to speak with: the request's, else the server's default -- which a speaker
+         * reference in the request overrides, as in llama.cpp's server (b12283).
+         *
+         * @param serverDefault the server's default voice, or {@code null}
+         * @return the voice, or {@code null} for the model's own default
+         */
+        @Nullable
+        String voiceOr(@Nullable String serverDefault) {
+            if (voice != null || options.getSpeakerReference() != null) {
+                return voice;
+            }
+            return serverDefault;
+        }
     }
 
     /**

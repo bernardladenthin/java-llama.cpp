@@ -520,7 +520,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
             final String contentType;
             try {
                 SpeechApiSupport.Request parsed = parser.apply(request);
-                byte[] wav = engine.synthesize(parsed.input(), parsed.voice(), parsed.language(), parsed.options());
+                byte[] wav = engine.synthesize(
+                        parsed.input(),
+                        parsed.voiceOr(config.getSpeechVoice()),
+                        parsed.languageOr(config.getSpeechLanguage()),
+                        parsed.options());
                 contentType = SpeechApiSupport.contentType(wav, parsed.format());
                 audio = SpeechApiSupport.body(wav, parsed.format());
             } catch (IllegalArgumentException | InvalidRequestException e) {

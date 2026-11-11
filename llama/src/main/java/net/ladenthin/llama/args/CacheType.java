@@ -15,6 +15,8 @@ public enum CacheType implements CliArg {
     F16("f16"),
     /** 16-bit brain float. */
     BF16("bf16"),
+    /** 8-bit float (OCP FP8 E4M3), scaled per layer when the model carries cache scales (llama.cpp b12283). */
+    F8_E4M3("f8_e4m3"),
     /** 8-bit quantization, scheme 0. */
     Q8_0("q8_0"),
     /** 4-bit quantization, scheme 0. */

@@ -2256,9 +2256,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       # KEEP IN SYNC WITH UPSTREAM (release.yml, ubuntu-24-sycl): installer URLs and the Level Zero
       # release; see the install steps below.
-      ONEAPI_DLE_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/b5c100a7-8052-4e88-90e2-63d9916a998b/intel-deep-learning-essentials-2026.1.4.17_offline.sh
-      ONEAPI_ONEDNN_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/94c3dbac-0852-45be-a57d-21c204cada3e/intel-onednn-2026.0.2.46_offline.sh
-      LEVEL_ZERO_VERSION: "1.33.1"
+      ONEAPI_DLE_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/aef232d2-aac5-4cd6-bceb-911019bbb6a8/intel-deep-learning-essentials-2026.2.0.640_offline.sh
+      ONEAPI_ONEDNN_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/46452a4a-7b7f-49f2-be4c-602a900180bb/intel-onednn-2026.1.0.625_offline.sh
+      LEVEL_ZERO_VERSION: "1.34.0"
       LEVEL_ZERO_UBUNTU_VERSION: "u24.04"
     steps:
       - name: Free up disk space
@@ -2380,9 +2380,9 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       # KEEP IN SYNC WITH UPSTREAM (release.yml, windows-sycl): see the install step below.
-      ONEAPI_DLE_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/a51104eb-6f4a-4a0e-9dae-1b81b0c81ae1/intel-deep-learning-essentials-2026.1.4.16_offline.exe
-      ONEAPI_ONEDNN_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/34e28083-d04b-46a3-826c-8c1d00bf1e1c/intel-onednn-2026.0.2.47_offline.exe
-      LEVEL_ZERO_SDK_URL: https://github.com/oneapi-src/level-zero/releases/download/v1.33.1/level-zero-win-sdk-1.33.1.zip
+      ONEAPI_DLE_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/b177a006-5cd9-4cb2-807f-8199cc73d53c/intel-deep-learning-essentials-2026.2.0.638_offline.exe
+      ONEAPI_ONEDNN_URL: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/8f905666-c85c-43fb-9bd0-2618c7ecd33b/intel-onednn-2026.1.0.622_offline.exe
+      LEVEL_ZERO_SDK_URL: https://github.com/oneapi-src/level-zero/releases/download/v1.34.0/level-zero-win-sdk-1.34.0.zip
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
@@ -2399,7 +2399,7 @@ jobs:
         shell: cmd
         # KEEP IN SYNC WITH UPSTREAM: the two installers and their component lists are those of
         # llama.cpp's windows-sycl release job (release.yml at the pinned tag, scripts/install-oneapi.bat;
-        # b11654/#30131). Deep Learning Essentials 2026.1 carries DPC++, MKL and TBB; oneDNN is a
+        # b11654/#30131). Deep Learning Essentials 2026.2 carries DPC++, MKL and TBB; oneDNN is a
         # separate installer since then (the 2025.3.3 bundle this job used before had it as a
         # component). Each: extract the offline installer, run its bootstrapper with the components.
         # A cmd step's result is the exit code of its LAST line, so every download, extraction and
@@ -2408,7 +2408,7 @@ jobs:
         # runs after the setvars.bat check with a final `exit /b 0`, so a locked file cannot fail a
         # successful install either. The curls retry like upstream's script; the three VS integration
         # flags are upstream's. Intel publishes no checksum next to the files (TODO.md, roadmap item 3).
-        # THIS CHANGES THE SHIPPED MODULE'S RUNTIME: Deep Learning Essentials 2026.1 is the oneAPI
+        # THIS CHANGES THE SHIPPED MODULE'S RUNTIME: Deep Learning Essentials 2026.x is the oneAPI
         # 2026 runtime (sycl9.dll, mkl_sycl_blas.6.dll; the 2025.3 bundle gave sycl8.dll and
         # mkl_sycl_blas.5.dll), and with the Level Zero SDK below the module imports ze_loader.dll,
         # which it did not before (run 38870889665). A consumer with the 2025.3 runtime on PATH loses

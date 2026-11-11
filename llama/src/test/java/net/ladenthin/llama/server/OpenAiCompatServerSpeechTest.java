@@ -129,6 +129,40 @@ public class OpenAiCompatServerSpeechTest {
         return new OpenAiCompatServer(new OpenAiCompatServerHttpTest.FakeBackend(), config(), speech).start();
     }
 
+    /**
+     * The server's default language and voice stand in for what a request leaves out (llama.cpp
+     * b12283, {@code --tts-lang} / {@code --tts-voice}); a speaker reference in the request
+     * overrides the default voice, and what the request names wins.
+     */
+    @Test
+    public void theServersDefaultLanguageAndVoiceApplyWhereARequestNamesNone() throws IOException {
+        FakeSpeech speech = new FakeSpeech();
+        OpenAiServerConfig config = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .speechLanguage("de")
+                .speechVoice("female")
+                .build();
+        try (OpenAiCompatServer server =
+                new OpenAiCompatServer(new OpenAiCompatServerHttpTest.FakeBackend(), config, speech).start()) {
+            assertThat(send(server.getPort(), "POST", "/v1/audio/speech", "{\"input\":\"a\"}").code, is(200));
+            assertThat(send(server.getPort(), "POST", "/tts", "{\"input\":\"b\"}").code, is(200));
+            assertThat(
+                    send(server.getPort(), "POST", "/tts", "{\"input\":\"c\",\"voice\":\"male\",\"lang\":\"en\"}").code,
+                    is(200));
+            String reference = Base64.getEncoder().encodeToString(new byte[] {1, 2, 3});
+            assertThat(
+                    send(
+                                    server.getPort(),
+                                    "POST",
+                                    "/tts",
+                                    "{\"input\":\"d\",\"speaker_ref_b64\":\"" + reference + "\"}")
+                            .code,
+                    is(200));
+        }
+        assertThat(speech.calls, is(Arrays.asList("a|female|de", "b|female|de", "c|male|en", "d|null|de")));
+    }
+
     @Test
     public void aSpeechRequestAnswersTheWavFileByteForByte() throws IOException {
         FakeSpeech speech = new FakeSpeech();

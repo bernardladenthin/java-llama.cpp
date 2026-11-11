@@ -1,0 +1,32 @@
+common: open the --log-file by its UTF-8 path on Windows
+
+common_log::set_file() (common/log.cpp) opens the log file with fopen(path, "w"), which the
+Windows C runtime reads in the process's active code page. The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+--log-file outside ASCII is created under a mangled name. Upstream's own executables do not see
+it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens it with ggml_fopen(), which converts UTF-8 to UTF-16 on Windows and is fopen()
+elsewhere -- the function the model files already go through.
+
+Read from the source and from the measurement of the same class in
+docs/handover/local-agent-report-windows-non-ascii-paths.md (which lists this site as open);
+not measured on Windows with the fix before it was written: CI's Windows C++ jobs are its first
+run there.
+
+Drop-check: drop this patch when set_file() no longer calls the narrow fopen() --
+CApiNonAsciiPaths.TheLogFileIsWrittenUnderItsNonAsciiName then stays green without it on a
+Windows job.
+
+diff --git a/common/log.cpp b/common/log.cpp
+--- a/common/log.cpp
++++ b/common/log.cpp
+@@ -405,7 +405,7 @@
+         }
+ 
+         if (path) {
+-            file = fopen(path, "w");
++            file = ggml_fopen(path, "w");
+         } else {
+             file = nullptr;
+         }

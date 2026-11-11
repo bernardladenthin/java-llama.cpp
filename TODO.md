@@ -87,8 +87,8 @@ measurements below remain open hardening/coverage work; they do not establish a 
       Obtain the values from a trusted download or the successful Publish logs and verify them
       before pinning. `CUDA_REDIST_MANIFEST` is already version-pinned.
 - [ ] **Hash the oneAPI installers and Level Zero downloads.** Both SYCL jobs use versioned
-      `ONEAPI_DLE_URL` / `ONEAPI_ONEDNN_URL` installers (Deep Learning Essentials 2026.1.4 and
-      oneDNN 2026.0.2). Download them on a machine that can reach Intel, then add pinned SHA-256
+      `ONEAPI_DLE_URL` / `ONEAPI_ONEDNN_URL` installers (Deep Learning Essentials 2026.2.0 and
+      oneDNN 2026.1.0 since b12283). Download them on a machine that can reach Intel, then add pinned SHA-256
       checks; do the same for the Level Zero debs and SDK zip.
 - [ ] **Hash the ROCm wheels.** `stable.repo.amd.com/rocm/whl-next/` is a moving index; versions
       are constrained with `==`, but hashes are absent. Generate a complete hash-pinned
@@ -188,7 +188,7 @@ and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jl
 `voice` of a synthesis handed over as upstream now wants it), `ModelParameters.addShard`
 (`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`).
 
-**Windows, non-ASCII paths: measured, the slot files fixed, four sites open.** Since b12131 /
+**Windows, non-ASCII paths: measured, the slot files fixed, the download paths open.** Since b12131 /
 b12132 (#31682, #31681) upstream builds its `std::filesystem::path` and `std::fstream` objects in
 `common/` and `tools/server/` from a plain `std::string`, which Windows reads in the process's
 active code page; its own executables are UTF-8 there through an app manifest (#31329), a library
@@ -204,15 +204,17 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     `jllama_imatrix_merge` and the trainer's `training_file`. `CApiSlotFiles` and
     `CApiNonAsciiPaths` hold all of it, and the paths that worked before (`-m`, `--mmproj`,
     `--lora`, `--shard`, the model and matrix the quantizer reads, the GGUF outputs of the imatrix
-    run and the trainer -- not the quantizer's own output, which is in the open list below).
+    run and the trainer).
     `patches/0026` adds the last reader: a legacy imatrix file under such a path
-    (`common_imatrix_load_legacy`, a narrow `std::ifstream`; read from the source, first run on
-    CI's Windows jobs).
-  - **Open, each one narrow site in llama.cpp, a non-ASCII path fails or lands under a mangled
-    name:** `--log-file` (`common/log.cpp`, a narrow `fopen`), the quantizer's output
-    (`src/llama-quant.cpp`), and the download paths (`-m` as the target of `--model-url`,
-    `LLAMA_CACHE`; several files under `common/`). README names them. A patch each, or upstream:
-    not decided.
+    (`common_imatrix_load_legacy`, a narrow `std::ifstream`), `patches/0027` `--log-file`
+    (`common/log.cpp`, a narrow `fopen`) and `patches/0028` the quantizer's output
+    (`src/llama-quant.cpp`, a narrow `std::ofstream`). **These three are read from the source and
+    green on CI's Windows runners, whose code page and test paths were not checked against a
+    code-page-1252 desktop**: one run of `jllama_test.exe --gtest_filter=CApiNonAsciiPaths.*:CApiSlotFiles.*`
+    on such a machine, without and with the patches, is the measurement that is missing.
+  - **Open, narrow sites in llama.cpp, a non-ASCII path fails or lands under a mangled name:** the
+    download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
+    `common/`). README names them. A patch, or upstream: not decided.
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
     built-in file tools, the checkpoint half of the appendix (the test model writes no
     checkpoints; it shares the patched sites), and everything through the Java layer -- the machine had
@@ -325,6 +327,26 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12242 to b12283 (2026-11-11)** -- 41 upstream commits; 15 patches unchanged, `0015`
+reduced, `0027` and `0028` new.
+- **8-bit float KV cache** (`--cache-type-k/-v f8_e4m3`, #31922): `CacheType.F8_E4M3`; the enum
+  sweep loads the random model with it and answers on the CPU. Not measured: memory and quality
+  against `q8_0` on a real model, and any GPU backend.
+- **`--tts-lang` / `--tts-voice`** (#32022, the server's defaults for `/tts` and
+  `/v1/audio/speech`): `ModelParameters.setTtsLanguage` / `setTtsVoice` for `NativeServer`, and
+  `OpenAiServerConfig.speechLanguage` / `speechVoice` for `OpenAiCompatServer`
+  (`OpenAiCompatServerSpeechTest`, model-free). `OpenAiServerCli` has no flag for them.
+- **Realtime output voice and language** (`session.update` `audio.output.voice/language`, refused
+  once the conversation started): `RealtimeNativeServerIntegrationTest` has the case, **written
+  without the model**; its first run is this bump's Publish run.
+- **ggml-rpc client half of `patches/0015` is upstream's** (#30415). A device lost during a
+  computation still aborts the process; the server half (stop, COMM_INIT bind address) stays ours.
+- **SYCL toolchain 2026.2** (Deep Learning Essentials 2026.2.0, oneDNN 2026.1.0, Level Zero
+  1.34.0, as upstream's release jobs). The run-time DLL names of the Windows module (README names
+  `sycl9.dll`, `mkl_sycl_blas.6.dll`) are read off the package job's import list after the first
+  run, not known before it.
+- **WebUI**: 22 more npm packages (CodeMirror / Lezer, MIT), license texts regenerated.
+
 **From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
 in the request fields, their limits or the response keys.
 - **`POST /tts` and `/v1/audio/speech` on `OpenAiCompatServer`**: served (`SpeechBackend`, over a
@@ -346,10 +368,10 @@ in the request fields, their limits or the response keys.
   `session.update` (b12239 #31978): `RealtimeNativeServerIntegrationTest` has the cases (the
   session reports them back, a response without its own settings is text only; an unknown modality
   and a bad limit are error events). **Written without the model**: the class is property-gated
-  (LFM3-Audio, in CI's set since 2026-11-10), and neither case has run yet.
-- **Speech and realtime tests whose models joined the CI set on 2026-11-10, none of them run yet**
-  (huggingface.co is not reachable from the sandbox they were written in; the first Publish run is
-  the measurement, and a red case there is a finding about the test or the engine, not a flake):
+  (LFM3-Audio, in CI's set since 2026-11-10); they ran green in Publish run 42853242881.
+- **Speech and realtime tests whose models joined the CI set on 2026-11-10** (written in a sandbox
+  that cannot reach huggingface.co; their first run was Publish run 42853242881, green on all six
+  Java test jobs):
   `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest` (the pipeline contract of
   `AbstractTtsPipelineContract`: sample rate from the header, every listed voice, a speaker
   reference cloned or refused as the pipeline reports, the temperature accepted),

@@ -323,6 +323,12 @@ public enum ModelOption {
     /** CLI option {@code --top-k}. */
     TOP_K("--top-k"),
 
+    /** CLI option {@code --tts-lang}. */
+    TTS_LANG("--tts-lang"),
+
+    /** CLI option {@code --tts-voice}. */
+    TTS_VOICE("--tts-voice"),
+
     /** CLI option {@code --top-p}. */
     TOP_P("--top-p"),
 

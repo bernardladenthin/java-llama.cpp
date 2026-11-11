@@ -278,6 +278,41 @@ public class RealtimeNativeServerIntegrationTest extends OpenAiServerTestSupport
         }
     }
 
+    /**
+     * {@code session.update} takes the voice and language of the spoken answer under
+     * {@code audio.output} (llama.cpp b12283, #31982) and reports them back; once the conversation
+     * has started they cannot change any more, which is an {@code error} event.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    public void theSessionTakesTheOutputVoiceAndLanguageUntilTheConversationStarts() throws Exception {
+        try (Session session = Session.open(port, "")) {
+            session.await("session.created");
+            session.send(outputVoiceAndLanguage("female", "de"));
+            JsonNode output = session.await("session.updated")
+                    .path("session")
+                    .path("audio")
+                    .path("output");
+            assertThat(output.toString(), output.path("voice").asText(), is("female"));
+            assertThat(output.toString(), output.path("language").asText(), is("de"));
+
+            session.userText("Say hello.");
+            session.send(outputVoiceAndLanguage("male", "de"));
+            JsonNode error = session.awaitAny("error");
+            assertThat(error.toString(), error.toString(), containsString("cannot change"));
+        }
+    }
+
+    private static ObjectNode outputVoiceAndLanguage(String voice, String language) {
+        ObjectNode update = MAPPER.createObjectNode().put("type", "session.update");
+        ObjectNode output = update.putObject("session")
+                .put("type", "realtime")
+                .putObject("audio")
+                .putObject("output");
+        output.put("voice", voice).put("language", language);
+        return update;
+    }
+
     /** What the session cannot take is an {@code error} event, not a dropped field. */
     @Test
     @Timeout(value = 5, unit = TimeUnit.MINUTES)

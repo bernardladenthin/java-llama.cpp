@@ -1,0 +1,40 @@
+llama: write the quantizer's output by its UTF-8 path on Windows
+
+llama_model_quantize_impl() (src/llama-quant.cpp) opens every output file through
+std::ofstream(fname), a narrow string MSVC reads in the process's active code page, while the
+model it reads goes through ggml_fopen (UTF-8 to UTF-16). The path is UTF-8 (the C API, and Java
+through JNI, pass UTF-8 on every platform), so inside java.exe on a code page like 1252 a
+quantized model with a name outside ASCII lands under a mangled name, and the caller does not
+find the file it asked for. Upstream's own executables do not see it: they carry an
+activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose
+narrow encoding is UTF-8 already. Same class as 0024, 0025 and 0026.
+
+Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; not measured on
+Windows with the fix before it was written: CI's Windows C++ jobs are its first run there.
+
+Drop-check: drop this patch when the output stream no longer takes the narrow fname --
+CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -8,6 +8,7 @@
+ #include <cmath>
+ #include <cstring>
+ #include <cinttypes>
++#include <filesystem>
+ #include <fstream>
+ #include <mutex>
+ #include <regex>
+@@ -1257,7 +1258,7 @@
+             fname = std::string(split_path.data());
+         }
+ 
+-        fout = std::ofstream(fname, std::ios::binary);
++        fout = std::ofstream(std::filesystem::u8path(fname), std::ios::binary);
+         fout.exceptions(std::ofstream::failbit); // fail fast on write errors
+         const size_t meta_size = gguf_get_meta_size(ctx_outs[cur_split].get());
+         // placeholder for the meta data
