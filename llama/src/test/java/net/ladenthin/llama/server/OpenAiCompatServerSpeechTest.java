@@ -220,6 +220,11 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getSeed(), is((Integer) null));
             assertThat(set.getTemperature(), is((Float) null));
             assertThat(set.getSpeakerReference() == null, is(true));
+
+            // a null "n_predict" is an absent one: the alias still counts
+            answer = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"n_predict\":null,\"max_tokens\":32}");
+            assertThat(answer.text(), answer.code, is(200));
+            assertThat(speech.options.get(1).getMaxFrames(), is(32));
         }
     }
 

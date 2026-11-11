@@ -34,7 +34,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   legacyFormat])`, `jllama_imatrix_merge()` in the C API and `Jllama.mergeImportanceMatrices` in
   `llama-ffm` add up matrices of one model computed over different texts, as `llama-imatrix` does
   with several `--in-file`. Inputs are GGUF or the legacy binary format, the output either; one
-  input converts a file between the two. Matrices of different chunk sizes or models are refused.
+  input converts a file between the two. Matrices whose chunk sizes or tensor shapes differ are
+  refused; two models of the same shape are not told apart, so the inputs have to be one model's.
 - **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
   frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what
@@ -155,7 +156,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **Windows: `--log-file` and the quantizer's output under a non-ASCII path.** Both went through a
   narrow open in llama.cpp (`fopen` in `common/log.cpp`, `std::ofstream` in `src/llama-quant.cpp`),
   which inside `java.exe` reads the path in the active code page: the file landed under a mangled
-  name or the call failed. Patches `0027` and `0028` open them as UTF-8. Of the Windows paths only
+  name or the call failed. Patches `0027` and `0028` open them as UTF-8, and `0029` a `file://`
+  media URL below a `--media-path` outside ASCII. Of the Windows paths only
   the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
 - **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
   `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
@@ -177,8 +179,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Hugging Face token is sent to `huggingface.co` hosts only (#31730); cpp-httplib 0.65.0 and
   BoringSSL 0.20261105.0. No source change here. **On Windows**, upstream now reads its secondary
   paths in the process's active code page, which inside `java.exe` is not UTF-8. Measured since:
-  the slot directory and slot files are fixed by patches `0024` and `0025`; `--log-file`, the
-  quantizer's output file and a download target still need an ASCII path there (README, TODO.md).
+  the slot directory and slot files are fixed by patches `0024` and `0025`, and `--log-file`, the
+  quantizer's output and a `file://` media URL by `0027` to `0029`; a download target still needs
+  an ASCII path there (README, TODO.md).
   The model path itself is unaffected.
 - **llama.cpp b12079** (from b12078, one upstream commit): the RPC server's COMM_INIT connects
   more than two ranks and can hand the collective to a backend communicator (CUDA with NCCL,
@@ -290,7 +293,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   written as UTF-8 there too, and a legacy importance matrix is read from such a path (patch `0026`).
   A speaker reference of `POST /tts` crosses to the engine in a temporary file created for its
   owner alone: POSIX permissions `rw-------`, on Windows an access control list naming the owner
-  (where the user name resolves to no principal, the file keeps what its directory hands down). Still ASCII-only on Windows: a download target (README).
+  (where the user name resolves to no principal, the request fails rather than writing a file its directory's rules would open to others). Still ASCII-only on Windows: a download target (README).
 - **`TextToSpeech.synthesize()` works more than once per instance.** Every call after the first failed
   with `prompt processing failed` (llama.cpp: "inconsistent sequence positions"): the Qwen3-TTS
   pipeline numbers each prompt from position 0 and leaves the KV cache to the caller, and the engine

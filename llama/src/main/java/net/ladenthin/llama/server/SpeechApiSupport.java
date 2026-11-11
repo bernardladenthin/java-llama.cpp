@@ -207,7 +207,7 @@ final class SpeechApiSupport {
                 throw new IllegalArgumentException("\"speaker_ref_b64\" is not valid base64", e);
             }
         }
-        JsonNode frames = request.path(request.has(FIELD_N_PREDICT) ? FIELD_N_PREDICT : "max_tokens");
+        JsonNode frames = request.path(request.hasNonNull(FIELD_N_PREDICT) ? FIELD_N_PREDICT : "max_tokens");
         JsonNode temperature = request.path("temperature");
         if (temperature.isNumber() && temperature.asDouble() < 0.0) {
             throw new IllegalArgumentException("Field 'temperature': must not be negative");

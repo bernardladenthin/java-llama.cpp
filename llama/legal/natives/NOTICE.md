@@ -53,10 +53,10 @@ texts are not needed here.
 | CUDA Toolkit headers / libdevice | CUDA 13.5 | cuda13 modules (yes) | LicenseRef-NVIDIA-CUDA-EULA | `(not shipped)` | - |
 | HIP headers (hip_runtime / cooperative groups) | ROCm TheRock 10.0 | rocm-linux-x86-64 + rocm-windows-x86-64 (inline header code only) | MIT | `hip` | https://github.com/ROCm/rocm-systems/blob/therock-10.0/projects/hip/LICENSE.md |
 | rocBLAS / hipBLAS / ROCm device libs | ROCm 10.0 | dynamic (rocBLAS/hipBLAS) / LLVM-exception bitcode | MIT / Apache-2.0 WITH LLVM-exception | `(not shipped)` | - |
-| oneDNN C++ API headers | installer 2026.0.2 (assumed v3.11) | sycl-linux-x86-64 + sycl-windows-x86-64 (version mapping; THIRD-PARTY-PROGRAMS kept for reference only) | Apache-2.0 | `onednn` | https://github.com/uxlfoundation/oneDNN/blob/v3.11/LICENSE |
-| oneMKL SYCL BLAS headers | Deep Learning Essentials 2026.1.4 | sycl modules (yes) | LicenseRef-Intel-Simplified-Software-License | `(not shipped)` | (text ships only in the Intel installer) |
-| DPC++ SYCL headers + dpct helpers (LLVM-derived) | DLE 2026.1.4 | sycl modules | Apache-2.0 WITH LLVM-exception | `(not shipped)` | - |
-| Level Zero headers | 1.33.1 | sycl modules (yes) | MIT | `(not shipped)` | - |
+| oneDNN C++ API headers | installer 2026.1.0 (its upstream tag is not confirmed; the license text here was taken at v3.11) | sycl-linux-x86-64 + sycl-windows-x86-64 (version mapping; THIRD-PARTY-PROGRAMS kept for reference only) | Apache-2.0 | `onednn` | https://github.com/uxlfoundation/oneDNN/blob/v3.11/LICENSE |
+| oneMKL SYCL BLAS headers | Deep Learning Essentials 2026.2.0 | sycl modules (yes) | LicenseRef-Intel-Simplified-Software-License | `(not shipped)` | (text ships only in the Intel installer) |
+| DPC++ SYCL headers + dpct helpers (LLVM-derived) | DLE 2026.2.0 | sycl modules | Apache-2.0 WITH LLVM-exception | `(not shipped)` | - |
+| Level Zero headers | 1.34.0 | sycl modules (yes) | MIT | `(not shipped)` | - |
 | Vulkan-Headers (vulkan.hpp) | SDK 1.4.350.0 (Windows); Ubuntu libvulkan-dev (Linux) | vulkan-{linux;windows}-{x86-64;aarch64} (Linux header version differs) | Apache-2.0 OR MIT | `vulkan-headers` | https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.350.0/LICENSE.md |
 | SPIRV-Headers (spirv.hpp) | SDK 1.4.350.0 / Ubuntu spirv-headers | vulkan modules | MIT-style Khronos | `spirv-headers` | https://github.com/KhronosGroup/SPIRV-Headers/blob/vulkan-sdk-1.4.350.0/LICENSE |
 | OpenCL-Headers | v2026.05.29 (opencl jars); vcpkg / Ubuntu (openvino jars) | opencl-android-aarch64 + opencl-windows-{x86-64;aarch64} + openvino modules | Apache-2.0 | `opencl-headers` | https://github.com/KhronosGroup/OpenCL-Headers/blob/v2026.05.29/LICENSE |

@@ -1011,8 +1011,10 @@ the server's `/slots` route takes it -- a name with a directory part or `..` is 
 download paths still have to be ASCII**, because llama.cpp opens them in the process's ANSI code
 page: the target of a model download (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) and,
 unmeasured, `--models-dir` in router mode. The model, mmproj, LoRA and shard files, the slot files,
-the importance matrix, the trainer's files, `--log-file` and the output of
-`LlamaQuantizer.quantize` are read and written under any path.
+the importance matrix, the trainer's files, `--log-file`, the output of
+`LlamaQuantizer.quantize` and a `file://` media URL below `--media-path` are read and written under
+any path. A path given through an environment variable (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) is read in
+the ANSI code page there; pass paths through `ModelParameters`.
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 

@@ -1848,6 +1848,27 @@ std::string base64_of(const std::vector<uint8_t> &bytes) {
     return out;
 }
 
+// And back, for a media file a test writes to disk.
+std::vector<uint8_t> base64_bytes(const std::string &text) {
+    std::vector<uint8_t> out;
+    uint32_t acc = 0;
+    int bits = 0;
+    for (const char c : text) {
+        const char *const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const char *at = c == '=' ? nullptr : std::strchr(alphabet, c);
+        if (at == nullptr) {
+            break;
+        }
+        acc = (acc << 6) | static_cast<uint32_t>(at - alphabet);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<uint8_t>((acc >> bits) & 0xFF));
+        }
+    }
+    return out;
+}
+
 TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
     // Audio input (llama.cpp discussion #13759): no audio model is in CI's set, so the Java test of
     // it skips itself everywhere. The generator's Whisper-style projector makes the random model
@@ -3859,15 +3880,43 @@ TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
     // --media-path goes through the same directory check as --slot-save-path (fs_is_directory,
     // patches/0024): a directory outside ASCII has to be accepted on every code page, and one that
     // does not exist refused (the option's own message goes to the log, the load reports the parse).
+    // And a file below it has to be read from there: a "file://" URL of a request went through a
+    // narrow std::ifstream (patches/0029), so the directory was accepted and nothing in it found.
     const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-media");
+    const std::string mmproj = write_tiny_mmproj_gguf();
     ASSERT_FALSE(model.empty());
+    ASSERT_FALSE(mmproj.empty());
     const std::filesystem::path dir =
         std::filesystem::temp_directory_path() /
         std::filesystem::u8path("jllama-media-\xC3\xA4-\xE6\x97\xA5-" + std::to_string(std::random_device{}()));
     ASSERT_TRUE(std::filesystem::create_directories(dir));
-    jllama_model *loaded = load_tiny(model, {"--media-path", utf8(dir)});
+    {
+        std::ofstream png(dir / std::filesystem::u8path("b\xC3\xA4r.png"), std::ios::binary);
+        const std::vector<uint8_t> bytes = base64_bytes(TINY_PNG_BASE64);
+        png.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        ASSERT_TRUE(png.good());
+    }
+    jllama_model *loaded = load_tiny(model, {"--media-path", utf8(dir), "--mmproj", mmproj});
     ASSERT_NE(loaded, nullptr) << jllama_last_error();
     EXPECT_FALSE(greedy_answer(loaded).empty());
+    const auto look_at = [](const std::string &url) {
+        return json{
+            {"messages",
+             json::array({{{"role", "user"},
+                           {"content", json::array({{{"type", "text"}, {"text", "What is this?"}},
+                                                    {{"type", "image_url"}, {"image_url", {{"url", url}}}}})}}})},
+            {"max_tokens", 1},
+            {"temperature", 0}}
+            .dump();
+    };
+    Owned seen;
+    ASSERT_EQ(jllama_chat_completions(loaded, look_at("file://b\xC3\xA4r.png").c_str(), &seen.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_GT(json::parse(seen.str()).at("usage").at("prompt_tokens").get<int>(), 4) << seen.str();
+    Owned missing;
+    EXPECT_EQ(jllama_chat_completions(loaded, look_at("file://missing.png").c_str(), &missing.s),
+              JLLAMA_STATUS_INVALID_REQUEST)
+        << "a file that is not in the media directory was read from somewhere";
     jllama_model_free(loaded);
 
     jllama_model *refused = load_tiny(model, {"--media-path", utf8(dir / "missing")});
@@ -3877,6 +3926,7 @@ TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
     std::filesystem::remove(model, ignored);
+    std::filesystem::remove(mmproj, ignored);
 }
 
 TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {

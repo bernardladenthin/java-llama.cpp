@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
@@ -65,8 +66,9 @@ class TextToSpeechBackendTest {
     }
 
     @Test
-    void aFileSystemWithAccessControlListsGetsOneEntryForTheOwner() {
-        FileAttribute<?>[] attributes = TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("acl"));
+    void aFileSystemWithAccessControlListsGetsOneEntryForTheOwner() throws IOException {
+        FileAttribute<?>[] attributes =
+                TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("acl"), System.getProperty("user.name"));
         assertThat(attributes.length, is(equalTo(1)));
         assertThat(attributes[0].name(), is(equalTo("acl:acl")));
         List<?> entries = (List<?>) attributes[0].value();
@@ -78,15 +80,24 @@ class TextToSpeechBackendTest {
     }
 
     @Test
-    void aFileSystemWithPosixPermissionsGetsThem() {
-        FileAttribute<?>[] attributes = TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("posix"));
+    void aUserNameThatResolvesToNoPrincipalFailsInsteadOfWritingAnOpenFile() {
+        // the file would get whatever its directory hands down, which may be everybody
+        assertThrows(
+                IOException.class,
+                () -> TextToSpeechBackend.ownerOnlyAttributes(
+                        Collections.singleton("acl"), "no-such-user-jllama-\u00e4-" + System.nanoTime()));
+    }
+
+    @Test
+    void aFileSystemWithPosixPermissionsGetsThem() throws IOException {
+        FileAttribute<?>[] attributes = TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("posix"), "x");
         assertThat(attributes.length, is(equalTo(1)));
         assertThat(attributes[0].name(), is(equalTo("posix:permissions")));
     }
 
     @Test
-    void aFileSystemWithNeitherGetsNoAttribute() {
-        assertThat(TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("basic")).length, is(equalTo(0)));
+    void aFileSystemWithNeitherGetsNoAttribute() throws IOException {
+        assertThat(TextToSpeechBackend.ownerOnlyAttributes(Collections.singleton("basic"), "x").length, is(equalTo(0)));
     }
 
     /** Records what the backend hands the engine, and reads the reference file while it exists. */

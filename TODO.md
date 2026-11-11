@@ -208,13 +208,19 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     `patches/0026` adds the last reader: a legacy imatrix file under such a path
     (`common_imatrix_load_legacy`, a narrow `std::ifstream`), `patches/0027` `--log-file`
     (`common/log.cpp`, a narrow `fopen`) and `patches/0028` the quantizer's output
-    (`src/llama-quant.cpp`, a narrow `std::ofstream`). **These three are read from the source and
+    (`src/llama-quant.cpp`, a narrow `std::ofstream`), and `patches/0029` a `file://` media URL
+    below `--media-path` (`handle_media`, found by the review of PR #612). **These four are read from the source and
     green on CI's Windows runners, whose code page and test paths were not checked against a
     code-page-1252 desktop**: one run of `jllama_test.exe --gtest_filter=CApiNonAsciiPaths.*:CApiSlotFiles.*`
     on such a machine, without and with the patches, is the measurement that is missing.
   - **Open, narrow sites in llama.cpp, a non-ASCII path fails or lands under a mangled name:** the
     download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
     `common/`). README names them. A patch, or upstream: not decided.
+  - **Open, not a file site:** a path that reaches llama.cpp through an environment variable
+    (`LLAMA_ARG_SLOT_SAVE_PATH`, `LLAMA_ARG_LOG_FILE`, ...) is what `getenv` returns, the ANSI code
+    page inside `java.exe`, and is now read as UTF-8 like the argv. `ModelParameters` passes argv,
+    so the library's own API is not affected; converting the environment values would be a patch
+    to `common/arg.cpp`'s option loop. README says to pass paths through `ModelParameters`.
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
     built-in file tools, and everything through the Java layer -- the machine had
     no Temurin 25, so the measurement went through the C API.
@@ -334,7 +340,11 @@ reduced, `0027` and `0028` new.
 - **`--tts-lang` / `--tts-voice`** (#32022, the server's defaults for `/tts` and
   `/v1/audio/speech`): `ModelParameters.setTtsLanguage` / `setTtsVoice` for `NativeServer`, and
   `OpenAiServerConfig.speechLanguage` / `speechVoice` for `OpenAiCompatServer`
-  (`OpenAiCompatServerSpeechTest`, model-free). `OpenAiServerCli` has no flag for them.
+  (`OpenAiCompatServerSpeechTest`, model-free). `OpenAiServerCli` has no flag for them, and none
+  for a speech engine at all: `OpenAiCompatServer.main` starts without a `SpeechBackend`, so the
+  speech routes of the standalone launcher answer `501`; they work for a caller that constructs
+  the server with a `TextToSpeech`. Flags for the TTS pair (`--tts-model`, `--tts-mmproj`) are the
+  missing piece.
 - **Realtime output voice and language** (`session.update` `audio.output.voice/language`, refused
   once the conversation started): `RealtimeNativeServerIntegrationTest` has the case, **written
   without the model**; its first run is this bump's Publish run.

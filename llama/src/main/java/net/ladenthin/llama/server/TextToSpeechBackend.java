@@ -143,7 +143,8 @@ final class TextToSpeechBackend implements SpeechBackend {
         Path file = Files.createTempFile(
                 REFERENCE_PREFIX,
                 REFERENCE_SUFFIX,
-                ownerOnlyAttributes(FileSystems.getDefault().supportedFileAttributeViews()));
+                ownerOnlyAttributes(
+                        FileSystems.getDefault().supportedFileAttributeViews(), System.getProperty("user.name")));
         try {
             Files.write(file, reference);
         } catch (IOException | RuntimeException e) {
@@ -156,12 +157,15 @@ final class TextToSpeechBackend implements SpeechBackend {
     /**
      * The attributes a file is created with so that only its owner can open it: POSIX permissions
      * where the file system has them, else an access control list naming the owner alone (Windows),
-     * else none.
+     * else none (a file system with neither has no way to say it).
      *
      * @param views the attribute views the file system supports
+     * @param userName the name of the user the file is for
      * @return the attributes for {@link Files#createTempFile(String, String, FileAttribute...)}
+     * @throws IOException when the file system has access control lists and the user name resolves
+     *     to no principal: the file would then get what its directory hands down
      */
-    static FileAttribute<?>[] ownerOnlyAttributes(Set<String> views) {
+    static FileAttribute<?>[] ownerOnlyAttributes(Set<String> views, String userName) throws IOException {
         if (views.contains("posix")) {
             return new FileAttribute<?>[] {
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
@@ -169,9 +173,8 @@ final class TextToSpeechBackend implements SpeechBackend {
         }
         if (views.contains("acl")) {
             try {
-                UserPrincipal owner = FileSystems.getDefault()
-                        .getUserPrincipalLookupService()
-                        .lookupPrincipalByName(System.getProperty("user.name"));
+                UserPrincipal owner =
+                        FileSystems.getDefault().getUserPrincipalLookupService().lookupPrincipalByName(userName);
                 final List<AclEntry> acl = Collections.singletonList(AclEntry.newBuilder()
                         .setType(AclEntryType.ALLOW)
                         .setPrincipal(owner)
@@ -191,8 +194,9 @@ final class TextToSpeechBackend implements SpeechBackend {
                     }
                 };
             } catch (IOException | RuntimeException e) {
-                // no principal for the user name: the file keeps the ACL its directory hands down
-                return new FileAttribute<?>[0];
+                // no principal for the user name: without one the file would get whatever its
+                // directory hands down, which in a shared temporary directory may be everybody
+                throw new IOException("cannot restrict the speaker reference file to its owner", e);
             }
         }
         return new FileAttribute<?>[0];

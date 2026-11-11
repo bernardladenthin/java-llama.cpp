@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**18 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**19 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -40,6 +40,7 @@ match a binary to this page.
 | 0026 | [`0026-common-imatrix-legacy-reads-utf8.patch`](#0026-common-imatrix-legacy-reads-utf8patch) | common: open a legacy importance matrix by its UTF-8 path on Windows | 1 | 1 |
 | 0027 | [`0027-common-log-file-reads-utf8.patch`](#0027-common-log-file-reads-utf8patch) | common: open the --log-file by its UTF-8 path on Windows | 1 | 1 |
 | 0028 | [`0028-llama-quant-output-reads-utf8.patch`](#0028-llama-quant-output-reads-utf8patch) | llama: write the quantizer's output by its UTF-8 path on Windows | 1 | 2 |
+| 0029 | [`0029-server-media-file-reads-utf8.patch`](#0029-server-media-file-reads-utf8patch) | server: open a file:// media URL by its UTF-8 path on Windows | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -823,5 +824,34 @@ Windows with the fix before it was written: CI's Windows C++ jobs are its first 
 
 Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
+without it on a Windows job.
+```
+
+## 0029-server-media-file-reads-utf8.patch
+
+**Files (1):** `tools/server/server-common.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server: open a file:// media URL by its UTF-8 path on Windows
+
+handle_media() (tools/server/server-common.cpp:1255 at b12283) reads a "file://" URL of a request
+through std::ifstream(media_path + file_path), a narrow string MSVC reads in the process's active
+code page. The media directory is UTF-8 (the C API, and Java through JNI, pass UTF-8 on every
+platform) and 0024 lets the server accept one outside ASCII, so inside java.exe on a code page
+like 1252 the load succeeded and every file below the directory was then "does not exist or cannot
+be opened" -- or, worse, was read from a sibling directory whose name is the mis-decoded one.
+Upstream's own executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a
+library loaded into java.exe cannot.
+
+The fix opens the stream on std::filesystem::u8path(), the identity on platforms whose narrow
+encoding is UTF-8 already. Same class as 0024 to 0028.
+
+Read from the source, not measured on Windows before this patch was written: the Windows jobs of
+CI are its first run there.
+
+Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
+conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green
 without it on a Windows job.
 ```
