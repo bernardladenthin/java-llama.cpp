@@ -556,4 +556,65 @@ public class OpenAiServerCliTest {
         assertThat(usage, containsString("--jinja"));
         assertThat(usage, containsString("--chat-template-kwargs"));
     }
+
+    @Test
+    public void theSpeechModelIsItsTwoFilesAndTheServersDefaults() {
+        OpenAiServerCli.Options options = OpenAiServerCli.parse(
+                "-m",
+                "m.gguf",
+                "--tts-model",
+                "tts.gguf",
+                "--tts-mmproj",
+                "tts-mmproj.gguf",
+                "--tts-lang",
+                "de",
+                "--tts-voice",
+                "female");
+        assertThat(options.getTtsModel(), is("tts.gguf"));
+        assertThat(options.getTtsMmproj(), is("tts-mmproj.gguf"));
+        assertThat(options.getTtsLang(), is("de"));
+        assertThat(options.getTtsVoice(), is("female"));
+        OpenAiServerConfig config = options.toServerConfig();
+        assertThat(config.getSpeechLanguage(), is("de"));
+        assertThat(config.getSpeechVoice(), is("female"));
+    }
+
+    @Test
+    public void withoutASpeechModelNothingOfItIsSet() {
+        OpenAiServerCli.Options options = OpenAiServerCli.parse("-m", "m.gguf");
+        assertThat(options.getTtsModel() == null, is(true));
+        assertThat(options.getTtsMmproj() == null, is(true));
+        assertThat(options.getTtsLang() == null, is(true));
+        assertThat(options.getTtsVoice() == null, is(true));
+        assertThat(options.toServerConfig().getSpeechLanguage() == null, is(true));
+        assertThat(options.toServerConfig().getSpeechVoice() == null, is(true));
+    }
+
+    @Test
+    public void aSpeechModelNeedsBothOfItsFiles() {
+        IllegalArgumentException onlyModel = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--tts-model", "t.gguf"));
+        assertThat(onlyModel.getMessage(), containsString("--tts-mmproj"));
+        IllegalArgumentException onlyProjector = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--tts-mmproj", "p.gguf"));
+        assertThat(onlyProjector.getMessage(), containsString("--tts-model"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"--tts-lang", "--tts-voice"})
+    public void aSpeechDefaultWithoutASpeechModelIsRefused(String flag) {
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", flag, "x"));
+        assertThat(e.getMessage(), containsString("need a speech model"));
+    }
+
+    @Test
+    public void theSpeechFlagsAndRoutesAreInTheUsage() {
+        String usage = OpenAiServerCli.usage();
+        assertThat(usage, containsString("--tts-model"));
+        assertThat(usage, containsString("--tts-mmproj"));
+        assertThat(usage, containsString("--tts-lang"));
+        assertThat(usage, containsString("--tts-voice"));
+        assertThat(usage, containsString("/v1/audio/speech"));
+    }
 }

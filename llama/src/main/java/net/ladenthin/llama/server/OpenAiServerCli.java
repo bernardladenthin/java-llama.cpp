@@ -91,6 +91,10 @@ public final class OpenAiServerCli {
         @Nullable Map<String, String> chatTemplateKwargs = null;
         boolean embedding = false;
         boolean reranking = false;
+        @Nullable String ttsModel = null;
+        @Nullable String ttsMmproj = null;
+        @Nullable String ttsLang = null;
+        @Nullable String ttsVoice = null;
 
         for (int i = 0; i < args.length; i++) {
             final String arg = args[i];
@@ -174,6 +178,18 @@ public final class OpenAiServerCli {
                 case "--rerank":
                     reranking = true;
                     break;
+                case "--tts-model":
+                    ttsModel = nextValue(args, ++i, arg);
+                    break;
+                case "--tts-mmproj":
+                    ttsMmproj = nextValue(args, ++i, arg);
+                    break;
+                case "--tts-lang":
+                    ttsLang = nextValue(args, ++i, arg);
+                    break;
+                case "--tts-voice":
+                    ttsVoice = nextValue(args, ++i, arg);
+                    break;
                 case "-h":
                 case "--help":
                     // Detected by isHelpRequested(); accepted here so parse() still succeeds.
@@ -185,6 +201,12 @@ public final class OpenAiServerCli {
 
         if (modelPath == null) {
             throw error("Missing required argument: -m/--model <path-to-gguf>");
+        }
+        if ((ttsModel == null) != (ttsMmproj == null)) {
+            throw error("--tts-model and --tts-mmproj name the two files of one speech model: give both");
+        }
+        if (ttsModel == null && (ttsLang != null || ttsVoice != null)) {
+            throw error("--tts-lang and --tts-voice need a speech model (--tts-model, --tts-mmproj)");
         }
         return new Options(
                 host,
@@ -207,7 +229,11 @@ public final class OpenAiServerCli {
                 jinja,
                 chatTemplateKwargs,
                 embedding,
-                reranking);
+                reranking,
+                ttsModel,
+                ttsMmproj,
+                ttsLang,
+                ttsVoice);
     }
 
     /**
@@ -250,6 +276,11 @@ public final class OpenAiServerCli {
                 "  --rpc <host:port,...>      Offload layers to llama.cpp RPC servers (repeatable)",
                 "  --embedding                Load in embedding mode (enables POST /v1/embeddings)",
                 "  --reranking                Load in reranking mode (enables POST /v1/rerank)",
+                "  --tts-model <path>         Speech model, its text GGUF (enables the speech routes;",
+                "                             loaded next to the model, with -ngl and -t)",
+                "  --tts-mmproj <path>        Speech model, its projector GGUF (required with --tts-model)",
+                "  --tts-lang <code>          Language of a speech request that names none",
+                "  --tts-voice <name>         Voice of a speech request that names none",
                 "  -h,  --help                Show this help and exit",
                 "",
                 "Endpoints:",
@@ -258,6 +289,8 @@ public final class OpenAiServerCli {
                 "  POST /v1/embeddings        (requires --embedding)",
                 "  POST /v1/rerank            (requires --reranking)",
                 "  POST /infill               (fill-in-the-middle / autocomplete)",
+                "  POST /v1/audio/speech      (requires --tts-model)",
+                "  POST /tts                  (requires --tts-model)",
                 "  GET  /v1/models",
                 "  GET  /health");
     }
@@ -409,6 +442,10 @@ public final class OpenAiServerCli {
         private final @Nullable Map<String, String> chatTemplateKwargs;
         private final boolean embedding;
         private final boolean reranking;
+        private final @Nullable String ttsModel;
+        private final @Nullable String ttsMmproj;
+        private final @Nullable String ttsLang;
+        private final @Nullable String ttsVoice;
 
         private Options(
                 String host,
@@ -431,7 +468,11 @@ public final class OpenAiServerCli {
                 boolean jinja,
                 @Nullable Map<String, String> chatTemplateKwargs,
                 boolean embedding,
-                boolean reranking) {
+                boolean reranking,
+                @Nullable String ttsModel,
+                @Nullable String ttsMmproj,
+                @Nullable String ttsLang,
+                @Nullable String ttsVoice) {
             this.host = host;
             this.port = port;
             this.modelPath = modelPath;
@@ -453,6 +494,47 @@ public final class OpenAiServerCli {
             this.chatTemplateKwargs = chatTemplateKwargs;
             this.embedding = embedding;
             this.reranking = reranking;
+            this.ttsModel = ttsModel;
+            this.ttsMmproj = ttsMmproj;
+            this.ttsLang = ttsLang;
+            this.ttsVoice = ttsVoice;
+        }
+
+        /**
+         * The text GGUF of the speech model, which the launcher loads next to the model to serve
+         * the speech routes.
+         *
+         * @return the path, or {@code null} when no speech model was named
+         */
+        public @Nullable String getTtsModel() {
+            return ttsModel;
+        }
+
+        /**
+         * The projector GGUF of the speech model.
+         *
+         * @return the path, or {@code null} when no speech model was named
+         */
+        public @Nullable String getTtsMmproj() {
+            return ttsMmproj;
+        }
+
+        /**
+         * The language of a speech request that names none.
+         *
+         * @return the language code, or {@code null} for the speech model's own default
+         */
+        public @Nullable String getTtsLang() {
+            return ttsLang;
+        }
+
+        /**
+         * The voice of a speech request that names none.
+         *
+         * @return the voice name, or {@code null} for the speech model's own default
+         */
+        public @Nullable String getTtsVoice() {
+            return ttsVoice;
         }
 
         /**
@@ -798,6 +880,12 @@ public final class OpenAiServerCli {
                     .totalSlots(totalSlots > 0 ? totalSlots : Math.max(1, parallel));
             if (apiKey != null) {
                 builder.apiKey(apiKey);
+            }
+            if (ttsLang != null) {
+                builder.speechLanguage(ttsLang);
+            }
+            if (ttsVoice != null) {
+                builder.speechVoice(ttsVoice);
             }
             final int slotCtx;
             if (slotContextSize > 0) {

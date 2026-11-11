@@ -3929,6 +3929,57 @@ TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
     std::filesystem::remove(mmproj, ignored);
 }
 
+// Sets (or, with nullptr, removes) an environment variable from UTF-8 text, the way a shell or a
+// parent process hands one to the JVM: UTF-16 on Windows, bytes elsewhere.
+void set_env_utf8(const char *name, const char *value) {
+#ifdef _WIN32
+    const std::wstring wname(name, name + std::strlen(name));
+    const std::wstring wvalue = value != nullptr ? std::filesystem::u8path(value).wstring() : std::wstring();
+    _wputenv_s(wname.c_str(), wvalue.c_str()); // an empty value removes the variable
+#else
+    if (value != nullptr) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
+TEST(CApiNonAsciiPaths, AnOptionFromTheEnvironmentIsReadAsUtf8) {
+    // llama.cpp takes every option from an environment variable too (LLAMA_ARG_SLOT_SAVE_PATH), and
+    // read it with std::getenv(): the active code page on Windows, where the handlers and the file
+    // sites behind them expect UTF-8 (patches/0030). The variable is applied before the arguments,
+    // so a path outside ASCII in it failed the load whatever the arguments said.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-env");
+    ASSERT_FALSE(model.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::u8path("jllama-env-\xC3\xA4-\xE6\x97\xA5-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+
+    set_env_utf8("LLAMA_ARG_SLOT_SAVE_PATH", utf8(dir).c_str());
+    jllama_model *loaded = load_tiny(model, {});
+    set_env_utf8("LLAMA_ARG_SLOT_SAVE_PATH", nullptr);
+    ASSERT_NE(loaded, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(loaded).empty());
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(loaded, JLLAMA_SLOT_SAVE, 0, "env.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::error_code ec;
+    EXPECT_GT(std::filesystem::file_size(dir / "env.bin", ec), 0u) << "the slot file is not in the directory named";
+    jllama_model_free(loaded);
+
+    // and the variable is gone again: the next load has no slot directory
+    jllama_model *plain = load_tiny(model, {});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    Owned refused;
+    EXPECT_EQ(jllama_slot_action(plain, JLLAMA_SLOT_SAVE, 0, "env.bin", &refused.s), JLLAMA_STATUS_ERROR);
+    jllama_model_free(plain);
+
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::remove(model, ec);
+}
+
 TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {
     // --log-file went through the C runtime's narrow fopen (patches/0027): on Windows the file was
     // created under the path as the active code page reads it. The log is the process's, so the

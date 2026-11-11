@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**19 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**20 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -41,6 +41,7 @@ match a binary to this page.
 | 0027 | [`0027-common-log-file-reads-utf8.patch`](#0027-common-log-file-reads-utf8patch) | common: open the --log-file by its UTF-8 path on Windows | 1 | 1 |
 | 0028 | [`0028-llama-quant-output-reads-utf8.patch`](#0028-llama-quant-output-reads-utf8patch) | llama: write the quantizer's output by its UTF-8 path on Windows | 1 | 2 |
 | 0029 | [`0029-server-media-file-reads-utf8.patch`](#0029-server-media-file-reads-utf8patch) | server: open a file:// media URL by its UTF-8 path on Windows | 1 | 1 |
+| 0030 | [`0030-common-arg-env-reads-utf8.patch`](#0030-common-arg-env-reads-utf8patch) | common: read an option's environment variable as UTF-8 on Windows | 1 | 2 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -854,4 +855,37 @@ CI are its first run there.
 Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
 conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green
 without it on a Windows job.
+```
+
+## 0030-common-arg-env-reads-utf8.patch
+
+**Files (1):** `common/arg.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: read an option's environment variable as UTF-8 on Windows
+
+common_arg::get_value_from_env() (common/arg.cpp:114 at b12283) takes an option's value from
+std::getenv(), which on Windows answers in the process's active code page. Every handler reads its
+value as UTF-8 -- the same handler serves the command line, which the C API and Java pass as UTF-8
+-- and since 0024 to 0029 the paths behind them are opened as UTF-8 too. So inside java.exe on a
+code page like 1252 a LLAMA_ARG_SLOT_SAVE_PATH, LLAMA_ARG_LOG_FILE or LLAMA_ARG_MODEL outside ASCII
+named another string than the same value as an argument: the directory check failed and the model
+did not load. The environment is applied before the arguments, so an argument that would have
+overridden the variable did not help: the load had already failed on it. Upstream's own
+executables do not see it: they carry an activeCodePage=UTF-8 manifest, and a library loaded into
+java.exe cannot.
+
+The fix reads the variable with _wgetenv() and converts it to UTF-8 (through
+std::filesystem::path, so no <windows.h> in this file); elsewhere it is std::getenv() as before.
+It covers every option with an environment variable, not only the paths: a value is text either
+way.
+
+Read from the source and found by the review of PR #612, not measured on Windows before this patch
+was written: the Windows jobs of CI are its first run there.
+
+Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
+on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it
+on a Windows job.
 ```

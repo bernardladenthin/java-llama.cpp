@@ -186,11 +186,16 @@ public class TestConstants {
 
     /**
      * System property holding a path to a decision model GGUF (laya, julia-1, lev, openjev, kev, LFM3 d1, ...)
-     * for {@code SystemOneIntegrationTest}, which drives llama.cpp's {@code /v1/systemone} API. Not in
-     * the CI model set, so the decision-model half of that test self-skips when this is unset or the
-     * file is missing; upstream tests with {@code ggml-org/tinylaya-for-testing-gguf}.
+     * for {@code SystemOneIntegrationTest}, which drives llama.cpp's {@code /v1/systemone} API
+     * ({@link #DEFAULT_DECISION_MODEL_PATH} when unset).
      */
     public static final String PROP_DECISION_MODEL_PATH = LlamaSystemProperties.PREFIX + ".decision.model";
+
+    /**
+     * Path used when {@link #PROP_DECISION_MODEL_PATH} is unset: the CI model (.github/models.csv),
+     * upstream's own test model for the route, a small ModernBERT of decision type {@code laya}.
+     */
+    public static final String DEFAULT_DECISION_MODEL_PATH = resolveModelPath("models/tinylaya-for-testing-Q8_0.gguf");
 
     /**
      * System property holding a path to an audio-input model GGUF (e.g. Ultravox / Qwen2.5-Omni).

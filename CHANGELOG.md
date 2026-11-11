@@ -157,7 +157,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   narrow open in llama.cpp (`fopen` in `common/log.cpp`, `std::ofstream` in `src/llama-quant.cpp`),
   which inside `java.exe` reads the path in the active code page: the file landed under a mangled
   name or the call failed. Patches `0027` and `0028` open them as UTF-8, and `0029` a `file://`
-  media URL below a `--media-path` outside ASCII. Of the Windows paths only
+  media URL below a `--media-path` outside ASCII. `0030` reads an option's environment variable
+  (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) as UTF-8 too: in the ANSI code page a path outside ASCII in it
+  failed the model load, whatever the arguments said.
+- **The standalone `OpenAiCompatServer` speaks.** `--tts-model <gguf> --tts-mmproj <gguf>` load a
+  speech model next to the model, and `POST /v1/audio/speech` and `POST /tts` are served; without
+  them both answer `501` as before. `--tts-lang` / `--tts-voice` are the defaults of a request
+  that names none. Of the Windows paths only
   the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
 - **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
   `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;

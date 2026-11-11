@@ -1567,7 +1567,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
             final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
             OpenAiServerConfig config = options.toServerConfig(
                     model.supportsVision(), model.getModelFtype(), slotContextSize(slots), slots.size());
-            try (OpenAiCompatServer server = new OpenAiCompatServer(model, config)) {
+            // the speech model, when one was named: loaded next to the model, closed after the server
+            final String ttsModel = options.getTtsModel();
+            final String ttsMmproj = options.getTtsMmproj();
+            try (TextToSpeech speech = ttsModel != null && ttsMmproj != null
+                            ? new TextToSpeech(ttsModel, ttsMmproj, options.getGpuLayers(), options.getThreads())
+                            : null;
+                    OpenAiCompatServer server = speech != null
+                            ? new OpenAiCompatServer(model, config, speech)
+                            : new OpenAiCompatServer(model, config)) {
                 server.start();
                 printReady(config, server.getPort());
                 try {

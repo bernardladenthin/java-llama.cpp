@@ -216,11 +216,11 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   - **Open, narrow sites in llama.cpp, a non-ASCII path fails or lands under a mangled name:** the
     download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
     `common/`). README names them. A patch, or upstream: not decided.
-  - **Open, not a file site:** a path that reaches llama.cpp through an environment variable
-    (`LLAMA_ARG_SLOT_SAVE_PATH`, `LLAMA_ARG_LOG_FILE`, ...) is what `getenv` returns, the ANSI code
-    page inside `java.exe`, and is now read as UTF-8 like the argv. `ModelParameters` passes argv,
-    so the library's own API is not affected; converting the environment values would be a patch
-    to `common/arg.cpp`'s option loop. README says to pass paths through `ModelParameters`.
+  - **Fixed, not a file site:** a value llama.cpp takes from an environment variable
+    (`LLAMA_ARG_SLOT_SAVE_PATH`, `LLAMA_ARG_LOG_FILE`, ...) was what `getenv` returns, the ANSI code
+    page inside `java.exe`, and failed the load before any argument could override it;
+    `patches/0030` reads it as UTF-16 and converts. Read from the source like `0026`-`0029`: the
+    same missing measurement on a code-page-1252 desktop.
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
     built-in file tools, and everything through the Java layer -- the machine had
     no Temurin 25, so the measurement went through the C API.
@@ -340,11 +340,10 @@ reduced, `0027` and `0028` new.
 - **`--tts-lang` / `--tts-voice`** (#32022, the server's defaults for `/tts` and
   `/v1/audio/speech`): `ModelParameters.setTtsLanguage` / `setTtsVoice` for `NativeServer`, and
   `OpenAiServerConfig.speechLanguage` / `speechVoice` for `OpenAiCompatServer`
-  (`OpenAiCompatServerSpeechTest`, model-free). `OpenAiServerCli` has no flag for them, and none
-  for a speech engine at all: `OpenAiCompatServer.main` starts without a `SpeechBackend`, so the
-  speech routes of the standalone launcher answer `501`; they work for a caller that constructs
-  the server with a `TextToSpeech`. Flags for the TTS pair (`--tts-model`, `--tts-mmproj`) are the
-  missing piece.
+  (`OpenAiCompatServerSpeechTest`, model-free). The standalone launcher has them as
+  `--tts-lang` / `--tts-voice` next to `--tts-model` + `--tts-mmproj`, which load a `TextToSpeech`
+  beside the model (`OpenAiServerCliTest`); that the launcher then really speaks was not run with
+  a speech model here -- no test starts `main` with one.
 - **Realtime output voice and language** (`session.update` `audio.output.voice/language`, refused
   once the conversation started): `RealtimeNativeServerIntegrationTest` has the case, **written
   without the model**; its first run is this bump's Publish run.
@@ -363,11 +362,12 @@ reduced, `0027` and `0028` new.
 - a recurrent model (`mamba`): cached prompt and slot save / erase / restore;
 - a decision model (`openjev`) for `/v1/systemone`;
 - an ultravox-style audio projector: a WAV clip in a raw prompt and in a chat message.
-Open after them: the **Java** tests of the last two (`SystemOneIntegrationTest`'s decision half,
-`AudioInputIntegrationTest`) still skip themselves everywhere, because the generator is C++. Either a
-small real model per feature joins `models.csv` (upstream's `ggml-org/tinyopenjev-for-testing-gguf`
-and `tinylaya-for-testing-gguf` are a few MB; an audio pair is ~1 GB), or the generator's files are
-written by a build step the Java tests can read. Not decided. And one finding for upstream, not
+`SystemOneIntegrationTest`'s decision half runs in CI since upstream's `tinylaya-for-testing-Q8_0.gguf`
+joined `models.csv` (feature `decision`, 97 MB, Apache-2.0, decision type `laya`; **not run locally**:
+Hugging Face was not reachable from the sandbox it was added in, so the first Publish run is its
+measurement). Open: `AudioInputIntegrationTest` still skips itself everywhere -- an audio pair is
+~1 GB, or the generator's files are written by a build step the Java tests can read. Not decided.
+And one finding for upstream, not
 filed: an ultravox projector whose stack factor does not divide 1500 aborts the process on the first
 clip ("Invalid number of output tokens", expected 187, got 188) -- whether a real ultravox GGUF
 (stack factor 8) reaches that was not checked.

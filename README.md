@@ -552,7 +552,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
-| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
+| `net.ladenthin.llama.decision.model` | `models/tinylaya-for-testing-Q8_0.gguf` | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; the default is upstream's own test model (`ggml-org/tinylaya-for-testing-gguf`, in CI's set). While the file is missing only the rejection of a non-decision model runs. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
@@ -1013,8 +1013,8 @@ page: the target of a model download (`--model-url` / `-hf` with `-m`, `LLAMA_CA
 unmeasured, `--models-dir` in router mode. The model, mmproj, LoRA and shard files, the slot files,
 the importance matrix, the trainer's files, `--log-file`, the output of
 `LlamaQuantizer.quantize` and a `file://` media URL below `--media-path` are read and written under
-any path. A path given through an environment variable (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) is read in
-the ANSI code page there; pass paths through `ModelParameters`.
+any path, and so is a value llama.cpp takes from an environment variable
+(`LLAMA_ARG_SLOT_SAVE_PATH`, ...).
 
 ### Conversation checkpoints: rewind + fork (`Session`)
 
@@ -1104,7 +1104,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
-| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
+| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`; on the command line `--tts-model <gguf> --tts-mmproj <gguf>`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
 | `POST /tts` | the same `SpeechBackend`, with llama.cpp's own fields: `input` / `prompt`, `voice`, `lang`, `speaker_ref_b64`, `n_predict`, `top_k`, `seed`, `temperature`, `response_format` `wav` / `pcm` (float) / `pcm16`; `stream` is refused |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |
@@ -1202,7 +1202,8 @@ java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`). The tuning flags mirror
+`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--rpc`, `--embedding`, `--reranking`,
+`--tts-model` + `--tts-mmproj` for a speech model, with `--tts-lang` / `--tts-voice` as its defaults). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
 works directly.
