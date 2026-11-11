@@ -75,6 +75,7 @@ public final class OpenAiServerCli {
         @Nullable String modelPath = null;
         @Nullable String modelId = null;
         @Nullable String apiKey = null;
+        @Nullable String corsOrigins = null;
         @Nullable String mmproj = null;
         @Nullable String mmprojDevice = null;
         List<RpcEndpoint> rpcServers = new ArrayList<>();
@@ -160,6 +161,9 @@ public final class OpenAiServerCli {
                 case "--api-key":
                     apiKey = nextValue(args, ++i, arg);
                     break;
+                case "--cors-origins":
+                    corsOrigins = nextValue(args, ++i, arg);
+                    break;
                 case "--mmproj":
                     mmproj = nextValue(args, ++i, arg);
                     break;
@@ -214,6 +218,7 @@ public final class OpenAiServerCli {
                 modelPath,
                 modelId,
                 apiKey,
+                corsOrigins,
                 mmproj,
                 mmprojDevice,
                 rpcServers,
@@ -271,6 +276,9 @@ public final class OpenAiServerCli {
                 "  --parallel <n>             Parallel inference slots (default: llama.cpp default)",
                 "  --model-id <name>          Model id reported by /v1/models (default: file name; no comma)",
                 "  --api-key <key>            Require an 'Authorization: Bearer <key>' header",
+                "  --cors-origins <list>      Origins browser pages may call from: '*' (default), 'localhost'",
+                "                             or a comma-separated list; anything but '*' refuses a foreign",
+                "                             Origin or Host with 403",
                 "  --mmproj <path>            Multimodal projector for vision models (enables image input)",
                 "  -mmdev, --mmproj-device <d>  Device for the multimodal projector ('none' = keep on CPU)",
                 "  --rpc <host:port,...>      Offload layers to llama.cpp RPC servers (repeatable)",
@@ -426,6 +434,7 @@ public final class OpenAiServerCli {
         private final String modelPath;
         private final @Nullable String modelId;
         private final @Nullable String apiKey;
+        private final @Nullable String corsOrigins;
         private final @Nullable String mmproj;
         private final @Nullable String mmprojDevice;
         private final List<RpcEndpoint> rpcServers;
@@ -453,6 +462,7 @@ public final class OpenAiServerCli {
                 String modelPath,
                 @Nullable String modelId,
                 @Nullable String apiKey,
+                @Nullable String corsOrigins,
                 @Nullable String mmproj,
                 @Nullable String mmprojDevice,
                 Collection<RpcEndpoint> rpcServers,
@@ -478,6 +488,7 @@ public final class OpenAiServerCli {
             this.modelPath = modelPath;
             this.modelId = modelId;
             this.apiKey = apiKey;
+            this.corsOrigins = corsOrigins;
             this.mmproj = mmproj;
             this.mmprojDevice = mmprojDevice;
             this.rpcServers = Collections.unmodifiableList(new ArrayList<>(rpcServers));
@@ -589,6 +600,15 @@ public final class OpenAiServerCli {
          */
         public @Nullable String getApiKey() {
             return apiKey;
+        }
+
+        /**
+         * The origins browser pages may call the server from ({@code --cors-origins}).
+         *
+         * @return the value, or {@code null} for the server's default ({@code "*"})
+         */
+        public @Nullable String getCorsOrigins() {
+            return corsOrigins;
         }
 
         /**
@@ -880,6 +900,9 @@ public final class OpenAiServerCli {
                     .totalSlots(totalSlots > 0 ? totalSlots : Math.max(1, parallel));
             if (apiKey != null) {
                 builder.apiKey(apiKey);
+            }
+            if (corsOrigins != null) {
+                builder.corsAllowOrigin(corsOrigins);
             }
             if (ttsLang != null) {
                 builder.speechLanguage(ttsLang);

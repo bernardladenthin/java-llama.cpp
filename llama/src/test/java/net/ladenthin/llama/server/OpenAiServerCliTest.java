@@ -336,6 +336,18 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void corsOriginsReachTheServerConfig() {
+        OpenAiServerCli.Options options =
+                OpenAiServerCli.parse("-m", "m.gguf", "--cors-origins", "http://app.example,http://b.example");
+        assertThat(options.getCorsOrigins(), is("http://app.example,http://b.example"));
+        assertThat(options.toServerConfig().getCorsAllowOrigin(), is("http://app.example,http://b.example"));
+        // without the option the server's default stays
+        OpenAiServerCli.Options plain = OpenAiServerCli.parse("-m", "m.gguf");
+        assertThat(plain.getCorsOrigins() == null, is(true));
+        assertThat(plain.toServerConfig().getCorsAllowOrigin(), is(OpenAiServerConfig.DEFAULT_CORS_ALLOW_ORIGIN));
+    }
+
+    @Test
     public void apiKeyEnablesAuthInServerConfig() {
         OpenAiServerConfig config =
                 OpenAiServerCli.parse("-m", "m.gguf", "--api-key", "secret").toServerConfig();
