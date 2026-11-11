@@ -216,8 +216,7 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
     `common/`). README names them. A patch, or upstream: not decided.
   - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
-    built-in file tools, the checkpoint half of the appendix (the test model writes no
-    checkpoints; it shares the patched sites), and everything through the Java layer -- the machine had
+    built-in file tools, and everything through the Java layer -- the machine had
     no Temurin 25, so the measurement went through the C API.
   - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
     lines over `common/{common,download,hf-cache,preset}.cpp` and
@@ -346,6 +345,22 @@ reduced, `0027` and `0028` new.
   `sycl9.dll`, `mkl_sycl_blas.6.dll`) are read off the package job's import list after the first
   run, not known before it.
 - **WebUI**: 22 more npm packages (CodeMirror / Lezer, MIT), license texts regenerated.
+
+**Generated models for paths no CI model reaches (2026-11-11)** -- four additions to
+`tiny_llama_gguf.hpp`, each with a C API test that runs in every `C++ Tests` job:
+- a sliding-window decoder (`cohere2`), whose slot file carries context checkpoints -- the
+  checkpoint half of `patches/0025`, unmeasured until now;
+- a recurrent model (`mamba`): cached prompt and slot save / erase / restore;
+- a decision model (`openjev`) for `/v1/systemone`;
+- an ultravox-style audio projector: a WAV clip in a raw prompt and in a chat message.
+Open after them: the **Java** tests of the last two (`SystemOneIntegrationTest`'s decision half,
+`AudioInputIntegrationTest`) still skip themselves everywhere, because the generator is C++. Either a
+small real model per feature joins `models.csv` (upstream's `ggml-org/tinyopenjev-for-testing-gguf`
+and `tinylaya-for-testing-gguf` are a few MB; an audio pair is ~1 GB), or the generator's files are
+written by a build step the Java tests can read. Not decided. And one finding for upstream, not
+filed: an ultravox projector whose stack factor does not divide 1500 aborts the process on the first
+clip ("Invalid number of output tokens", expected 187, got 188) -- whether a real ultravox GGUF
+(stack factor 8) reaches that was not checked.
 
 **From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
 in the request fields, their limits or the response keys.

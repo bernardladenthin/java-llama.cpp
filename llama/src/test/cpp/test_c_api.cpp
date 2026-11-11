@@ -16,6 +16,7 @@
 #include "jllama_java_enum_values.h"
 #include "rpc_support.hpp"
 #include "tiny_llama_gguf.hpp"
+#include "tts_wav.hpp"
 
 #include "build-info.h"
 #include "log.h"
@@ -1825,6 +1826,314 @@ TEST(CApiSlotFiles, ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhol
         jllama_model_free(model);
         std::filesystem::remove(dir / std::filesystem::u8path(name), ec);
     }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+// Standard base64, for the media of a multimodal prompt.
+std::string base64_of(const std::vector<uint8_t> &bytes) {
+    static const char *const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const uint32_t b0 = bytes[i];
+        const uint32_t b1 = i + 1 < bytes.size() ? bytes[i + 1] : 0;
+        const uint32_t b2 = i + 2 < bytes.size() ? bytes[i + 2] : 0;
+        const uint32_t v = (b0 << 16) | (b1 << 8) | b2;
+        out += alphabet[(v >> 18) & 63];
+        out += alphabet[(v >> 12) & 63];
+        out += i + 1 < bytes.size() ? alphabet[(v >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? alphabet[v & 63] : '=';
+    }
+    return out;
+}
+
+TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
+    // Audio input (llama.cpp discussion #13759): no audio model is in CI's set, so the Java test of
+    // it skips itself everywhere. The generator's Whisper-style projector makes the random model
+    // hear: the meta says so, and a clip in upstream's multimodal prompt object becomes embeddings
+    // between the text tokens, on the raw, streamed and OpenAI paths.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-audio";
+    spec.n_ctx_train = 512; // a clip is one 30 s chunk of 375 embeddings
+    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string mmproj = write_tiny_audio_mmproj_gguf();
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(mmproj.empty());
+    jllama_model *model = load_tiny(path, {"--mmproj", mmproj, "-c", "512"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(meta.str());
+    EXPECT_TRUE(j.at("modalities").at("audio").get<bool>()) << meta.str();
+    EXPECT_FALSE(j.at("modalities").at("vision").get<bool>()) << meta.str();
+    const std::string marker = j.value("media_marker", std::string());
+    ASSERT_FALSE(marker.empty());
+
+    // half a second of a 440 Hz tone at 16 kHz, as a WAV file
+    std::vector<float> tone(8000);
+    for (size_t i = 0; i < tone.size(); ++i) {
+        tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+    }
+    const std::string clip = base64_of(jllama_tts::pcm_to_wav16_bytes(tone, 16000));
+
+    Owned text_only;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"hear  now","n_predict":1,"temperature":0})", &text_only.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(text_only.str()).at("tokens_evaluated").get<int>();
+
+    const auto request = [&](const char *length_field) {
+        return json{
+            {"prompt", {{"prompt_string", "hear " + marker + " now"}, {"multimodal_data", json::array({clip})}}},
+            {length_field, 2},
+            {"temperature", 0}}
+            .dump();
+    };
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, request("n_predict").c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int with_clip = json::parse(completion.str()).at("tokens_evaluated").get<int>();
+    // 3000 mel frames, halved by the second convolution and stacked by four
+    EXPECT_EQ(with_clip, text_tokens + 375) << completion.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, request("n_predict").c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model, task).at("tokens_evaluated").get<int>(), with_clip);
+
+    Owned oai;
+    ASSERT_EQ(jllama_completions_oai(model, request("max_tokens").c_str(), &oai.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(oai.str()).at("usage").at("prompt_tokens").get<int>(), with_clip) << oai.str();
+
+    // a chat message with an input_audio part goes the same way
+    const json chat = {
+        {"messages",
+         json::array({{{"role", "user"},
+                       {"content", json::array({{{"type", "text"}, {"text", "What is this?"}},
+                                                {{"type", "input_audio"},
+                                                 {"input_audio", {{"data", clip}, {"format", "wav"}}}}})}}})},
+        {"max_tokens", 2},
+        {"temperature", 0}};
+    Owned answer;
+    ASSERT_EQ(jllama_chat_completions(model, chat.dump().c_str(), &answer.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(json::parse(answer.str()).at("usage").at("prompt_tokens").get<int>(), 375) << answer.str();
+
+    // an image is not something this projector reads
+    const json image = {
+        {"prompt", {{"prompt_string", "look " + marker + " now"}, {"multimodal_data", json::array({TINY_PNG_BASE64})}}},
+        {"n_predict", 1}};
+    Owned refused;
+    EXPECT_NE(jllama_completions(model, image.dump().c_str(), &refused.s), JLLAMA_STATUS_OK);
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(mmproj, ignored);
+}
+
+TEST(CApiRecurrent, ARecurrentModelAnswersTheSameFromACachedPromptAndARestoredSlot) {
+    // The second kind of memory llama.cpp has: Mamba keeps no rows per token but one state per
+    // layer, which every token overwrites. A prefix cannot be cut out of that, so the server works
+    // with checkpoints, and a slot file holds the state. A random Mamba has to answer, answer the
+    // same again (the second request restores the state the prompt left), and answer the same from
+    // a slot saved and restored.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::recurrent("jllama-c-api-mamba"));
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-mamba-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("architecture").get<std::string>(), "mamba") << meta.str();
+
+    const std::string first = greedy_answer(model, 16);
+    EXPECT_FALSE(first.empty());
+    const std::string second = greedy_answer(model, 16);
+    const std::string third = greedy_answer(model, 16);
+    EXPECT_EQ(second, third); // both over the cached prompt
+
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "mamba.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json saved_json = json::parse(saved.str());
+    EXPECT_GT(saved_json.at("n_written").get<size_t>(), 0u);
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "mamba.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json restored_json = json::parse(restored.str());
+    EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
+    EXPECT_EQ(restored_json.at("n_restored").get<int>(), saved_json.at("n_saved").get<int>()) << restored.str();
+    EXPECT_EQ(greedy_answer(model, 16), third);
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+// The request of upstream's own /v1/systemone test: one question of each type.
+const char *const SYSTEMONE_REQUEST = R"({
+  "state": "I was charged twice for my order last week and nobody has replied.",
+  "questions": {
+    "route": {"type": "choice", "instructions": "Which team should handle this?",
+              "criteria": {"billing": "payments and refunds", "shipping": null, "technical": null}},
+    "urgency": {"type": "score", "instructions": "How urgent is this?",
+                "criteria": ["can wait", "this week", "today", "right now"]},
+    "angry": {"type": "noul", "instructions": "Is the customer angry?"}
+  }
+})";
+
+double sum_of(const json &probabilities) {
+    double sum = 0.0;
+    for (const auto &entry : probabilities.items()) {
+        sum += entry.value().get<double>();
+    }
+    return sum;
+}
+
+TEST(CApiSystemOne, ADecisionModelAnswersEveryQuestionType) {
+    // /v1/systemone (jllama_systemone, LlamaModel.handleSystemOne) on a model that declares a
+    // decision type. No decision model is in CI's set, so the Java test of this path skips itself
+    // everywhere; the generator's "openjev" model is the plain decoder with the type and a
+    // "systemone" template, and its answers are read at the label tokens. A random model decides
+    // nothing: what is asserted is the shape upstream documents -- a distribution per question that
+    // sums to one, the choice its most probable option, a score inside its scale.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::decision("jllama-c-api-decision"));
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"-c", "1024"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    Owned response;
+    ASSERT_EQ(jllama_systemone(model, SYSTEMONE_REQUEST, &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json body = json::parse(response.str());
+    const json &answers = body.at("answers");
+    ASSERT_EQ(answers.size(), 3u) << response.str();
+
+    const json &route = answers.at("route");
+    EXPECT_EQ(route.at("type").get<std::string>(), "choice");
+    ASSERT_EQ(route.at("probabilities").size(), 3u) << response.str();
+    EXPECT_NEAR(sum_of(route.at("probabilities")), 1.0, 1e-4);
+    const std::string choice = route.at("choice").get<std::string>();
+    for (const auto &option : route.at("probabilities").items()) {
+        EXPECT_LE(option.value().get<double>(), route.at("probabilities").at(choice).get<double>()) << option.key();
+    }
+
+    const json &urgency = answers.at("urgency");
+    EXPECT_EQ(urgency.at("type").get<std::string>(), "score");
+    ASSERT_EQ(urgency.at("probabilities").size(), 4u) << response.str();
+    EXPECT_NEAR(sum_of(urgency.at("probabilities")), 1.0, 1e-4);
+    EXPECT_GE(urgency.at("score").get<double>(), 0.0);
+    EXPECT_LE(urgency.at("score").get<double>(), 3.0);
+    EXPECT_EQ(urgency.at("legend").at("3").get<std::string>(), "right now");
+
+    const json &angry = answers.at("angry");
+    EXPECT_EQ(angry.at("type").get<std::string>(), "noul");
+    EXPECT_GE(angry.at("noul").get<double>(), 0.0);
+    EXPECT_LE(angry.at("noul").get<double>(), 1.0);
+
+    EXPECT_GT(body.at("usage").at("input_tokens").get<int>(), 0);
+    EXPECT_EQ(body.at("usage").at("output_tokens").get<int>(), 0);
+
+    // the same question twice is the same answer: nothing is sampled
+    Owned again;
+    ASSERT_EQ(jllama_systemone(model, SYSTEMONE_REQUEST, &again.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(again.str()).at("answers").at("route").at("choice").get<std::string>(), choice);
+
+    // what the request gets wrong is the caller's fault
+    for (const char *bad :
+         {R"({"state":"x","questions":{"q":{"type":"bogus","instructions":"?"}}})",
+          R"({"questions":{"q":{"type":"noul","instructions":"?"}}})", R"({"state":"x","questions":{}})"}) {
+        SCOPED_TRACE(bad);
+        Owned refused;
+        EXPECT_EQ(jllama_systemone(model, bad, &refused.s), JLLAMA_STATUS_INVALID_REQUEST) << jllama_last_error();
+    }
+
+    // a decision model does not generate text, and says where to go instead
+    Owned completion;
+    EXPECT_NE(jllama_completions(model, R"({"prompt":"Hello","n_predict":4})", &completion.s), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("/v1/systemone"), std::string::npos) << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiSlotFiles, ASlidingWindowModelsSlotFileCarriesItsContextCheckpoints) {
+    // The checkpoint half of the slot file's appendix (patches/0025 shares its two sites with the
+    // draft half). The server keeps context checkpoints only for a model that cannot roll its memory
+    // back -- a sliding attention window, a recurrent state -- so the plain decoder never wrote one.
+    // The generator's sliding-window model does: the save appends them, under a non-ASCII file name
+    // they stay in the one file, and the restore reads them back.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::swa(16, "jllama-c-api-slot-swa"));
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-swa-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+
+    struct Lines {
+        std::mutex mutex;
+        std::vector<std::string> text;
+        int count(const std::string &needle) {
+            std::lock_guard<std::mutex> lock(mutex);
+            int n = 0;
+            for (const std::string &line : text) {
+                n += line.find(needle) != std::string::npos ? 1 : 0;
+            }
+            return n;
+        }
+    } lines;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *user) {
+                      auto *sink = static_cast<Lines *>(user);
+                      std::lock_guard<std::mutex> lock(sink->mutex);
+                      sink->text.emplace_back(text);
+                  },
+                  &lines),
+              JLLAMA_STATUS_OK);
+
+    jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    // longer than the window, so the window has moved on by the time the slot is saved
+    EXPECT_FALSE(greedy_answer(model, 48).empty());
+
+    const std::string name = "swa-\xC3\xA4-\xE6\x97\xA5.bin";
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name.c_str(), &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json saved_json = json::parse(saved.str());
+    std::vector<std::string> files;
+    for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        const auto u8 = entry.path().filename().u8string();
+        files.emplace_back(u8.begin(), u8.end());
+    }
+    ASSERT_EQ(files.size(), 1u) << "the slot file and its checkpoints must be one file";
+    EXPECT_EQ(files[0], name);
+    std::error_code ec;
+    EXPECT_EQ(std::filesystem::file_size(dir / std::filesystem::u8path(name), ec),
+              saved_json.at("n_written").get<size_t>())
+        << saved.str();
+
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, name.c_str(), &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json restored_json = json::parse(restored.str());
+    EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
+    EXPECT_FALSE(greedy_answer(model, 8).empty()); // the restored slot, checkpoints and all, still answers
+    jllama_model_free(model);
+    ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK); // flushes
+
+    // without these the test would pass on a model that wrote no checkpoint at all
+    EXPECT_EQ(lines.count("context checkpoint(s) ("), 1) << "the save appended no checkpoints";
+    EXPECT_EQ(lines.count("context checkpoint(s) from"), 1) << "the restore read no checkpoints";
+
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     std::filesystem::remove_all(dir, ignored);

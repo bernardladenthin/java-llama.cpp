@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
@@ -137,6 +138,20 @@ struct tiny_model_spec {
     // block each, plus the projection that joins a token embedding with the trunk's hidden state.
     std::string arch = "llama";
     int n_layer_nextn = 0;
+    // A sliding attention window of n_swa positions, with arch "cohere2": the llama decoder without
+    // the norm before the feed-forward and with the output tied to the token embedding, every layer
+    // attending to the last n_swa positions only. Such a model cannot roll its memory back to an
+    // earlier position, so the server keeps context checkpoints for it and appends them to a slot
+    // file -- the one path the plain decoder never takes.
+    int n_swa = 0;
+    // arch "mamba" is a recurrent model: no attention and no KV cache, a state per layer that is
+    // overwritten with every token (a convolution window and the state-space model's hidden state).
+    // The server can only checkpoint such a model, and a slot file holds its state instead of rows.
+    // A decision model, as /v1/systemone asks for: <arch>.decision.type names how the answers are
+    // read, and the model carries a "systemone" chat template that renders one question. "openjev"
+    // is the type a plain decoder can be: the answer is the distribution over the label tokens A, B,
+    // ... at the end of the prompt, one single-byte token each in this vocabulary.
+    std::string decision_type = {};
     // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
     // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
     // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
@@ -156,6 +171,32 @@ struct tiny_model_spec {
         spec.prefix = prefix;
         spec.arch = "hy_v3";
         spec.n_layer_nextn = 1;
+        return spec;
+    }
+
+    // A sliding-window decoder, for which the server writes context checkpoints.
+    static tiny_model_spec swa(int window = 16, const std::string &prefix = "jllama-swa") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "cohere2";
+        spec.n_swa = window;
+        return spec;
+    }
+
+    // A recurrent model (Mamba).
+    static tiny_model_spec recurrent(const std::string &prefix = "jllama-mamba") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "mamba";
+        return spec;
+    }
+
+    // A decision model of type "openjev" (see decision_type).
+    static tiny_model_spec decision(const std::string &prefix = "jllama-decision") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.decision_type = "openjev";
+        spec.n_ctx_train = 1024; // a question, its options and the state are one prompt
         return spec;
     }
 
@@ -180,6 +221,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_context *g = gguf_init_empty();
     const std::string a = spec.arch;
     const bool hy_v3 = spec.arch == "hy_v3";
+    const bool cohere2 = spec.arch == "cohere2";
+    const bool mamba = spec.arch == "mamba";
+    constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
+    const int ssm_inner = 2 * spec.n_embd; // the only expansion factor llama.cpp loads
     const int n_layer_all = spec.n_layer + spec.n_layer_nextn;
     gguf_set_val_str(g, "general.architecture", a.c_str());
     if (hy_v3) {
@@ -196,9 +241,27 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
+    if (mamba) {
+        gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), SSM_CONV);
+        gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), static_cast<uint32_t>(ssm_inner));
+        gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), SSM_STATE);
+        gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), SSM_DT_RANK);
+    }
+    if (cohere2) {
+        gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
+        gguf_set_val_f32(g, (a + ".attention.layer_norm_epsilon").c_str(), 1e-5f);
+        gguf_set_val_f32(g, (a + ".logit_scale").c_str(), 1.0f);
+    }
     if (spec.n_expert > 0) {
         gguf_set_val_u32(g, (a + ".expert_count").c_str(), static_cast<uint32_t>(spec.n_expert));
         gguf_set_val_u32(g, (a + ".expert_used_count").c_str(), static_cast<uint32_t>(spec.n_expert_used));
+    }
+    if (!spec.decision_type.empty()) {
+        gguf_set_val_str(g, (a + ".decision.type").c_str(), spec.decision_type.c_str());
+        // the template gets the raw values of the request; what is no text is written as JSON
+        gguf_set_val_str(g, "tokenizer.chat_template.systemone",
+                         "Question: {{ instructions | tojson }}\nState: {{ state | tojson }}\n"
+                         "Options: {{ options | tojson }}\nAnswer: ");
     }
     if (spec.pooling_type >= 0) {
         gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));
@@ -325,9 +388,11 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
 
     ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
-    add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
+    ggml_tensor *token_embd = add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {spec.n_embd}, 1.0f);
-    ggml_tensor *output = add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f);
+    // cohere2 has no output layer of its own: the token embedding is the output
+    ggml_tensor *output =
+        cohere2 ? token_embd : add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f);
     if (!sentencepiece) {
         confine_output_to_ascii(output); // token ids are bytes there; every SentencePiece piece is printable
     }
@@ -335,6 +400,24 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     for (int il = 0; il < n_layer_all; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
         gguf_context *to = shard != nullptr && il == spec.n_layer - 1 ? shard : g;
+        if (mamba) {
+            add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ssm_in.weight", {spec.n_embd, 2 * ssm_inner}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {SSM_CONV, ssm_inner}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ssm_conv1d.bias", {ssm_inner}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ssm_x.weight", {ssm_inner, SSM_DT_RANK + 2 * SSM_STATE}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ssm_dt.weight", {SSM_DT_RANK, ssm_inner}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ssm_dt.bias", {ssm_inner}, 1.0f);
+            // the state decays with exp(dt * A): a positive entry would let it grow with every token
+            ggml_tensor *ssm_a = add_random_tensor(to, ctx, rng, p + "ssm_a", {SSM_STATE, ssm_inner}, 0.1f);
+            auto *decay = (float *)ssm_a->data;
+            for (int64_t i = 0; i < ggml_nelements(ssm_a); ++i) {
+                decay[i] = -std::fabs(decay[i]) - 0.1f;
+            }
+            add_random_tensor(to, ctx, rng, p + "ssm_d", {ssm_inner}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ssm_out.weight", {ssm_inner, spec.n_embd}, 0.1f);
+            continue;
+        }
         if (hy_v3) {
             add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {spec.head_dim}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
@@ -349,7 +432,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
         add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+        if (!cohere2) {
+            add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+        }
         if (spec.n_expert > 0) {
             // the router needs spread-out logits, or every token takes the same experts
             add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, spec.n_expert}, 1.0f);
@@ -621,6 +706,82 @@ inline std::string write_tiny_mmproj_gguf(const std::string &prefix = "jllama-mm
     add("mm.0.bias", {PROJ}, -1);
     add("mm.2.weight", {PROJ, N_EMBD}, -1);
     add("mm.2.bias", {N_EMBD}, -1);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// A random ultravox-style audio projector for the model above: a Whisper encoder (two
+// convolutions over a 16-bin mel spectrogram, one transformer layer of width 16 over the 1500
+// positions of a 30 s chunk), four frames stacked into one, and the projection to the model's
+// N_EMBD. Loaded with --mmproj it lets the server hear: a clip of up to 30 s is one chunk and 375
+// embeddings, so the model needs a context that holds them. (The stack factor has to divide 1500:
+// llama.cpp counts the embeddings of a chunk before it builds the graph, and the two counts agree
+// only then -- with 8 it expected 187, computed 188 and aborted.) llama.cpp computes the mel filter
+// bank itself; like the model, what the encoder hears is noise.
+inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jllama-mmproj-audio") {
+    constexpr int A_EMBD = 16, A_HEAD = 2, A_FF = 32, A_LAYER = 1, A_MEL = 16, A_POS = 1500, STACK = 4, HIDDEN = 32;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(11);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_str(g, "clip.projector_type", "ultravox");
+    gguf_set_val_bool(g, "clip.has_audio_encoder", true);
+    gguf_set_val_u32(g, "clip.audio.num_mel_bins", A_MEL);
+    gguf_set_val_u32(g, "clip.audio.embedding_length", A_EMBD);
+    gguf_set_val_u32(g, "clip.audio.feed_forward_length", A_FF);
+    gguf_set_val_u32(g, "clip.audio.block_count", A_LAYER);
+    gguf_set_val_u32(g, "clip.audio.projection_dim", N_EMBD);
+    gguf_set_val_u32(g, "clip.audio.attention.head_count", A_HEAD);
+    gguf_set_val_f32(g, "clip.audio.attention.layer_norm_epsilon", 1e-5f);
+    gguf_set_val_u32(g, "clip.audio.projector.stack_factor", STACK);
+
+    ggml_init_params ip = {4u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: small noise (weights, biases); otherwise every element is value (norms).
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, 0.1f);
+        auto *data = (float *)t->data;
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            data[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    add("a.conv1d.1.weight", {3, A_MEL, A_EMBD}, -1);
+    add("a.conv1d.1.bias", {1, A_EMBD}, -1);
+    add("a.conv1d.2.weight", {3, A_EMBD, A_EMBD}, -1);
+    add("a.conv1d.2.bias", {1, A_EMBD}, -1);
+    add("a.position_embd.weight", {A_EMBD, A_POS}, -1);
+    for (int il = 0; il < A_LAYER; ++il) {
+        const std::string p = "a.blk." + std::to_string(il) + ".";
+        for (const char *n : {"attn_q", "attn_k", "attn_v", "attn_out"}) {
+            add(p + n + ".weight", {A_EMBD, A_EMBD}, -1);
+            if (std::string(n) != "attn_k") { // Whisper's key projection has no bias
+                add(p + n + ".bias", {A_EMBD}, -1);
+            }
+        }
+        for (const char *n : {"ln1", "ln2"}) {
+            add(p + n + ".weight", {A_EMBD}, 1.0f);
+            add(p + n + ".bias", {A_EMBD}, 0.0f);
+        }
+        add(p + "ffn_up.weight", {A_EMBD, A_FF}, -1);
+        add(p + "ffn_up.bias", {A_FF}, -1);
+        add(p + "ffn_down.weight", {A_FF, A_EMBD}, -1);
+        add(p + "ffn_down.bias", {A_EMBD}, -1);
+    }
+    add("a.post_ln.weight", {A_EMBD}, 1.0f);
+    add("a.post_ln.bias", {A_EMBD}, 0.0f);
+    add("mm.a.norm_pre.weight", {A_EMBD * STACK}, 1.0f);
+    add("mm.a.mlp.1.weight", {A_EMBD * STACK, HIDDEN}, -1);
+    add("mm.a.norm_mid.weight", {HIDDEN / 2}, 1.0f); // the gated activation halves the width
+    add("mm.a.mlp.2.weight", {HIDDEN / 2, N_EMBD}, -1);
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
     ggml_free(ctx);
