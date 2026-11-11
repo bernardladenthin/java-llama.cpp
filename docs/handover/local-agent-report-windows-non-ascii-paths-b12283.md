@@ -505,3 +505,117 @@ At the request to add a test where possible. Test code only; no library code was
   provenance files restored to it. Git ignores the directory.
 - In the scratch directory, outside the repository: Temurin 25.0.5+8 and the probe.
 - `C:\Temp\Prüfung\`: everything was deleted after each run.
+
+## Third run at c36bc557
+
+The third run used the same machine and code page: `GetACP()` 1252. The branch was pulled to
+`c36bc557` ("test_c_api: the media test compares with a text-only request; decision comment"). Its
+new commits change `LlamaLoader` (the hint `2c20af60`) and `test_c_api.cpp`; no patch and no native
+library source.
+
+Nothing that the earlier sections already measured was run again. What was built:
+
+- the llama classes, recompiled with Temurin 25.0.5+8;
+- `jllama_test` in the existing `llama\build`, rebuilt incrementally (`--target jllama_test`). The
+  patches are unchanged, so there was no reconfigure.
+
+The natives are those of the second run: the static `jllama.dll` in `src/main/natives`, built at
+`0d9468ac` with all 20 patches. The probe is the one from the second run, `NonAsciiTools.java`,
+with the paths built from `\u` escapes and the model `AMD-Llama-135m-code.Q2_K.gguf` at
+`C:\Temp\Prüfung\日本\model.gguf`.
+
+### The extraction directory outside the platform encoding: the hint (measured)
+
+`System.getProperty("sun.jnu.encoding")` is **`Cp1252`**. The run sets
+`net.ladenthin.llama.tmpdir = C:\Temp\Prüfung\tmp-日` in code before the first use of the loader.
+
+**Result: `UnsatisfiedLinkError` as before, now with the hint.** The message, verbatim; only the
+`paths=[…]` list, the `java.library.path` the loader prints, is cut:
+
+```
+java.lang.UnsatisfiedLinkError: The native library of backend 'cpu' could not be loaded for os.name=Windows, os.arch=x86_64 (GPU modules: none); reason: C:\Temp\Prüfung\tmp-?\jllama-backend-cpu-1a1c9b9f0e4-c4c200\jllama.dll: Can't find dependent libraries -- the path holds a character the platform encoding (Cp1252) cannot represent, so the JVM cannot pass it to the operating system; move the extraction directory to a path inside that encoding with -Dnet.ladenthin.llama.tmpdir=<dir> or -Djava.io.tmpdir=<dir>; paths=[...]
+```
+
+What the message contains:
+
+- the expected sentence, "the path holds a character the platform encoding (Cp1252) cannot represent";
+- the encoding by its value;
+- both properties, `-Dnet.ladenthin.llama.tmpdir=<dir>` and `-Djava.io.tmpdir=<dir>`.
+
+The extraction itself happened, as in the second run: `[jllama] extracted 'jllama.dll' to
+'C:\Temp\Prüfung\tmp-日\…\jllama.dll'`.
+
+### Counter-check: only an umlaut (measured)
+
+The run sets `net.ladenthin.llama.tmpdir = C:\Temp\Prüfung\tmp` in code. Here the only non-ASCII
+character is `ü`, which Cp1252 can encode.
+
+**Result: it loads, without the hint.**
+
+```
+[jllama] native backend 'cpu' loaded from C:\Temp\Prüfung\tmp\jllama-backend-cpu-1a1c9b9f0e4-c4c200 with no GPU module; 2 file(s) in place for ggml to load
+RESULT ok     load C:\Temp\Prüfung\日本\model.gguf
+```
+
+The run's output does not contain "platform encoding": 0 matches.
+
+### C API tests (measured)
+
+```
+jllama_test.exe --gtest_filter=CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8:CApiSystemOne.*
+```
+
+| Test | Result |
+|---|---|
+| CApiSystemOne.ADecisionModelAnswersEveryQuestionType | green (108 ms) |
+| CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 (now compared with a request without an image) | green (98 ms) |
+
+`[  PASSED  ] 2 tests.`, exit code 0.
+
+### The 8.3 short name as a way around (measured, nothing implemented)
+
+**Does a short name exist?** On `C:` (NTFS) there is one:
+
+- `GetShortPathNameW("C:\Temp\Prüfung\tmp-日\jllama-backend-cpu-1a1c9b9f0e4-c4c200")` gives
+  `C:\Temp\PRFUNG~1\TMP-~1\JLLAMA~1`;
+- `dir /x C:\Temp\Prüfung` lists `TMP-~1` for `tmp-日` (and `78E1~1` for `日本`);
+- `fsutil 8dot3name query` reports the registry state "2" (per volume, the default);
+- the per-volume query of `C:` needs administrator rights (`Fehler 5: Zugriff verweigert`), so the
+  volume flag itself is not read. That names exist on it is shown by the query above.
+
+On `X:`, where the repository lies, there is **none**: `GetShortPathNameW` returns the path of a
+long-named directory unchanged. `X:` is not a local volume, since `Get-Volume` does not find it.
+`C:\Program Files\Common Files` → `C:\PROGRA~1\COMMON~1` is shown for comparison.
+
+**Does `jllama.dll` load through it? No, in neither way tried.**
+
+1. `System.load("C:\Temp\PRFUNG~1\TMP-~1\JLLAMA~1\jllama.dll")`, an ASCII string from the command
+   line:
+
+   ```
+   java.lang.UnsatisfiedLinkError: C:\Temp\Prüfung\tmp-?\jllama-backend-cpu-1a1c9b9f0e4-c4c200\jllama.dll: Can't find dependent libraries
+   ```
+
+   The JVM reports the *long* path, with `?` for `日`. It expands the short name back to the long
+   one before it loads, so the short name never reaches `LoadLibrary`. This is inferred from the
+   message: `System.load` works on the canonical path of the file, and canonicalising on Windows
+   resolves 8.3 names. It is not verified in the JDK source.
+2. `-Dnet.ladenthin.llama.lib.path=C:\Temp\PRFUNG~1\TMP-~1\JLLAMA~1`, then a `LlamaModel` load:
+   - the loader logs `Failed to load native library: C:\Temp\PRFUNG~1\TMP-~1\JLLAMA~1\jllama.dll`;
+   - it then falls back to the jar on the classpath and loads from the default extraction directory
+     `C:\Users\<user>\AppData\Local\Temp\jllama-backend-cpu-…`;
+   - the model answers, but not from the short-name directory.
+
+**Consequence.** A loader fallback through `GetShortPathNameW` would not help through `System.load`
+on this JVM (Temurin 25.0.5), even where a short name exists, and where 8.3 names are off (as on
+`X:`) there is none to use. What remains are:
+
+- the hint, measured above;
+- a directory inside the encoding, which the user chooses or a fallback picks.
+
+### Left on disk after the third run
+
+- `C:\Temp\Prüfung\` is deleted.
+- `llama\build` was re-configured at the end. `jllama-build.txt` names all 20 patches and
+  `jllama.commit=c36bc557…`, without `-dirty`.
+- Nothing else changed: no patch, no source outside this report.
