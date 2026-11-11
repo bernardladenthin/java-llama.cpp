@@ -2023,8 +2023,8 @@ double sum_of(const json &probabilities) {
 
 TEST(CApiSystemOne, ADecisionModelAnswersEveryQuestionType) {
     // /v1/systemone (jllama_systemone, LlamaModel.handleSystemOne) on a model that declares a
-    // decision type. No decision model is in CI's set, so the Java test of this path skips itself
-    // everywhere; the generator's "openjev" model is the plain decoder with the type and a
+    // decision type. The Java test of this path runs in CI on upstream's tinylaya-for-testing
+    // (decision type "laya"); the generator's "openjev" model is the plain decoder with the type and a
     // "systemone" template, and its answers are read at the label tokens. A random model decides
     // nothing: what is asserted is the shape upstream documents -- a distribution per question that
     // sums to one, the choice its most probable option, a score inside its scale.
@@ -3918,7 +3918,19 @@ TEST(CApiNonAsciiPaths, TheMediaDirectoryIsCheckedAsUtf8) {
     Owned seen;
     ASSERT_EQ(jllama_chat_completions(loaded, look_at("file://b\xC3\xA4r.png").c_str(), &seen.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
-    EXPECT_GT(json::parse(seen.str()).at("usage").at("prompt_tokens").get<int>(), 4) << seen.str();
+    // The image has to be in the prompt, not only accepted: the same message without it is shorter by
+    // at least the projector's four patch embeddings.
+    const std::string text_only =
+        json{{"messages", json::array({{{"role", "user"},
+                                        {"content", json::array({{{"type", "text"}, {"text", "What is this?"}}})}}})},
+             {"max_tokens", 1},
+             {"temperature", 0}}
+            .dump();
+    Owned unseen;
+    ASSERT_EQ(jllama_chat_completions(loaded, text_only.c_str(), &unseen.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GE(json::parse(seen.str()).at("usage").at("prompt_tokens").get<int>(),
+              json::parse(unseen.str()).at("usage").at("prompt_tokens").get<int>() + 4)
+        << seen.str() << unseen.str();
     Owned missing;
     EXPECT_EQ(jllama_chat_completions(loaded, look_at("file://missing.png").c_str(), &missing.s),
               JLLAMA_STATUS_INVALID_REQUEST)
