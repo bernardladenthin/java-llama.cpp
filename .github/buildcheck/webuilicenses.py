@@ -29,6 +29,7 @@ import json
 import os
 import re
 import tarfile
+import tomllib
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -53,6 +54,8 @@ IMPLICIT = ("svelte", "@sveltejs/kit", "workbox-window")
 DECLARED = "(declared in package.json)"
 # The SPDX texts for a package that ships no license file: the repository's REUSE folder.
 SPDX_TEXTS = Path(__file__).resolve().parents[2] / "LICENSES"
+# Where the text file's own licenses are declared: its annotation names every license in it.
+REUSE_TOML = Path(__file__).resolve().parents[2] / "REUSE.toml"
 SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
@@ -242,6 +245,31 @@ def check_texts(out):
         if _section(_spdx_title(spdx_id)) not in text:
             problems.append(f"no {spdx_id} license text in THIRD-PARTY-LICENSES.txt for the packages "
                             "that only declare it")
+    return problems
+
+
+def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
+    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names every license packages.csv lists.
+
+    `reuse lint` cannot see this: it holds the annotation to the LICENSES folder, not to what the
+    file contains. A lockfile that brings a license the repository has not carried before
+    (llama-brand's CC-BY-NC-4.0 at b12316) would otherwise leave the file declared as less than it is.
+    """
+    target = (Path(out) / "THIRD-PARTY-LICENSES.txt").resolve()
+    reuse_toml = Path(reuse_toml)
+    declared = None
+    for annotation in tomllib.loads(reuse_toml.read_text(encoding="utf-8")).get("annotations", []):
+        paths = annotation.get("path", [])
+        for path in [paths] if isinstance(paths, str) else paths:
+            if (reuse_toml.parent / path).resolve() == target:
+                declared = set(declared_ids(annotation.get("SPDX-License-Identifier", "")))
+    if declared is None:
+        return [f"{reuse_toml.name} has no annotation for {target.name} in {Path(out).name}"]
+    used = sorted({spdx_id for row in _listed(out) for spdx_id in declared_ids(row["license"])})
+    problems = [f"{spdx_id} is a license in packages.csv, and {reuse_toml.name}'s annotation of "
+                f"{target.name} does not name it" for spdx_id in used if spdx_id not in declared]
+    problems += [f"{spdx_id} is a license in packages.csv without a text in {Path(licenses).name}/"
+                 for spdx_id in used if not (Path(licenses) / f"{spdx_id}.txt").is_file()]
     return problems
 
 

@@ -11,7 +11,7 @@
 import argparse
 import sys
 
-from buildcheck.webuilicenses import check, generate
+from buildcheck.webuilicenses import check, check_reuse, generate
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
         packages = generate(args.ui, args.out)
         print(f"{len(packages)} packages written to {args.out}")
         return 0
-    problems = check(args.ui, args.out)
+    problems = check(args.ui, args.out) + check_reuse(args.out)
     for problem in problems:
         print(f"::error::{problem}")
     if not problems:

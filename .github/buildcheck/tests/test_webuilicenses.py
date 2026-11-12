@@ -156,6 +156,85 @@ class WebuiLicensesTest(unittest.TestCase):
             self.assertEqual(webuilicenses.tarball_url({"name": "llama-brand", "version": "0.1.0",
                                                         "resolved": resolved}), archive)
 
+    def with_a_github_dependency(self):
+        """The fixture's lockfile plus a package npm resolved from a GitHub commit, imported by the UI."""
+        sha = "f05540643c1ca2a18d732ed6491c839686da9a3a"
+        lock = json.loads((self.ui / "package-lock.json").read_text())
+        lock["packages"]["node_modules/brand"] = {
+            "version": "0.1.0", "license": "CC-BY-NC-4.0",
+            "resolved": f"git+ssh://git@github.com/some-org/brand.git#{sha}"}
+        (self.ui / "package-lock.json").write_text(json.dumps(lock))
+        (self.ui / "src/lib/logo.ts").write_text("import logo from 'brand/logo.svg';\n")
+        return {
+            "https://registry.npmjs.org/alpha/-/alpha-1.0.0.tgz": tarball({"LICENSE": "alpha license"}),
+            "https://registry.npmjs.org/beta/-/beta-2.0.0.tgz": tarball({"LICENSE": "beta license"}),
+            "https://registry.npmjs.org/svelte/-/svelte-5.0.0.tgz": tarball({"LICENSE": "svelte"}),
+            # GitHub names the archive's root after the repository and the commit, not `package`
+            f"https://codeload.github.com/some-org/brand/tar.gz/{sha}": tarball(
+                {"LICENSE": "non-commercial terms", "BRAND-USAGE.md": "may ship with software",
+                 "README.md": "not a legal file", "assets/LICENSE": "nested"}, root=f"brand-{sha}"),
+        }, sha
+
+    def test_generate_reads_a_github_commit_dependency_with_its_usage_grant(self):
+        tarballs, sha = self.with_a_github_dependency()
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        text = (self.out / "THIRD-PARTY-LICENSES.txt").read_text(encoding="utf-8")
+        self.assertIn("brand@0.1.0 (CC-BY-NC-4.0): LICENSE\n", text)
+        self.assertIn("non-commercial terms", text)
+        self.assertIn("brand@0.1.0 (CC-BY-NC-4.0): BRAND-USAGE.md\n", text)
+        self.assertIn("may ship with software", text)
+        self.assertNotIn("not a legal file", text)
+        self.assertNotIn("nested", text)
+        rows = {row["package"]: row for row in webuilicenses._listed(self.out)}
+        self.assertEqual(rows["brand"]["files"], "BRAND-USAGE.md;LICENSE")
+        # the list keeps what the lockfile says, so the commit stays readable from it
+        self.assertEqual(rows["brand"]["tarball"], f"git+ssh://git@github.com/some-org/brand.git#{sha}")
+        self.assertEqual(webuilicenses.check(self.ui, self.out), [])
+
+    def test_check_reports_a_github_dependency_the_texts_were_generated_without(self):
+        self.generated()
+        self.with_a_github_dependency()
+        problems = webuilicenses.check(self.ui, self.out)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("package-lock.json is", problems[0])
+        self.assertIn("brand@0.1.0", problems[1])
+
+    def reuse_toml(self, expression):
+        path = Path(self.temp.name) / "REUSE.toml"
+        path.write_text('version = 1\n\n[[annotations]]\npath = "other.txt"\n'
+                        'SPDX-License-Identifier = "0BSD"\n\n[[annotations]]\n'
+                        'path = ["out/packages.csv", "out/THIRD-PARTY-LICENSES.txt"]\n'
+                        f'SPDX-License-Identifier = "{expression}"\n')
+        return path
+
+    def test_the_reuse_annotation_names_every_license_of_the_list(self):
+        tarballs, _ = self.with_a_github_dependency()
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        self.assertEqual(webuilicenses.check_reuse(self.out, self.reuse_toml("MIT AND ISC AND CC-BY-NC-4.0")), [])
+        problems = webuilicenses.check_reuse(self.out, self.reuse_toml("MIT AND ISC"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("CC-BY-NC-4.0 is a license in packages.csv", problems[0])
+
+    def test_a_license_of_the_list_needs_its_text_in_the_licenses_folder(self):
+        self.generated()
+        licenses = Path(self.temp.name) / "LICENSES"
+        licenses.mkdir()
+        (licenses / "MIT.txt").write_text("mit")
+        problems = webuilicenses.check_reuse(self.out, self.reuse_toml("MIT AND ISC"), licenses)
+        self.assertEqual(problems, ["ISC is a license in packages.csv without a text in LICENSES/"])
+
+    def test_a_text_file_without_a_reuse_annotation_is_reported(self):
+        self.generated()
+        path = Path(self.temp.name) / "REUSE.toml"
+        path.write_text('version = 1\n\n[[annotations]]\npath = "other.txt"\nSPDX-License-Identifier = "MIT"\n')
+        self.assertEqual(webuilicenses.check_reuse(self.out, path),
+                         ["REUSE.toml has no annotation for THIRD-PARTY-LICENSES.txt in out"])
+
+    def test_the_committed_texts_and_their_reuse_annotation_agree(self):
+        committed = webuilicenses.REUSE_TOML.parent / "llama/legal/natives/webui-npm"
+        self.assertEqual(webuilicenses.check_texts(committed), [])
+        self.assertEqual(webuilicenses.check_reuse(committed), [])
+
     def test_a_dependency_that_is_no_fixed_archive_is_refused(self):
         for resolved in ("git+ssh://git@github.com/ggml-org/llama-brand.git#master",
                          "git+ssh://git@gitlab.com/a/b.git#" + "0" * 40,
