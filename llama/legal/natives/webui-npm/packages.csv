@@ -197,6 +197,7 @@ commander,15.0.0,MIT,LICENSE,https://registry.npmjs.org/commander/-/commander-15
 khroma,2.1.0,,license,https://registry.npmjs.org/khroma/-/khroma-2.1.0.tgz
 kleur,4.1.5,MIT,license,https://registry.npmjs.org/kleur/-/kleur-4.1.5.tgz
 layout-base,1.0.2,MIT,LICENSE,https://registry.npmjs.org/layout-base/-/layout-base-1.0.2.tgz
+llama-brand,0.1.0,CC-BY-NC-4.0,BRAND-USAGE.md;LICENSE,git+ssh://git@github.com/ggml-org/llama-brand.git#f05540643c1ca2a18d732ed6491c839686da9a3a
 locate-character,3.0.0,MIT,(declared in package.json),https://registry.npmjs.org/locate-character/-/locate-character-3.0.0.tgz
 lodash-es,4.18.1,MIT,LICENSE,https://registry.npmjs.org/lodash-es/-/lodash-es-4.18.1.tgz
 longest-streak,3.1.0,MIT,license,https://registry.npmjs.org/longest-streak/-/longest-streak-3.1.0.tgz

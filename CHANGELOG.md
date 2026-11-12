@@ -158,6 +158,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12316** (from b12309, 7 upstream commits; pinned by commit): the embedded WebUI takes
+  its logo and favicons from upstream's `llama-brand` package (CC BY-NC 4.0 with a `BRAND-USAGE.md`
+  that permits redistribution with software, commercial included; both texts are in the natives
+  jars' license file, `llama-brand` is named in `NOTICE.md`), keeps downloads listed during a search
+  and reports a paused download as stopped, not failed; the OpenCL module gains a decomposed flash
+  attention for Adreno (five new kernels), the CUDA module skips empty MoE tiles. Patch `0006`
+  refreshed (upstream includes `<mutex>` itself now). The WebUI license generator reads a
+  dependency npm resolved from a GitHub commit.
 - **llama.cpp b12309** (from b12292, 17 upstream commits; pinned by commit, upstream has not tagged
   the number yet): flash attention on the CPU sums an F16 V cache in F32 (no more inf/NaN on a long
   context), a `tts` template can normalize its text itself (`tts_norm_scan`, `tts_norm_sub`), Jinja

@@ -29,12 +29,18 @@ import json
 import os
 import re
 import tarfile
+import tomllib
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # A file at the tarball root (npm packs `package/`, DefinitelyTyped the package name).
-LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors)([.-][^/]*)?$", re.I)
+# brand-usage: llama-brand's BRAND-USAGE.md, the grant that lets its CC BY-NC marks be redistributed
+# with software (the WebUI's logo and favicons since b12316); without it the license text alone
+# would read as "not in a commercial distribution".
+LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors|brand-usage)([.-][^/]*)?$", re.I)
+# A dependency npm resolved from a GitHub repository at a commit, not from the registry.
+GITHUB_COMMIT = re.compile(r"^git\+(?:ssh://git@|https://)github\.com/([^/]+)/([^/#]+?)(?:\.git)?#([0-9a-f]{40})$")
 QUOTE, NOT_QUOTE = "['\"]", "[^'\"]"
 SPECIFIER = re.compile(
     r"(?:import|export)\s" + NOT_QUOTE + r"*?from\s*" + QUOTE + "(" + NOT_QUOTE + "+)" + QUOTE
@@ -48,6 +54,8 @@ IMPLICIT = ("svelte", "@sveltejs/kit", "workbox-window")
 DECLARED = "(declared in package.json)"
 # The SPDX texts for a package that ships no license file: the repository's REUSE folder.
 SPDX_TEXTS = Path(__file__).resolve().parents[2] / "LICENSES"
+# Where the text file's own licenses are declared: its annotation names every license in it.
+REUSE_TOML = Path(__file__).resolve().parents[2] / "REUSE.toml"
 SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
@@ -120,11 +128,25 @@ def closure(lock, roots):
     return result
 
 
-def _texts(package, fetch):
-    """The package's own legal files from its registry tarball, or its declared license + author."""
+def tarball_url(package):
+    """Where the package's source archive is: its registry tarball, or GitHub's archive of the commit.
+
+    Anything else is refused: a branch name or another host is not a fixed set of bytes.
+    """
     url = package["resolved"]
-    if not url.startswith("https://registry.npmjs.org/"):
-        raise ValueError(f"{package['name']}@{package['version']}: no registry tarball ({url})")
+    if url.startswith("https://registry.npmjs.org/"):
+        return url
+    commit = GITHUB_COMMIT.match(url)
+    if commit:
+        owner, repository, sha = commit.groups()
+        return f"https://codeload.github.com/{owner}/{repository}/tar.gz/{sha}"
+    raise ValueError(f"{package['name']}@{package['version']}: neither a registry tarball nor a GitHub "
+                     f"commit ({url})")
+
+
+def _texts(package, fetch):
+    """The package's own legal files from its source archive, or its declared license + author."""
+    url = tarball_url(package)
     texts, author = [], ""
     with tarfile.open(fileobj=io.BytesIO(fetch(url)), mode="r:gz") as archive:
         for member in sorted(archive.getmembers(), key=lambda m: m.name):
@@ -223,6 +245,31 @@ def check_texts(out):
         if _section(_spdx_title(spdx_id)) not in text:
             problems.append(f"no {spdx_id} license text in THIRD-PARTY-LICENSES.txt for the packages "
                             "that only declare it")
+    return problems
+
+
+def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
+    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names every license packages.csv lists.
+
+    `reuse lint` cannot see this: it holds the annotation to the LICENSES folder, not to what the
+    file contains. A lockfile that brings a license the repository has not carried before
+    (llama-brand's CC-BY-NC-4.0 at b12316) would otherwise leave the file declared as less than it is.
+    """
+    target = (Path(out) / "THIRD-PARTY-LICENSES.txt").resolve()
+    reuse_toml = Path(reuse_toml)
+    declared = None
+    for annotation in tomllib.loads(reuse_toml.read_text(encoding="utf-8")).get("annotations", []):
+        paths = annotation.get("path", [])
+        for path in [paths] if isinstance(paths, str) else paths:
+            if (reuse_toml.parent / path).resolve() == target:
+                declared = set(declared_ids(annotation.get("SPDX-License-Identifier", "")))
+    if declared is None:
+        return [f"{reuse_toml.name} has no annotation for {target.name} in {Path(out).name}"]
+    used = sorted({spdx_id for row in _listed(out) for spdx_id in declared_ids(row["license"])})
+    problems = [f"{spdx_id} is a license in packages.csv, and {reuse_toml.name}'s annotation of "
+                f"{target.name} does not name it" for spdx_id in used if spdx_id not in declared]
+    problems += [f"{spdx_id} is a license in packages.csv without a text in {Path(licenses).name}/"
+                 for spdx_id in used if not (Path(licenses) / f"{spdx_id}.txt").is_file()]
     return problems
 
 

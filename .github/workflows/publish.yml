@@ -594,6 +594,11 @@ jobs:
           HF_UI_VERSION: ${{ steps.tag.outputs.tag }}
           LLAMA_BUILD_NUMBER: ${{ steps.tag.outputs.tag }}
         run: |
+          # The lockfile names llama-brand (the logo and favicons, b12316) as
+          # git+ssh://git@github.com/..., and the runner has no SSH key. npm takes a GitHub
+          # dependency at a commit from the https archive, and this covers the case where it
+          # falls back to git after all.
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           npm ci --ignore-scripts
           npm run build
           test -f dist/index.html

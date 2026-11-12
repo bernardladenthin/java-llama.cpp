@@ -351,6 +351,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12309 to b12316 (2026-11-12)** -- 7 upstream commits, pinned by commit; `0006` refreshed
+(one hunk less), the other 19 patches unchanged. The WebUI bundles `llama-brand`'s logo and favicons
+now (CC BY-NC 4.0 plus the grant in its `BRAND-USAGE.md`); upstream's `package.json` follows that
+repository's `master`, so the lockfile's commit, and with it the license texts, can move at any
+bump. Not measured: the OpenCL module's decomposed flash attention on an Adreno GPU (#32046) and the
+CUDA change (#32067).
+
 **From b12292 to b12309 (2026-11-11)** -- 17 upstream commits, pinned by commit (no tag yet); 20
 patches unchanged. Done with it: the quantizer records the file name of the importance matrix, not
 its path (as upstream's tool since #32000); `NativeServerCors` holds `--cors-origins` on the

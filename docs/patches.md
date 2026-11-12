@@ -24,7 +24,7 @@ match a binary to this page.
 |---|---|---|---:|---:|
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 7 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 6 |
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
@@ -114,6 +114,11 @@ instance.
 Refreshed at b12014: #31417 removed the Windows argv reconstruction from common_params_parse (the
 defect 0001 carried a fix for, dropped at the same bump), so the forwarded-argv hunk is gone:
 llama_server() calls common_params_parse for every caller, and it parses the argv it is given.
+
+Refreshed at b12316: #31467 made the download progress throttle per file and added
+`#include <mutex>` (and <unordered_map>) to server.cpp itself, so the hunk that added the include
+for g_shutdown_handler_mutex is gone. 6 hunks: the flag, the guarded handler, the two resets, and
+opts.install_signal_handlers.
 ```
 
 ## 0007-server-attach-http-frontend.patch
