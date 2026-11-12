@@ -279,7 +279,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `examples/server` needs it too.
 - **Dependencies, build plugins and CI pins, in step with the sibling repositories:** Jackson 2.23.0,
   Checker Framework 4.4.0, animal-sniffer-annotations 1.29; in the standalone `llama-atmosphere-agent`
-  JLine 4.5.0 and spotless-maven-plugin 3.11.0; Gradle 9.9.0 (`GRADLE_VERSION`) and the Android Gradle
+  JLine 4.6.0, Atmosphere 4.0.77, the ACP Java SDK 0.81.0 (no source change needed) and
+  spotless-maven-plugin 3.11.0; Gradle 9.9.1 (`GRADLE_VERSION`) and the Android Gradle
   Plugin 9.5.1 in `android-llmservice` and the consumer fixture; `anthropics/claude-code-action`
   v1.0.269; the enforced clang-format 23.1.5 (from 23.1.3, no formatting change).
   `bernardladenthin/actions` is pinned at v1.1.1: its actions and reusable workflows run

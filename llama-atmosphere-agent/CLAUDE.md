@@ -66,7 +66,7 @@ The pom depends on that starter with a `*:*` exclusion, so no Spring class reach
 only the starter jar itself does, which is where `WebConsole` reads the pages from. Drop the dependency
 and `--web` starts with nothing to open (`WebConsole.available()` says so at startup).
 
-**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.76) ships
+**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.77) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
 streams (`stream:true`), accumulates `delta.tool_calls` by `index`, executes `ToolDefinition`
 executors, re-submits the conversation (assistant `tool_calls` message **without** a `content` key,
@@ -855,7 +855,7 @@ object before `buildAsync`**, or the handshake message races the listener into a
 `request(1)` is never called — a flaky test that looked like a server bug.
 
 **`--acp` (`AcpServer`, `AcpFrontend`).** The ACP Java SDK (`com.agentclientprotocol:acp-core` +
-`acp-json-jackson2`, 0.80.0 -- binary-incompatible with 0.18.0, ported 2026-10-11: session updates go out
+`acp-json-jackson2`, 0.81.0 -- 0.80.0 was binary-incompatible with 0.18.0 and ported 2026-10-11, 0.81.0 needed no change: session updates go out
 through `sendSessionUpdate` without the discriminator argument the records write themselves,
 `session/request_permission` is a call on `context.client()`, `awaitTermination()` replaces `await()`, and
 the tool-call `name` the protocol added carries the agent's tool name) over `StdioAcpAgentTransport`. Its sync handlers run on the SDK's own pool,

@@ -30,7 +30,7 @@ env:
   # AGP 9.5.x needs Gradle >= 9.6.0 (android-llmservice/CLAUDE.md). Not seen by Dependabot: bump by hand,
   # together with the literal in verify-signing-key-gradle (a job kept identical in all four sibling
   # repositories, so it names its version itself).
-  GRADLE_VERSION: '9.9.0'
+  GRADLE_VERSION: '9.9.1'
   # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
   # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
   # including those running third-party actions. A release build (a v* tag, which is what
