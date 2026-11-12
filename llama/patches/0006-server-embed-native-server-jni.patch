@@ -20,19 +20,16 @@ Refreshed at b12014: #31417 removed the Windows argv reconstruction from common_
 defect 0001 carried a fix for, dropped at the same bump), so the forwarded-argv hunk is gone:
 llama_server() calls common_params_parse for every caller, and it parses the argv it is given.
 
+Refreshed at b12316: #31467 made the download progress throttle per file and added
+`#include <mutex>` (and <unordered_map>) to server.cpp itself, so the hunk that added the include
+for g_shutdown_handler_mutex is gone. 6 hunks: the flag, the guarded handler, the two resets, and
+opts.install_signal_handlers.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 8b1d42650..bbbf20a90 100644
+index a0640f12b..cba74c59e 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -16,6 +16,7 @@
- #include <atomic>
- #include <clocale>
- #include <exception>
-+#include <mutex>
- #include <signal.h>
- #include <thread> // for std::thread::hardware_concurrency
- 
-@@ -26,6 +27,53 @@
+@@ -28,6 +28,53 @@
  static std::function<void(int)> shutdown_handler;
  static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
  
@@ -86,7 +83,7 @@ index 8b1d42650..bbbf20a90 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -486,6 +534,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -499,6 +546,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
  
      // setup server instances manager
      std::optional<server_models_routes> models_routes;
@@ -96,7 +93,7 @@ index 8b1d42650..bbbf20a90 100644
      try {
          models_routes.emplace(params, argc, argv);
      } catch (const std::exception & e) {
-@@ -561,14 +612,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -575,14 +625,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
      }
      ctx_http.is_ready.store(true);
  
@@ -113,7 +110,7 @@ index 8b1d42650..bbbf20a90 100644
  
      try {
          models_routes->models.load_startup_models();
-@@ -629,6 +680,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -643,6 +693,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
      server_tools   tools;
  
      server_http_context ctx_http;
@@ -123,7 +120,7 @@ index 8b1d42650..bbbf20a90 100644
      if (!ctx_http.init(params)) {
          SRV_ERR("%s", "failed to initialize HTTP server\n");
          return 1;
-@@ -681,11 +735,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -695,11 +748,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
  
      SRV_INF("%s", "model loaded\n");
  
@@ -137,7 +134,7 @@ index 8b1d42650..bbbf20a90 100644
  
      if (opts.install_signal_handlers) {
          server_install_signal_handlers();
-@@ -797,7 +851,11 @@ int llama_server(int argc, char ** argv) {
+@@ -811,7 +864,11 @@ int llama_server(int argc, char ** argv) {
      llama_backend_init();
      llama_numa_init(params.numa);
  

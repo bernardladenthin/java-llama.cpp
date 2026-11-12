@@ -147,6 +147,29 @@ class WebuiLicensesTest(unittest.TestCase):
             webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
         self.assertFalse(self.out.exists())
 
+    def test_a_github_commit_dependency_is_read_from_the_archive_of_that_commit(self):
+        sha = "f05540643c1ca2a18d732ed6491c839686da9a3a"
+        archive = f"https://codeload.github.com/ggml-org/llama-brand/tar.gz/{sha}"
+        for resolved in (f"git+ssh://git@github.com/ggml-org/llama-brand.git#{sha}",
+                         f"git+https://github.com/ggml-org/llama-brand.git#{sha}",
+                         f"git+ssh://git@github.com/ggml-org/llama-brand#{sha}"):
+            self.assertEqual(webuilicenses.tarball_url({"name": "llama-brand", "version": "0.1.0",
+                                                        "resolved": resolved}), archive)
+
+    def test_a_dependency_that_is_no_fixed_archive_is_refused(self):
+        for resolved in ("git+ssh://git@github.com/ggml-org/llama-brand.git#master",
+                         "git+ssh://git@gitlab.com/a/b.git#" + "0" * 40,
+                         "https://example.org/alpha.tgz", ""):
+            with self.assertRaisesRegex(ValueError, "alpha@1.0.0"):
+                webuilicenses.tarball_url({"name": "alpha", "version": "1.0.0", "resolved": resolved})
+
+    def test_the_grant_next_to_a_license_is_a_legal_file_too(self):
+        # llama-brand: CC BY-NC by its LICENSE, redistributable with software by its BRAND-USAGE.md
+        self.assertTrue(webuilicenses.LEGAL.match("llama-brand-f055/BRAND-USAGE.md"))
+        self.assertTrue(webuilicenses.LEGAL.match("llama-brand-f055/LICENSE"))
+        self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/README.md"))
+        self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/fonts/OFL.txt"))
+
     def test_declared_ids_leave_the_operators_out(self):
         self.assertEqual(webuilicenses.declared_ids("(MPL-2.0 OR Apache-2.0)"), ["MPL-2.0", "Apache-2.0"])
         self.assertEqual(webuilicenses.declared_ids(""), [])

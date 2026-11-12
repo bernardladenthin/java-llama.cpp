@@ -34,7 +34,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # A file at the tarball root (npm packs `package/`, DefinitelyTyped the package name).
-LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors)([.-][^/]*)?$", re.I)
+# brand-usage: llama-brand's BRAND-USAGE.md, the grant that lets its CC BY-NC marks be redistributed
+# with software (the WebUI's logo and favicons since b12316); without it the license text alone
+# would read as "not in a commercial distribution".
+LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors|brand-usage)([.-][^/]*)?$", re.I)
+# A dependency npm resolved from a GitHub repository at a commit, not from the registry.
+GITHUB_COMMIT = re.compile(r"^git\+(?:ssh://git@|https://)github\.com/([^/]+)/([^/#]+?)(?:\.git)?#([0-9a-f]{40})$")
 QUOTE, NOT_QUOTE = "['\"]", "[^'\"]"
 SPECIFIER = re.compile(
     r"(?:import|export)\s" + NOT_QUOTE + r"*?from\s*" + QUOTE + "(" + NOT_QUOTE + "+)" + QUOTE
@@ -120,11 +125,25 @@ def closure(lock, roots):
     return result
 
 
-def _texts(package, fetch):
-    """The package's own legal files from its registry tarball, or its declared license + author."""
+def tarball_url(package):
+    """Where the package's source archive is: its registry tarball, or GitHub's archive of the commit.
+
+    Anything else is refused: a branch name or another host is not a fixed set of bytes.
+    """
     url = package["resolved"]
-    if not url.startswith("https://registry.npmjs.org/"):
-        raise ValueError(f"{package['name']}@{package['version']}: no registry tarball ({url})")
+    if url.startswith("https://registry.npmjs.org/"):
+        return url
+    commit = GITHUB_COMMIT.match(url)
+    if commit:
+        owner, repository, sha = commit.groups()
+        return f"https://codeload.github.com/{owner}/{repository}/tar.gz/{sha}"
+    raise ValueError(f"{package['name']}@{package['version']}: neither a registry tarball nor a GitHub "
+                     f"commit ({url})")
+
+
+def _texts(package, fetch):
+    """The package's own legal files from its source archive, or its declared license + author."""
+    url = tarball_url(package)
     texts, author = [], ""
     with tarfile.open(fileobj=io.BytesIO(fetch(url)), mode="r:gz") as archive:
         for member in sorted(archive.getmembers(), key=lambda m: m.name):

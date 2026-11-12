@@ -328,7 +328,9 @@ SPDX-License-Identifier = "Apache-2.0"
 path = "llama/legal/natives/webui-npm/THIRD-PARTY-LICENSES.txt"
 precedence = "override"
 SPDX-FileCopyrightText = "The authors of the npm packages it names"
-SPDX-License-Identifier = "MIT AND ISC AND BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND Unlicense AND MPL-2.0"
+# CC-BY-NC-4.0: llama-brand's LICENSE and BRAND-USAGE.md (the WebUI's logo and favicons, b12316); the
+# second is the grant that permits redistributing the marks with software.
+SPDX-License-Identifier = "MIT AND ISC AND BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND Unlicense AND MPL-2.0 AND CC-BY-NC-4.0"
 
 # Generated or written here: provenance notes, the package list and the lockfile digest.
 [[annotations]]
