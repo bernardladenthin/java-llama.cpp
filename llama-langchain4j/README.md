@@ -120,10 +120,11 @@ jina-reranker models the core test jobs already download) — the
 - **`response_format` (JSON mode).** `ResponseFormat.JSON` maps to the native
   `response_format={"type":"json_object"}`; a `ResponseFormat` carrying a `JsonSchema` maps to the
   native `json_schema` grammar constraint (structured output). Works on both adapters.
-- **Multimodal user input.** `ImageContent` (base64 or URL) and `AudioContent` (inline wav/mp3) map to
+- **Multimodal user input.** `ImageContent` (base64 or URL), `VideoContent` (base64 with its MIME type, or
+  a URL; decoded by the machine's `ffmpeg`, see the core README) and `AudioContent` (inline wav/mp3) map to
   the OAI array-form `content` parts routed through the compiled-in mtmd pipeline — the model must be
   loaded with a matching `--mmproj` (see the core README's multimodal section). Unsupported media
-  (URL-only audio, non-wav/mp3 audio, video/PDF) fails loud rather than being silently dropped.
+  (URL-only audio, non-wav/mp3 audio, PDF) fails loud rather than being silently dropped.
 - **Sampling parameters:** `temperature`, `topP`, `topK`, `maxOutputTokens`, `frequencyPenalty`,
   `presencePenalty`, `stopSequences`.
 

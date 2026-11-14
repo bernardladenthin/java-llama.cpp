@@ -22,6 +22,7 @@ path = [
     "docs/history/REFACTORING.md",
     "llama/src/test/resources/images/README.md",
     "llama/src/test/resources/audios/README.md",
+    "llama/src/test/resources/videos/README.md",
     ".claude/commands/find-cpp-duplication.md",
     ".claude/skills/java-tdd-guide/SKILL.pointer.md",
     "llama-langchain4j/README.md",
@@ -115,6 +116,13 @@ SPDX-License-Identifier = "MIT"
 # project (see llama/src/test/resources/audios/README.md).
 [[annotations]]
 path = "llama/src/test/resources/audios/sample.wav"
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+# Test video clip: ffmpeg's own test picture ("testsrc"), rendered and encoded for this project
+# (see llama/src/test/resources/videos/README.md).
+[[annotations]]
+path = "llama/src/test/resources/videos/sample.mp4"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 

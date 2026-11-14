@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12316](https://img.shields.io/badge/llama.cpp-%23b12316-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12316)  
+[![llama.cpp b12387](https://img.shields.io/badge/llama.cpp-%23b12387-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12387)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -726,22 +726,45 @@ So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only
 actually contradict the other is dropped. If you need a device after disabling offload, call
 `setMmprojDevice` last.
 
-**Video input — decode settings only, so far.** `mtmd` has carried a video path since llama.cpp
-**b9562** (#24269); **b10647** (#24318) added the `--video-*` CLI flags and the
-`mtmd_helper_init_opt` plumbing that surfaces them. It is compiled into the shipped desktop library
-(`MTMD_VIDEO` is on by default and forced off when `LLAMA_SUBPROCESS` is off, which is upstream's
-default on Android and iOS). Its decode settings are exposed
-as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
-one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
-which an application server, an Android app or a JAR-only container frequently does not have them on —
-naming the directory is then the only way for video to work at all.
+**Video input** is one more content part. llama.cpp samples the frames of a video and gives them to
+the vision projector as images, with a timestamp between them, so every model loaded with a vision
+`--mmproj` takes video (`LlamaModel.supportsVideo()`):
 
-What is **not** here yet is the content part: upstream's wire type for a video is
-`{"type":"input_video","input_video":{"data":"..."}}` (OpenAI's `video_url` is accepted as an alias; as
-for `image_url`, the value may be raw base64, a `data:video/...;base64,` URI or an HTTP(S) URL),
-gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
-factory emitting that shape, so these knobs currently configure a path this API cannot yet feed
-directly. Tracked in `TODO.md`.
+```java
+ChatMessage message = ChatMessage.userMultimodal(
+        ContentPart.text("What happens in this video?"),
+        ContentPart.videoFile(Paths.get("clip.mp4")));   // or videoBytes(bytes, "video/mp4"), videoUrl(url)
+
+try (LlamaModel model = new LlamaModel(modelParams)) {
+    System.out.println(model.supportsVideo()); // true
+    System.out.println(model.chatCompleteText(InferenceParameters.empty()
+            .withMessages(Collections.singletonList(message))
+            .withNPredict(64)));
+}
+```
+
+- **It needs `ffmpeg` and `ffprobe` on the machine.** This library decodes nothing itself: llama.cpp runs
+  the two programs as child processes and reads the frames from them. They are found on `PATH`, or in
+  the directory `setVideoFfmpegDir(String)` names -- which an application server or a container image
+  often needs. Without them a request with a video is refused as invalid (`InvalidRequestException`,
+  `400` on the HTTP servers) and the model keeps answering other requests.
+- **On Android, and wherever no `ffmpeg` can be run, the frames come from a `VideoDecoder`** given to
+  the model: `new LlamaModel(parameters, null, decoder)`. The interface (`callback.VideoDecoder` /
+  `VideoStream`: open the bytes, describe the video, deliver frame after frame as RGB) is the door
+  for a media library that is there anyway -- this project implements no codec. The `llama-android`
+  AAR brings the one for Android, `MediaRetrieverVideoDecoder`, over the platform's
+  `MediaMetadataRetriever`; see [Importing in Android](#importing-in-android). A model loaded with a
+  decoder uses it instead of ffmpeg on every platform.
+- **Every container and codec that `ffmpeg` reads** works; the MIME type of `videoBytes` is not what
+  decides it. `videoUrl` takes a `data:video/...;base64,` URI, an `http(s)` URL of a public address
+  (`allowPrivateMediaUrls()` for others) or a `file://` URL below `--media-path`.
+- **The frame rate decides the cost.** `setVideoFps(float)` (default 4 per second) is how many frames
+  per second reach the model, each as many prompt tokens as an image of its size;
+  `setVideoTimestampInterval(long)` is how often a `[1m05.00s]` timestamp is put between them. A minute
+  at the default is 240 images -- size the context for it or lower the rate.
+- The part is sent as `{"type":"video_url","video_url":{"url":...}}`; llama.cpp reads its own
+  `input_video` (`{"data": ...}`) the same way. `OpenAiCompatServer` forwards both and reports
+  `modalities.video` in `GET /props`; the LangChain4j adapter maps `VideoContent`.
 
 **Audio input** works identically — load an audio-capable model (Ultravox, Qwen2.5-Omni, …) with its
 audio `--mmproj` and add a `ContentPart.audioFile(...)` (or `inputAudio(bytes, "wav"|"mp3")`) part. It
@@ -765,7 +788,7 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 }
 ```
 
-`LlamaModel.supportsVision()` / `supportsAudio()` report which modalities the loaded projector enables.
+`LlamaModel.supportsVision()` / `supportsAudio()` / `supportsVideo()` report which modalities the loaded projector enables.
 `getModelMeta()` adds what llama.cpp derives from it: `supportsChat()` (false only for a
 text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
 `POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`), and from the chat
@@ -1253,7 +1276,8 @@ heartbeats so a long prompt prefill does not trip the client's stream-inactivity
 tool calling depends on the model's own tool-calling quality. Pass `--api-key` (or `OpenAiServerConfig.builder().apiKey(...)`) to require the key, sent as
 `Authorization: Bearer <key>` (or as `x-api-key`, the header Anthropic clients send); the server binds to
 `127.0.0.1` by default. Browser pages of every origin may call it (`corsAllowOrigin` `*`); name the
-origins with `--cors-origins` / `corsAllowOrigin(...)` (`localhost`, or a comma-separated list such as
+origins with `--cors-origins` / `corsAllowOrigin(...)` (`localhost` for the server's own origin only --
+a page on another port of the machine is refused, name it in a list --, or a comma-separated list such as
 `http://localhost:5173,https://app.example`) and the server refuses a request from anywhere else with
 `403` -- a foreign `Origin`, and on a loopback connection a `Host` header that names another machine
 (DNS rebinding) -- by the rules of llama.cpp's own `--cors-origins`. A client that is no browser sends
@@ -1822,6 +1846,27 @@ Compose UI, with a 13-language flag picker and private local save/load — lives
 It builds with plain Gradle/AGP (no Android Studio required), produces a Play-shaped signed
 `.aab`, and is validated in CI by a real on-device emulator UI test. See its README for the
 build, signing/Play, and testing walkthrough.
+
+**Video input on Android.** An app cannot run the `ffmpeg` program llama.cpp decodes video with, so
+the AAR carries `net.ladenthin.llama.android.MediaRetrieverVideoDecoder`: it asks the platform's
+`MediaMetadataRetriever` for the frames (the codecs of the device, rotation applied) and hands them to
+the model. Load a vision model with it and send a video like an image:
+
+```kotlin
+val model = LlamaModel(
+    ModelParameters().setModel(modelPath).setMmproj(mmprojPath),
+    null,                              // no load-progress callback
+    MediaRetrieverVideoDecoder(),
+)
+val message = ChatMessage.userMultimodal(
+    ContentPart.text("What happens in this video?"),
+    ContentPart.videoBytes(bytes, "video/mp4"),
+)
+```
+
+llama.cpp samples 4 frames per second (`setVideoFps`), each as costly as an image, and the whole file
+is held in memory: this is for short clips. The example app [`android-llmservice/`](android-llmservice/README.md)
+does exactly this behind its attach button.
 
 ### Option 2 (advanced): build from source inside your app
 

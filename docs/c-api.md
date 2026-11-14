@@ -35,6 +35,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
 | `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |
 | `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`, which loads the tokenizer only: such a model answers the meta, tokenize and detokenize calls and refuses every other with `JLLAMA_STATUS_ERROR`), with an optional load-progress callback |
+| `jllama_model_load_video()` | `jllama_model_load()` with a `jllama_video_decoder` of the application: the videos of the model's requests are then decoded by its functions (`open`, `read_frame`, `close`; optional `start`, `read_audio`, `release`) and not by the `ffmpeg` program -- for hosts that cannot run one. Called on a thread of the library, not the caller's |
 | `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, the `capabilities` `chat` / `audio_gen` / `audio_stream` llama.cpp derives from the loaded projector, the `media_marker` a raw multimodal prompt places, chat template, the GGUF key/value map) |
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
 | `jllama_chat_completions_stream_request()` / `_receive()` / `jllama_task_release()` | a streamed one: a task id, then one `{"data": <chunk>, "stop": <bool>}` envelope per call until `stop` |

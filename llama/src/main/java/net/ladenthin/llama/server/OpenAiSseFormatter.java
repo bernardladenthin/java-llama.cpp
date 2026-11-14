@@ -159,9 +159,8 @@ final class OpenAiSseFormatter {
      *
      * <p>All three modality keys upstream emits are present, so a client that gates on
      * {@code modalities.video} sees an explicit {@code false} rather than a missing key.
-     * {@code audio} and {@code video} are hard-coded {@code false} because this server exposes no
-     * configuration for them &mdash; {@link OpenAiServerConfig} carries only
-     * {@code supportsVision}.</p>
+     * {@code audio} is hard-coded {@code false} because this server exposes no configuration for
+     * it; this overload reports no video either.</p>
      *
      * @param modelId the served model id
      * @param nCtx the advertised context length
@@ -185,6 +184,22 @@ final class OpenAiSseFormatter {
      * @return the props object serialized as JSON
      */
     static String propsJson(String modelId, int nCtx, boolean vision, int totalSlots, java.util.List<String> voices) {
+        return propsJson(modelId, nCtx, vision, false, totalSlots, voices);
+    }
+
+    /**
+     * {@link #propsJson(String, int, boolean, int, java.util.List)} with the model's video input.
+     *
+     * @param modelId the served model id
+     * @param nCtx the advertised context length
+     * @param vision whether image input is supported
+     * @param video whether video input is supported
+     * @param totalSlots the number of inference slots
+     * @param voices the voice names a speech request can name; empty for none
+     * @return the props object serialized as JSON
+     */
+    static String propsJson(
+            String modelId, int nCtx, boolean vision, boolean video, int totalSlots, java.util.List<String> voices) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         if (!voices.isEmpty()) {
             com.fasterxml.jackson.databind.node.ArrayNode names = root.putArray("voices");
@@ -201,7 +216,7 @@ final class OpenAiSseFormatter {
         ObjectNode modalities = root.putObject("modalities");
         modalities.put("vision", vision);
         modalities.put("audio", false);
-        modalities.put("video", false);
+        modalities.put("video", video);
         return root.toString();
     }
 }

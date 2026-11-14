@@ -25,6 +25,8 @@
 #include "jllama_context.hpp"
 #include "log.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -43,15 +45,32 @@ struct jllama_interrupted : std::runtime_error {
 namespace jllama::engine {
 
 /**
+ * A video decoder of the host, the engine's form of jllama_video_decoder (jllama_api.h, where the
+ * contract of every function is written down). `open`, `read_frame` and `close` are required.
+ */
+struct video_decoder {
+    void *(*open)(void *user_data, const char *path, const unsigned char *data, size_t size, uint32_t *width,
+                  uint32_t *height, float *fps, int32_t *n_frames, float *duration) = nullptr;
+    bool (*start)(void *state, uint32_t width, uint32_t height, float fps, bool *fps_picked) = nullptr;
+    bool (*read_frame)(void *state, unsigned char *rgb, uint32_t width, uint32_t height) = nullptr;
+    const float *(*read_audio)(void *state, int sample_rate, size_t *n_samples) = nullptr;
+    void (*close)(void *state) = nullptr;
+    void (*release)(void *user_data) = nullptr;
+    void *user_data = nullptr;
+};
+
+/**
  * Loads a model from a llama-server argv (argv[0] is the program name, as common_params_parse
  * expects; `--vocab-only` is this library's own flag and is stripped first). `progress` is
  * llama.cpp's load-progress callback (return false to abort the load) or null. Throws
  * std::invalid_argument for an unreachable `--rpc` server, std::runtime_error for everything else
  * (argv the server parser refuses, a model that does not load). The returned handle is owned by
- * the caller and released with free().
+ * the caller and released with free(). `decoder`, when given, is copied and decodes the videos of
+ * the model's requests instead of ffmpeg; its release callback runs exactly once, when the handle
+ * is freed or when this function throws.
  */
 [[nodiscard]] jllama_context *load(const std::vector<std::string> &argv, llama_progress_callback progress,
-                                   void *progress_user_data);
+                                   void *progress_user_data, const video_decoder *decoder = nullptr);
 
 /**
  * Tears a handle down: marks it closing so every parked reader unwinds, waits until no call is in

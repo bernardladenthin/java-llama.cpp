@@ -224,6 +224,12 @@ public class TestConstants {
     public static final String DEFAULT_AUDIO_INPUT_PATH = resolveModelPath("src/test/resources/audios/sample.wav");
 
     /**
+     * The video clip {@code VideoInputIntegrationTest} sends: two seconds of ffmpeg's test picture
+     * at four frames per second, committed under {@code src/test/resources/videos/}.
+     */
+    public static final String DEFAULT_VIDEO_INPUT_PATH = resolveModelPath("src/test/resources/videos/sample.mp4");
+
+    /**
      * System property holding a path to the Qwen3-TTS backbone GGUF used by
      * {@code TtsIntegrationTest} ({@link #DEFAULT_TTS_MODEL_PATH} when unset). The test self-skips when
      * this or the mmproj file is missing.

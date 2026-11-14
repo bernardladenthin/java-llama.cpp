@@ -41,6 +41,8 @@ from pathlib import Path
 LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors|brand-usage)([.-][^/]*)?$", re.I)
 # A dependency npm resolved from a GitHub repository at a commit, not from the registry.
 GITHUB_COMMIT = re.compile(r"^git\+(?:ssh://git@|https://)github\.com/([^/]+)/([^/#]+?)(?:\.git)?#([0-9a-f]{40})$")
+# The same dependency as npm writes it since b12387 (upstream #32112): GitHub's archive of the commit.
+GITHUB_ARCHIVE = re.compile(r"^https://codeload\.github\.com/([^/]+)/([^/]+)/tar\.gz/([0-9a-f]{40})$")
 QUOTE, NOT_QUOTE = "['\"]", "[^'\"]"
 SPECIFIER = re.compile(
     r"(?:import|export)\s" + NOT_QUOTE + r"*?from\s*" + QUOTE + "(" + NOT_QUOTE + "+)" + QUOTE
@@ -136,7 +138,7 @@ def tarball_url(package):
     url = package["resolved"]
     if url.startswith("https://registry.npmjs.org/"):
         return url
-    commit = GITHUB_COMMIT.match(url)
+    commit = GITHUB_COMMIT.match(url) or GITHUB_ARCHIVE.match(url)
     if commit:
         owner, repository, sha = commit.groups()
         return f"https://codeload.github.com/{owner}/{repository}/tar.gz/{sha}"

@@ -229,7 +229,7 @@ class AndroidTest(Fixture):
             f.write("<project><dependencies><dependency><groupId>g</groupId><artifactId>j</artifactId>"
                     "<version>${j.version}</version></dependency></dependencies></project>")
 
-    def release(self, cpu_jni_align=16384, opencl_classes=None, extra_dep="", opencl_cpu_version="1.2.0"):
+    def release(self, cpu_jni_align=16384, opencl_classes=None, extra_dep="", opencl_cpu_version="1.2.0", cpu_classes=None):
         self.release_natives()
         core = {"net/ladenthin/llama/A.class": b"A", "module-info.class": b"M"}
         self.write("llama-1.2.0.jar", zipped(core))
@@ -244,7 +244,10 @@ class AndroidTest(Fixture):
                         jni[f"jni/{abi}/{n[len(prefix):]}"] = jar.read(n)
         jni["jni/x86_64/libggml-base.so"] = elf(cpu_jni_align)
         self.write("llama-android-1.2.0.aar", zipped({"AndroidManifest.xml": manifest, "proguard.txt": "-keep x",
-                                                      "classes.jar": zipped({"net/ladenthin/llama/A.class": b"A"}), **jni}))
+                                                      "classes.jar": zipped(cpu_classes or {
+                                                          "net/ladenthin/llama/A.class": b"A",
+                                                          "net/ladenthin/llama/android/MediaRetrieverVideoDecoder.class": b"D",
+                                                      }), **jni}))
         self.write("llama-android-opencl-1.2.0.aar", zipped({
             "AndroidManifest.xml": manifest, "proguard.txt": "-keep x",
             "classes.jar": zipped(opencl_classes or {"META-INF/MANIFEST.MF": "x"}),
@@ -259,6 +262,19 @@ class AndroidTest(Fixture):
         self.release()
         result = postrelease.check_android(self.assets, "1.2.0", self.root)
         self.assertEqual(result.problems, [])
+
+    def test_the_cpu_aar_carries_the_core_classes_and_its_own_package(self):
+        # without the decoder class: the AAR's own class is missing
+        self.release(cpu_classes={"net/ladenthin/llama/A.class": b"A"})
+        problems = postrelease.check_android(self.assets, "1.2.0", self.root).problems
+        self.assertIn("llama-android: classes.jar lacks MediaRetrieverVideoDecoder, the video decoder over the platform",
+                      problems)
+        # a class outside the AAR's package that the classes jar does not have
+        self.release(cpu_classes={"net/ladenthin/llama/A.class": b"A", "net/ladenthin/llama/Extra.class": b"E",
+                                  "net/ladenthin/llama/android/MediaRetrieverVideoDecoder.class": b"D"})
+        problems = postrelease.check_android(self.assets, "1.2.0", self.root).problems
+        self.assertTrue(any(p.startswith("llama-android: classes.jar is not the classes jar minus module-info")
+                            for p in problems), problems)
 
     def test_alignment_jni_bytes_opencl_classes_and_the_poms(self):
         checker = ("<dependency><groupId>org.checkerframework</groupId><artifactId>checker-qual</artifactId>"

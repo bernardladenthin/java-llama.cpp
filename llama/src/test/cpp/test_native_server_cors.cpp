@@ -148,15 +148,21 @@ TEST(NativeServerCors, AnAllowedOriginListRefusesAForeignHostAndOrigin) {
     EXPECT_EQ(status_of(router.get({{"Origin", "http://127.0.0.1:" + port}})), 200);
 }
 
-TEST(NativeServerCors, TheValueLocalhostServesLocalOriginsOnly) {
+TEST(NativeServerCors, TheValueLocalhostServesTheSameOriginOnly) {
     cors_router router({"--cors-origins", "localhost"});
     ASSERT_TRUE(router.wait_until_listening());
     const std::string port = std::to_string(router.port());
 
-    const httplib::Result local = router.get({{"Origin", "http://localhost:5173"}});
-    ASSERT_TRUE(local);
-    EXPECT_EQ(local->status, 200);
-    EXPECT_EQ(local->get_header_value("Access-Control-Allow-Origin"), "http://localhost:5173");
+    // b12387: another port of this machine can be an application nobody trusts, so the value serves the
+    // server's own origin only (until then every origin on localhost, 127.0.0.1 and ::1, reflected)
+    const httplib::Result other_port = router.get({{"Origin", "http://localhost:5173"}});
+    ASSERT_TRUE(other_port);
+    EXPECT_EQ(other_port->status, 403);
+    const httplib::Result own = router.get({{"Origin", "http://127.0.0.1:" + port}});
+    ASSERT_TRUE(own);
+    EXPECT_EQ(own->status, 200);
+    EXPECT_EQ(own->get_header_value("Access-Control-Allow-Origin"), "");
+    EXPECT_EQ(status_of(router.get({})), 200);
 
     const httplib::Result foreign = router.get({{"Origin", "http://evil.example"}});
     ASSERT_TRUE(foreign);

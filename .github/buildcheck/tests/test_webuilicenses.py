@@ -152,7 +152,8 @@ class WebuiLicensesTest(unittest.TestCase):
         archive = f"https://codeload.github.com/ggml-org/llama-brand/tar.gz/{sha}"
         for resolved in (f"git+ssh://git@github.com/ggml-org/llama-brand.git#{sha}",
                          f"git+https://github.com/ggml-org/llama-brand.git#{sha}",
-                         f"git+ssh://git@github.com/ggml-org/llama-brand#{sha}"):
+                         f"git+ssh://git@github.com/ggml-org/llama-brand#{sha}",
+                         archive):
             self.assertEqual(webuilicenses.tarball_url({"name": "llama-brand", "version": "0.1.0",
                                                         "resolved": resolved}), archive)
 
@@ -238,6 +239,8 @@ class WebuiLicensesTest(unittest.TestCase):
     def test_a_dependency_that_is_no_fixed_archive_is_refused(self):
         for resolved in ("git+ssh://git@github.com/ggml-org/llama-brand.git#master",
                          "git+ssh://git@gitlab.com/a/b.git#" + "0" * 40,
+                         "https://codeload.github.com/ggml-org/llama-brand/tar.gz/master",
+                         "https://codeload.github.com/ggml-org/llama-brand/zip/" + "0" * 40,
                          "https://example.org/alpha.tgz", ""):
             with self.assertRaisesRegex(ValueError, "alpha@1.0.0"):
                 webuilicenses.tarball_url({"name": "alpha", "version": "1.0.0", "resolved": resolved})

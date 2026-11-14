@@ -86,11 +86,16 @@ of a server that has gone away), and ggml_backend_rpc_init() aborts by name when
 registration of a reachable server fails. The server half (stop, listening, COMM_INIT bind
 address and cancellation, transport) is unchanged.
 
+Refreshed at b12387 ("ggml : prune", protocol 10.0.0): upstream reformatted the
+declaration of ggml_backend_rpc_start_server() in ggml-rpc.h over several lines, the context
+of the hunk that declares the stop and listening functions after it. Only context moved; the
++ and - lines are unchanged, 24 hunks.
+
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 4b716398e..88f4346de 100644
+index 00f9659cb..23c97199d 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -1188,6 +1188,11 @@ static void add_rpc_devices(const std::string & servers) {
+@@ -1196,6 +1196,11 @@ static void add_rpc_devices(const std::string & servers) {
      }
      for (const auto & server : rpc_servers) {
          auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
@@ -103,13 +108,13 @@ index 4b716398e..88f4346de 100644
      }
  }
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
-index f32ddeee2..89275aee1 100644
+index da1d4e1f1..cc6c74054 100644
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
-@@ -26,6 +26,11 @@ GGML_BACKEND_API void ggml_backend_rpc_get_device_memory(const char * endpoint,
- 
- GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
-                                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices);
+@@ -31,6 +31,11 @@ GGML_BACKEND_API void ggml_backend_rpc_start_server(
+         size_t n_threads,
+         size_t n_devices,
+         ggml_backend_dev_t * devices);
 +// Makes a ggml_backend_rpc_start_server() running on another thread return: the client being
 +// served is disconnected and the listening socket closed. One server per process.
 +GGML_BACKEND_API void ggml_backend_rpc_stop_server(void);

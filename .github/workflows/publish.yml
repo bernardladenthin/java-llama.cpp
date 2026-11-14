@@ -594,11 +594,6 @@ jobs:
           HF_UI_VERSION: ${{ steps.tag.outputs.tag }}
           LLAMA_BUILD_NUMBER: ${{ steps.tag.outputs.tag }}
         run: |
-          # The lockfile names llama-brand (the logo and favicons, b12316) as
-          # git+ssh://git@github.com/..., and the runner has no SSH key. npm takes a GitHub
-          # dependency at a commit from the https archive, and this covers the case where it
-          # falls back to git after all.
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           npm ci --ignore-scripts
           npm run build
           test -f dist/index.html
@@ -1244,6 +1239,9 @@ jobs:
             if [ "$flavor" = "llama-android" ]; then
               unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/LlamaModel.class" > /dev/null \
                 || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
+              # the AAR's own class: video input through the platform's MediaMetadataRetriever
+              unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/android/MediaRetrieverVideoDecoder.class" > /dev/null \
+                || { echo "::error::$AAR classes.jar lacks MediaRetrieverVideoDecoder"; exit 1; }
             elif unzip -Z -1 /tmp/aar-classes.jar | grep '\.class$' > /dev/null; then
               echo "::error::$AAR duplicates Java classes from its CPU AAR dependency"; exit 1
             fi
@@ -2012,7 +2010,7 @@ jobs:
         # docs/benchmarks/gpu-module-jars.md. Server applications run on exactly those GPUs. Keep the
         # two lists equal; a divergence would ship two jars with different hardware support.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;103-real;120-real;121-real;121-virtual" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         timeout-minutes: ${{ fromJSON(env.ARTIFACT_TIMEOUT_MINUTES) }}
@@ -2713,7 +2711,17 @@ jobs:
       # per-patch guard covers directly. Model-free, milliseconds.
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
+      # Video input is decoded by the ffmpeg and ffprobe programs of the machine (llama.cpp's own
+      # decoder). The runner image has neither, and the video cases skip themselves without them --
+      # so this job installs them and JLLAMA_REQUIRE_FFMPEG turns a skip into a failure here.
+      - name: Install ffmpeg for the video input tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
       - name: Run C++ unit tests
+        env:
+          JLLAMA_REQUIRE_FFMPEG: "1"
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-linux-aarch64:
@@ -2919,7 +2927,16 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
+      # See the C++ test job: llama.cpp decodes video with ffmpeg, VideoInputIntegrationTest skips its
+      # decoding cases without it, and this is the Java job where they must run.
+      - name: Install ffmpeg for the video input tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
       - name: Run tests
+        env:
+          JLLAMA_REQUIRE_FFMPEG: "1"
         run: |
           mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that

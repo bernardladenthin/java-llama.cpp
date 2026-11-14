@@ -128,13 +128,17 @@ public class OpenAiCompatServerOriginTest {
     }
 
     @Test
-    public void localhostServesLocalOriginsOnly() throws IOException {
+    public void localhostServesTheSameOriginOnly() throws IOException {
         try (OpenAiCompatServer server =
                 new OpenAiCompatServer(new OpenAiCompatServerHttpTest.FakeBackend(), config("localhost")).start()) {
             int port = server.getPort();
-            String local = get(port, "Origin: http://localhost:5173");
-            assertThat(local, startsWith("HTTP/1.1 200"));
-            assertThat(local, containsString("Access-control-allow-origin: http://localhost:5173"));
+            // llama.cpp b12387: another port of this machine can be an application nobody trusts
+            String otherPort = get(port, "Origin: http://localhost:5173");
+            assertThat(otherPort, startsWith("HTTP/1.1 403"));
+            String own = get(port, "Host: localhost:" + port, "Origin: http://localhost:" + port);
+            assertThat(own, startsWith("HTTP/1.1 200"));
+            assertThat(own.toLowerCase(java.util.Locale.ROOT), not(containsString("access-control-allow-origin")));
+            assertThat(get(port), startsWith("HTTP/1.1 200"));
             assertThat(get(port, "Origin: http://evil.example"), startsWith("HTTP/1.1 403"));
             assertThat(get(port, "Host: evil.example"), startsWith("HTTP/1.1 403"));
         }

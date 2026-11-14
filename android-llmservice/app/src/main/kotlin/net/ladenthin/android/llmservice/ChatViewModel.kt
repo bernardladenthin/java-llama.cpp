@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.ladenthin.llama.LlamaModel
+import net.ladenthin.llama.android.MediaRetrieverVideoDecoder
 import net.ladenthin.llama.kotlin.generateChatFlow
 import net.ladenthin.llama.parameters.InferenceParameters
 import net.ladenthin.llama.parameters.ModelParameters
@@ -252,7 +253,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Stages a SAF-picked image as the pending attachment for the next [send]. Read fully into
+     * Stages a SAF-picked image or video as the pending attachment for the next [send]. Read fully into
      * memory rather than copied to [android.content.Context.getFilesDir]: unlike the model/mmproj
      * GGUFs (which llama.cpp must mmap by real path),
      * [net.ladenthin.llama.value.ContentPart.imageBytes] consumes raw bytes directly.
@@ -268,7 +269,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     type to data
                 }
                 _uiState.update { it.copy(pendingImage = PendingImage(bytes, mimeType, displayName), error = null) }
-                log("Image attached: $displayName")
+                log("${if (mimeType.startsWith("video/")) "Video" else "Image"} attached: $displayName")
             } catch (t: Throwable) {
                 _uiState.update { it.copy(error = ErrorInfo(ErrorType.LOAD, t.message ?: "I/O error")) }
             }
@@ -313,7 +314,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // no GPU device selection, no mmproj offload attempt.
                     parameters.setMmproj(mmproj).setDevices("none").setMmprojOffload(false)
                 }
-                LlamaModel(parameters)
+                if (mmproj != null) {
+                    // A vision model also takes video (R12.8): llama.cpp samples the frames, and
+                    // the AAR's decoder gets them from the platform's MediaMetadataRetriever --
+                    // there is no ffmpeg program to run in an app.
+                    LlamaModel(parameters, null, MediaRetrieverVideoDecoder())
+                } else {
+                    LlamaModel(parameters)
+                }
             }
             withContext(Dispatchers.IO) { model?.close() }
             model = loaded
@@ -532,7 +540,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (text.isNotBlank()) {
                 parts.add(ContentPart.text(text))
             }
-            parts.add(ContentPart.imageBytes(bytes, mime))
+            // The attach picker offers images and videos; the MIME type the system reports says which.
+            parts.add(
+                if (mime.startsWith("video/")) {
+                    ContentPart.videoBytes(bytes, mime)
+                } else {
+                    ContentPart.imageBytes(bytes, mime)
+                },
+            )
             return ChatMessage(role, parts)
         }
         return ChatMessage(role, text)

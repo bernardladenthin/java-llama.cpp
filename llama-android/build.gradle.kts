@@ -47,6 +47,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 plugins {
     base
+    `java-base`
     `maven-publish`
     signing
 }
@@ -161,9 +162,50 @@ val coreJarFile = file("../llama/target/llama-$reactorVersion.jar")
 // AAR content tasks.
 // ---------------------------------------------------------------------------
 
+// The Android-only classes of this artifact (src/main/java): the glue between the core's
+// interfaces and the platform -- today MediaRetrieverVideoDecoder, the video decoder over
+// android.media.MediaMetadataRetriever. They need the platform's classes to compile against, so
+// this build needs an Android SDK with one platform of API 28 or newer (android.jar; nothing else
+// of the SDK, and still no AGP): ANDROID_HOME or ANDROID_SDK_ROOT, as every Android build sets it,
+// or -PandroidJar=<path to an android.jar>.
+fun androidJar(): File {
+    (findProperty("androidJar") as String?)?.let { return file(it) }
+    val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        ?: throw GradleException(
+            "No Android SDK: set ANDROID_HOME (or ANDROID_SDK_ROOT), or pass -PandroidJar=<android.jar>. " +
+                "The llama-android classes are compiled against the platform."
+        )
+    val platforms = File(sdk, "platforms").listFiles { dir -> File(dir, "android.jar").isFile }
+        ?.mapNotNull { dir -> dir.name.removePrefix("android-").toIntOrNull()?.let { api -> api to dir } }
+        ?.filter { it.first >= 28 }
+        ?: emptyList()
+    val newest = platforms.maxByOrNull { it.first }
+        ?: throw GradleException("No platform of API 28 or newer under $sdk/platforms (need its android.jar)")
+    return File(newest.second, "android.jar")
+}
+
+val compileAndroidClasses = tasks.register<JavaCompile>("compileAndroidClasses") {
+    description = "Compiles the Android-only classes against the core jar and the platform's android.jar."
+    source = fileTree("src/main/java")
+    destinationDirectory.set(layout.buildDirectory.dir("intermediates/android-classes"))
+    // Java 8 class files, like the core's: an app's D8 takes them at any minSdk this AAR allows.
+    options.release.set(8)
+    options.encoding = "UTF-8"
+    // -options: javac warns that release 8 is on its way out. -classfile: the core's classes carry
+    // the Checker Framework's qualifiers, which are not on this classpath (provided scope there).
+    options.compilerArgs.addAll(listOf("-Xlint:all,-options,-classfile", "-Werror"))
+    doFirst {
+        require(coreJarFile.isFile) {
+            "Core jar not found: $coreJarFile — build it first: mvn -pl llama -am -DskipTests package (from the repo root)"
+        }
+    }
+    classpath = files(coreJarFile, provider { androidJar() })
+}
+
 // The AAR classes.jar: the Maven-built core jar (classes only since 6.0.0 -- the natives
 // ship as separate natives jars, the Android .so under jni/ here) minus module-info.class
-// (D8 does not accept JPMS descriptors in classes.jar) and the Maven descriptor.
+// (D8 does not accept JPMS descriptors in classes.jar) and the Maven descriptor, plus the
+// Android-only classes above.
 val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
     description = "Repackages the Maven-built core classes as the AAR classes.jar payload."
     archiveBaseName.set("classes-payload")
@@ -179,6 +221,7 @@ val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
         exclude("module-info.class")
         exclude("META-INF/maven/**")
     }
+    from(compileAndroidClasses)
     // The license texts of the code compiled into the .so files under jni/ (llama/legal/natives/,
     // NOTICE.md there). A path of this artifact's own: AGP merges the java resources of every
     // classes.jar into the APK and fails on two equal paths, and the OpenCL AAR carries the same set.
@@ -204,13 +247,14 @@ val generateRTxt = tasks.register("generateRTxt") {
 }
 
 val sourcesJar = tasks.register<Jar>("sourcesJar") {
-    description = "Core Java sources (Central requires a -sources jar per artifact)."
+    description = "Core Java sources and this artifact's own (Central requires a -sources jar per artifact)."
     archiveClassifier.set("sources")
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
     from("../llama/src/main/java") {
         exclude("module-info.java")
     }
+    from("src/main/java")
 }
 
 val javadocJar = tasks.register<Jar>("javadocJar") {

@@ -2947,6 +2947,659 @@ TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
     EXPECT_GT(used, 60) << "the sweep ran over implausibly few values";
 }
 
+namespace {
+
+// Video input is llama.cpp's own: the server hands a file that is neither an image nor audio to
+// the `ffmpeg` and `ffprobe` programs it finds on PATH and feeds the frames to the vision projector.
+// These cases therefore need the two programs. Where they are missing the cases are skipped --
+// unless JLLAMA_REQUIRE_FFMPEG is set, as in the CI job that installs them, where a skip would hide
+// that nothing ran.
+bool ffmpeg_is_installed() {
+#if defined(_WIN32)
+    const char *quiet = " >NUL 2>&1";
+#else
+    const char *quiet = " >/dev/null 2>&1";
+#endif
+    return std::system((std::string("ffmpeg -version") + quiet).c_str()) == 0 &&
+           std::system((std::string("ffprobe -version") + quiet).c_str()) == 0;
+}
+
+// A clip ffmpeg writes itself: its test picture, `seconds` long at `fps` frames per second.
+std::vector<uint8_t> ffmpeg_test_clip(int seconds, int fps, const char *extension = "mp4") {
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() /
+        ("jllama-c-api-clip-" + std::to_string(std::random_device{}()) + "." + extension);
+#if defined(_WIN32)
+    const char *quiet = " >NUL 2>&1";
+#else
+    const char *quiet = " >/dev/null 2>&1";
+#endif
+    const std::string command =
+        "ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=" + std::to_string(seconds) +
+        ":size=64x64:rate=" + std::to_string(fps) + " -pix_fmt yuv420p \"" + file.string() + "\"" + quiet;
+    std::vector<uint8_t> bytes;
+    if (std::system(command.c_str()) == 0) {
+        std::ifstream in(file, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::error_code ignored;
+    std::filesystem::remove(file, ignored);
+    return bytes;
+}
+
+std::string model_media_marker(jllama_model *model) {
+    Owned meta;
+    if (jllama_model_meta(model, &meta.s) != JLLAMA_STATUS_OK) {
+        ADD_FAILURE() << jllama_last_error();
+        return std::string();
+    }
+    return json::parse(meta.str()).value("media_marker", std::string());
+}
+
+// A raw request whose prompt carries one media file between two words.
+std::string media_prompt_request(jllama_model *model, const std::vector<uint8_t> &media) {
+    return json{{"prompt",
+                 {{"prompt_string", "look " + model_media_marker(model) + " now"},
+                  {"multimodal_data", json::array({base64_of(media)})}}},
+                {"n_predict", 1},
+                {"temperature", 0},
+                {"cache_prompt", false}}
+        .dump();
+}
+
+int tokens_evaluated(jllama_model *model, const std::string &request) {
+    Owned completion;
+    if (jllama_completions(model, request.c_str(), &completion.s) != JLLAMA_STATUS_OK) {
+        ADD_FAILURE() << jllama_last_error();
+        return -1;
+    }
+    return json::parse(completion.str()).at("tokens_evaluated").get<int>();
+}
+
+class CApiVideo : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        path_ = write_tiny_llama_gguf("jllama-c-api-video");
+        mmproj_ = write_tiny_mmproj_gguf("jllama-c-api-video-mmproj");
+        ASSERT_FALSE(path_.empty());
+        ASSERT_FALSE(mmproj_.empty());
+        ffmpeg_ = ffmpeg_is_installed();
+    }
+    static void TearDownTestSuite() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(mmproj_, ignored);
+    }
+    // The random model with the random vision projector.
+    static jllama_model *load(const std::vector<std::string> &extra = {}) {
+        std::vector<std::string> args = {"--mmproj", mmproj_, "-c", "1024"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        return load_tiny(path_, args);
+    }
+    static std::string path_;
+    static std::string mmproj_;
+    static bool ffmpeg_;
+};
+std::string CApiVideo::path_;
+std::string CApiVideo::mmproj_;
+bool CApiVideo::ffmpeg_ = false;
+
+#define REQUIRE_FFMPEG()                                                                                               \
+    do {                                                                                                               \
+        if (!ffmpeg_) {                                                                                                \
+            if (std::getenv("JLLAMA_REQUIRE_FFMPEG") != nullptr) {                                                     \
+                FAIL() << "JLLAMA_REQUIRE_FFMPEG is set, and ffmpeg / ffprobe are not on PATH";                        \
+            }                                                                                                          \
+            GTEST_SKIP() << "ffmpeg / ffprobe are not on PATH";                                                        \
+        }                                                                                                              \
+    } while (false)
+
+} // namespace
+
+TEST_F(CApiVideo, TheModelMetaSaysWhetherTheModelTakesVideo) {
+    // a desktop build decodes video with ffmpeg, so every model with a vision projector takes it;
+    // the meta does not say whether the program is installed -- a request finds that out
+    jllama_model *with_projector = load();
+    ASSERT_NE(with_projector, nullptr) << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(with_projector, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(json::parse(meta.str()).at("modalities").at("video").get<bool>()) << meta.str();
+    jllama_model_free(with_projector);
+
+    jllama_model *without = load_tiny(path_, {});
+    ASSERT_NE(without, nullptr) << jllama_last_error();
+    Owned plain;
+    ASSERT_EQ(jllama_model_meta(without, &plain.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_FALSE(json::parse(plain.str()).at("modalities").at("video").get<bool>()) << plain.str();
+    const json request = {
+        {"messages",
+         json::array(
+             {{{"role", "user"},
+               {"content", json::array({json{{"type", "input_video"}, {"input_video", {{"data", "AAAA"}}}}})}}})}};
+    Owned response;
+    EXPECT_NE(jllama_chat_completions(without, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("video input is not supported"), std::string::npos)
+        << jllama_last_error();
+    jllama_model_free(without);
+}
+
+TEST_F(CApiVideo, AVideoReachesTheModelAsItsFrames) {
+    REQUIRE_FFMPEG();
+    jllama_model *model = load();
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const int text_tokens = tokens_evaluated(model, R"({"prompt":"look  now","n_predict":1,"temperature":0})");
+    const int image_tokens = tokens_evaluated(model, media_prompt_request(model, base64_bytes(TINY_PNG_BASE64)));
+    ASSERT_EQ(image_tokens, text_tokens + 4);
+
+    // two seconds at four frames per second, the rate the server samples at by default: eight
+    // frames, four patch embeddings each, plus the text mtmd puts around a video
+    const std::vector<uint8_t> clip = ffmpeg_test_clip(2, 4);
+    ASSERT_FALSE(clip.empty()) << "ffmpeg wrote no clip";
+    const int video_tokens = tokens_evaluated(model, media_prompt_request(model, clip));
+    EXPECT_GE(video_tokens, text_tokens + 8 * 4);
+    EXPECT_LT(video_tokens, text_tokens + 8 * 4 + 64) << "more than eight frames and a few words";
+
+    // twice as long: eight more frames
+    const std::vector<uint8_t> longer = ffmpeg_test_clip(4, 4);
+    ASSERT_FALSE(longer.empty());
+    const int longer_tokens = tokens_evaluated(model, media_prompt_request(model, longer));
+    EXPECT_GE(longer_tokens, video_tokens + 8 * 4);
+    EXPECT_LT(longer_tokens, video_tokens + 8 * 4 + 32);
+
+    // the same clip, the same tokens: streamed, and on the OpenAI completion path
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, media_prompt_request(model, clip).c_str(), &task),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model, task).at("tokens_evaluated").get<int>(), video_tokens);
+
+    // another container and codec (Matroska)
+    const std::vector<uint8_t> mkv = ffmpeg_test_clip(2, 4, "mkv");
+    ASSERT_FALSE(mkv.empty());
+    EXPECT_EQ(tokens_evaluated(model, media_prompt_request(model, mkv)), video_tokens);
+    jllama_model_free(model);
+}
+
+TEST_F(CApiVideo, AChatMessageCarriesAVideoUnderBothNamesUpstreamReads) {
+    REQUIRE_FFMPEG();
+    jllama_model *model = load();
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const std::string clip = base64_of(ffmpeg_test_clip(2, 4));
+    ASSERT_FALSE(clip.empty());
+    const auto prompt_tokens = [&](const json &content) {
+        const json request = {{"messages", json::array({{{"role", "user"}, {"content", content}}})},
+                              {"max_tokens", 2},
+                              {"temperature", 0},
+                              {"cache_prompt", false}};
+        Owned response;
+        if (jllama_chat_completions(model, request.dump().c_str(), &response.s) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return -1;
+        }
+        return json::parse(response.str()).at("usage").at("prompt_tokens").get<int>();
+    };
+    const json text = {{"type", "text"}, {"text", "what happens"}};
+    const int text_only = prompt_tokens(json::array({text}));
+    ASSERT_GT(text_only, 0);
+    // llama.cpp's own part, with the bytes as base64 or as a data URL
+    const int as_data =
+        prompt_tokens(json::array({text, json{{"type", "input_video"}, {"input_video", {{"data", clip}}}}}));
+    EXPECT_GE(as_data, text_only + 8 * 4);
+    EXPECT_EQ(prompt_tokens(json::array(
+                  {text, json{{"type", "input_video"}, {"input_video", {{"url", "data:video/mp4;base64," + clip}}}}})),
+              as_data);
+    // the OpenAI-style alias
+    EXPECT_EQ(prompt_tokens(json::array(
+                  {text, json{{"type", "video_url"}, {"video_url", {{"url", "data:video/mp4;base64," + clip}}}}})),
+              as_data);
+    // a video next to an image: both are counted
+    EXPECT_EQ(prompt_tokens(json::array(
+                  {text, json{{"type", "input_video"}, {"input_video", {{"data", clip}}}},
+                   json{{"type", "image_url"},
+                        {"image_url", {{"url", std::string("data:image/png;base64,") + TINY_PNG_BASE64}}}}})),
+              as_data + 4);
+    jllama_model_free(model);
+}
+
+TEST_F(CApiVideo, TheFrameRateOptionDecidesHowManyFramesAreTaken) {
+    REQUIRE_FFMPEG();
+    const std::vector<uint8_t> clip = ffmpeg_test_clip(2, 4);
+    ASSERT_FALSE(clip.empty());
+    std::map<std::string, int> tokens;
+    for (const char *fps : {"4", "2", "1"}) {
+        // timestamps off, so the difference is frames only
+        jllama_model *model = load({"--video-fps", fps, "--video-timestamp-interval", "0"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        tokens[fps] = tokens_evaluated(model, media_prompt_request(model, clip));
+        jllama_model_free(model);
+    }
+    // 8, 4 and 2 frames of four embeddings
+    EXPECT_EQ(tokens["4"] - tokens["2"], 4 * 4) << tokens["4"] << " / " << tokens["2"];
+    EXPECT_EQ(tokens["2"] - tokens["1"], 2 * 4) << tokens["2"] << " / " << tokens["1"];
+}
+
+TEST_F(CApiVideo, AFileThatIsNoMediaIsTheCallersFault) {
+    // also without ffmpeg: neither an image, nor audio, nor a video anything decodes
+    jllama_model *model = load();
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const std::vector<uint8_t> garbage = {'n', 'o', 't', ' ', 'a', ' ', 'v', 'i', 'd', 'e', 'o'};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, media_prompt_request(model, garbage).c_str(), &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST)
+        << jllama_last_error();
+    // and the model still answers
+    EXPECT_GT(tokens_evaluated(model, media_prompt_request(model, base64_bytes(TINY_PNG_BASE64))), 4);
+    jllama_model_free(model);
+}
+
+TEST_F(CApiVideo, WithoutTheFfmpegProgramsAVideoIsRefusedAndTheModelGoesOn) {
+    REQUIRE_FFMPEG();
+    // --video-ffmpeg-dir names where the two programs are; a directory without them is a machine
+    // without ffmpeg, which must answer the request with an error and leave the process alone
+    const std::filesystem::path empty =
+        std::filesystem::temp_directory_path() / ("jllama-no-ffmpeg-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(empty);
+    jllama_model *model = load({"--video-ffmpeg-dir", empty.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const std::vector<uint8_t> clip = ffmpeg_test_clip(2, 4);
+    ASSERT_FALSE(clip.empty());
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, media_prompt_request(model, clip).c_str(), &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST)
+        << jllama_last_error();
+    EXPECT_GT(tokens_evaluated(model, media_prompt_request(model, base64_bytes(TINY_PNG_BASE64))), 4);
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove_all(empty, ignored);
+}
+
+namespace {
+
+// A video "file" only the test's decoder reads: "JLV1", then the frame count, width, height and
+// frames per second, one byte each. Neither stb_image nor the audio sniffing takes it, so mtmd
+// hands it to the video decoder, as it does with an mp4.
+std::vector<uint8_t> fake_video(uint8_t n_frames, uint8_t width, uint8_t height, uint8_t fps) {
+    return {'J', 'L', 'V', '1', n_frames, width, height, fps};
+}
+
+// What the test's decoder was asked, across every stream it opened.
+struct FakeVideoDecoder {
+    std::atomic<int> opened{0};
+    std::atomic<int> started{0};
+    std::atomic<int> frames_read{0};
+    std::atomic<int> frames_skipped{0};
+    std::atomic<int> closed{0};
+    std::atomic<int> released{0};
+    std::atomic<int> bad_frame_sizes{0};
+    std::atomic<bool> picks_fps{false};
+    std::atomic<bool> fail_start{false};
+    std::atomic<float> fps_asked{-1.0f};
+
+    struct Stream {
+        FakeVideoDecoder *owner;
+        int n_frames;
+        int next = 0;
+        uint32_t width;
+        uint32_t height;
+    };
+
+    jllama_video_decoder c_decoder() {
+        jllama_video_decoder d = {};
+        d.user_data = this;
+        d.open = [](void *user_data, const char *, const unsigned char *data, size_t size,
+                    jllama_video_info *info) -> void * {
+            auto *self = static_cast<FakeVideoDecoder *>(user_data);
+            if (data == nullptr || size != 8 || std::memcmp(data, "JLV1", 4) != 0) {
+                return nullptr;
+            }
+            self->opened++;
+            info->width = data[5];
+            info->height = data[6];
+            info->fps = static_cast<float>(data[7]);
+            info->n_frames = data[4];
+            info->duration = static_cast<float>(data[4]) / static_cast<float>(data[7]);
+            return new Stream{self, data[4], 0, data[5], data[6]};
+        };
+        d.start = [](void *state, unsigned int width, unsigned int height, float fps, bool *fps_picked) -> bool {
+            auto *stream = static_cast<Stream *>(state);
+            stream->owner->started++;
+            stream->owner->fps_asked = fps;
+            stream->width = width;
+            stream->height = height;
+            *fps_picked = stream->owner->picks_fps.load();
+            return !stream->owner->fail_start.load();
+        };
+        d.read_frame = [](void *state, unsigned char *rgb, unsigned int width, unsigned int height) -> bool {
+            auto *stream = static_cast<Stream *>(state);
+            if (stream->next >= stream->n_frames) {
+                return false;
+            }
+            if (width != stream->width || height != stream->height) {
+                stream->owner->bad_frame_sizes++;
+            }
+            if (rgb == nullptr) {
+                stream->owner->frames_skipped++;
+            } else {
+                // a colour per frame, so no two frames are the same picture
+                std::memset(rgb, 40 + 20 * stream->next, static_cast<size_t>(width) * height * 3);
+                stream->owner->frames_read++;
+            }
+            stream->next++;
+            return true;
+        };
+        d.close = [](void *state) {
+            auto *stream = static_cast<Stream *>(state);
+            stream->owner->closed++;
+            delete stream;
+        };
+        d.release = [](void *user_data) { static_cast<FakeVideoDecoder *>(user_data)->released++; };
+        return d;
+    }
+};
+
+// The random model with the random vision projector, loaded with `decoder` (null: none).
+jllama_model *load_tiny_vision(const std::string &path, const std::string &mmproj, const jllama_video_decoder *decoder,
+                               const std::vector<std::string> &extra = {}) {
+    std::vector<std::string> args = {"jllama", "-m",   path, "--mmproj",    mmproj, "-c",
+                                     "512",    "-ngl", "0",  "--no-warmup", "-t",   "2"};
+    args.insert(args.end(), extra.begin(), extra.end());
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    if (jllama_model_load_video(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, decoder, &model) !=
+        JLLAMA_STATUS_OK) {
+        return nullptr;
+    }
+    return model;
+}
+
+// The fixture of CApiVideo, for the cases that decode through a decoder of the application.
+class CApiVideoDecoder : public CApiVideo {};
+
+} // namespace
+
+TEST_F(CApiVideoDecoder, AModelLoadedWithADecoderTakesVideoThroughIt) {
+    // llama.cpp b12387: an application may hand in the frames of a video itself
+    // (server_context::set_video_decoder) -- from the platform's own media API on Android, where no
+    // ffmpeg program can be run. The frames reach the projector as images: four patch embeddings
+    // each, between the text of the prompt and its timestamps. No ffmpeg is involved here.
+    FakeVideoDecoder decoder;
+    const jllama_video_decoder c_decoder = decoder.c_decoder();
+    jllama_model *model = load_tiny_vision(path_, mmproj_, &c_decoder);
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    {
+        Owned meta;
+        ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_TRUE(json::parse(meta.str()).at("modalities").at("video").get<bool>()) << meta.str();
+    }
+    const int text_tokens = tokens_evaluated(model, R"({"prompt":"look  now","n_predict":1,"temperature":0})");
+    const int image_tokens = tokens_evaluated(model, media_prompt_request(model, base64_bytes(TINY_PNG_BASE64)));
+    EXPECT_EQ(image_tokens, text_tokens + 4);
+    EXPECT_EQ(decoder.opened.load(), 0) << "an image went to the video decoder";
+
+    // 8 frames at 4 per second, the rate the model samples at by default: every frame is read
+    const int video_tokens = tokens_evaluated(model, media_prompt_request(model, fake_video(8, 32, 32, 4)));
+    EXPECT_EQ(decoder.opened.load(), 1);
+    EXPECT_EQ(decoder.started.load(), 1);
+    EXPECT_EQ(decoder.frames_read.load(), 8);
+    EXPECT_EQ(decoder.closed.load(), 1);
+    EXPECT_EQ(decoder.bad_frame_sizes.load(), 0);
+    EXPECT_GE(video_tokens, text_tokens + 8 * 4) << "fewer tokens than eight frames have embeddings";
+
+    // twice the frames, twice the embeddings (and one more timestamp at most)
+    const int longer_tokens = tokens_evaluated(model, media_prompt_request(model, fake_video(16, 32, 32, 4)));
+    EXPECT_EQ(decoder.frames_read.load(), 8 + 16);
+    EXPECT_GE(longer_tokens, video_tokens + 8 * 4);
+    EXPECT_EQ(decoder.closed.load(), 2);
+
+    // the same video in a chat message, under both names upstream reads, and streamed
+    const std::string video_base64 = base64_of(fake_video(8, 32, 32, 4));
+    for (const char *type : {"input_video", "video_url"}) {
+        SCOPED_TRACE(type);
+        const int before = decoder.frames_read.load();
+        const json part = std::string(type) == "input_video"
+                              ? json{{"type", type}, {type, {{"data", video_base64}}}}
+                              : json{{"type", type}, {type, {{"url", "data:video/mp4;base64," + video_base64}}}};
+        const json request = {
+            {"messages",
+             json::array({{{"role", "user"},
+                           {"content", json::array({json{{"type", "text"}, {"text", "what happens"}}, part})}}})},
+            {"max_tokens", 2},
+            {"temperature", 0}};
+        Owned response;
+        ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_GE(json::parse(response.str()).at("usage").at("prompt_tokens").get<int>(), 8 * 4) << response.str();
+        EXPECT_EQ(decoder.frames_read.load(), before + 8);
+    }
+    {
+        const int before = decoder.frames_read.load();
+        int task = -1;
+        ASSERT_EQ(jllama_completions_stream_request(
+                      model, media_prompt_request(model, fake_video(8, 32, 32, 4)).c_str(), &task),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(receive_to_stop(model, task).at("tokens_evaluated").get<int>(), video_tokens);
+        EXPECT_EQ(decoder.frames_read.load(), before + 8);
+    }
+    EXPECT_EQ(decoder.opened.load(), decoder.closed.load());
+    EXPECT_EQ(decoder.released.load(), 0) << "released while the model is loaded";
+    jllama_model_free(model);
+    EXPECT_EQ(decoder.released.load(), 1);
+}
+
+TEST_F(CApiVideoDecoder, TheFrameRateOptionDecidesWhichFramesAreRead) {
+    FakeVideoDecoder decoder;
+    const jllama_video_decoder c_decoder = decoder.c_decoder();
+    // --video-fps 2 over a 4 fps video: every second frame is read, the others are skipped unread
+    jllama_model *model = load_tiny_vision(path_, mmproj_, &c_decoder, {"--video-fps", "2"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const int half = tokens_evaluated(model, media_prompt_request(model, fake_video(8, 32, 32, 4)));
+    EXPECT_EQ(decoder.frames_read.load(), 4);
+    EXPECT_GE(decoder.frames_skipped.load(), 3);
+    EXPECT_GE(half, 4 * 4);
+
+    // a decoder that resamples itself is asked for the rate and then for every frame it delivers
+    decoder.picks_fps = true;
+    decoder.frames_read = 0;
+    decoder.frames_skipped = 0;
+    EXPECT_GT(tokens_evaluated(model, media_prompt_request(model, fake_video(8, 32, 32, 4))), half);
+    EXPECT_FLOAT_EQ(decoder.fps_asked.load(), 2.0f);
+    EXPECT_EQ(decoder.frames_read.load(), 8);
+    EXPECT_EQ(decoder.frames_skipped.load(), 0);
+    jllama_model_free(model);
+    EXPECT_EQ(decoder.released.load(), 1);
+}
+
+TEST_F(CApiVideoDecoder, AVideoTheDecoderRefusesIsTheCallersFault) {
+    FakeVideoDecoder decoder;
+    const jllama_video_decoder c_decoder = decoder.c_decoder();
+    jllama_model *model = load_tiny_vision(path_, mmproj_, &c_decoder);
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned response;
+    // bytes that are neither an image, nor audio, nor a video the decoder reads
+    const std::vector<uint8_t> garbage = {'n', 'o', 't', ' ', 'a', ' ', 'v', 'i', 'd', 'e', 'o'};
+    EXPECT_EQ(jllama_completions(model, media_prompt_request(model, garbage).c_str(), &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST)
+        << jllama_last_error();
+    EXPECT_EQ(decoder.opened.load(), 0);
+    // a decoder that cannot start
+    decoder.fail_start = true;
+    EXPECT_EQ(jllama_completions(model, media_prompt_request(model, fake_video(8, 32, 32, 4)).c_str(), &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST)
+        << jllama_last_error();
+    EXPECT_EQ(decoder.opened.load(), 1);
+    EXPECT_EQ(decoder.closed.load(), 1) << "a stream that failed to start was not closed";
+    // and the model still answers
+    decoder.fail_start = false;
+    EXPECT_GT(tokens_evaluated(model, media_prompt_request(model, fake_video(4, 32, 32, 4))), 4 * 4);
+    jllama_model_free(model);
+}
+
+TEST_F(CApiVideoDecoder, TheDecoderIsReleasedOnceAlsoWhenTheLoadFails) {
+    FakeVideoDecoder decoder;
+    jllama_video_decoder c_decoder = decoder.c_decoder();
+    jllama_model *model = nullptr;
+    const char *missing[] = {"jllama", "-m", "/nonexistent/jllama-video.gguf"};
+    EXPECT_NE(jllama_model_load_video(3, missing, nullptr, nullptr, &c_decoder, &model), JLLAMA_STATUS_OK);
+    EXPECT_EQ(model, nullptr);
+    EXPECT_EQ(decoder.released.load(), 1);
+
+    EXPECT_EQ(jllama_model_load_video(3, missing, nullptr, nullptr, &c_decoder, nullptr),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(decoder.released.load(), 2);
+    EXPECT_EQ(jllama_model_load_video(0, nullptr, nullptr, nullptr, &c_decoder, &model),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(decoder.released.load(), 3);
+
+    // a decoder without its required functions is refused by name, and released
+    c_decoder.read_frame = nullptr;
+    const std::vector<std::string> args = {"jllama", "-m", path_, "--mmproj", mmproj_, "-ngl", "0"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    EXPECT_EQ(jllama_model_load_video(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &c_decoder, &model),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("open, read_frame and close"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(decoder.released.load(), 4);
+}
+
+TEST_F(CApiVideoDecoder, ADecoderDoesNotGiveAModelWithoutAProjectorVideo) {
+    FakeVideoDecoder decoder;
+    const jllama_video_decoder c_decoder = decoder.c_decoder();
+    const std::vector<std::string> args = {"jllama", "-m", path_, "-c", "128", "-ngl", "0", "--no-warmup"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load_video(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &c_decoder, &model),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_FALSE(json::parse(meta.str()).at("modalities").at("video").get<bool>());
+    const json request = {
+        {"messages",
+         json::array(
+             {{{"role", "user"},
+               {"content", json::array({json{{"type", "input_video"},
+                                             {"input_video", {{"data", base64_of(fake_video(4, 32, 32, 4))}}}}})}}})}};
+    Owned response;
+    EXPECT_NE(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("video input is not supported"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(decoder.opened.load(), 0);
+    jllama_model_free(model);
+    EXPECT_EQ(decoder.released.load(), 1);
+}
+
+TEST_F(CApiVideoDecoder, AModelThatSleptDecodesWithTheSameDecoder) {
+    // waking from the idle sleep runs load_model() again; the decoder has to be there for it
+    FakeVideoDecoder decoder;
+    const jllama_video_decoder c_decoder = decoder.c_decoder();
+    struct Lines {
+        std::mutex mutex;
+        int sleeps = 0;
+    } lines;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *user) {
+                      auto *sink = static_cast<Lines *>(user);
+                      std::lock_guard<std::mutex> lock(sink->mutex);
+                      sink->sleeps += std::string(text).find("server is entering sleeping state") != std::string::npos;
+                  },
+                  &lines),
+              JLLAMA_STATUS_OK);
+    struct LogCallbackReset {
+        ~LogCallbackReset() { jllama_set_log_callback(nullptr, nullptr); }
+    } log_callback_reset;
+    jllama_model *model = load_tiny_vision(path_, mmproj_, &c_decoder, {"--sleep-idle-seconds", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const int awake = tokens_evaluated(model, media_prompt_request(model, fake_video(8, 32, 32, 4)));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    const auto slept = [&lines]() {
+        std::lock_guard<std::mutex> lock(lines.mutex);
+        return lines.sleeps > 0;
+    };
+    while (!slept() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ASSERT_TRUE(slept()) << "the model did not sleep";
+    EXPECT_EQ(tokens_evaluated(model, media_prompt_request(model, fake_video(8, 32, 32, 4))), awake);
+    EXPECT_EQ(decoder.frames_read.load(), 16);
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(json::parse(meta.str()).at("modalities").at("video").get<bool>());
+    jllama_model_free(model);
+    EXPECT_EQ(decoder.released.load(), 1);
+}
+
+TEST(CApiSleep, AModelWithAnIdleTimeoutSleepsAgainAfterEveryCall) {
+    // llama.cpp b12387 (#32133): server_queue::wait_until_no_sleep() counts its caller as in flight,
+    // and the idle timer does not fire while the count is positive. The engine wakes the server
+    // through that function before every operation, so a count it did not give back kept a model
+    // loaded with --sleep-idle-seconds awake for good after its first request -- the weights stayed
+    // in memory, and nothing said so. Each call below must be followed by a sleep, and the call
+    // after a sleep must wake the model and answer.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-sleep");
+    ASSERT_FALSE(path.empty());
+    struct Lines {
+        std::mutex mutex;
+        std::vector<std::string> text;
+        int count(const std::string &needle) {
+            std::lock_guard<std::mutex> lock(mutex);
+            int n = 0;
+            for (const std::string &line : text) {
+                n += line.find(needle) != std::string::npos ? 1 : 0;
+            }
+            return n;
+        }
+    } lines;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *user) {
+                      auto *sink = static_cast<Lines *>(user);
+                      std::lock_guard<std::mutex> lock(sink->mutex);
+                      sink->text.emplace_back(text);
+                  },
+                  &lines),
+              JLLAMA_STATUS_OK);
+    struct LogCallbackReset {
+        ~LogCallbackReset() { jllama_set_log_callback(nullptr, nullptr); }
+    } log_callback_reset;
+
+    jllama_model *model = load_tiny(path, {"--sleep-idle-seconds", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto sleeps = [&lines](int n) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (lines.count("server is entering sleeping state") < n && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return lines.count("server is entering sleeping state") >= n;
+    };
+    // a completion (wake_server for the metadata, then wake_and_post), then metadata alone, then
+    // tokenization: the three shapes of a call that wakes the server
+    EXPECT_FALSE(greedy_answer(model, 4).empty());
+    EXPECT_TRUE(sleeps(1)) << "the model did not sleep after a completion";
+    EXPECT_FALSE(greedy_answer(model, 4).empty()) << "the sleeping model did not wake for a completion";
+    EXPECT_TRUE(sleeps(2)) << "the model did not sleep after the completion that woke it";
+    Owned meta;
+    EXPECT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(sleeps(3)) << "the model did not sleep after a metadata call";
+    int *tokens = nullptr;
+    size_t n_tokens = 0;
+    EXPECT_EQ(jllama_tokenize(model, "hello", false, &tokens, &n_tokens), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tokens_free(tokens);
+    EXPECT_TRUE(sleeps(4)) << "the model did not sleep after a tokenization";
+    jllama_model_free(model);
+    ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiPooling, AModelThatDeclaresItsPoolingTypeNeedsNoOption) {
     // Why there is no PoolingType constant for "unspecified": without --pooling the model's own
     // <arch>.pooling_type applies. Two models with the same weights, one declaring mean pooling:

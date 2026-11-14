@@ -211,17 +211,72 @@ void jllama_string_free(char *s) { std::free(s); }
 
 jllama_status jllama_model_load(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                 void *progress_user_data, jllama_model **out) {
+    return jllama_model_load_video(argc, argv, progress, progress_user_data, nullptr, out);
+}
+
+namespace {
+
+// jllama_video_decoder as the engine's video_decoder. The engine reports the stream through plain
+// out-parameters (it has no jllama_api.h type), so `open` goes through this one adapter; the other
+// functions have the engine's signatures and are passed on as they are.
+struct api_video_decoder {
+    jllama_video_decoder fns;
+
+    static void *open(void *user_data, const char *path, const unsigned char *data, size_t size, uint32_t *width,
+                      uint32_t *height, float *fps, int32_t *n_frames, float *duration) {
+        const auto *self = static_cast<const api_video_decoder *>(user_data);
+        jllama_video_info info = {0, 0, 0.0f, -1, -1.0f};
+        void *state = self->fns.open(self->fns.user_data, path, data, size, &info);
+        *width = info.width;
+        *height = info.height;
+        *fps = info.fps;
+        *n_frames = info.n_frames;
+        *duration = info.duration;
+        return state;
+    }
+    static void release(void *user_data) {
+        const auto *self = static_cast<const api_video_decoder *>(user_data);
+        if (self->fns.release != nullptr) {
+            self->fns.release(self->fns.user_data);
+        }
+        delete self;
+    }
+};
+
+} // namespace
+
+jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_load_progress_fn progress,
+                                      void *progress_user_data, const jllama_video_decoder *decoder,
+                                      jllama_model **out) {
+    // The decoder's release callback is owed from here on, whatever fails below.
+    jllama::engine::video_decoder engine_decoder;
+    if (decoder != nullptr) {
+        engine_decoder.user_data = new api_video_decoder{*decoder};
+        engine_decoder.open = decoder->open != nullptr ? &api_video_decoder::open : nullptr;
+        engine_decoder.start = decoder->start;
+        engine_decoder.read_frame = decoder->read_frame;
+        engine_decoder.read_audio = decoder->read_audio;
+        engine_decoder.close = decoder->close;
+        engine_decoder.release = &api_video_decoder::release;
+    }
+    const auto release_unused = [&]() {
+        if (decoder != nullptr) {
+            api_video_decoder::release(engine_decoder.user_data);
+        }
+    };
     if (out == nullptr) {
+        release_unused();
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
     }
     *out = nullptr;
     if (argc < 1 || argv == nullptr) {
+        release_unused();
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
     }
     try {
         // llama_progress_callback and jllama_load_progress_fn have the same shape on purpose.
-        *out = reinterpret_cast<jllama_model *>(
-            jllama::engine::load(to_strings(argc, argv), progress, progress_user_data));
+        *out = reinterpret_cast<jllama_model *>(jllama::engine::load(
+            to_strings(argc, argv), progress, progress_user_data, decoder != nullptr ? &engine_decoder : nullptr));
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
     } catch (const std::invalid_argument &e) {

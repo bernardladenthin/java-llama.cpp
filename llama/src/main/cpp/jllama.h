@@ -79,6 +79,13 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModelWithProgress
 
 /*
  * Class:     net_ladenthin_llama_LlamaModel
+ * Method:    loadModelWithVideoDecoder
+ * Signature: ([Ljava/lang/String;Lnet/ladenthin/llama/callback/LoadProgressCallback;Lnet/ladenthin/llama/callback/VideoDecoder;)V
+ */
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModelWithVideoDecoder(JNIEnv *, jobject, jobjectArray, jobject, jobject);
+
+/*
+ * Class:     net_ladenthin_llama_LlamaModel
  * Method:    delete
  * Signature: ()V
  */

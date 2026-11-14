@@ -15,6 +15,8 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.Content;
 import dev.langchain4j.data.message.ContentType;
 import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.VideoContent;
+import dev.langchain4j.data.video.Video;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -321,6 +323,9 @@ final class LangChain4jMapping {
         if (content instanceof AudioContent) {
             return toAudioPart(((AudioContent) content).audio());
         }
+        if (content instanceof VideoContent) {
+            return toVideoPart(((VideoContent) content).video());
+        }
         throw new IllegalArgumentException("Unsupported user content type: " + content.type());
     }
 
@@ -333,6 +338,17 @@ final class LangChain4jMapping {
         }
         throw new IllegalArgumentException(
                 "ImageContent carries neither base64 data (with MIME type) nor a URL: " + image);
+    }
+
+    private static ContentPart toVideoPart(Video video) {
+        if (video.base64Data() != null && video.mimeType() != null) {
+            return ContentPart.videoUrl("data:" + video.mimeType() + ";base64," + video.base64Data());
+        }
+        if (video.url() != null) {
+            return ContentPart.videoUrl(video.url().toString());
+        }
+        throw new IllegalArgumentException(
+                "VideoContent carries neither base64 data (with MIME type) nor a URL: " + video);
     }
 
     private static ContentPart toAudioPart(Audio audio) {

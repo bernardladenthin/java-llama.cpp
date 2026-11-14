@@ -803,16 +803,6 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set KV cache defragmentation threshold (default: 0.1, &lt; 0 - disabled).
-     *
-     * @param defragThold the KV cache defragmentation threshold (negative = disabled)
-     * @return this builder
-     */
-    public ModelParameters setDefragThold(float defragThold) {
-        return putScalar(ModelOption.DEFRAG_THOLD, defragThold);
-    }
-
-    /**
      * Set the number of parallel sequences to decode (default: 1).
      *
      * @param nParallel the number of parallel sequences to decode
@@ -1783,6 +1773,38 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setVideoFfmpegDir(String directory) {
         return putScalar(ModelOption.VIDEO_FFMPEG_DIR, directory);
+    }
+
+    /**
+     * Allow {@code http(s)} media URLs (an {@code image_url} of a chat message, for example) that
+     * point at a local or private address.
+     *
+     * <p>Since llama.cpp b12387 a media URL is fetched only from a public address: a request could
+     * otherwise make the process read from the machine's own network (server-side request forgery).
+     * Call this only where every caller is trusted and the media really lives on such an address;
+     * {@code data:} URLs and base64 content are not affected.</p>
+     *
+     * @return this builder
+     */
+    public ModelParameters allowPrivateMediaUrls() {
+        return setFlag(ModelFlag.MEDIA_ALLOW_PRIVATE_URLS);
+    }
+
+    /**
+     * Offer the embedded server's built-in tools, its MCP servers and its MCP proxy on an address
+     * that is not loopback without an API key (upstream {@code --allow-unauthenticated-tools}).
+     *
+     * <p>Since llama.cpp b12387 a server that listens on such an address and has tools or MCP
+     * configured refuses to start unless an API key is set or this is given: those tools run commands
+     * and read files on the machine for whoever reaches the port. Call it only on a network where
+     * every peer is trusted. It concerns a {@link net.ladenthin.llama.server.NativeServer} that loads
+     * its own model from these parameters; a server attached to a {@code LlamaModel} answers the
+     * tool routes with {@code 403} either way.</p>
+     *
+     * @return this builder
+     */
+    public ModelParameters allowUnauthenticatedTools() {
+        return setFlag(ModelFlag.ALLOW_UNAUTHENTICATED_TOOLS);
     }
 
     /**

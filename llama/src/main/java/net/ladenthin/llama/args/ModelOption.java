@@ -80,9 +80,6 @@ public enum ModelOption {
     /** CLI option {@code --ctx-size}. */
     CTX_SIZE("--ctx-size"),
 
-    /** CLI option {@code --defrag-thold}. */
-    DEFRAG_THOLD("--defrag-thold"),
-
     /** CLI option {@code --device}. */
     DEVICE("--device"),
 

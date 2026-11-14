@@ -58,7 +58,7 @@ sudo dnf install -y cuda-toolkit-13-5
 # On a bump, re-read ggml's list at the new tag (`grep -A 30 CUDA_ARCHITECTURES
 # ggml/src/ggml-cuda/CMakeLists.txt`) and extend this one rather than dropping it: new hardware
 # arrives as a new entry there, and silently inheriting their default would reintroduce the gap.
-CUDA_ARCH_RELEASE="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual"
+CUDA_ARCH_RELEASE="75-real;80-real;86-real;89-real;90-real;100-real;103-real;120-real;121-real;121-virtual"
 
 CUDA_ARCH_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH_RELEASE}"
 case "${CUDA_FAST_BUILD:-}" in

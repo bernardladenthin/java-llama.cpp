@@ -351,6 +351,39 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12316 to b12387 (2026-11-14)** -- 71 upstream commits, pinned by commit (no tag yet);
+`0003` and `0015` refreshed (context), the other 18 patches unchanged, every drop-check read: all
+still needed. Done with it: the engine gives its wake back (`CApiSleep`), RPC fixture on protocol
+10, `localhost` as same-origin in `OriginGuard`, `allowPrivateMediaUrls()`, `setDefragThold`
+removed, `allowUnauthenticatedTools()`, two `SpecType` constants, `103-real` in both CUDA lists.
+Open, none of it blocking:
+- **Video input: done over llama.cpp's own decoder** (the `ffmpeg` / `ffprobe` programs):
+  `ContentPart.videoFile` / `videoBytes` / `videoUrl`, `LlamaModel.supportsVideo()`,
+  `modalities.video` in `OpenAiCompatServer`'s `/props`, LangChain4j's `VideoContent`; `CApiVideo`
+  and `VideoInputIntegrationTest` hold it, with ffmpeg installed in the two Linux test jobs.
+  **Decided 2026-11-14: this project builds no decoder of its own; frames come from an existing
+  library.** For that, llama.cpp b12387's host decoder (`server_context::set_video_decoder`) is
+  passed through: `jllama_model_load_video` in the C API, `callback.VideoDecoder` / `VideoStream`
+  and `LlamaModel(parameters, progress, decoder)` in Java (`CApiVideoDecoder`,
+  `VideoDecoderIntegrationTest`, both with a stand-in decoder and without ffmpeg). On Android the
+  `llama-android` AAR brings `MediaRetrieverVideoDecoder` over the platform's
+  `MediaMetadataRetriever`, and the example app attaches videos with it. Open:
+  - **No device run with a model.** `OnDeviceVideoDecoderTest` reads the clip on the CI emulator;
+    no job has a vision model on a device, so "a video answered on a phone" is unmeasured -- as is
+    the time `getFrameAtIndex` takes per frame on real hardware.
+  - **The soundtrack** (`read_audio` of the C decoder, for LFM3-Omni) is not in the Java interface.
+  - **`llama-ffm`** has no binding for `jllama_model_load_video`.
+  - **The whole video is one `byte[]`** (base64 in the request, a copy for the decoder): fine for
+    clips, not for long recordings.
+  - Not measured: the answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI
+    checks that the frames arrive, with SmolVLM.
+- **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
+  (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
+  and the generator writes no such model.
+- **Not measured, and not planned:** the CUDA changes (SM103 kernels, few-row MMQ, NVFP4 prefill;
+  decided 2026-11-14). Not measured: the Vulkan flash attention for Intel on hardware; the NEON 4x4 `sgemm` tile on aarch64 (CI builds and runs
+  it, no benchmark).
+
 **From b12309 to b12316 (2026-11-12)** -- 7 upstream commits, pinned by commit; `0006` refreshed
 (one hunk less), the other 19 patches unchanged. The WebUI bundles `llama-brand`'s logo and favicons
 now (CC BY-NC 4.0 plus the grant in its `BRAND-USAGE.md`); upstream's `package.json` follows that
@@ -721,11 +754,6 @@ upstream options; absence of a Java builder method alone does not make a release
 - **Request-key coverage:** re-derive remaining gaps by comparing `RequestField.values()` and
   the current upstream schema walked by `test_wire_contracts.cpp`. The old b10883 counts are not
   a current API inventory; expose additional fields on demand.
-- **Video input (`ContentPart.videoFile(...)` / bytes overload):** the three video configuration
-  flags are exposed, but the typed content part and its integration test remain. Emit upstream's
-  `input_video` wire shape with base64/data URI/URL as supported by the current parser. Do not
-  advertise the untested `imageBytes(..., "video/mp4")` workaround. A real test needs video-capable
-  model/projector fixtures and `ffmpeg`/`ffprobe` on the runner, because upstream invokes them.
 - **`--spec-synth-len` / `--spec-synth-rates`: deliberately not exposed.** They synthesize fake
   acceptance probabilities for upstream benchmarks. Keep them out of application builder API;
   they remain reachable through raw `NativeServer` argv.

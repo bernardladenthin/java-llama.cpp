@@ -22,8 +22,10 @@ import org.jspecify.annotations.Nullable;
  *       allowed origin. A page whose own name resolves to {@code 127.0.0.1} reaches the server with that
  *       name in {@code Host}, and is same-origin to itself.
  *   <li><b>A foreign {@code Origin}.</b> An {@code Origin} is served when it is the request's own
- *       {@code Host} (a page this server delivered), an entry of the list, or, for the value
- *       {@code "localhost"}, any origin on {@code localhost}, {@code 127.0.0.1} or {@code ::1}.
+ *       {@code Host} (a page this server delivered) or an entry of the list. The value
+ *       {@code "localhost"} names no further origin: another port of this machine can be an application
+ *       nobody trusts, so it serves the same origin only (llama.cpp b12387; until then it served every
+ *       origin on {@code localhost}, {@code 127.0.0.1} and {@code ::1}).
  *   <li><b>No {@code Origin}.</b> A client that is no browser is served. A browser's request without one
  *       says where it comes from in {@code Sec-Fetch-Site}; {@code cross-site} and {@code same-site} are
  *       refused (this server delivers no page a navigation could want).
@@ -36,7 +38,7 @@ final class OriginGuard {
     /** The value that serves every origin and checks nothing. */
     static final String ANY = "*";
 
-    /** The value that serves the origins of this machine, whatever their port. */
+    /** The value that serves this machine's own clients and, of the browser's origins, the server's own only. */
     static final String LOCALHOST = "localhost";
 
     private static final String SCHEME_SEPARATOR = "://";
@@ -82,7 +84,8 @@ final class OriginGuard {
      * The {@code Access-Control-Allow-Origin} value for a response, or {@code null} for none.
      *
      * <p>The header takes one origin (or {@code "*"}), never a list, so a list is answered with the
-     * request's own origin when it is on it; {@code "localhost"} likewise names the local origin that asked.
+     * request's own origin when it is on it; {@code "localhost"} serves the same origin only, which needs no
+     * header.
      *
      * @param allowedOrigins the configured value
      * @param origin the request's {@code Origin} header
@@ -92,8 +95,11 @@ final class OriginGuard {
         if (ANY.equals(allowedOrigins)) {
             return ANY;
         }
+        if (LOCALHOST.equals(allowedOrigins)) {
+            return null;
+        }
         if (origin == null || origin.isEmpty()) {
-            return LOCALHOST.equals(allowedOrigins) || allowedOrigins.indexOf(',') >= 0 ? null : allowedOrigins;
+            return allowedOrigins.indexOf(',') >= 0 ? null : allowedOrigins;
         }
         return isListedOrigin(allowedOrigins, origin) ? origin : null;
     }
@@ -101,8 +107,7 @@ final class OriginGuard {
     /** Whether {@code origin} is one the configured value names. */
     private static boolean isListedOrigin(String allowedOrigins, String origin) {
         if (LOCALHOST.equals(allowedOrigins)) {
-            final String name = nameOf(authorityOf(origin));
-            return "localhost".equals(name) || "127.0.0.1".equals(name) || "::1".equals(name);
+            return false;
         }
         for (final String entry : allowedOrigins.split(",", -1)) {
             if (entry.trim().equals(origin)) {

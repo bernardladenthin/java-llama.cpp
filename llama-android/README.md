@@ -56,15 +56,18 @@ as assets and copy them to files dir) and pass the absolute path to `ModelParame
 
 ## How this build works
 
-This directory is a **standalone plain-Gradle build** (no Android Gradle Plugin, no Android SDK
-required to build): an AAR is a documented zip, and Gradle's built-in `maven-publish` can publish
+This directory is a **standalone plain-Gradle build** (no Android Gradle Plugin; of the Android SDK
+only one platform's `android.jar`, which the AAR's own classes are compiled against -- `ANDROID_HOME`
+or `-PandroidJar=<path>`): an AAR is a documented zip, and Gradle's built-in `maven-publish` can publish
 it with `<packaging>aar</packaging>` — which plain Maven cannot (`android-maven-plugin` is
 unmaintained). It is intentionally *not* a Maven reactor module, but it stays version-locked to
 the reactor: `build.gradle.kts` parses the version (and the mirrored dependency versions) out of
 the Maven poms at configure time, so `mvn versions:set` remains the single bump point.
 
 The CPU AAR's `classes.jar` repackages the **byte-identical Maven-built core classes** (no
-recompilation) minus `module-info.class`; the Android `.so` files ship under `jni/<abi>/`
+recompilation) minus `module-info.class`, plus the AAR's own classes in the package
+`net.ladenthin.llama.android` (`src/main/java`: the glue to the platform, today
+`MediaRetrieverVideoDecoder`, see "Video input" below); the Android `.so` files ship under `jni/<abi>/`
 instead of as Java resources. The OpenCL AAR has an empty `classes.jar`; its API comes through
 the CPU AAR dependency, so the two artifacts introduce no duplicate Java classes. The desktop natives jars carry `jllama-files.txt` /
 `jllama-build.txt` lists for the JVM loader, which an AAR does not need and does not contain.
@@ -73,6 +76,35 @@ The shared manifest template is expanded with a distinct package for each AAR:
 `net.ladenthin.llama.android` for CPU and `net.ladenthin.llama.android.opencl` for OpenCL.
 AGP requires unique library namespaces when the two AARs are consumed together; these
 manifest packages do not change the Java API package `net.ladenthin.llama`.
+
+## Video input
+
+llama.cpp decodes the video of a request by running the `ffmpeg` program, which an app cannot do.
+`net.ladenthin.llama.android.MediaRetrieverVideoDecoder` is the core's `VideoDecoder` over the
+platform's `MediaMetadataRetriever`: nothing is decoded in this project, the platform is asked for
+frame *i* (`getFrameAtIndex`, API 28 -- this artifact's floor) and its pixels are copied.
+
+```kotlin
+val model = LlamaModel(
+    ModelParameters().setModel(modelPath).setMmproj(mmprojPath),
+    null,
+    MediaRetrieverVideoDecoder(),
+)
+model.chatCompleteText(
+    InferenceParameters("").withMessages(
+        listOf(ChatMessage.userMultimodal(ContentPart.text("What happens?"), ContentPart.videoBytes(bytes, "video/mp4"))),
+    ),
+)
+```
+
+- Containers and codecs are the device's: what its player plays, the decoder reads.
+- The model samples 4 frames per second by default (`ModelParameters.setVideoFps`); every sampled
+  frame is one seek-and-decode by the platform and as many prompt tokens as an image.
+- The whole file is held in memory while it is read (the request carries it base64-encoded).
+- Tested on the CI emulator by `OnDeviceVideoDecoderTest` (the consumer fixture): the description of
+  the clip, every frame as RGB, scaling, skipping, bytes that are no video. That the frames reach a
+  model is tested on the JVM with a stand-in decoder (`VideoDecoderIntegrationTest`); no CI job runs
+  a vision model on a device.
 
 ### Building locally
 
@@ -86,7 +118,8 @@ mvn -pl llama -am -DskipTests package
 #    natives/cpu/x86_64/*.so
 #    natives/opencl/arm64-v8a/libggml-opencl.so
 
-# 3. Assemble + publish to the local staging repo / mavenLocal
+# 3. Assemble + publish to the local staging repo / mavenLocal (ANDROID_HOME must name an SDK
+#    with a platform of API 28 or newer, or pass -PandroidJar=<path to an android.jar>)
 gradle -p llama-android aarCpu aarOpencl
 gradle -p llama-android publishToMavenLocal
 ```

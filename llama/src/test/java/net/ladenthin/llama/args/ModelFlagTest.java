@@ -47,6 +47,8 @@ public class ModelFlagTest {
             {ModelFlag.NO_MMPROJ_AUTO, "--no-mmproj-auto"},
             {ModelFlag.MMPROJ_OFFLOAD, "--mmproj-offload"},
             {ModelFlag.NO_MMPROJ_OFFLOAD, "--no-mmproj-offload"},
+            {ModelFlag.MEDIA_ALLOW_PRIVATE_URLS, "--media-allow-private-urls"},
+            {ModelFlag.ALLOW_UNAUTHENTICATED_TOOLS, "--allow-unauthenticated-tools"},
             {ModelFlag.OFFLINE, "--offline"},
             {ModelFlag.METRICS, "--metrics"},
             {ModelFlag.PROPS, "--props"},
@@ -77,7 +79,7 @@ public class ModelFlagTest {
         //                     Use ModelParameters#setLoadMode.
         //   DUMP_KV_CACHE  -- removed upstream with no replacement.
         // src/test/cpp/test_model_flags.cpp enforces this against the real option table.
-        assertEquals(36, ModelFlag.values().length);
+        assertEquals(38, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

@@ -17,6 +17,8 @@ import dev.langchain4j.data.audio.Audio;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.AudioContent;
 import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.VideoContent;
+import dev.langchain4j.data.video.Video;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -437,5 +439,25 @@ class LangChain4jMappingTest {
                 dev.langchain4j.data.image.Image.builder().build());
 
         assertThrows(IllegalArgumentException.class, () -> LangChain4jMapping.toContentPart(image));
+    }
+
+    @Test
+    void videoContentBecomesAVideoPart() {
+        // inline data with its MIME type: the data URI llama.cpp decodes
+        ContentPart inline = LangChain4jMapping.toContentPart(VideoContent.from(
+                Video.builder().base64Data("AAEC").mimeType("video/mp4").build()));
+        assertThat(inline.getType(), is(ContentPart.Type.VIDEO_URL));
+        assertThat(inline.getVideoUrl(), is("data:video/mp4;base64,AAEC"));
+
+        // a URL only: handed on for the server to fetch
+        ContentPart remote = LangChain4jMapping.toContentPart(VideoContent.from("https://example.org/clip.mp4"));
+        assertThat(remote.getType(), is(ContentPart.Type.VIDEO_URL));
+        assertThat(remote.getVideoUrl(), is("https://example.org/clip.mp4"));
+
+        // neither: nothing the model could be given
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> LangChain4jMapping.toContentPart(
+                        VideoContent.from(Video.builder().mimeType("video/mp4").build())));
     }
 }

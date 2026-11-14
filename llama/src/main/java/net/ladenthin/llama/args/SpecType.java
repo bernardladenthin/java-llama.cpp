@@ -36,6 +36,12 @@ public enum SpecType implements CliArg {
     /** A DSpark drafter (DFlash with a Markov head). CLI string: {@code "draft-dspark"}. */
     DRAFT_DSPARK("draft-dspark"),
 
+    /** A DFlash2 drafter (DFlash with a selector). CLI string: {@code "draft-dflash2"}. */
+    DRAFT_DFLASH2("draft-dflash2"),
+
+    /** A LiliCorr drafter (DFlash with a scorer). CLI string: {@code "draft-lilicorr"}. */
+    DRAFT_LILICORR("draft-lilicorr"),
+
     /** Drafts from n-grams of the current context. CLI string: {@code "ngram-simple"}. */
     NGRAM_SIMPLE("ngram-simple"),
 
