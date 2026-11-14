@@ -68,7 +68,7 @@ SPDX-License-Identifier: MIT
 		     newer core from the snapshot repository below. -->
 		<llama.version>${project.version}</llama.version>
 		<atmosphere.version>4.0.77</atmosphere.version>
-		<jline.version>4.6.0</jline.version>
+		<jline.version>4.7.0</jline.version>
 		<jetty.version>12.1.15</jetty.version>
 		<acp.version>0.81.0</acp.version>
 		<slf4j.version>2.0.20</slf4j.version>
