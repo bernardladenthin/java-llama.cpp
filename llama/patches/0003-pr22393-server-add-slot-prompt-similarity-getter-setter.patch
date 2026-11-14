@@ -14,11 +14,14 @@ API and should instead live in downstream code. This patch is therefore now carr
 indefinitely, not pending-merge; it will never be droppable via an upstream bump and must keep
 being refreshed on every version bump.
 
+Refreshed at b12387: upstream added server_context::set_video_decoder() where the two
+declarations sat; only context moved, the + lines are unchanged.
+
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 39b7eb2..7c274cb 100644
+index 93b70ed4e..2ddcab7bc 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -3965,6 +3965,14 @@ server_response_reader server_context::get_response_reader() {
+@@ -5261,6 +5261,14 @@ server_response_reader server_context::get_response_reader() {
      return impl->get_response_reader();
  }
  
@@ -34,10 +37,10 @@ index 39b7eb2..7c274cb 100644
      auto bos_id = llama_vocab_bos(impl->vocab);
      auto eos_id = llama_vocab_eos(impl->vocab);
 diff --git a/tools/server/server-context.h b/tools/server/server-context.h
-index 952f825..938c985 100644
+index 2c91d53a4..0625247b4 100644
 --- a/tools/server/server-context.h
 +++ b/tools/server/server-context.h
-@@ -106,6 +106,11 @@ struct server_context {
+@@ -89,6 +89,11 @@ struct server_context {
      // not thread-safe, should only be used from the main thread
      server_context_meta get_meta() const;
  
@@ -48,4 +51,4 @@ index 952f825..938c985 100644
 +
      // note: must be set before load_model() is called
      void set_state_callback(server_state_callback_t callback);
- };
+ 

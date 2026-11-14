@@ -11,8 +11,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ### Added
 - **`OpenAiCompatServer` refuses requests from somewhere else** once `corsAllowOrigin` is not `*`
-  (new CLI option `--cors-origins`; the values are llama.cpp's: `*`, `localhost`, or a
-  comma-separated list of origins). `OriginGuard` applies the rules of llama.cpp's own server
+  (new CLI option `--cors-origins`; the values are llama.cpp's: `*`, `localhost` -- the server's own
+  origin only --, or a comma-separated list of origins). `OriginGuard` applies the rules of llama.cpp's own server
   (upstream #32098): a foreign `Origin` or `Sec-Fetch-Site`, and on a loopback connection a `Host`
   that names neither loopback nor the host of an allowed origin (DNS rebinding), are answered `403`
   `permission_error` before any route runs. The `Access-Control-Allow-Origin` header alone only hid
@@ -161,6 +161,40 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12387** (from b12316, 71 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). Upstream calls this state llama.cpp and ggml 1.0.0 and pruned its public headers
+  for it. What reaches a user of this library:
+  - **RPC protocol 10.** A `--rpc` client and an `RpcServer` must be of the same llama.cpp again: a
+    jar before this bump and one after it refuse each other at the handshake.
+  - **`--cors-origins localhost` serves the server's own origin only** (`NativeServer`, and
+    `OpenAiCompatServer`'s `corsAllowOrigin("localhost")`, which follows it). A page on another port
+    of the machine was served until now and is answered `403`; name it in a list
+    (`http://localhost:5173`).
+  - **Media URLs are fetched from public addresses only** (upstream #32115, against server-side
+    request forgery): an `image_url` or audio URL naming a local or private address is refused.
+    `ModelParameters.allowPrivateMediaUrls()` (`--media-allow-private-urls`) allows them again.
+  - **Removed: `ModelParameters.setDefragThold(float)`**, with upstream's `--defrag-thold`. The
+    option had been without effect for a long time; a model loaded with it fails to load now.
+  - **`SpecType.DRAFT_DFLASH2` and `SpecType.DRAFT_LILICORR`**, upstream's two new speculative
+    decoding types, both variants of DFlash drafting (#32016).
+  - **A model with `--sleep-idle-seconds` kept sleeping** -- which took a change here: upstream
+    (#32133) now counts whoever wakes the server and does not let it sleep while the count is
+    positive. Without the engine giving its wake back, such a model stayed loaded for good after
+    its first call.
+  - **The embedded server** asks for an API key (or `--allow-unauthenticated-tools`) before it
+    offers its built-in tools or MCP on an address that is not loopback, and a model worker of
+    router mode refuses a browser's request that does not come through the router.
+  - **`libllama` lost the functions upstream had marked deprecated** (`llama_load_model_from_file`,
+    `llama_new_context_with_model`, `llama_free_model`, the `llama_token_*` family, the session
+    file and `llama_copy_state_data` functions, ...). This library uses none; a C program linked
+    against the `libllama` of a library jar has to move to their successors.
+  - Backends: CUDA kernels compiled for GB300 (`103-real` joins the architecture list of both CUDA
+    jobs), faster MMQ for few rows; Vulkan flash attention for Intel GPUs; an ARM NEON 4x4 tile in
+    `sgemm`; a Metal offset fix in `mul_mv`. Chat: Gemma 4 parsing reworked, a faster Jinja render,
+    left-factored grammars.
+  Patches `0003` and `0015` refreshed (context only), the other 18 unchanged. The WebUI's
+  `llama-brand` dependency is resolved from GitHub's archive of a commit now, which the license
+  generator reads. C++ suite: 737 tests, 781 cases (`CApiSleep` is new).
 - **llama.cpp b12316** (from b12309, 7 upstream commits; pinned by commit): the embedded WebUI takes
   its logo and favicons from upstream's `llama-brand` package (CC BY-NC 4.0 with a `BRAND-USAGE.md`
   that permits redistribution with software, commercial included; both texts are in the natives

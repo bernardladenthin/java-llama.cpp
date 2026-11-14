@@ -2947,6 +2947,68 @@ TEST_F(CApiEnumSweep, EveryCliEnumValueLoadsTheModelAndIsUsable) {
     EXPECT_GT(used, 60) << "the sweep ran over implausibly few values";
 }
 
+TEST(CApiSleep, AModelWithAnIdleTimeoutSleepsAgainAfterEveryCall) {
+    // llama.cpp b12387 (#32133): server_queue::wait_until_no_sleep() counts its caller as in flight,
+    // and the idle timer does not fire while the count is positive. The engine wakes the server
+    // through that function before every operation, so a count it did not give back kept a model
+    // loaded with --sleep-idle-seconds awake for good after its first request -- the weights stayed
+    // in memory, and nothing said so. Each call below must be followed by a sleep, and the call
+    // after a sleep must wake the model and answer.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-sleep");
+    ASSERT_FALSE(path.empty());
+    struct Lines {
+        std::mutex mutex;
+        std::vector<std::string> text;
+        int count(const std::string &needle) {
+            std::lock_guard<std::mutex> lock(mutex);
+            int n = 0;
+            for (const std::string &line : text) {
+                n += line.find(needle) != std::string::npos ? 1 : 0;
+            }
+            return n;
+        }
+    } lines;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *user) {
+                      auto *sink = static_cast<Lines *>(user);
+                      std::lock_guard<std::mutex> lock(sink->mutex);
+                      sink->text.emplace_back(text);
+                  },
+                  &lines),
+              JLLAMA_STATUS_OK);
+    struct LogCallbackReset {
+        ~LogCallbackReset() { jllama_set_log_callback(nullptr, nullptr); }
+    } log_callback_reset;
+
+    jllama_model *model = load_tiny(path, {"--sleep-idle-seconds", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto sleeps = [&lines](int n) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (lines.count("server is entering sleeping state") < n && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return lines.count("server is entering sleeping state") >= n;
+    };
+    // a completion (wake_server for the metadata, then wake_and_post), then metadata alone, then
+    // tokenization: the three shapes of a call that wakes the server
+    EXPECT_FALSE(greedy_answer(model, 4).empty());
+    EXPECT_TRUE(sleeps(1)) << "the model did not sleep after a completion";
+    EXPECT_FALSE(greedy_answer(model, 4).empty()) << "the sleeping model did not wake for a completion";
+    EXPECT_TRUE(sleeps(2)) << "the model did not sleep after the completion that woke it";
+    Owned meta;
+    EXPECT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(sleeps(3)) << "the model did not sleep after a metadata call";
+    int *tokens = nullptr;
+    size_t n_tokens = 0;
+    EXPECT_EQ(jllama_tokenize(model, "hello", false, &tokens, &n_tokens), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tokens_free(tokens);
+    EXPECT_TRUE(sleeps(4)) << "the model did not sleep after a tokenization";
+    jllama_model_free(model);
+    ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiPooling, AModelThatDeclaresItsPoolingTypeNeedsNoOption) {
     // Why there is no PoolingType constant for "unspecified": without --pooling the model's own
     // <arch>.pooling_type applies. Two models with the same weights, one declaring mean pooling:

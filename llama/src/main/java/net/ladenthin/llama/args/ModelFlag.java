@@ -138,6 +138,9 @@ public enum ModelFlag {
     /** Keep the multimodal projector on the CPU. */
     NO_MMPROJ_OFFLOAD("--no-mmproj-offload"),
 
+    /** Allow http(s) media URLs that point at a local or private address (llama.cpp b12387). */
+    MEDIA_ALLOW_PRIVATE_URLS("--media-allow-private-urls"),
+
     /**
      * Run fully offline — never make an outbound network request to download a model. Useful for
      * air-gapped or pre-staged-model deployments where any outbound call is itself a failure mode.

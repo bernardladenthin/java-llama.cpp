@@ -114,7 +114,45 @@ inline void release_jllama_context_impl(jllama_context *jctx) {
 // RAII guard: releases the jllama_context user reference at scope exit, including
 // on early return. REQUIRE_SERVER_CONTEXT (JNI) and the C API's calls use it so every
 // entry point is covered.
+// Keeping the server awake for the length of one call (llama.cpp b12387, upstream #32133).
+//
+// Since that change server_queue::wait_until_no_sleep() counts its caller as "in flight" and the
+// idle timer does not put the server to sleep while the count is positive; the caller gives the
+// count back with release_inflight(). Upstream's HTTP handlers do that in the destructor of their
+// response generator. Without the release a model loaded with --sleep-idle-seconds never slept
+// again after its first request, silently.
+//
+// An operation here wakes the server more than once (wake_server() before it reads the metadata
+// and tokenizes, wake_and_post() before it posts), so the count is held once per thread and call:
+// the first wake keeps it, a later wake of the same queue gives its extra count back at once, and
+// the user-reference guard below releases it when the call returns. That also closes the window
+// upstream fixed -- the server cannot go to sleep between the wake and the use of its state.
+inline thread_local server_queue *jllama_awake_queue = nullptr;
+
+inline void jllama_hold_server_awake(server_queue &queue) {
+    queue.wait_until_no_sleep();
+    if (jllama_awake_queue == &queue) {
+        queue.release_inflight(); // this call already holds its count
+        return;
+    }
+    if (jllama_awake_queue != nullptr) {
+        jllama_awake_queue->release_inflight();
+    }
+    jllama_awake_queue = &queue;
+}
+
+inline void jllama_release_server_awake() {
+    if (jllama_awake_queue != nullptr) {
+        jllama_awake_queue->release_inflight();
+        jllama_awake_queue = nullptr;
+    }
+}
+
 struct jllama_context_guard {
     jllama_context *ptr;
-    ~jllama_context_guard() { release_jllama_context_impl(ptr); }
+    ~jllama_context_guard() {
+        // before the user reference goes: the queue belongs to the context it keeps alive
+        jllama_release_server_awake();
+        release_jllama_context_impl(ptr);
+    }
 };

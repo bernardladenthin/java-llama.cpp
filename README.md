@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12316](https://img.shields.io/badge/llama.cpp-%23b12316-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12316)  
+[![llama.cpp b12387](https://img.shields.io/badge/llama.cpp-%23b12387-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12387)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1253,7 +1253,8 @@ heartbeats so a long prompt prefill does not trip the client's stream-inactivity
 tool calling depends on the model's own tool-calling quality. Pass `--api-key` (or `OpenAiServerConfig.builder().apiKey(...)`) to require the key, sent as
 `Authorization: Bearer <key>` (or as `x-api-key`, the header Anthropic clients send); the server binds to
 `127.0.0.1` by default. Browser pages of every origin may call it (`corsAllowOrigin` `*`); name the
-origins with `--cors-origins` / `corsAllowOrigin(...)` (`localhost`, or a comma-separated list such as
+origins with `--cors-origins` / `corsAllowOrigin(...)` (`localhost` for the server's own origin only --
+a page on another port of the machine is refused, name it in a list --, or a comma-separated list such as
 `http://localhost:5173,https://app.example`) and the server refuses a request from anywhere else with
 `403` -- a foreign `Origin`, and on a loopback connection a `Host` header that names another machine
 (DNS rebinding) -- by the rules of llama.cpp's own `--cors-origins`. A client that is no browser sends

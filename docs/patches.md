@@ -84,6 +84,9 @@ slot_prompt_similarity is internal, single-use-case state that shouldn't be expo
 API and should instead live in downstream code. This patch is therefore now carried
 indefinitely, not pending-merge; it will never be droppable via an upstream bump and must keep
 being refreshed on every version bump.
+
+Refreshed at b12387: upstream added server_context::set_video_decoder() where the two
+declarations sat; only context moved, the + lines are unchanged.
 ```
 
 ## 0006-server-embed-native-server-jni.patch
@@ -285,6 +288,11 @@ re-checked on the next ggml_backend_rpc_add_server() (upstream returns the cache
 of a server that has gone away), and ggml_backend_rpc_init() aborts by name when the
 registration of a reachable server fails. The server half (stop, listening, COMM_INIT bind
 address and cancellation, transport) is unchanged.
+
+Refreshed at b12387 ("ggml : prune", protocol 10.0.0): upstream reformatted the
+declaration of ggml_backend_rpc_start_server() in ggml-rpc.h over several lines, the context
+of the hunk that declares the stop and listening functions after it. Only context moved; the
++ and - lines are unchanged, 24 hunks.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch

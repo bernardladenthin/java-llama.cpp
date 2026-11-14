@@ -105,11 +105,18 @@ public class OriginGuardTest {
     }
 
     @Test
-    public void localhostServesEveryLocalOrigin() {
-        assertThat(loopback("localhost", "127.0.0.1", "http://localhost:5173", null), is(true));
-        assertThat(loopback("localhost", "127.0.0.1", "https://127.0.0.1", null), is(true));
-        assertThat(loopback("localhost", "127.0.0.1", "http://[::1]:3000", null), is(true));
-        assertThat(loopback("localhost", "127.0.0.1", "http://LocalHost", null), is(true));
+    public void localhostServesTheSameOriginOnly() {
+        // llama.cpp b12387: another port of this machine can be an application nobody trusts
+        assertThat(loopback("localhost", "127.0.0.1", "http://localhost:5173", null), is(false));
+        assertThat(loopback("localhost", "127.0.0.1", "https://127.0.0.1:3000", null), is(false));
+        assertThat(loopback("localhost", "127.0.0.1", "http://[::1]:3000", null), is(false));
+        assertThat(loopback("localhost", "127.0.0.1", "http://LocalHost", null), is(false));
+        // the page this server delivered: its Origin is the Host it was reached under
+        assertThat(loopback("localhost", "127.0.0.1:9931", "http://127.0.0.1:9931", null), is(true));
+        assertThat(loopback("localhost", "localhost:9931", "http://LocalHost:9931", null), is(true));
+        assertThat(loopback("localhost", "localhost:9931", "http://localhost:9932", null), is(false));
+        // a client that is no browser sends no Origin
+        assertThat(loopback("localhost", "127.0.0.1:9931", null, null), is(true));
         assertThat(loopback("localhost", "127.0.0.1", "http://evil.example", null), is(false));
         assertThat(loopback("localhost", "127.0.0.1", "http://localhost.evil.example", null), is(false));
         assertThat(loopback("localhost", "127.0.0.1", "localhost", null), is(false));
@@ -141,7 +148,8 @@ public class OriginGuardTest {
         assertThat(OriginGuard.allowOriginHeader(LIST, "https://other.example:8443"), is("https://other.example:8443"));
         assertThat(OriginGuard.allowOriginHeader(LIST, "http://evil.example"), is(nullValue()));
         assertThat(OriginGuard.allowOriginHeader("localhost", null), is(nullValue()));
-        assertThat(OriginGuard.allowOriginHeader("localhost", "http://localhost:5173"), is("http://localhost:5173"));
+        // the same origin needs no header, and no other origin is served
+        assertThat(OriginGuard.allowOriginHeader("localhost", "http://localhost:5173"), is(nullValue()));
         assertThat(OriginGuard.allowOriginHeader("localhost", "http://evil.example"), is(nullValue()));
     }
 }

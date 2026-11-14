@@ -404,18 +404,6 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
-    public void testSetDefragThold() {
-        ModelParameters p = new ModelParameters().setDefragThold(0.2f);
-        assertThat(p.parameters.get("--defrag-thold"), is("0.2"));
-    }
-
-    @Test
-    public void testSetDefragTholdDisabled() {
-        ModelParameters p = new ModelParameters().setDefragThold(-1.0f);
-        assertThat(p.parameters.get("--defrag-thold"), is("-1.0"));
-    }
-
-    @Test
     public void testDisableKvOffload() {
         ModelParameters p = new ModelParameters().disableKvOffload();
         assertThat(p.parameters, hasKey("--no-kv-offload"));
@@ -1199,5 +1187,11 @@ public class ModelParametersExtendedTest {
         assertThat(p.isUnset(ModelFlag.SWA_FULL), is(true));
         p.enableSwaFull();
         assertThat(p.isUnset(ModelFlag.SWA_FULL), is(false));
+    }
+
+    @Test
+    public void testAllowPrivateMediaUrls() {
+        ModelParameters p = new ModelParameters().allowPrivateMediaUrls();
+        assertThat(p.parameters.containsKey("--media-allow-private-urls"), is(true));
     }
 }

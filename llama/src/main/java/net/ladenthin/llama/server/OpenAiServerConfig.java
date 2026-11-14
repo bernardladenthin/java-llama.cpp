@@ -378,9 +378,9 @@ public final class OpenAiServerConfig {
          * connection a {@code Host} that names neither loopback nor the host of an allowed origin (DNS
          * rebinding). A client that is no browser sends none of these headers and is served as before.
          *
-         * @param corsAllowOrigin {@code "*"}, {@code "localhost"} (every origin on {@code localhost},
-         *     {@code 127.0.0.1} or {@code ::1}, whatever its port) or a comma-separated list of origins
-         *     ({@code scheme://host[:port]})
+         * @param corsAllowOrigin {@code "*"}, {@code "localhost"} (this machine's clients, and of a browser's
+         *     origins the server's own only: another port of the machine is refused) or a comma-separated
+         *     list of origins ({@code scheme://host[:port]})
          * @return this builder
          */
         public Builder corsAllowOrigin(String corsAllowOrigin) {

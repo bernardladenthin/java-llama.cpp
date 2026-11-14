@@ -397,7 +397,7 @@ void wake_server(jllama_context *jctx) {
         return; // no server_context in vocab-only mode; the model is owned directly and never sleeps
     }
     server_response_reader rd = jctx->server.get_response_reader();
-    rd.queue_tasks.wait_until_no_sleep();
+    jllama_hold_server_awake(rd.queue_tasks);
     // Re-read the vocab: a sleep/resume cycle replaced the model this pointer came from.
     jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
 }
@@ -520,7 +520,7 @@ static void name_completion_task(server_task &task, const server_context_meta &m
 // here when the queue is terminated is never released. It is safe only because every caller holds a
 // jllama_context_guard user reference and free() waits for users == 0 BEFORE calling terminate().
 void wake_and_post(server_response_reader &rd, server_task &&task, bool front) {
-    rd.queue_tasks.wait_until_no_sleep();
+    jllama_hold_server_awake(rd.queue_tasks);
     rd.post_task(std::move(task), front);
 }
 
@@ -528,7 +528,7 @@ void wake_and_post(server_response_reader &rd, server_task &&task, bool front) {
 // turns generated text into content, reasoning and tool calls. A default session is the non-chat
 // case (content only).
 void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks, const common_chat_session &session) {
-    rd.queue_tasks.wait_until_no_sleep();
+    jllama_hold_server_awake(rd.queue_tasks);
     rd.post_tasks(std::move(tasks), session);
 }
 

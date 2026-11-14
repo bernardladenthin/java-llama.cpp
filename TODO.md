@@ -351,6 +351,25 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12316 to b12387 (2026-11-14)** -- 71 upstream commits, pinned by commit (no tag yet);
+`0003` and `0015` refreshed (context), the other 18 patches unchanged, every drop-check read: all
+still needed. Done with it: the engine gives its wake back (`CApiSleep`), RPC fixture on protocol
+10, `localhost` as same-origin in `OriginGuard`, `allowPrivateMediaUrls()`, `setDefragThold`
+removed, two `SpecType` constants, `103-real` in both CUDA lists. Open, none of it blocking:
+- **Video input.** Upstream's server takes video through an `ffmpeg` binary found at run time
+  (`MTMD_VIDEO`, `mtmd-helper-video-ffmpeg.cpp`) or through a decoder the host sets
+  (`server_context::set_video_decoder`, `mtmd_helper_video_decoder`). Nothing here offers it: no
+  `ContentPart` for video, no decoder callback in the C API. A Java decoder callback (frames from
+  the caller) would make it work without `ffmpeg`, Android included.
+- **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
+  (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
+  and the generator writes no such model.
+- **`--allow-unauthenticated-tools`** has no `ModelParameters` method: the attach server answers
+  `/tools` and `/cors-proxy` with `403`, and a classic `NativeServer` takes the flag in its argv.
+- **Not measured:** the CUDA changes (SM103 kernels, few-row MMQ, NVFP4 prefill) and the Vulkan
+  flash attention for Intel on hardware; the NEON 4x4 `sgemm` tile on aarch64 (CI builds and runs
+  it, no benchmark).
+
 **From b12309 to b12316 (2026-11-12)** -- 7 upstream commits, pinned by commit; `0006` refreshed
 (one hunk less), the other 19 patches unchanged. The WebUI bundles `llama-brand`'s logo and favicons
 now (CC BY-NC 4.0 plus the grant in its `BRAND-USAGE.md`); upstream's `package.json` follows that

@@ -803,16 +803,6 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set KV cache defragmentation threshold (default: 0.1, &lt; 0 - disabled).
-     *
-     * @param defragThold the KV cache defragmentation threshold (negative = disabled)
-     * @return this builder
-     */
-    public ModelParameters setDefragThold(float defragThold) {
-        return putScalar(ModelOption.DEFRAG_THOLD, defragThold);
-    }
-
-    /**
      * Set the number of parallel sequences to decode (default: 1).
      *
      * @param nParallel the number of parallel sequences to decode
@@ -1783,6 +1773,21 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setVideoFfmpegDir(String directory) {
         return putScalar(ModelOption.VIDEO_FFMPEG_DIR, directory);
+    }
+
+    /**
+     * Allow {@code http(s)} media URLs (an {@code image_url} of a chat message, for example) that
+     * point at a local or private address.
+     *
+     * <p>Since llama.cpp b12387 a media URL is fetched only from a public address: a request could
+     * otherwise make the process read from the machine's own network (server-side request forgery).
+     * Call this only where every caller is trusted and the media really lives on such an address;
+     * {@code data:} URLs and base64 content are not affected.</p>
+     *
+     * @return this builder
+     */
+    public ModelParameters allowPrivateMediaUrls() {
+        return setFlag(ModelFlag.MEDIA_ALLOW_PRIVATE_URLS);
     }
 
     /**
