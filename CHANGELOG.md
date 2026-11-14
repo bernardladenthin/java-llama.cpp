@@ -91,6 +91,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
+  change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
+  the sibling repositories.
 - **A refused speech request is an `InvalidRequestException`** (`JLLAMA_STATUS_INVALID_REQUEST` in the
   C API, `400` from `/v1/audio/speech` and `/tts` instead of `500`): a voice the model does not have,
   a voice next to a speaker reference, a reference the pair cannot use or that cannot be read. It is
