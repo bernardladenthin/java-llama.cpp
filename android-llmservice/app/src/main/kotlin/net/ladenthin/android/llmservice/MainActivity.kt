@@ -153,14 +153,14 @@ private fun ChatScreen(viewModel: ChatViewModel) {
     }
     val onChooseMmproj: () -> Unit = { mmprojPicker.launch(arrayOf("*/*")) }
 
-    // Image attachment picker — stages one image for the next Send; only usable once a vision
-    // model is loaded (the attach button in Conversation is gated on that).
+    // Attachment picker — stages one image or one video for the next Send; only usable once a
+    // vision model is loaded (the attach button in Conversation is gated on that).
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             viewModel.attachImage(uri, queryDisplayName(context, uri))
         }
     }
-    val onAttachImage: () -> Unit = { imagePicker.launch(arrayOf("image/*")) }
+    val onAttachImage: () -> Unit = { imagePicker.launch(arrayOf("image/*", "video/*")) }
 
     // One-shot notices (saved / loaded / none) -> snackbar. Resolve the localized text in
     // composable scope, then show it from the effect.
@@ -842,7 +842,11 @@ private fun MessageBubble(message: ChatViewModel.Message) {
                     },
                 ),
         ) {
-            val prefix = if (message.imageBytes != null) "🖼️ " else ""
+            val prefix = when {
+                message.imageBytes == null -> ""
+                message.imageMimeType?.startsWith("video/") == true -> "🎞️ "
+                else -> "🖼️ "
+            }
             Text(text = prefix + message.text.ifEmpty { "…" }, modifier = Modifier.padding(12.dp))
         }
     }

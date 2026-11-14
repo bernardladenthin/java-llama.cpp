@@ -1239,6 +1239,9 @@ jobs:
             if [ "$flavor" = "llama-android" ]; then
               unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/LlamaModel.class" > /dev/null \
                 || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
+              # the AAR's own class: video input through the platform's MediaMetadataRetriever
+              unzip -l /tmp/aar-classes.jar | grep "net/ladenthin/llama/android/MediaRetrieverVideoDecoder.class" > /dev/null \
+                || { echo "::error::$AAR classes.jar lacks MediaRetrieverVideoDecoder"; exit 1; }
             elif unzip -Z -1 /tmp/aar-classes.jar | grep '\.class$' > /dev/null; then
               echo "::error::$AAR duplicates Java classes from its CPU AAR dependency"; exit 1
             fi

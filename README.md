@@ -747,8 +747,14 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
   the two programs as child processes and reads the frames from them. They are found on `PATH`, or in
   the directory `setVideoFfmpegDir(String)` names -- which an application server or a container image
   often needs. Without them a request with a video is refused as invalid (`InvalidRequestException`,
-  `400` on the HTTP servers) and the model keeps answering other requests. **Android cannot run them**
-  (upstream builds video out there), so `supportsVideo()` is `false` in the AAR.
+  `400` on the HTTP servers) and the model keeps answering other requests.
+- **On Android, and wherever no `ffmpeg` can be run, the frames come from a `VideoDecoder`** given to
+  the model: `new LlamaModel(parameters, null, decoder)`. The interface (`callback.VideoDecoder` /
+  `VideoStream`: open the bytes, describe the video, deliver frame after frame as RGB) is the door
+  for a media library that is there anyway -- this project implements no codec. The `llama-android`
+  AAR brings the one for Android, `MediaRetrieverVideoDecoder`, over the platform's
+  `MediaMetadataRetriever`; see [Importing in Android](#importing-in-android). A model loaded with a
+  decoder uses it instead of ffmpeg on every platform.
 - **Every container and codec that `ffmpeg` reads** works; the MIME type of `videoBytes` is not what
   decides it. `videoUrl` takes a `data:video/...;base64,` URI, an `http(s)` URL of a public address
   (`allowPrivateMediaUrls()` for others) or a `file://` URL below `--media-path`.
@@ -1840,6 +1846,27 @@ Compose UI, with a 13-language flag picker and private local save/load — lives
 It builds with plain Gradle/AGP (no Android Studio required), produces a Play-shaped signed
 `.aab`, and is validated in CI by a real on-device emulator UI test. See its README for the
 build, signing/Play, and testing walkthrough.
+
+**Video input on Android.** An app cannot run the `ffmpeg` program llama.cpp decodes video with, so
+the AAR carries `net.ladenthin.llama.android.MediaRetrieverVideoDecoder`: it asks the platform's
+`MediaMetadataRetriever` for the frames (the codecs of the device, rotation applied) and hands them to
+the model. Load a vision model with it and send a video like an image:
+
+```kotlin
+val model = LlamaModel(
+    ModelParameters().setModel(modelPath).setMmproj(mmprojPath),
+    null,                              // no load-progress callback
+    MediaRetrieverVideoDecoder(),
+)
+val message = ChatMessage.userMultimodal(
+    ContentPart.text("What happens in this video?"),
+    ContentPart.videoBytes(bytes, "video/mp4"),
+)
+```
+
+llama.cpp samples 4 frames per second (`setVideoFps`), each as costly as an image, and the whole file
+is held in memory: this is for short clips. The example app [`android-llmservice/`](android-llmservice/README.md)
+does exactly this behind its attach button.
 
 ### Option 2 (advanced): build from source inside your app
 

@@ -29,6 +29,21 @@ public final class ConsumerSmoke {
     }
 
     /**
+     * Opens a vision model whose videos the platform decodes -- the AAR's own class, so this is
+     * also what the release build (R8 with the AAR's consumer rules) has to keep and link.
+     *
+     * @param modelPath absolute path to a GGUF file on device storage
+     * @param mmprojPath absolute path to its vision projector
+     * @return the loaded model (caller closes)
+     */
+    public static LlamaModel openWithVideo(String modelPath, String mmprojPath) {
+        return new LlamaModel(
+                new ModelParameters().setModel(modelPath).setMmproj(mmprojPath).setCtxSize(4096),
+                null,
+                new net.ladenthin.llama.android.MediaRetrieverVideoDecoder());
+    }
+
+    /**
      * Runs a short completion.
      *
      * @param model the loaded model

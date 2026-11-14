@@ -117,6 +117,71 @@ JLLAMA_API void jllama_string_free(char *s);
 JLLAMA_API jllama_status jllama_model_load(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                            void *progress_user_data, jllama_model **out);
 
+/** What a video decoder reports about a stream it opened. */
+typedef struct jllama_video_info {
+    unsigned int width; /* as displayed: rotation and pixel aspect ratio applied */
+    unsigned int height;
+    float fps;      /* of the source; must be > 0 */
+    int n_frames;   /* -1 if unknown */
+    float duration; /* in seconds, -1 if unknown */
+} jllama_video_info;
+
+/**
+ * A video decoder of the application, for jllama_model_load_video. Without one a video in a
+ * request is decoded by the `ffmpeg` / `ffprobe` programs found on PATH (or in `--video-ffmpeg-dir`),
+ * which a desktop build runs as child processes and an Android build cannot. The functions are
+ * called in this order: open, start, read_audio, read_frame..., close -- on a thread of the library,
+ * not on the thread that made the request (the server reads a request's media on its own thread).
+ * One state is used by one thread; open may be called while another state is still open.
+ */
+typedef struct jllama_video_decoder {
+    /**
+     * Opens a video: `data` holds `size` bytes of the file as the request carried it (valid during
+     * the call only); `path` is null today. Fills *info and returns the state the other functions
+     * get, or null when these bytes are no video this decoder reads -- the request is then refused.
+     */
+    void *(*open)(void *user_data, const char *path, const unsigned char *data, size_t size, jllama_video_info *info);
+    /**
+     * Optional (may be null). Called once with the frame size read_frame will be asked for and the
+     * frame rate the model wants (0: every frame). A decoder that resamples to `fps` itself sets
+     * *fps_picked; otherwise the library picks frames by index and skips the others. False fails
+     * the request.
+     */
+    bool (*start)(void *state, unsigned int width, unsigned int height, float fps, bool *fps_picked);
+    /**
+     * The next frame in presentation order as RGB24 (3 bytes per pixel, rows top to bottom, no
+     * padding), scaled to width x height, written to `rgb`; a null `rgb` skips the frame. Returns
+     * false at the end of the stream or on an error.
+     */
+    bool (*read_frame)(void *state, unsigned char *rgb, unsigned int width, unsigned int height);
+    /**
+     * Optional (may be null). The soundtrack as mono 32-bit float PCM at `sample_rate`, starting at
+     * the first video frame; the samples stay valid until the next call on this state. Null when
+     * there is none. Only a model that hears a video's soundtrack asks for it.
+     */
+    const float *(*read_audio)(void *state, int sample_rate, size_t *n_samples);
+    /** Releases a state open returned. */
+    void (*close)(void *state);
+    /**
+     * Optional (may be null). Called exactly once with `user_data` when the library no longer uses
+     * the decoder: from jllama_model_free, or from jllama_model_load_video itself when the load fails.
+     */
+    void (*release)(void *user_data);
+    void *user_data;
+} jllama_video_decoder;
+
+/**
+ * jllama_model_load with a video decoder of the application: a model loaded with a vision projector
+ * (`--mmproj`) then takes video (`modalities.video` of jllama_model_meta) through `decoder` instead
+ * of ffmpeg -- an `input_video` / `video_url` part of a chat message, or a video among the
+ * `multimodal_data` of a raw prompt. The struct is copied; its functions and `user_data` are used
+ * until `release` is called. `open`, `read_frame` and `close` are required
+ * (JLLAMA_STATUS_INVALID_REQUEST without them). A null `decoder` is jllama_model_load.
+ */
+JLLAMA_API jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_load_progress_fn progress,
+                                                 void *progress_user_data, const jllama_video_decoder *decoder,
+                                                 jllama_model **out);
+
 /**
  * Frees a model: cancels its streaming tasks, waits for the calls in flight on it, stops its
  * inference loop and releases the weights. Null is ignored.

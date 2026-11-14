@@ -380,7 +380,7 @@ struct jni_thread_attachment {
 thread_local jni_thread_attachment t_jni_attachment;
 } // namespace
 
-JNIEnv *get_jni_env_attaching() noexcept {
+JNIEnv *get_jni_env_attaching(const char *thread_name = "jllama-log-worker") noexcept {
     JNIEnv *env = nullptr;
     if (g_vm == nullptr) {
         return nullptr;
@@ -392,8 +392,8 @@ JNIEnv *get_jni_env_attaching() noexcept {
     if (res != JNI_EDETACHED) {
         return nullptr;
     }
-    char name[] = "jllama-log-worker"; // the JVM copies it; shows in thread dumps instead of Thread-N
-    JavaVMAttachArgs args = {JNI_VERSION_1_6, name, nullptr};
+    // the JVM copies the name; it shows in thread dumps instead of Thread-N
+    JavaVMAttachArgs args = {JNI_VERSION_1_6, const_cast<char *>(thread_name), nullptr};
     if (g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void **>(&env), &args) != JNI_OK) {
         return nullptr;
     }
@@ -830,14 +830,215 @@ bool jni_load_progress_trampoline(float progress, void *user_data) {
 }
 } // namespace
 
+namespace {
+
+// A Java VideoDecoder behind jllama_video_decoder. The callbacks run on a thread of the library,
+// not on the Java thread that made the request (measured: the server reads a request's media on its
+// own thread, also for a LlamaModel call); it is attached to the JVM on its first call and detached
+// when it exits (get_jni_env_attaching). Every call runs in a local frame of its own, and a Java exception
+// is described on stderr, cleared and turned into the failure value: nothing may unwind into
+// llama.cpp. The classes are looked up when the model is loaded, on the Java thread, because
+// FindClass on an attached native thread only sees the system class loader.
+struct jni_video_decoder {
+    jobject decoder = nullptr; // global
+    jmethodID m_open = nullptr;
+    jmethodID m_width = nullptr;
+    jmethodID m_height = nullptr;
+    jmethodID m_fps = nullptr;
+    jmethodID m_frame_count = nullptr;
+    jmethodID m_duration = nullptr;
+    jmethodID m_start = nullptr;
+    jmethodID m_read_frame = nullptr;
+    jmethodID m_close = nullptr;
+};
+
+struct jni_video_stream {
+    const jni_video_decoder *owner;
+    jobject stream; // global
+};
+
+// True when a Java exception was pending; it is printed and cleared.
+bool jni_video_failed(JNIEnv *env) {
+    if (!env->ExceptionCheck()) {
+        return false;
+    }
+    env->ExceptionDescribe();
+    env->ExceptionClear();
+    return true;
+}
+
+// Closes the Java stream and drops its reference.
+void jni_video_close_stream(JNIEnv *env, jni_video_stream *stream) {
+    env->CallVoidMethod(stream->stream, stream->owner->m_close);
+    jni_video_failed(env);
+    env->DeleteGlobalRef(stream->stream);
+    delete stream;
+}
+
+void *jni_video_open(void *user_data, const char * /*path*/, const unsigned char *data, size_t size,
+                     jllama_video_info *info) {
+    const auto *owner = static_cast<const jni_video_decoder *>(user_data);
+    JNIEnv *env = get_jni_env_attaching("jllama-video");
+    // a Java array holds at most 2^31 - 1 bytes
+    if (env == nullptr || data == nullptr || size > static_cast<size_t>(INT32_MAX)) {
+        return nullptr;
+    }
+    if (env->PushLocalFrame(8) != JNI_OK) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jni_video_stream *result = nullptr;
+    jbyteArray bytes = env->NewByteArray(static_cast<jsize>(size));
+    if (bytes != nullptr) {
+        env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(data));
+        jobject stream = env->CallObjectMethod(owner->decoder, owner->m_open, bytes);
+        if (!jni_video_failed(env) && stream != nullptr) {
+            jobject global = env->NewGlobalRef(stream);
+            if (global != nullptr) {
+                result = new jni_video_stream{owner, global};
+                const jint width = env->CallIntMethod(global, owner->m_width);
+                const jint height = env->CallIntMethod(global, owner->m_height);
+                const jfloat fps = env->CallFloatMethod(global, owner->m_fps);
+                const jint frames = env->CallIntMethod(global, owner->m_frame_count);
+                const jfloat duration = env->CallFloatMethod(global, owner->m_duration);
+                if (jni_video_failed(env) || width <= 0 || height <= 0 || !(fps > 0.0f)) {
+                    // a stream that cannot say what it is: closed here, the request is refused
+                    jni_video_close_stream(env, result);
+                    result = nullptr;
+                } else {
+                    info->width = static_cast<unsigned int>(width);
+                    info->height = static_cast<unsigned int>(height);
+                    info->fps = fps;
+                    info->n_frames = frames;
+                    info->duration = duration;
+                }
+            }
+        }
+    }
+    jni_video_failed(env); // an allocation that failed
+    env->PopLocalFrame(nullptr);
+    return result;
+}
+
+bool jni_video_start(void *state, unsigned int width, unsigned int height, float fps, bool *fps_picked) {
+    auto *stream = static_cast<jni_video_stream *>(state);
+    JNIEnv *env = get_jni_env_attaching("jllama-video");
+    if (env == nullptr) {
+        return false;
+    }
+    const jboolean picked = env->CallBooleanMethod(stream->stream, stream->owner->m_start, static_cast<jint>(width),
+                                                   static_cast<jint>(height), static_cast<jfloat>(fps));
+    if (jni_video_failed(env)) {
+        return false;
+    }
+    *fps_picked = picked == JNI_TRUE;
+    return true;
+}
+
+bool jni_video_read_frame(void *state, unsigned char *rgb, unsigned int width, unsigned int height) {
+    auto *stream = static_cast<jni_video_stream *>(state);
+    JNIEnv *env = get_jni_env_attaching("jllama-video");
+    if (env == nullptr) {
+        return false;
+    }
+    if (env->PushLocalFrame(4) != JNI_OK) {
+        env->ExceptionClear();
+        return false;
+    }
+    bool more = false;
+    jobject buffer = nullptr;
+    if (rgb != nullptr) {
+        buffer = env->NewDirectByteBuffer(rgb, static_cast<jlong>(width) * static_cast<jlong>(height) * 3);
+    }
+    if (rgb == nullptr || buffer != nullptr) {
+        more = env->CallBooleanMethod(stream->stream, stream->owner->m_read_frame, buffer, static_cast<jint>(width),
+                                      static_cast<jint>(height)) == JNI_TRUE;
+    }
+    if (jni_video_failed(env)) {
+        more = false;
+    }
+    env->PopLocalFrame(nullptr);
+    return more;
+}
+
+void jni_video_close(void *state) {
+    auto *stream = static_cast<jni_video_stream *>(state);
+    JNIEnv *env = get_jni_env_attaching("jllama-video");
+    if (env == nullptr) {
+        delete stream; // no JVM to release the reference in
+        return;
+    }
+    jni_video_close_stream(env, stream);
+}
+
+// Called once by the C API when the model no longer uses the decoder (jllama_video_decoder::release).
+void jni_video_release(void *user_data) {
+    auto *owner = static_cast<jni_video_decoder *>(user_data);
+    JNIEnv *env = get_jni_env_attaching("jllama-video");
+    if (env != nullptr) {
+        env->DeleteGlobalRef(owner->decoder);
+    }
+    delete owner;
+}
+
+// The C decoder for a Java VideoDecoder, or false with a Java exception pending. On success the
+// C API owns `out->user_data` and frees it through `release`.
+bool make_jni_video_decoder(JNIEnv *env, jobject decoder, jllama_video_decoder *out) {
+    jclass decoder_cls = env->FindClass("net/ladenthin/llama/callback/VideoDecoder");
+    jclass stream_cls = decoder_cls != nullptr ? env->FindClass("net/ladenthin/llama/callback/VideoStream") : nullptr;
+    if (decoder_cls == nullptr || stream_cls == nullptr) {
+        return false; // NoClassDefFoundError is pending
+    }
+    auto owner = std::make_unique<jni_video_decoder>();
+    owner->m_open = env->GetMethodID(decoder_cls, "open", "([B)Lnet/ladenthin/llama/callback/VideoStream;");
+    owner->m_width = env->GetMethodID(stream_cls, "getWidth", "()I");
+    owner->m_height = env->GetMethodID(stream_cls, "getHeight", "()I");
+    owner->m_fps = env->GetMethodID(stream_cls, "getFramesPerSecond", "()F");
+    owner->m_frame_count = env->GetMethodID(stream_cls, "getFrameCount", "()I");
+    owner->m_duration = env->GetMethodID(stream_cls, "getDurationSeconds", "()F");
+    owner->m_start = env->GetMethodID(stream_cls, "start", "(IIF)Z");
+    owner->m_read_frame = env->GetMethodID(stream_cls, "readFrame", "(Ljava/nio/ByteBuffer;II)Z");
+    owner->m_close = env->GetMethodID(stream_cls, "close", "()V");
+    if (env->ExceptionCheck()) {
+        return false; // NoSuchMethodError is pending
+    }
+    owner->decoder = env->NewGlobalRef(decoder);
+    if (owner->decoder == nullptr) {
+        env->ThrowNew(c_error_oom, "Failed to reference the video decoder");
+        return false;
+    }
+    *out = {};
+    out->open = jni_video_open;
+    out->start = jni_video_start;
+    out->read_frame = jni_video_read_frame;
+    out->close = jni_video_close;
+    out->release = jni_video_release;
+    out->user_data = owner.release();
+    return true;
+}
+
+} // namespace
+
 // Shared implementation of loadModel and loadModelWithProgress: the argv crosses into the C API
 // (jllama_model_load), which runs the load the engine owns; a Java LoadProgressCallback becomes the
 // C progress callback through jni_load_progress_trampoline. The handle the C API returns is the
 // jllama_context the Java field holds.
-static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobject progress) {
+static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobject progress,
+                            jobject video_decoder = nullptr) {
+    // First: once it exists, the C API owns the decoder and releases it on every way out of the load.
+    jllama_video_decoder decoder = {};
+    if (video_decoder != nullptr && !make_jni_video_decoder(env, video_decoder, &decoder)) {
+        return;
+    }
+    const auto release_decoder = [&]() {
+        if (video_decoder != nullptr) {
+            jni_video_release(decoder.user_data);
+        }
+    };
     const jsize argc = env->GetArrayLength(jparams);
     char **argv = parse_string_array(env, jparams, argc);
     if (argv == nullptr) {
+        release_decoder();
         env->ThrowNew(c_error_oom, "Failed to allocate memory for parameters");
         return;
     }
@@ -851,6 +1052,7 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
         progress_ud.on_progress = env->GetMethodID(cb_cls, "onProgress", "(F)Z");
         if (progress_ud.on_progress == nullptr) {
             free_string_array(argv, argc);
+            release_decoder();
             env->ThrowNew(c_llama_error, "LoadProgressCallback.onProgress(float) not found");
             return;
         }
@@ -858,8 +1060,9 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
     }
 
     jllama_model *model = nullptr;
-    const jllama_status status = jllama_model_load(static_cast<int>(argc), argv, progress_fn,
-                                                   progress != nullptr ? &progress_ud : nullptr, &model);
+    const jllama_status status =
+        jllama_model_load_video(static_cast<int>(argc), argv, progress_fn, progress != nullptr ? &progress_ud : nullptr,
+                                video_decoder != nullptr ? &decoder : nullptr, &model);
     free_string_array(argv, argc);
     if (status != JLLAMA_STATUS_OK) {
         // An unreachable --rpc server and a refused argv are both LlamaException here, as before.
@@ -877,6 +1080,14 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModelWithProgress
                                                                                  jobjectArray jparams,
                                                                                  jobject callback) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void { load_model_impl(env, obj, jparams, callback); });
+}
+
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModelWithVideoDecoder(JNIEnv *env, jobject obj,
+                                                                                     jobjectArray jparams,
+                                                                                     jobject callback,
+                                                                                     jobject video_decoder) {
+    return jni_guard_impl(env, c_llama_error,
+                          [&]() -> void { load_model_impl(env, obj, jparams, callback, video_decoder); });
 }
 
 // Build the special-token id map (a token is -1 / LLAMA_TOKEN_NULL when the model defines none).

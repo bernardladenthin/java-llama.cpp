@@ -46,6 +46,13 @@ struct jllama_context {
     // Non-null only in vocab-only mode (bypasses server_context entirely).
     llama_model *vocab_only_model = nullptr;
 
+    // The host's video decoder (jllama::engine::video_decoder_host), when the model was loaded with
+    // one: the server keeps a pointer into it for every later load_model() (a wake from the idle
+    // sleep runs one), so it lives as long as the context. Destroyed with the context, which runs
+    // the host's release callback. Declared after `server` on purpose: nothing decodes during the
+    // server's destruction.
+    std::shared_ptr<void> video_decoder;
+
     // Saved copy of common_params used to load the model.
     // Required by server_schema::eval_llama_cmpl_schema which takes common_params&.
     common_params params;

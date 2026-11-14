@@ -13,6 +13,7 @@
 #include "server-common.h"
 #include "server-chat.h"
 #include "server-http.h"
+#include "mtmd-helper.h"
 #include "base64.hpp"
 #include "json-schema-to-grammar.h"
 #include "imatrix-loader.h"
@@ -184,8 +185,86 @@ bool gguf_lacks_classification_head(const std::string &path) {
 
 } // namespace
 
+namespace {
+
+// The host's decoder behind mtmd's interface. mtmd hands its functions only the state open()
+// returned, so that state is wrapped with the decoder it belongs to; and it reports the stream
+// through its own struct, which the host does not see (jllama_api.h has no mtmd type).
+struct video_decoder_host {
+    video_decoder fns;
+    mtmd_helper_video_decoder mtmd = {};
+
+    explicit video_decoder_host(const video_decoder &decoder) : fns(decoder) {
+        mtmd.user_data = this;
+        mtmd.open = [](void *user_data, const char *path, const unsigned char *buf, size_t len,
+                       mtmd_helper_video_stream_info *info) -> void * {
+            const auto *host = static_cast<const video_decoder_host *>(user_data);
+            uint32_t width = 0;
+            uint32_t height = 0;
+            float fps = 0.0f;
+            int32_t n_frames = -1;
+            float duration = -1.0f;
+            void *state =
+                host->fns.open(host->fns.user_data, path, buf, len, &width, &height, &fps, &n_frames, &duration);
+            if (state == nullptr) {
+                return nullptr;
+            }
+            info->width = width;
+            info->height = height;
+            info->fps = fps;
+            info->n_frames = n_frames;
+            info->duration = duration;
+            return new opened{host, state};
+        };
+        if (fns.start != nullptr) {
+            mtmd.start = [](void *state, uint32_t width, uint32_t height, float fps, bool *fps_picked) -> bool {
+                const auto *o = static_cast<const opened *>(state);
+                return o->host->fns.start(o->state, width, height, fps, fps_picked);
+            };
+        }
+        mtmd.read_frame = [](void *state, unsigned char *rgb, uint32_t width, uint32_t height) -> bool {
+            const auto *o = static_cast<const opened *>(state);
+            return o->host->fns.read_frame(o->state, rgb, width, height);
+        };
+        if (fns.read_audio != nullptr) {
+            mtmd.read_audio = [](void *state, int sample_rate, size_t *n_samples) -> const float * {
+                const auto *o = static_cast<const opened *>(state);
+                return o->host->fns.read_audio(o->state, sample_rate, n_samples);
+            };
+        }
+        mtmd.close = [](void *state) {
+            const auto *o = static_cast<const opened *>(state);
+            o->host->fns.close(o->state);
+            delete o;
+        };
+    }
+    video_decoder_host(const video_decoder_host &) = delete;
+    video_decoder_host &operator=(const video_decoder_host &) = delete;
+    ~video_decoder_host() {
+        if (fns.release != nullptr) {
+            fns.release(fns.user_data);
+        }
+    }
+
+  private:
+    struct opened {
+        const video_decoder_host *host;
+        void *state;
+    };
+};
+
+} // namespace
+
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
-                     void *progress_user_data) {
+                     void *progress_user_data, const video_decoder *decoder) {
+    // First, so that the host's release callback runs on every way out of this function.
+    std::shared_ptr<video_decoder_host> video_host;
+    if (decoder != nullptr) {
+        video_host = std::make_shared<video_decoder_host>(*decoder);
+        if (decoder->open == nullptr || decoder->read_frame == nullptr || decoder->close == nullptr) {
+            throw std::invalid_argument("a video decoder needs open, read_frame and close");
+        }
+    }
     common_params params;
 
     // Strip --vocab-only before common_params_parse (not a common_params flag).
@@ -228,6 +307,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     std::unique_ptr<jllama_context> jctx(new jllama_context());
     jctx->vocab_only = vocab_only;
     jctx->params = params;
+    jctx->video_decoder = video_host;
 
     // Vocab-only mode: load just the model vocab, skip inference setup.
     if (vocab_only) {
@@ -277,6 +357,12 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // Before load_model(), as upstream's llama_server() does -- see jllama_context::routes. It keeps
     // a reference to jctx->params, which lives as long as it does.
     jctx->routes = std::make_unique<server_routes>(jctx->params, jctx->server);
+
+    // Before load_model(): the server decides there whether the model takes video, and a custom
+    // decoder counts for a model with a vision projector (b12387).
+    if (video_host != nullptr) {
+        jctx->server.set_video_decoder(&video_host->mtmd);
+    }
 
     if (!jctx->server.load_model(params)) {
         // The failed load may have left a vocab-only model? No: that is the other branch. Nothing

@@ -361,14 +361,22 @@ Open, none of it blocking:
   `ContentPart.videoFile` / `videoBytes` / `videoUrl`, `LlamaModel.supportsVideo()`,
   `modalities.video` in `OpenAiCompatServer`'s `/props`, LangChain4j's `VideoContent`; `CApiVideo`
   and `VideoInputIntegrationTest` hold it, with ffmpeg installed in the two Linux test jobs.
-  **Decided 2026-11-14: this project builds no decoder of its own.** Still open, and only with an
-  existing library: video where no `ffmpeg` program can run (Android; a server without it).
-  llama.cpp b12387 lets a host hand in a decoder (`server_context::set_video_decoder`); a pass-through
-  for it in the C API was written, tested with a fake decoder and not kept, because the
-  frames would still have to come from a library someone chooses (Android's `MediaCodec` /
-  `MediaMetadataRetriever`, FFmpeg's libraries through JavaCV) -- not decided. Not measured: the
-  answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI checks that the frames
-  arrive, with SmolVLM. A video model that hears its soundtrack (LFM3-Omni) is untested.
+  **Decided 2026-11-14: this project builds no decoder of its own; frames come from an existing
+  library.** For that, llama.cpp b12387's host decoder (`server_context::set_video_decoder`) is
+  passed through: `jllama_model_load_video` in the C API, `callback.VideoDecoder` / `VideoStream`
+  and `LlamaModel(parameters, progress, decoder)` in Java (`CApiVideoDecoder`,
+  `VideoDecoderIntegrationTest`, both with a stand-in decoder and without ffmpeg). On Android the
+  `llama-android` AAR brings `MediaRetrieverVideoDecoder` over the platform's
+  `MediaMetadataRetriever`, and the example app attaches videos with it. Open:
+  - **No device run with a model.** `OnDeviceVideoDecoderTest` reads the clip on the CI emulator;
+    no job has a vision model on a device, so "a video answered on a phone" is unmeasured -- as is
+    the time `getFrameAtIndex` takes per frame on real hardware.
+  - **The soundtrack** (`read_audio` of the C decoder, for LFM3-Omni) is not in the Java interface.
+  - **`llama-ffm`** has no binding for `jllama_model_load_video`.
+  - **The whole video is one `byte[]`** (base64 in the request, a copy for the decoder): fine for
+    clips, not for long recordings.
+  - Not measured: the answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI
+    checks that the frames arrive, with SmolVLM.
 - **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
   (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
   and the generator writes no such model.

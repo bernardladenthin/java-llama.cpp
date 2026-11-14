@@ -43,6 +43,9 @@ android {
         }
     }
 
+    // The clip the on-device decoder test reads: the core's own test fixture, as an asset.
+    sourceSets["androidTest"].assets.srcDir("../../../llama/src/test/resources/videos")
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

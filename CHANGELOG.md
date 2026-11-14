@@ -16,7 +16,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   vision `--mmproj` takes it (`LlamaModel.supportsVideo()`). The video is decoded by the `ffmpeg`
   and `ffprobe` programs of the machine -- llama.cpp's own decoder; this library adds none --
   found on `PATH` or in `setVideoFfmpegDir`. Without them a request with a video is refused
-  (`InvalidRequestException`, `400`) and nothing else changes; Android cannot run them.
+  (`InvalidRequestException`, `400`) and nothing else changes.
+  **Where no ffmpeg can be run, a `VideoDecoder` hands in the frames:**
+  `new LlamaModel(parameters, progress, decoder)` with `callback.VideoDecoder` / `VideoStream`
+  (C API: `jllama_model_load_video` with a `jllama_video_decoder`), the door for a media library
+  that is there anyway. The `llama-android` AAR brings the one for Android,
+  `net.ladenthin.llama.android.MediaRetrieverVideoDecoder` over the platform's
+  `MediaMetadataRetriever`, and the example app attaches videos with it. The AAR build now needs an
+  Android platform's `android.jar` (`ANDROID_HOME`).
   `OpenAiCompatServer` reports `modalities.video` in `GET /props`
   (`OpenAiServerConfig.Builder.supportsVideo`) and forwards `input_video` / `video_url` parts as
   before; the LangChain4j adapter maps `VideoContent`. Tested from C++ (`CApiVideo`: frames
@@ -209,7 +216,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     left-factored grammars.
   Patches `0003` and `0015` refreshed (context only), the other 18 unchanged. The WebUI's
   `llama-brand` dependency is resolved from GitHub's archive of a commit now, which the license
-  generator reads. C++ suite: 743 tests, 787 cases (`CApiSleep` and `CApiVideo` are new).
+  generator reads. C++ suite: 749 tests, 793 cases (`CApiSleep`, `CApiVideo` and `CApiVideoDecoder` are new).
 - **llama.cpp b12316** (from b12309, 7 upstream commits; pinned by commit): the embedded WebUI takes
   its logo and favicons from upstream's `llama-brand` package (CC BY-NC 4.0 with a `BRAND-USAGE.md`
   that permits redistribution with software, commercial included; both texts are in the natives

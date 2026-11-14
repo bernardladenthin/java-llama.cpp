@@ -17,6 +17,7 @@ import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.callback.CancellationToken;
 import net.ladenthin.llama.callback.LoadProgressCallback;
 import net.ladenthin.llama.callback.ToolHandler;
+import net.ladenthin.llama.callback.VideoDecoder;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.json.ChatResponseParser;
 import net.ladenthin.llama.json.ChatStreamChunkParser;
@@ -147,6 +148,27 @@ public class LlamaModel implements AutoCloseable {
         } else {
             loadModelWithProgress(parameters.toArray(), progress);
         }
+    }
+
+    /**
+     * Load the model with a video decoder of the application: the videos of this model's requests
+     * ({@link net.ladenthin.llama.value.ContentPart#videoFile(java.nio.file.Path)}) are then decoded
+     * by {@code videoDecoder} and not by the {@code ffmpeg} program -- the way to video input where
+     * that program cannot be run, Android first of all. The model must be loaded with a vision
+     * projector ({@link net.ladenthin.llama.parameters.ModelParameters#setMmproj(String)});
+     * {@link #supportsVideo()} then reports {@code true}. The decoder is used until
+     * {@link #close()}.
+     *
+     * @param parameters the load options, passed to llama.cpp as its command line
+     * @param progress load progress sink; {@code null} disables the callback
+     * @param videoDecoder opens the videos of the model's requests
+     * @throws net.ladenthin.llama.exception.LlamaException if loading fails or the callback aborts
+     */
+    @SuppressWarnings("method.invocation")
+    public LlamaModel(ModelParameters parameters, @Nullable LoadProgressCallback progress, VideoDecoder videoDecoder) {
+        java.util.Objects.requireNonNull(videoDecoder, "videoDecoder");
+        OfflineModelGuard.check(parameters);
+        loadModelWithVideoDecoder(parameters.toArray(), progress, videoDecoder);
     }
 
     /**
@@ -571,6 +593,9 @@ public class LlamaModel implements AutoCloseable {
     private native void loadModel(String... parameters);
 
     private native void loadModelWithProgress(String[] parameters, LoadProgressCallback callback);
+
+    private native void loadModelWithVideoDecoder(
+            String[] parameters, @Nullable LoadProgressCallback callback, VideoDecoder videoDecoder);
 
     private native void delete();
 

@@ -52,6 +52,8 @@ BUILD_KEYS = ("llama.cpp", "llama.cpp.commit", "backend", "kind", "classifier", 
 MODULE_FILES = {"jllama-build.txt", "jllama-files.txt", "jllama-sbom.json"}
 ANDROID_ABIS = {"arm64-v8a": "cpu-android-aarch64", "x86_64": "cpu-android-x86-64"}
 MIN_SDK = "28"
+# The package of the classes only the Android AAR carries (llama-android/src/main/java).
+ANDROID_PACKAGE = "net/ladenthin/llama/android/"
 
 
 class Result:
@@ -279,10 +281,17 @@ def check_android(assets, version, root):
             core = {n: c for n, c in zip_entries(stream.read()).items() if not n.endswith("module-info.class")}
         classes = zip_entries(cpu.read("classes.jar"))
         core_classes = {n: c for n, c in core.items() if n.endswith(".class")}
-        aar_classes = {n: c for n, c in classes.items() if n.endswith(".class")}
+        # the AAR's own classes (the glue to the platform, e.g. MediaRetrieverVideoDecoder) live in
+        # one package of their own; everything else must be the classes jar's, byte for byte
+        own = {n for n in classes if n.startswith(ANDROID_PACKAGE) and n.endswith(".class")}
+        aar_classes = {n: c for n, c in classes.items() if n.endswith(".class") and n not in own}
         result.need(aar_classes == core_classes, "llama-android: classes.jar is not the classes jar minus module-info "
-                    f"({len(aar_classes)} classes, the classes jar has {len(core_classes)}; "
+                    f"plus {ANDROID_PACKAGE} ({len(aar_classes)} classes, the classes jar has {len(core_classes)}; "
                     f"differing {sorted(set(aar_classes.items()) ^ set(core_classes.items()))[:2]})")
+        result.need(ANDROID_PACKAGE + "MediaRetrieverVideoDecoder.class" in own,
+                    "llama-android: classes.jar lacks MediaRetrieverVideoDecoder, the video decoder over the platform")
+        result.need(not any(n.startswith(ANDROID_PACKAGE) for n in core),
+                    f"the classes jar carries {ANDROID_PACKAGE}, which is the AAR's package")
         rows = read_rows(root)
         for abi, classifier in ANDROID_ABIS.items():
             row = next(r for r in rows if r["classifier"] == classifier)

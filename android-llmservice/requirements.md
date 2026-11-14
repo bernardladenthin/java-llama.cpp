@@ -154,6 +154,7 @@ by hand only (no automated test); `build` = enforced at build/resource-compile t
 | R12.5 | Attached images are **session-transient**: shown in the message bubble (🖼️ prefix) for the lifetime of the app process, but **not** persisted by `SessionStore` (save/load keeps text only) and not copied to disk (read into memory only). | `ChatViewModel.Message`; `SessionStore` | manual |
 | R12.6 | **Unloading the model** (R3.8) also clears the selected vision projector (path + copied file) and any pending image attachment — picking a new model starts vision selection fresh. | `ChatViewModel.unloadModel` | manual |
 | R12.7 | The vision projector copy is included in the same **privacy wipe** as the model copy: deleted on cold start (`LlmServiceApp.onCreate`) and on `clearMmproj`/`unloadModel`. | `LlmServiceApp.clearWorkingData` | manual |
+| R12.8 | The attach picker of R12.3 also offers **videos** (`video/*`). A picked video is staged, sent and shown like an image (R12.4, R12.5; 🎞️ prefix in the bubble) and built as `ContentPart.videoBytes`. A model with a vision projector is loaded with the AAR's `MediaRetrieverVideoDecoder`, so the frames come from the platform's `MediaMetadataRetriever` (no ffmpeg in an app); llama.cpp samples 4 frames per second, each as costly as an image, and the whole file is held in memory -- short clips only. | `MainActivity` (`imagePicker`); `ChatViewModel.openModel`/`Message.toChatMessage` | manual; the decoder itself by `OnDeviceVideoDecoderTest` (consumer fixture, emulator) |
 
 ---
 
