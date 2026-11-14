@@ -1087,6 +1087,18 @@ public class LlamaModel implements AutoCloseable {
     }
 
     /**
+     * Reports whether the loaded model accepts video input: a {@code --mmproj} that reads images, on
+     * a build that can decode video (see {@link net.ladenthin.llama.value.ModelMeta#supportsVideo()}).
+     * Videos are supplied as {@link net.ladenthin.llama.value.ContentPart#videoFile(java.nio.file.Path)}
+     * parts.
+     *
+     * @return {@code true} when video input is available
+     */
+    public boolean supportsVideo() {
+        return getModelMeta().supportsVideo();
+    }
+
+    /**
      * Returns the loaded model's file type (quantization) as a human-readable string, e.g.
      * {@code "Q8_0"} or {@code "Q4_K - Medium"} (llama.cpp {@code llama_ftype_name}); a guessed
      * type is prefixed with {@code "(guessed) "}. Returns an empty string when the native layer does

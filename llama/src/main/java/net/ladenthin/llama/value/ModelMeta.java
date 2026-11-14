@@ -119,7 +119,11 @@ public final class ModelMeta {
     /**
      * Returns true if the model supports video input.
      *
-     * <p>Completes the modality trio upstream tracks on {@code server_context_meta}. Older builds of
+     * <p>llama.cpp gives a video's frames to the vision projector, so this is {@code true} for a
+     * model loaded with a {@code --mmproj} that reads images, on a build that can decode video
+     * (every desktop build, through the {@code ffmpeg} program; not Android). It does not say
+     * whether {@code ffmpeg} is installed: a request with a
+     * {@link ContentPart#videoFile(java.nio.file.Path) video part} finds that out. Older builds of
      * this library never emitted the underlying {@code modalities.video} key, so this returns
      * {@code false} against metadata captured from one of those.</p>
      *

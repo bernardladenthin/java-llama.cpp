@@ -208,4 +208,78 @@ public class ContentPartTest {
             assertThat(expected.getMessage(), is(notNullValue()));
         }
     }
+
+    @Test
+    public void videoUrlKeepsTheUrlAndNothingElse() {
+        ContentPart p = ContentPart.videoUrl("https://example.org/clip.mp4");
+        assertThat(p.getType(), is(ContentPart.Type.VIDEO_URL));
+        assertThat(p.getVideoUrl(), is("https://example.org/clip.mp4"));
+        assertThat(p.getImageUrl(), is(nullValue()));
+        assertThat(p.getText(), is(nullValue()));
+        assertThat(p.getAudioData(), is(nullValue()));
+        assertThat(p.getToolName(), is(nullValue()));
+        assertThrows(NullPointerException.class, () -> ContentPart.videoUrl(null));
+    }
+
+    @Test
+    public void aPartThatIsNoVideoHasNoVideoUrl() {
+        assertThat(ContentPart.text("hello").getVideoUrl(), is(nullValue()));
+        assertThat(ContentPart.imageUrl("data:image/png;base64,AAAA").getVideoUrl(), is(nullValue()));
+        assertThat(ContentPart.toolReference("search").getVideoUrl(), is(nullValue()));
+    }
+
+    @Test
+    public void videoBytesWrapsTheBytesInADataUri() {
+        byte[] bytes = new byte[] {0, 1, 2, (byte) 0xFF};
+        ContentPart p = ContentPart.videoBytes(bytes, "video/mp4");
+        assertThat(p.getType(), is(ContentPart.Type.VIDEO_URL));
+        assertThat(
+                p.getVideoUrl(),
+                is("data:video/mp4;base64," + Base64.getEncoder().encodeToString(bytes)));
+    }
+
+    @Test
+    public void videoBytesRejectsATypeThatIsNoVideo() {
+        byte[] bytes = new byte[] {1};
+        assertThrows(IllegalArgumentException.class, () -> ContentPart.videoBytes(bytes, "image/png"));
+        assertThrows(IllegalArgumentException.class, () -> ContentPart.videoBytes(bytes, ""));
+        // the prefix alone names no type; one more character does
+        assertThrows(IllegalArgumentException.class, () -> ContentPart.videoBytes(bytes, "video/"));
+        assertThat(ContentPart.videoBytes(bytes, "video/x").getVideoUrl(), startsWith("data:video/x;base64,"));
+        assertThrows(NullPointerException.class, () -> ContentPart.videoBytes(null, "video/mp4"));
+        assertThrows(NullPointerException.class, () -> ContentPart.videoBytes(bytes, null));
+    }
+
+    @Test
+    public void videoFileDetectsTheTypeFromTheExtension() throws IOException {
+        byte[] bytes = new byte[] {9, 8, 7};
+        String encoded = Base64.getEncoder().encodeToString(bytes);
+        String[][] expected = {
+            {"clip.mp4", "video/mp4"},
+            {"clip.M4V", "video/mp4"},
+            {"clip.mov", "video/quicktime"},
+            {"clip.webm", "video/webm"},
+            {"clip.MKV", "video/x-matroska"},
+            {"clip.avi", "video/x-msvideo"},
+        };
+        for (String[] row : expected) {
+            Path file = tmp.resolve(row[0]);
+            Files.write(file, bytes);
+            assertThat(row[0], ContentPart.videoFile(file).getVideoUrl(), is("data:" + row[1] + ";base64," + encoded));
+        }
+    }
+
+    @Test
+    public void videoFileRejectsAnUnknownExtensionAndAPathWithoutAName() throws IOException {
+        Path file = tmp.resolve("clip.txt");
+        Files.write(file, new byte[] {0});
+        IllegalArgumentException unknown =
+                assertThrows(IllegalArgumentException.class, () -> ContentPart.videoFile(file));
+        assertThat(unknown.getMessage(), startsWith("Cannot infer MIME type from extension: "));
+        Path root = tmp.getRoot();
+        IllegalArgumentException nameless =
+                assertThrows(IllegalArgumentException.class, () -> ContentPart.videoFile(root));
+        assertThat(nameless.getMessage(), startsWith("videoPath has no file name component: "));
+        assertThrows(NullPointerException.class, () -> ContentPart.videoFile(null));
+    }
 }

@@ -2708,7 +2708,17 @@ jobs:
       # per-patch guard covers directly. Model-free, milliseconds.
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
+      # Video input is decoded by the ffmpeg and ffprobe programs of the machine (llama.cpp's own
+      # decoder). The runner image has neither, and the video cases skip themselves without them --
+      # so this job installs them and JLLAMA_REQUIRE_FFMPEG turns a skip into a failure here.
+      - name: Install ffmpeg for the video input tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
       - name: Run C++ unit tests
+        env:
+          JLLAMA_REQUIRE_FFMPEG: "1"
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-linux-aarch64:
@@ -2914,7 +2924,16 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
+      # See the C++ test job: llama.cpp decodes video with ffmpeg, VideoInputIntegrationTest skips its
+      # decoding cases without it, and this is the Java job where they must run.
+      - name: Install ffmpeg for the video input tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
       - name: Run tests
+        env:
+          JLLAMA_REQUIRE_FFMPEG: "1"
         run: |
           mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that

@@ -726,22 +726,39 @@ So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only
 actually contradict the other is dropped. If you need a device after disabling offload, call
 `setMmprojDevice` last.
 
-**Video input — decode settings only, so far.** `mtmd` has carried a video path since llama.cpp
-**b9562** (#24269); **b10647** (#24318) added the `--video-*` CLI flags and the
-`mtmd_helper_init_opt` plumbing that surfaces them. It is compiled into the shipped desktop library
-(`MTMD_VIDEO` is on by default and forced off when `LLAMA_SUBPROCESS` is off, which is upstream's
-default on Android and iOS). Its decode settings are exposed
-as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
-one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
-which an application server, an Android app or a JAR-only container frequently does not have them on —
-naming the directory is then the only way for video to work at all.
+**Video input** is one more content part. llama.cpp samples the frames of a video and gives them to
+the vision projector as images, with a timestamp between them, so every model loaded with a vision
+`--mmproj` takes video (`LlamaModel.supportsVideo()`):
 
-What is **not** here yet is the content part: upstream's wire type for a video is
-`{"type":"input_video","input_video":{"data":"..."}}` (OpenAI's `video_url` is accepted as an alias; as
-for `image_url`, the value may be raw base64, a `data:video/...;base64,` URI or an HTTP(S) URL),
-gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
-factory emitting that shape, so these knobs currently configure a path this API cannot yet feed
-directly. Tracked in `TODO.md`.
+```java
+ChatMessage message = ChatMessage.userMultimodal(
+        ContentPart.text("What happens in this video?"),
+        ContentPart.videoFile(Paths.get("clip.mp4")));   // or videoBytes(bytes, "video/mp4"), videoUrl(url)
+
+try (LlamaModel model = new LlamaModel(modelParams)) {
+    System.out.println(model.supportsVideo()); // true
+    System.out.println(model.chatCompleteText(InferenceParameters.empty()
+            .withMessages(Collections.singletonList(message))
+            .withNPredict(64)));
+}
+```
+
+- **It needs `ffmpeg` and `ffprobe` on the machine.** This library decodes nothing itself: llama.cpp runs
+  the two programs as child processes and reads the frames from them. They are found on `PATH`, or in
+  the directory `setVideoFfmpegDir(String)` names -- which an application server or a container image
+  often needs. Without them a request with a video is refused as invalid (`InvalidRequestException`,
+  `400` on the HTTP servers) and the model keeps answering other requests. **Android cannot run them**
+  (upstream builds video out there), so `supportsVideo()` is `false` in the AAR.
+- **Every container and codec that `ffmpeg` reads** works; the MIME type of `videoBytes` is not what
+  decides it. `videoUrl` takes a `data:video/...;base64,` URI, an `http(s)` URL of a public address
+  (`allowPrivateMediaUrls()` for others) or a `file://` URL below `--media-path`.
+- **The frame rate decides the cost.** `setVideoFps(float)` (default 4 per second) is how many frames
+  per second reach the model, each as many prompt tokens as an image of its size;
+  `setVideoTimestampInterval(long)` is how often a `[1m05.00s]` timestamp is put between them. A minute
+  at the default is 240 images -- size the context for it or lower the rate.
+- The part is sent as `{"type":"video_url","video_url":{"url":...}}`; llama.cpp reads its own
+  `input_video` (`{"data": ...}`) the same way. `OpenAiCompatServer` forwards both and reports
+  `modalities.video` in `GET /props`; the LangChain4j adapter maps `VideoContent`.
 
 **Audio input** works identically — load an audio-capable model (Ultravox, Qwen2.5-Omni, …) with its
 audio `--mmproj` and add a `ContentPart.audioFile(...)` (or `inputAudio(bytes, "wav"|"mp3")`) part. It
@@ -765,7 +782,7 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 }
 ```
 
-`LlamaModel.supportsVision()` / `supportsAudio()` report which modalities the loaded projector enables.
+`LlamaModel.supportsVision()` / `supportsAudio()` / `supportsVideo()` report which modalities the loaded projector enables.
 `getModelMeta()` adds what llama.cpp derives from it: `supportsChat()` (false only for a
 text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embedded server's
 `POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`), and from the chat

@@ -153,4 +153,16 @@ public class OpenAiSseFormatterTest {
         assertThat(root.path("modalities").has("video"), is(true));
         assertThat(root.path("modalities").path("video").asBoolean(), is(false));
     }
+
+    @Test
+    public void propsJsonReportsVideoInputWhenTheModelTakesIt() throws IOException {
+        JsonNode with = MAPPER.readTree(
+                OpenAiSseFormatter.propsJson("local", 8192, true, true, 1, java.util.Collections.<String>emptyList()));
+        assertThat(with.path("modalities").path("video").asBoolean(), is(true));
+        assertThat(with.path("modalities").path("vision").asBoolean(), is(true));
+        JsonNode without = MAPPER.readTree(
+                OpenAiSseFormatter.propsJson("local", 8192, true, false, 1, java.util.Collections.<String>emptyList()));
+        assertThat(without.path("modalities").path("video").asBoolean(), is(false));
+        assertThat(without.path("modalities").path("vision").asBoolean(), is(true));
+    }
 }

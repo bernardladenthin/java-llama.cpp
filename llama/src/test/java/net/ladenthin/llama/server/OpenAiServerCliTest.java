@@ -629,4 +629,16 @@ public class OpenAiServerCliTest {
         assertThat(usage, containsString("--tts-voice"));
         assertThat(usage, containsString("/v1/audio/speech"));
     }
+
+    @Test
+    public void theLoadedModelsVideoInputReachesTheServerConfig() {
+        OpenAiServerCli.Options options = OpenAiServerCli.parse("-m", "m.gguf", "--mmproj", "proj.gguf");
+        assertThat(options.toServerConfig(true, true, "", 0, 0).isSupportsVideo(), is(true));
+        assertThat(options.toServerConfig(true, false, "", 0, 0).isSupportsVideo(), is(false));
+        // the overloads without the argument know of no video
+        assertThat(options.toServerConfig(true, "", 0, 0).isSupportsVideo(), is(false));
+        assertThat(options.toServerConfig().isSupportsVideo(), is(false));
+        assertThat(OpenAiServerConfig.builder().build().isSupportsVideo(), is(false));
+        assertThat(OpenAiServerConfig.builder().supportsVideo(true).build().isSupportsVideo(), is(true));
+    }
 }

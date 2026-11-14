@@ -1194,4 +1194,10 @@ public class ModelParametersExtendedTest {
         ModelParameters p = new ModelParameters().allowPrivateMediaUrls();
         assertThat(p.parameters.containsKey("--media-allow-private-urls"), is(true));
     }
+
+    @Test
+    public void testAllowUnauthenticatedTools() {
+        ModelParameters p = new ModelParameters().allowUnauthenticatedTools();
+        assertThat(p.parameters.containsKey("--allow-unauthenticated-tools"), is(true));
+    }
 }

@@ -10,6 +10,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Video input.** `ContentPart.videoFile(Path)`, `videoBytes(byte[], String)` and
+  `videoUrl(String)` put a video into a chat message; llama.cpp samples its frames (4 per second,
+  `setVideoFps`) and gives them to the vision projector as images, so every model loaded with a
+  vision `--mmproj` takes it (`LlamaModel.supportsVideo()`). The video is decoded by the `ffmpeg`
+  and `ffprobe` programs of the machine -- llama.cpp's own decoder; this library adds none --
+  found on `PATH` or in `setVideoFfmpegDir`. Without them a request with a video is refused
+  (`InvalidRequestException`, `400`) and nothing else changes; Android cannot run them.
+  `OpenAiCompatServer` reports `modalities.video` in `GET /props`
+  (`OpenAiServerConfig.Builder.supportsVideo`) and forwards `input_video` / `video_url` parts as
+  before; the LangChain4j adapter maps `VideoContent`. Tested from C++ (`CApiVideo`: frames
+  counted in the prompt tokens for mp4 and Matroska, the frame rate option, both part names, a
+  machine without ffmpeg) and from Java (`VideoInputIntegrationTest`, also over HTTP), with ffmpeg
+  installed in the two Linux test jobs.
 - **`OpenAiCompatServer` refuses requests from somewhere else** once `corsAllowOrigin` is not `*`
   (new CLI option `--cors-origins`; the values are llama.cpp's: `*`, `localhost` -- the server's own
   origin only --, or a comma-separated list of origins). `OriginGuard` applies the rules of llama.cpp's own server
@@ -173,6 +186,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   - **Media URLs are fetched from public addresses only** (upstream #32115, against server-side
     request forgery): an `image_url` or audio URL naming a local or private address is refused.
     `ModelParameters.allowPrivateMediaUrls()` (`--media-allow-private-urls`) allows them again.
+  - **`ModelParameters.allowUnauthenticatedTools()`** (`--allow-unauthenticated-tools`), for the
+    embedded server's rule below.
   - **Removed: `ModelParameters.setDefragThold(float)`**, with upstream's `--defrag-thold`. The
     option had been without effect for a long time; a model loaded with it fails to load now.
   - **`SpecType.DRAFT_DFLASH2` and `SpecType.DRAFT_LILICORR`**, upstream's two new speculative
@@ -194,7 +209,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     left-factored grammars.
   Patches `0003` and `0015` refreshed (context only), the other 18 unchanged. The WebUI's
   `llama-brand` dependency is resolved from GitHub's archive of a commit now, which the license
-  generator reads. C++ suite: 737 tests, 781 cases (`CApiSleep` is new).
+  generator reads. C++ suite: 743 tests, 787 cases (`CApiSleep` and `CApiVideo` are new).
 - **llama.cpp b12316** (from b12309, 7 upstream commits; pinned by commit): the embedded WebUI takes
   its logo and favicons from upstream's `llama-brand` package (CC BY-NC 4.0 with a `BRAND-USAGE.md`
   that permits redistribution with software, commercial included; both texts are in the natives

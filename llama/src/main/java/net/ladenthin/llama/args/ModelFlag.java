@@ -142,6 +142,12 @@ public enum ModelFlag {
     MEDIA_ALLOW_PRIVATE_URLS("--media-allow-private-urls"),
 
     /**
+     * Offer the server's built-in tools, MCP servers and MCP proxy on an address that is not
+     * loopback without an API key (llama.cpp b12387).
+     */
+    ALLOW_UNAUTHENTICATED_TOOLS("--allow-unauthenticated-tools"),
+
+    /**
      * Run fully offline — never make an outbound network request to download a model. Useful for
      * air-gapped or pre-staged-model deployments where any outbound call is itself a failure mode.
      *

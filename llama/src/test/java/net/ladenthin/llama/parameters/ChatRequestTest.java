@@ -213,6 +213,20 @@ class ChatRequestTest {
         }
 
         @Test
+        void buildMessagesJsonEmitsVideoParts() {
+            ChatRequest req = ChatRequest.empty()
+                    .appendMessage(ChatMessage.userMultimodal(
+                            ContentPart.text("what happens"),
+                            ContentPart.videoBytes(new byte[] {1, 2, 3}, "video/mp4")));
+            String json = req.buildMessagesJson();
+            assertThat(
+                    json,
+                    containsString("{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:video/mp4;base64,"
+                            + java.util.Base64.getEncoder().encodeToString(new byte[] {1, 2, 3}) + "\"}}"));
+            assertThat(json.contains("image_url"), is(false));
+        }
+
+        @Test
         void buildMessagesJsonEmitsInputAudioParts() {
             ChatRequest req = ChatRequest.empty()
                     .appendMessage(ChatMessage.userMultimodal(

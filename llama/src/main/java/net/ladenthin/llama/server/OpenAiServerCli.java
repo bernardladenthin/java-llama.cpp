@@ -891,11 +891,28 @@ public final class OpenAiServerCli {
          */
         public OpenAiServerConfig toServerConfig(
                 boolean supportsVision, String modelFtype, int slotContextSize, int totalSlots) {
+            return toServerConfig(supportsVision, false, modelFtype, slotContextSize, totalSlots);
+        }
+
+        /**
+         * {@link #toServerConfig(boolean, String, int, int)} with the loaded model's video input,
+         * advertised as {@code modalities.video} of {@code GET /props}.
+         *
+         * @param supportsVision whether the loaded model reports usable vision input
+         * @param supportsVideo whether the loaded model reports video input
+         * @param modelFtype the model's file-type (quantization) label, or {@code ""} if unknown
+         * @param slotContextSize the context size of one slot of the loaded model, or {@code 0} if unknown
+         * @param totalSlots the number of slots of the loaded model, or {@code 0} if unknown
+         * @return the server configuration
+         */
+        public OpenAiServerConfig toServerConfig(
+                boolean supportsVision, boolean supportsVideo, String modelFtype, int slotContextSize, int totalSlots) {
             final OpenAiServerConfig.Builder builder = OpenAiServerConfig.builder()
                     .host(host)
                     .port(port)
                     .modelId(getModelId())
                     .supportsVision(supportsVision)
+                    .supportsVideo(supportsVideo)
                     .modelFtype(modelFtype)
                     .totalSlots(totalSlots > 0 ? totalSlots : Math.max(1, parallel));
             if (apiKey != null) {

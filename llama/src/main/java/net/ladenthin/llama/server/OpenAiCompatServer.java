@@ -1176,6 +1176,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                             config.getModelId(),
                             contextLength,
                             config.isSupportsVision(),
+                            config.isSupportsVideo(),
                             config.getTotalSlots(),
                             speech != null ? speech.voices() : Collections.<String>emptyList()));
         } finally {
@@ -1600,7 +1601,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
         try (LlamaModel model = new LlamaModel(options.toModelParameters())) {
             final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
             OpenAiServerConfig config = options.toServerConfig(
-                    model.supportsVision(), model.getModelFtype(), slotContextSize(slots), slots.size());
+                    model.supportsVision(),
+                    model.supportsVideo(),
+                    model.getModelFtype(),
+                    slotContextSize(slots),
+                    slots.size());
             // the speech model, when one was named: loaded next to the model, closed after the server
             final String ttsModel = options.getTtsModel();
             final String ttsMmproj = options.getTtsMmproj();

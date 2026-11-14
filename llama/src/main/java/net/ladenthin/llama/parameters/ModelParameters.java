@@ -1791,6 +1791,23 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Offer the embedded server's built-in tools, its MCP servers and its MCP proxy on an address
+     * that is not loopback without an API key (upstream {@code --allow-unauthenticated-tools}).
+     *
+     * <p>Since llama.cpp b12387 a server that listens on such an address and has tools or MCP
+     * configured refuses to start unless an API key is set or this is given: those tools run commands
+     * and read files on the machine for whoever reaches the port. Call it only on a network where
+     * every peer is trusted. It concerns a {@link net.ladenthin.llama.server.NativeServer} that loads
+     * its own model from these parameters; a server attached to a {@code LlamaModel} answers the
+     * tool routes with {@code 403} either way.</p>
+     *
+     * @return this builder
+     */
+    public ModelParameters allowUnauthenticatedTools() {
+        return setFlag(ModelFlag.ALLOW_UNAUTHENTICATED_TOOLS);
+    }
+
+    /**
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
      *

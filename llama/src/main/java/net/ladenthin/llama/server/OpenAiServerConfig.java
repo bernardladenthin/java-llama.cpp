@@ -57,6 +57,7 @@ public final class OpenAiServerConfig {
     private final long heartbeatMillis;
     private final String corsAllowOrigin;
     private final boolean supportsVision;
+    private final boolean supportsVideo;
     private final int maxRequestBodyBytes;
     private final String modelFtype;
     private final int totalSlots;
@@ -73,6 +74,7 @@ public final class OpenAiServerConfig {
         this.heartbeatMillis = builder.heartbeatMillis;
         this.corsAllowOrigin = builder.corsAllowOrigin;
         this.supportsVision = builder.supportsVision;
+        this.supportsVideo = builder.supportsVideo;
         this.maxRequestBodyBytes = builder.maxRequestBodyBytes;
         this.modelFtype = builder.modelFtype;
         this.totalSlots = builder.totalSlots;
@@ -191,6 +193,18 @@ public final class OpenAiServerConfig {
     }
 
     /**
+     * Whether the served model takes video input (see
+     * {@link net.ladenthin.llama.value.ModelMeta#supportsVideo()}). Advertised as
+     * {@code modalities.video} of {@code GET /props}; a chat request carries a video as an
+     * {@code input_video} or {@code video_url} content part, which is forwarded to the model as it is.
+     *
+     * @return {@code true} if video input is available
+     */
+    public boolean isSupportsVideo() {
+        return supportsVideo;
+    }
+
+    /**
      * The served model's file type (quantization) as a human-readable string, e.g. {@code "Q8_0"}
      * or {@code "Q4_K - Medium"}, advertised in the {@code GET /v1/models} {@code data[].ftype} field
      * (matching the upstream llama.cpp server). Empty when unknown.
@@ -278,6 +292,7 @@ public final class OpenAiServerConfig {
         private long heartbeatMillis = DEFAULT_HEARTBEAT_MILLIS;
         private String corsAllowOrigin = DEFAULT_CORS_ALLOW_ORIGIN;
         private boolean supportsVision;
+        private boolean supportsVideo;
         private int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         private String modelFtype = "";
         private int totalSlots = 1;
@@ -396,6 +411,18 @@ public final class OpenAiServerConfig {
          */
         public Builder supportsVision(boolean supportsVision) {
             this.supportsVision = supportsVision;
+            return this;
+        }
+
+        /**
+         * Sets whether the served model takes video input (a vision projector, on a build that
+         * decodes video).
+         *
+         * @param supportsVideo {@code true} if video input is available
+         * @return this builder
+         */
+        public Builder supportsVideo(boolean supportsVideo) {
+            this.supportsVideo = supportsVideo;
             return this;
         }
 

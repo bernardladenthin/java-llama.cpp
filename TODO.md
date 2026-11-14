@@ -355,19 +355,25 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 `0003` and `0015` refreshed (context), the other 18 patches unchanged, every drop-check read: all
 still needed. Done with it: the engine gives its wake back (`CApiSleep`), RPC fixture on protocol
 10, `localhost` as same-origin in `OriginGuard`, `allowPrivateMediaUrls()`, `setDefragThold`
-removed, two `SpecType` constants, `103-real` in both CUDA lists. Open, none of it blocking:
-- **Video input.** Upstream's server takes video through an `ffmpeg` binary found at run time
-  (`MTMD_VIDEO`, `mtmd-helper-video-ffmpeg.cpp`) or through a decoder the host sets
-  (`server_context::set_video_decoder`, `mtmd_helper_video_decoder`). Nothing here offers it: no
-  `ContentPart` for video, no decoder callback in the C API. A Java decoder callback (frames from
-  the caller) would make it work without `ffmpeg`, Android included.
+removed, `allowUnauthenticatedTools()`, two `SpecType` constants, `103-real` in both CUDA lists.
+Open, none of it blocking:
+- **Video input: done over llama.cpp's own decoder** (the `ffmpeg` / `ffprobe` programs):
+  `ContentPart.videoFile` / `videoBytes` / `videoUrl`, `LlamaModel.supportsVideo()`,
+  `modalities.video` in `OpenAiCompatServer`'s `/props`, LangChain4j's `VideoContent`; `CApiVideo`
+  and `VideoInputIntegrationTest` hold it, with ffmpeg installed in the two Linux test jobs.
+  **Decided 2026-11-14: this project builds no decoder of its own.** Still open, and only with an
+  existing library: video where no `ffmpeg` program can run (Android; a server without it).
+  llama.cpp b12387 lets a host hand in a decoder (`server_context::set_video_decoder`); a pass-through
+  for it in the C API was written, tested with a fake decoder and not kept, because the
+  frames would still have to come from a library someone chooses (Android's `MediaCodec` /
+  `MediaMetadataRetriever`, FFmpeg's libraries through JavaCV) -- not decided. Not measured: the
+  answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI checks that the frames
+  arrive, with SmolVLM. A video model that hears its soundtrack (LFM3-Omni) is untested.
 - **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
   (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
   and the generator writes no such model.
-- **`--allow-unauthenticated-tools`** has no `ModelParameters` method: the attach server answers
-  `/tools` and `/cors-proxy` with `403`, and a classic `NativeServer` takes the flag in its argv.
-- **Not measured:** the CUDA changes (SM103 kernels, few-row MMQ, NVFP4 prefill) and the Vulkan
-  flash attention for Intel on hardware; the NEON 4x4 `sgemm` tile on aarch64 (CI builds and runs
+- **Not measured, and not planned:** the CUDA changes (SM103 kernels, few-row MMQ, NVFP4 prefill;
+  decided 2026-11-14). Not measured: the Vulkan flash attention for Intel on hardware; the NEON 4x4 `sgemm` tile on aarch64 (CI builds and runs
   it, no benchmark).
 
 **From b12309 to b12316 (2026-11-12)** -- 7 upstream commits, pinned by commit; `0006` refreshed
@@ -740,11 +746,6 @@ upstream options; absence of a Java builder method alone does not make a release
 - **Request-key coverage:** re-derive remaining gaps by comparing `RequestField.values()` and
   the current upstream schema walked by `test_wire_contracts.cpp`. The old b10883 counts are not
   a current API inventory; expose additional fields on demand.
-- **Video input (`ContentPart.videoFile(...)` / bytes overload):** the three video configuration
-  flags are exposed, but the typed content part and its integration test remain. Emit upstream's
-  `input_video` wire shape with base64/data URI/URL as supported by the current parser. Do not
-  advertise the untested `imageBytes(..., "video/mp4")` workaround. A real test needs video-capable
-  model/projector fixtures and `ffmpeg`/`ffprobe` on the runner, because upstream invokes them.
 - **`--spec-synth-len` / `--spec-synth-rates`: deliberately not exposed.** They synthesize fake
   acceptance probabilities for upstream benchmarks. Keep them out of application builder API;
   they remain reachable through raw `NativeServer` argv.

@@ -27,7 +27,12 @@ import org.jspecify.annotations.Nullable;
  *   {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}
  * ]}
  * </pre>
- * and the upstream {@code oaicompat_chat_params_parse} routes it through the
+ * A video is one more kind of part ({@link #videoFile(Path)}, {@link #videoBytes(byte[], String)},
+ * {@link #videoUrl(String)}): llama.cpp samples its frames and gives them to the vision projector
+ * as images, decoding the file with the {@code ffmpeg} and {@code ffprobe} programs of the machine
+ * (see {@link net.ladenthin.llama.parameters.ModelParameters#setVideoFps(float)}).
+ * <p>
+ * The upstream {@code oaicompat_chat_params_parse} routes a media part through the
  * compiled-in {@code mtmd} pipeline (requires
  * {@link net.ladenthin.llama.parameters.ModelParameters#setMmproj(String)} to be wired).
  * <p>
@@ -47,6 +52,8 @@ public final class ContentPart {
         IMAGE_URL,
         /** An audio clip (base64 {@code data} + {@code format}), for audio-input models. */
         INPUT_AUDIO,
+        /** A video (data URI or remote URL), for models with a vision projector. */
+        VIDEO_URL,
         /**
          * A reference to a request tool by name (llama.cpp b11940): reveals a deferred
          * {@link ToolDefinition} to the model, whose template renders its definition here.
@@ -60,6 +67,7 @@ public final class ContentPart {
     private final @Nullable String audioData;
     private final @Nullable String audioFormat;
     private final @Nullable String toolName;
+    private final @Nullable String videoUrl;
 
     private ContentPart(
             Type type,
@@ -77,12 +85,24 @@ public final class ContentPart {
             @Nullable String audioData,
             @Nullable String audioFormat,
             @Nullable String toolName) {
+        this(type, text, imageUrl, audioData, audioFormat, toolName, null);
+    }
+
+    private ContentPart(
+            Type type,
+            @Nullable String text,
+            @Nullable String imageUrl,
+            @Nullable String audioData,
+            @Nullable String audioFormat,
+            @Nullable String toolName,
+            @Nullable String videoUrl) {
         this.type = type;
         this.text = text;
         this.imageUrl = imageUrl;
         this.audioData = audioData;
         this.audioFormat = audioFormat;
         this.toolName = toolName;
+        this.videoUrl = videoUrl;
     }
 
     /**
@@ -184,6 +204,88 @@ public final class ContentPart {
     }
 
     /**
+     * Build a video part from a pre-formed URL or data URI: an HTTP(S) URL the server fetches (a
+     * public address, unless
+     * {@link net.ladenthin.llama.parameters.ModelParameters#allowPrivateMediaUrls()} was set), a
+     * {@code file://} URL below the model's {@code --media-path}, or a complete
+     * {@code data:video/...;base64,...} string. Sent as
+     * {@code {"type":"video_url","video_url":{"url":...}}}, the OpenAI-style part llama.cpp reads
+     * like its own {@code input_video}.
+     *
+     * <p>llama.cpp decodes the video with the {@code ffmpeg} and {@code ffprobe} programs it finds
+     * on {@code PATH} (or in
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setVideoFfmpegDir(String)}) and gives
+     * the sampled frames to the vision projector, so the model needs a {@code --mmproj}
+     * ({@link net.ladenthin.llama.value.ModelMeta#supportsVideo()}), and a request with a video is
+     * refused as invalid on a machine without the two programs. Android builds cannot run them.</p>
+     *
+     * @param url video URL or data URI (must not be {@code null})
+     * @return a VIDEO_URL part wrapping {@code url}
+     */
+    public static ContentPart videoUrl(String url) {
+        Objects.requireNonNull(url, "url");
+        return new ContentPart(Type.VIDEO_URL, null, null, null, null, null, url);
+    }
+
+    /**
+     * Build a video part from the bytes of a video file plus an explicit MIME type. The bytes are
+     * base64-encoded and wrapped in a {@code data:} URI; see {@link #videoUrl(String)} for what the
+     * model and the machine need. llama.cpp recognises the container from the bytes, so the MIME
+     * type only has to start with {@code video/}.
+     *
+     * @param bytes the bytes of the video file (must not be {@code null})
+     * @param mimeType MIME type, e.g. {@code "video/mp4"} (must start with {@code "video/"})
+     * @return a VIDEO_URL part carrying the data URI
+     * @throws IllegalArgumentException if {@code mimeType} does not start with {@code "video/"}
+     */
+    public static ContentPart videoBytes(byte[] bytes, String mimeType) {
+        Objects.requireNonNull(bytes, "bytes");
+        Objects.requireNonNull(mimeType, "mimeType");
+        if (!mimeType.startsWith("video/") || mimeType.length() == "video/".length()) {
+            throw new IllegalArgumentException("mimeType must be a video type such as 'video/mp4', was: " + mimeType);
+        }
+        String encoded = Base64.getEncoder().encodeToString(bytes);
+        return new ContentPart(Type.VIDEO_URL, null, null, null, null, null, "data:" + mimeType + ";base64," + encoded);
+    }
+
+    /**
+     * Build a video part by reading a file from disk and detecting its MIME type from the file
+     * extension. Recognised extensions: {@code .mp4}, {@code .m4v}, {@code .mov}, {@code .webm},
+     * {@code .mkv}, {@code .avi}. Anything else throws {@link IllegalArgumentException}; use
+     * {@link #videoBytes(byte[], String)} to name a type explicitly. The whole file is read into
+     * memory and sent base64-encoded; see {@link #videoUrl(String)} for what the model and the
+     * machine need.
+     *
+     * @param videoPath path to the video file (must not be {@code null})
+     * @return a VIDEO_URL part carrying the data URI
+     * @throws IOException if the file cannot be read
+     */
+    public static ContentPart videoFile(Path videoPath) throws IOException {
+        Objects.requireNonNull(videoPath, "videoPath");
+        Path fileNamePath = videoPath.getFileName();
+        if (fileNamePath == null) {
+            throw new IllegalArgumentException("videoPath has no file name component: " + videoPath);
+        }
+        String name = fileNamePath.toString().toLowerCase(Locale.ROOT);
+        String mimeType;
+        if (name.endsWith(".mp4") || name.endsWith(".m4v")) {
+            mimeType = "video/mp4";
+        } else if (name.endsWith(".mov")) {
+            mimeType = "video/quicktime";
+        } else if (name.endsWith(".webm")) {
+            mimeType = "video/webm";
+        } else if (name.endsWith(".mkv")) {
+            mimeType = "video/x-matroska";
+        } else if (name.endsWith(".avi")) {
+            mimeType = "video/x-msvideo";
+        } else {
+            throw new IllegalArgumentException("Cannot infer MIME type from extension: " + videoPath
+                    + " — use ContentPart.videoBytes(bytes, mimeType) instead");
+        }
+        return videoBytes(Files.readAllBytes(videoPath), mimeType);
+    }
+
+    /**
      * Build a tool reference: names a tool of the request, typically a deferred one
      * ({@link ToolDefinition#isDeferLoading()}), whose definition the chat template then renders at
      * this point of the conversation -- the result of a tool search, for instance (llama.cpp b11940).
@@ -267,6 +369,14 @@ public final class ContentPart {
      */
     public @Nullable String getAudioFormat() {
         return audioFormat;
+    }
+
+    /**
+     * Video URL accessor (only set for {@link Type#VIDEO_URL}).
+     * @return the URL or data URI, or {@code null} for other parts
+     */
+    public @Nullable String getVideoUrl() {
+        return videoUrl;
     }
 
     /**
