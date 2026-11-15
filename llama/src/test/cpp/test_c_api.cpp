@@ -284,6 +284,23 @@ TEST_F(CApi, RawCompletionsReturnTheResultObject) {
     EXPECT_EQ(jllama_completions(model_, "{not json", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
 }
 
+TEST_F(CApi, AGrammarTriggerOfAnUnknownTypeIsTheCallersFault) {
+    // Up to b12387 common_sampler_init() asserted on a trigger type it did not know, which ended the
+    // process -- for this library the JVM. Upstream #31478 (b12408) throws instead, and the server
+    // reports it as an invalid request when the slot starts.
+    const json request = {
+        {"prompt", "Hi"},       {"n_predict", 2},
+        {"temperature", 0},     {"grammar", "root ::= \"a\""},
+        {"grammar_lazy", true}, {"grammar_triggers", json::array({json{{"type", 99}, {"value", "a"}}})}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("grammar trigger type"), std::string::npos) << jllama_last_error();
+    // The model is unharmed and answers the next request.
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
 TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
     Owned response;
     ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":2,"temperature":0})", &response.s),
