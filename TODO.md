@@ -353,7 +353,7 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 
 **From b12387 to b12408 (2026-11-15)** -- 21 upstream commits, pinned by commit (one past the tag
 b12407); every patch applies unchanged, every drop-check read: all still needed. No source change
-here; a grammar trigger of an unknown type no longer ends the process (`CApi` test). Open, none of
+here; a grammar trigger of an unknown type no longer ends the process, and a streamed response keeps the connection (two `CApi` tests). Open, none of
 it blocking: Inkling 2 (#32217, text and vision) is not exercised by any test here.
 
 **From b12316 to b12387 (2026-11-14)** -- 71 upstream commits, pinned by commit (no tag yet);
