@@ -249,6 +249,9 @@ val generateRTxt = tasks.register("generateRTxt") {
 val sourcesJar = tasks.register<Jar>("sourcesJar") {
     description = "Core Java sources and this artifact's own (Central requires a -sources jar per artifact)."
     archiveClassifier.set("sources")
+    // `java-base` points every Jar task at build/libs; the release collection
+    // (.github/release-assets.json) reads these two from build/distributions.
+    destinationDirectory.set(base.distsDirectory)
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
     from("../llama/src/main/java") {
@@ -261,6 +264,7 @@ val javadocJar = tasks.register<Jar>("javadocJar") {
     description = "Javadoc placeholder jar (Central requires a -javadoc jar per artifact; " +
             "the full javadoc ships with net.ladenthin:llama, whose classes this AAR repackages)."
     archiveClassifier.set("javadoc")
+    destinationDirectory.set(base.distsDirectory)
     val readme = layout.buildDirectory.file("intermediates/javadoc-readme/README.txt")
     doFirst {
         val file = readme.get().asFile

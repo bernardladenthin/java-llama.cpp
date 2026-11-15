@@ -18,6 +18,10 @@
 #include "tiny_llama_gguf.hpp"
 #include "tts_wav.hpp"
 
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+#include <cpp-httplib/httplib.h>
+#endif
+
 #include "build-info.h"
 #include "log.h"
 #include "ggml.h"
@@ -282,6 +286,23 @@ TEST_F(CApi, RawCompletionsReturnTheResultObject) {
     EXPECT_LE(j.at("tokens_predicted").get<int>(), 2);
     EXPECT_TRUE(j.at("stop").get<bool>());
     EXPECT_EQ(jllama_completions(model_, "{not json", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, AGrammarTriggerOfAnUnknownTypeIsTheCallersFault) {
+    // Up to b12387 common_sampler_init() asserted on a trigger type it did not know, which ended the
+    // process -- for this library the JVM. Upstream #31478 (b12408) throws instead, and the server
+    // reports it as an invalid request when the slot starts.
+    const json request = {
+        {"prompt", "Hi"},       {"n_predict", 2},
+        {"temperature", 0},     {"grammar", "root ::= \"a\""},
+        {"grammar_lazy", true}, {"grammar_triggers", json::array({json{{"type", 99}, {"value", "a"}}})}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("grammar trigger type"), std::string::npos) << jllama_last_error();
+    // The model is unharmed and answers the next request.
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
 }
 
 TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
@@ -2361,6 +2382,49 @@ TEST_F(CApi, TheAttachedServerServesTheModelAndLeavesItUsable) {
     Owned after;
     EXPECT_EQ(jllama_chat_completions(model_, CHAT_REQUEST, &after.s), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(jllama_server_start_attached(nullptr, 5, argv, &server), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+TEST_F(CApi, TheAttachedServerKeepsTheConnectionAfterAStreamedResponse) {
+    // Upstream #30492 (b12408): the stream callback returned `has_next`, which is false after the last
+    // chunk, and cpp-httplib then closed the connection -- every streamed response cost the client a
+    // new connection. A client that streams and asks again must do both over one socket.
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start_attached(model_, 5, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+
+    httplib::Client client("127.0.0.1", port);
+    client.set_keep_alive(true);
+    client.set_read_timeout(std::chrono::seconds(30));
+    std::atomic<int> sockets{0};
+    client.set_socket_options([&sockets](auto) { sockets.fetch_add(1); });
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ASSERT_TRUE(health && health->status == 200);
+    const int before = sockets.load();
+
+    const auto streamed = client.Post("/completion", R"({"prompt":"Hi","n_predict":4,"temperature":0,"stream":true})",
+                                      "application/json");
+    ASSERT_TRUE(streamed) << httplib::to_string(streamed.error());
+    EXPECT_EQ(streamed->status, 200);
+    EXPECT_NE(streamed->body.find("data: "), std::string::npos) << streamed->body;
+    EXPECT_NE(streamed->get_header_value("Connection"), "close");
+    const auto again = client.Get("/health");
+    ASSERT_TRUE(again) << httplib::to_string(again.error());
+    EXPECT_EQ(again->status, 200);
+    EXPECT_EQ(sockets.load(), before) << "the streamed response closed the connection";
+
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 #endif // JLLAMA_HAS_NATIVE_SERVER
 

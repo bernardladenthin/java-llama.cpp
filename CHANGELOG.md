@@ -181,6 +181,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12408** (from b12387, 21 upstream commits; pinned by commit, one past upstream's tag
+  b12407). No header this library includes changed, and every patch applies unchanged. What reaches a
+  user of this library: a `grammar_triggers` entry of an unknown `type` used to end the process (an
+  assertion in `common_sampler_init()`, upstream #31478) and is an `InvalidRequestException`
+  (`JLLAMA_STATUS_INVALID_REQUEST`) now; a streamed HTTP response no longer closes the connection
+  behind it (#30492); Inkling 2 (text and vision, #32217) loads; tool calls inside a reasoning block
+  are parsed for Gemma 4 and Ministral 3 (#32232, #32271); more Q0 kernels for s390x (#32203), and
+  Vulkan, CUDA, OpenCL and SYCL speed-ups.
 - **llama.cpp b12387** (from b12316, 71 upstream commits; pinned by commit, upstream has not tagged
   the number yet). Upstream calls this state llama.cpp and ggml 1.0.0 and pruned its public headers
   for it. What reaches a user of this library:
