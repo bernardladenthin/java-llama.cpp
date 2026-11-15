@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12408](https://img.shields.io/badge/llama.cpp-%23b12408-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12408)  
+[![llama.cpp b12416](https://img.shields.io/badge/llama.cpp-%23b12416-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12416)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -936,8 +936,9 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 
 Per the upstream contract, a scale update lists the adapters to keep active — any adapter missing
 from the map is set to scale `0` (disabled). A slot whose cache was computed under other scales clears
-it at its next request, so no answer mixes old and new adapters (upstream's `POST /lora-adapters`
-path does not; `patches/0021` applies upstream's rule for per-request adapters there too). The
+it at its next request, so no answer mixes old and new adapters (upstream does the same since
+llama.cpp b12416, #30367; `patches/0021` additionally starts every slot with the server's adapters, so a
+state restored into a never-used slot is not thrown away). The
 host-memory prompt cache (`--cache-ram`, on by default) does not record the adapters and can still load a
 state saved under other scales; disable it (`setCacheRamMib(0)`) where that matters.
 

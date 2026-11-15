@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12408)
-set(JLLAMA_GIT_COMMIT "6d3568e31d4e4b1e4db4acb8f6ceaad0084932f3")   # the commit the number b12408 names (untagged upstream on 2026-11-15); kept as the pin (a tag name can move)
+set(JLLAMA_GIT_TAG    b12416)
+set(JLLAMA_GIT_COMMIT "de32b268c4ad55d45f3b7b16c029f4e077f4ba74")   # the commit the number b12416 names (untagged upstream on 2026-11-15); kept as the pin (a tag name can move)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -942,7 +942,15 @@ target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-slot-sched.cpp
 )
+# server-slot-sched.cpp (b12416, #32154) picks the slot for a task (server_slot_sched, the prompt
+# running hash); server-context.cpp calls it for every task, so it is mandatory too, and
+# platform-neutral. Since the same change server-common.cpp hashes media with hash_sha256() from
+# vendor::hash, which upstream's server library links PRIVATE: jllama compiles server-common.cpp
+# itself, so it links the target too (mtmd's copy is inside the shared libmtmd on the modular
+# platforms, where its symbols are hidden).
+target_link_libraries(jllama PRIVATE vendor::hash)
 #
 # server-models-sched.cpp (b11930, #21231) is the router's request queue and device-memory
 # accounting (server_models_sched, --models-memory-margin); server-models.cpp holds one and calls it
@@ -1429,6 +1437,7 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-realtime.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-slot-sched.cpp
     )
 
     target_include_directories(jllama_test PRIVATE
@@ -1447,7 +1456,7 @@ if(BUILD_TESTING)
         # The generated Java-CLI-flag list consumed by test_model_flags.cpp.
         ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
-    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama cpp-httplib GTest::gtest_main)
+    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama cpp-httplib vendor::hash GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
 
     # The embedded llama-server's shutdown path (test_native_server_shutdown.cpp) drives the real

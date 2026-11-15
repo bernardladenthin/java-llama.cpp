@@ -162,6 +162,12 @@ final class AnthropicApiSupport {
         if ("enabled".equals(thinking.path("type").asText(""))) {
             openAi.put("thinking_budget_tokens", thinking.path("budget_tokens").asInt(DEFAULT_THINKING_BUDGET_TOKENS));
         }
+        // As upstream since llama.cpp b12416 (#32321): Anthropic's output_config.effort is the OpenAI
+        // reasoning_effort, which the chat mapper hands to the template.
+        JsonNode effort = request.path("output_config").path("effort");
+        if (effort.isTextual() && !effort.asText().isEmpty()) {
+            openAi.put("reasoning_effort", effort.asText());
+        }
         // As upstream since llama.cpp b11795 (#30856): llama.cpp's own sampling params (seed, min_p, ...) travel in
         // an extra_params object and are merged into the converted body last, so they win over a translated key.
         // The two keys this translation reserves for its own answer (verbose, response_fields) stay its own.

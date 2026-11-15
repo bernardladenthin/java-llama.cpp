@@ -357,6 +357,27 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void requestMapsOutputConfigEffortToReasoningEffortLikeUpstream() throws IOException {
+        // upstream since llama.cpp b12416 (#32321): output_config.effort becomes reasoning_effort, which the
+        // chat mapper turns into the template variable; an empty or absent effort sets nothing
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,"
+                + "\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("reasoning_effort").asText(), is("high"));
+        JsonNode empty = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,"
+                + "\"output_config\":{\"effort\":\"\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(empty.has("reasoning_effort"), is(false));
+        JsonNode without = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(without.has("reasoning_effort"), is(false));
+        // extra_params is merged last and still wins
+        JsonNode overridden = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":8,"
+                + "\"output_config\":{\"effort\":\"low\"},\"extra_params\":{\"reasoning_effort\":\"high\"},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(overridden.path("reasoning_effort").asText(), is("high"));
+    }
+
+    @Test
     public void requestPassesIdSlotLikeUpstream() throws IOException {
         // upstream's converter passes id_slot through since llama.cpp b11756 (#28554), so a client can pin
         // the slot of a conversation on this route as on /v1/chat/completions

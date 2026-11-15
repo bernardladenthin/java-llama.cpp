@@ -181,6 +181,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12416** (from b12408, 8 upstream commits; pinned by commit, two past upstream's tag
+  b12414). What reaches a user of this library: the Anthropic Messages route of `OpenAiCompatServer`
+  maps `output_config.effort` to `reasoning_effort`, as upstream does since #32321 (llama.cpp's own route
+  in `NativeServer` has it from upstream); a slot's cache is cleared when the server's LoRA adapters
+  change also upstream now (#30367), which this library did through `patches/0021` already; slot
+  selection moved into upstream's `server_slot_sched` (#32154) without a change in behaviour; Inkling 2's
+  image tokens are placed correctly in its chat template (#32294); stb_image synced (#32305).
 - **llama.cpp b12408** (from b12387, 21 upstream commits; pinned by commit, one past upstream's tag
   b12407). No header this library includes changed, and every patch applies unchanged. What reaches a
   user of this library: a `grammar_triggers` entry of an unknown `type` used to end the process (an

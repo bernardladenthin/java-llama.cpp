@@ -351,6 +351,11 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12408 to b12416 (2026-11-15)** -- 8 upstream commits, pinned by commit (two past the tag
+b12414). `0021` cut to its `init()` hunk (upstream #30367 took the other), `0003` pointed at the moved
+member, `server-slot-sched.cpp` and `vendor::hash` added to the build, `output_config.effort` mapped in
+the Java Anthropic route. Open, none of it blocking: nothing.
+
 **From b12387 to b12408 (2026-11-15)** -- 21 upstream commits, pinned by commit (one past the tag
 b12407); every patch applies unchanged, every drop-check read: all still needed. No source change
 here; a grammar trigger of an unknown type no longer ends the process, and a streamed response keeps the connection (two `CApi` tests). Open, none of
@@ -681,8 +686,8 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
   the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
   copies the line `ggml-backend.cpp` already has), `0020` (validate leaf allocations before
-  reusing a graph allocation), `0021` (invalidate the slot prompt cache when server LoRA adapters
-  change; both hunks have independent drop-checks in `CLAUDE.md`), `0022` (batch an expert's tokens
+  reusing a graph allocation), `0021` (start every slot with the server's LoRA adapters; its other half,
+  clearing the cache when the server's adapters change, went upstream as #30367 at b12416), `0022` (batch an expert's tokens
   through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
   its switch, which exists for measurements here; the evidence is
   `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`), `0023` (IBM Z: drop the duplicate `<vecintrin.h>`
