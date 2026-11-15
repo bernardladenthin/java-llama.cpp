@@ -2402,7 +2402,7 @@ TEST_F(CApi, TheAttachedServerKeepsTheConnectionAfterAStreamedResponse) {
     client.set_keep_alive(true);
     client.set_read_timeout(std::chrono::seconds(30));
     std::atomic<int> sockets{0};
-    client.set_socket_options([&sockets](httplib::socket_t) { sockets.fetch_add(1); });
+    client.set_socket_options([&sockets](auto) { sockets.fetch_add(1); });
     httplib::Result health;
     for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
         health = client.Get("/health");
