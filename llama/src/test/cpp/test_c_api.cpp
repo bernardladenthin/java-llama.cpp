@@ -2878,9 +2878,11 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     jllama_tts_options_init(&options);
     const jllama_tts::synthesis_options engine;
     EXPECT_EQ(options.struct_size, sizeof(jllama_tts_options));
-    EXPECT_EQ(sizeof(jllama_tts_options), 72u) << "llama-ffm's TTS_OPTIONS lays out 72 bytes";
+    EXPECT_EQ(sizeof(jllama_tts_options), 80u) << "llama-ffm's TTS_OPTIONS lays out 80 bytes";
     EXPECT_EQ(offsetof(jllama_tts_options, speaker_reference_text), 64u)
         << "b12453 appended the transcript behind the 64 bytes of 6.1.0's header";
+    EXPECT_EQ(offsetof(jllama_tts_options, cfg_scale), 72u) << "b12459 appended guidance and solver steps";
+    EXPECT_EQ(offsetof(jllama_tts_options, flow_steps), 76u);
     EXPECT_EQ(options.speaker_reference_path, nullptr);
     EXPECT_EQ(options.lang, nullptr);
     EXPECT_EQ(options.voice, nullptr);
@@ -2893,6 +2895,8 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     EXPECT_FLOAT_EQ(options.speed, 1.0f);
     EXPECT_FLOAT_EQ(options.loudness, 0.0f);
     EXPECT_EQ(options.speaker_reference_text, nullptr);
+    EXPECT_FLOAT_EQ(options.cfg_scale, engine.cfg_scale);
+    EXPECT_EQ(options.flow_steps, engine.flow_steps);
 }
 
 // What is checked before the model is touched, so a pointer that is no engine never reaches it: a
@@ -2931,6 +2935,12 @@ TEST(CApiTts, TheOptionsAreCheckedBeforeTheModel) {
     jllama_tts_options_init(&options);
     options.repeat_penalty = -1.0f;
     expect_refused(options, "repeat_penalty");
+    jllama_tts_options_init(&options);
+    options.cfg_scale = -1.0f;
+    expect_refused(options, "cfg_scale");
+    jllama_tts_options_init(&options);
+    options.flow_steps = 2000;
+    expect_refused(options, "flow_steps");
 }
 
 TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
@@ -3088,6 +3098,8 @@ TEST_F(CApiZonos3, ASynthesisIsAWavAtTheCodecsRate) {
     EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
     EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
     EXPECT_EQ(le32(wav, 24), 44100u) << "ZONOS3's ZAC codec resamples to 44.1 kHz";
+    EXPECT_EQ(wav[22] | wav[23] << 8, 1)
+        << "ZONOS3 is mono (b12459: the header follows mtmd_gen_audio_info::n_channels)";
     std::vector<unsigned char> again;
     ASSERT_EQ(speak(1.0f, 0.0f, &again), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(wav, again) << "the same seed gives the same audio";
@@ -3150,6 +3162,46 @@ TEST_F(CApiZonos3, ADeliveryNoModelCanTakeIsRefusedAndTheModelAnswersTheNext) {
     EXPECT_EQ(speak(1.0f, 3.0f, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
     EXPECT_NE(std::string(jllama_last_error()).find("loudness"), std::string::npos) << jllama_last_error();
     EXPECT_EQ(speak(1.0f, 0.0f, nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+// b12459: a frame cap of 0 is the model's own (gen_audio::max_frames()), which is 512 for ZONOS3 as for
+// most pipelines: the same seed then gives exactly the audio of an explicit cap of 512. Before the bump
+// the engine put 512 in itself; a stereo song model (YuE2) names none and stops by itself.
+TEST_F(CApiZonos3, AFrameCapOfZeroIsTheModelsOwn) {
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> explicit_cap;
+    ASSERT_EQ(speak(1.0f, 0.0f, &own, 0), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(1.0f, 0.0f, &explicit_cap, 512), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(own, explicit_cap);
+    std::vector<unsigned char> short_cap;
+    ASSERT_EQ(speak(1.0f, 0.0f, &short_cap, 40), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GE(own.size(), short_cap.size()) << "a cap of 40 cannot speak longer than the model's own";
+}
+
+// b12459 (#32369): guidance and solver steps belong to YuE2's flow-matching pipeline. ZONOS3 has
+// neither, so llama.cpp refuses any value but the model's own, and the engine names the fields
+// rather than the delivery; the model answers the next request.
+TEST_F(CApiZonos3, GuidanceAndSolverStepsAreRefusedByAModelWithoutThem) {
+    const auto speak_with = [](float cfg_scale, int flow_steps) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 40;
+        options.seed = 7;
+        options.cfg_scale = cfg_scale;
+        options.flow_steps = flow_steps;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length);
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    EXPECT_EQ(speak_with(1.5f, 0), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("cfg_scale or flow_steps"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(speak_with(0.0f, 8), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("cfg_scale or flow_steps"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(speak_with(0.0f, 0), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 
 TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {

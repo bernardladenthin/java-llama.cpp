@@ -14,10 +14,12 @@
 
 namespace jllama_tts {
 
-// Encode float PCM samples (range ~[-1, 1]) as a mono 16-bit WAV byte stream (returned, not
-// written to a file). Samples are scaled by 32767 and clamped to the int16 range.
-inline std::vector<uint8_t> pcm_to_wav16_bytes(const std::vector<float> &data, int sample_rate) {
-    const uint16_t num_channels = 1;
+// Encode float PCM samples (range ~[-1, 1]) as a 16-bit WAV byte stream (returned, not written to a
+// file). Samples are scaled by 32767 and clamped to the int16 range. With more than one channel the
+// samples are interleaved (left, right, left, ...), as llama.cpp's PCM output is since b12459, and
+// the header says so; a channel count below 1 is mono.
+inline std::vector<uint8_t> pcm_to_wav16_bytes(const std::vector<float> &data, int sample_rate, int channels = 1) {
+    const uint16_t num_channels = (uint16_t)(channels > 0 ? channels : 1);
     const uint16_t bits_per_sample = 16;
     const uint32_t data_size = (uint32_t)(data.size() * (bits_per_sample / 8));
     const uint32_t byte_rate = (uint32_t)sample_rate * num_channels * (bits_per_sample / 8);

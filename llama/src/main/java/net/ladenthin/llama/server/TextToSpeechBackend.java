@@ -25,10 +25,15 @@ import org.jspecify.annotations.Nullable;
 /** The {@link SpeechBackend} over a loaded {@link TextToSpeech}, with its default sampling settings. */
 final class TextToSpeechBackend implements SpeechBackend {
 
-    /** The frame cap, top-k and seed of {@link TextToSpeech#synthesize(String)}. */
-    private static final int MAX_FRAMES = SpeechParameters.DEFAULT_MAX_FRAMES;
+    /**
+     * The frame cap of a request without one: the model's own, as upstream's {@code /tts} since b12459
+     * (512 for most models; a model that stops by itself, YuE2, names none).
+     */
+    private static final int MAX_FRAMES = 0;
 
+    /** The top-k and seed of {@link TextToSpeech#synthesize(String)}. */
     private static final int TOP_K = SpeechParameters.DEFAULT_TOP_K;
+
     private static final int SEED = 0;
 
     private static final String REFERENCE_PREFIX = "jllama-speaker-ref";
@@ -90,6 +95,8 @@ final class TextToSpeechBackend implements SpeechBackend {
         Float repeatPenalty = options.getRepeatPenalty();
         Float speed = options.getSpeed();
         Float loudness = options.getLoudness();
+        Float cfgScale = options.getCfgScale();
+        Integer flowSteps = options.getFlowSteps();
         byte[] reference = options.getSpeakerReference();
         // TextToSpeech reads a speaker reference from a file (llama.cpp decodes it by its content)
         Path referenceFile = null;
@@ -112,6 +119,8 @@ final class TextToSpeechBackend implements SpeechBackend {
                             .speed(speed == null ? SpeechParameters.MODEL_DEFAULT_SPEED : speed)
                             .loudness(loudness == null ? SpeechParameters.MODEL_DEFAULT_LOUDNESS : loudness)
                             .speakerReferenceText(options.getSpeakerReferenceText())
+                            .cfgScale(cfgScale == null ? 0.0f : cfgScale)
+                            .flowSteps(flowSteps == null ? 0 : flowSteps)
                             .build());
         } finally {
             if (referenceFile != null) {

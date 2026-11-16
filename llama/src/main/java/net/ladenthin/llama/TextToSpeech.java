@@ -112,7 +112,9 @@ public final class TextToSpeech implements AutoCloseable {
                     parameters.getRepeatPenalty(),
                     parameters.getSpeed(),
                     parameters.getLoudness(),
-                    parameters.getSpeakerReferenceText());
+                    parameters.getSpeakerReferenceText(),
+                    parameters.getCfgScale(),
+                    parameters.getFlowSteps());
         }
 
         @Override
@@ -418,7 +420,9 @@ public final class TextToSpeech implements AutoCloseable {
             float repeatPenalty,
             float speed,
             float loudness,
-            @Nullable String speakerReferenceText);
+            @Nullable String speakerReferenceText,
+            float cfgScale,
+            int flowSteps);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
 

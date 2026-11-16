@@ -117,7 +117,7 @@ struct synthesis_options {
     std::string speaker_reference_path; ///< a clip to clone the voice from, "" for none
     std::string lang;                   ///< the model's language, "" for its default
     std::string voice;                  ///< a predefined or template voice, "" for the default
-    int max_frames = 0;                 ///< cap on the generated frames, <= 0 for 512
+    int max_frames = 0;                 ///< cap on the generated frames, <= 0 for the model's own
     int top_k = 0;                      ///< top-k, <= 0 for the engine's defaults
     uint32_t seed = 0;                  ///< sampler and codec seed
     float temperature = -1.0f;          ///< audio frame temperature, < 0 = the model's default
@@ -126,6 +126,8 @@ struct synthesis_options {
     float speed = 1.0f;                 ///< speaking speed relative to the model's pace, > 0
     float loudness = 0.0f;              ///< target loudness in LUFS, < 0; 0 = the model's own
     std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2), "" for none
+    float cfg_scale = 0.0f;             ///< guidance scale of the audio codes, > 0; 0 = the model's own (YuE2)
+    int flow_steps = 0;                 ///< flow-matching solver steps, 1..1024; 0 = the model's own (YuE2)
 };
 
 // The refusal for values no model can take, or "" when the request may go on. Whether the model
@@ -147,6 +149,13 @@ struct synthesis_options {
     if (!std::isfinite(options.loudness) || options.loudness > 0.0f) {
         return "loudness must be < 0 LUFS (0 = the model's own loudness)";
     }
+    // b12459 (#32369): upstream's ranges, set_input's and the /tts schema's
+    if (!std::isfinite(options.cfg_scale) || options.cfg_scale < 0.0f) {
+        return "cfg_scale must be > 0 (0 = the model's own, 1 = no guidance)";
+    }
+    if (options.flow_steps < 0 || options.flow_steps > 1024) {
+        return "flow_steps must be between 1 and 1024 (0 = the model's own)";
+    }
     return "";
 }
 
@@ -155,6 +164,16 @@ struct synthesis_options {
 [[nodiscard]] inline bool synthesis_uses_delivery(const synthesis_options &options) {
     return options.speed != 1.0f || options.loudness != 0.0f;
 }
+
+// Whether the request sets the guidance or the solver steps (b12459): only a model that supports
+// them (YuE2) may take a value other than the model's own.
+[[nodiscard]] inline bool synthesis_uses_generation_control(const synthesis_options &options) {
+    return options.cfg_scale != 0.0f || options.flow_steps != 0;
+}
+
+// The repetition-penalty window: the caller's frame cap, else 512 -- upstream's /tts before b12459,
+// kept for the window because a model limit of "none" is no window size.
+[[nodiscard]] inline int synthesis_penalty_window(int requested) { return requested > 0 ? requested : 512; }
 
 // The top-p handed on, 1 (off) for 0 -- upstream's "0 to use the defaults".
 [[nodiscard]] inline float synthesis_top_p(const synthesis_options &options) {

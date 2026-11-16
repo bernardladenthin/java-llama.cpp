@@ -192,7 +192,7 @@ public class OpenAiCompatServerSpeechTest {
                     "/tts",
                     "{\"input\":\"Guten Morgen.\",\"voice\":\"male\",\"lang\":\"de\",\"n_predict\":200,"
                             + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"repeat_penalty\":1.1,"
-                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_text\":\"Guten Tag.\","
+                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_text\":\"Guten Tag.\",\"cfg_scale\":1.5,\"flow_steps\":16,"
                             + "\"speaker_ref_b64\":\""
                             + Base64.getEncoder().encodeToString(reference) + "\"}");
             assertThat(answer.text(), answer.code, is(200));
@@ -211,6 +211,8 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getLoudness(), is(-20.0f));
             assertArrayEquals(reference, set.getSpeakerReference());
             assertThat(set.getSpeakerReferenceText(), is("Guten Tag."));
+            assertThat(set.getCfgScale(), is(1.5f));
+            assertThat(set.getFlowSteps(), is(16));
         }
     }
 
@@ -229,6 +231,8 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getTemperature(), is((Float) null));
             assertThat(set.getSpeakerReference() == null, is(true));
             assertThat(set.getSpeakerReferenceText(), is((String) null));
+            assertThat(set.getCfgScale(), is((Float) null));
+            assertThat(set.getFlowSteps(), is((Integer) null));
 
             // a null "n_predict" is an absent one: the alias still counts
             answer = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"n_predict\":null,\"max_tokens\":32}");
@@ -275,7 +279,9 @@ public class OpenAiCompatServerSpeechTest {
                 "{\"input\":\"Hi\",\"top_p\":1.5}",
                 "{\"input\":\"Hi\",\"top_p\":-0.1}",
                 "{\"input\":\"Hi\",\"speed\":\"fast\"}",
-                "{\"input\":\"Hi\",\"loudness\":true}"
+                "{\"input\":\"Hi\",\"loudness\":true}",
+                "{\"input\":\"Hi\",\"cfg_scale\":\"strong\"}",
+                "{\"input\":\"Hi\",\"flow_steps\":2.5}"
             };
             for (String body : refused) {
                 Answer answer = send(server.getPort(), "POST", "/tts", body);
@@ -302,16 +308,19 @@ public class OpenAiCompatServerSpeechTest {
         }
         assertThat(
                 SpeechOptions.defaults().toString(),
-                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                        + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none}"));
+                is(
+                        "SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
+                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
         assertThat(
                 new SpeechOptions(new byte[3], 1, 2, 3, 0.25f).toString(),
-                is("SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25,"
-                        + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none}"));
+                is(
+                        "SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25,"
+                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
         assertThat(
                 new SpeechOptions(null, null, null, null, null, 0.5f, 1.2f, 0.8f, -18.0f).toString(),
-                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                        + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0, speakerReferenceText=none}"));
+                is(
+                        "SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
+                                + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
         // the transcript is named by its length, like the reference by its size
         assertThat(
                 SpeechOptions.defaults().withSpeakerReferenceText("Hi there.").toString(),
@@ -460,6 +469,24 @@ public class OpenAiCompatServerSpeechTest {
             broken[i] = 'x';
             assertThrows(IllegalArgumentException.class, () -> SpeechApiSupport.pcm(broken));
         }
-        assertThat(SpeechApiSupport.pcmContentType(48000), is("audio/pcm;rate=48000;encoding=signed-int;bits=16"));
+        assertThat(SpeechApiSupport.pcmContentType(48000, 1), is("audio/pcm;rate=48000;encoding=signed-int;bits=16"));
+        // b12459: a stereo model's samples are interleaved, and the type says so, as upstream's does
+        assertThat(
+                SpeechApiSupport.pcmContentType(44100, 2),
+                is("audio/pcm;rate=44100;channels=2;encoding=signed-int;bits=16"));
+        byte[] stereo = wav(44100, new byte[] {1, 0, 2, 0});
+        stereo[22] = 2;
+        assertThat(SpeechApiSupport.channels(stereo), is(2));
+        assertThat(
+                SpeechApiSupport.contentType(stereo, SpeechApiSupport.Format.PCM_FLOAT),
+                is("audio/pcm;rate=44100;channels=2;encoding=float;bits=32"));
+        assertThat(SpeechApiSupport.pcm(stereo), is(new byte[] {1, 0, 2, 0}));
+        byte[] mono = wav(24000, new byte[0]);
+        mono[22] = 1;
+        assertThat(SpeechApiSupport.channels(mono), is(1));
+        assertThat(
+                SpeechApiSupport.contentType(mono, SpeechApiSupport.Format.PCM16),
+                is("audio/pcm;rate=24000;encoding=signed-int;bits=16"));
+        assertThrows(IllegalArgumentException.class, () -> SpeechApiSupport.channels(new byte[10]));
     }
 }

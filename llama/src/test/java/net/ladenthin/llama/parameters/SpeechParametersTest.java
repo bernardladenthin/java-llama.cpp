@@ -28,6 +28,18 @@ public class SpeechParametersTest {
         assertThat(defaults.getSpeed(), is(1.0f));
         assertThat(defaults.getLoudness(), is(0.0f));
         assertThat(defaults.getSpeakerReferenceText(), is(nullValue()));
+        assertThat(defaults.getCfgScale(), is(0.0f));
+        assertThat(defaults.getFlowSteps(), is(0));
+    }
+
+    @Test
+    void theGuidanceAndSolverStepsAreKeptByACopy() {
+        SpeechParameters song =
+                SpeechParameters.builder().cfgScale(1.5f).flowSteps(16).build();
+        SpeechParameters copy = song.toBuilder().seed(2).build();
+        assertThat(copy.getCfgScale(), is(1.5f));
+        assertThat(copy.getFlowSteps(), is(16));
+        assertThat(copy.toString(), containsString("flowSteps=16"));
     }
 
     @Test

@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 public final class SpeechOptions {
 
     private static final SpeechOptions DEFAULTS =
-            new SpeechOptions(null, null, null, null, null, null, null, null, null, null);
+            new SpeechOptions(null, null, null, null, null, null, null, null, null, null, null, null);
 
     private final byte @Nullable [] speakerReference;
     private final @Nullable Integer maxFrames;
@@ -26,6 +26,8 @@ public final class SpeechOptions {
     private final @Nullable Float speed;
     private final @Nullable Float loudness;
     private final @Nullable String speakerReferenceText;
+    private final @Nullable Float cfgScale;
+    private final @Nullable Integer flowSteps;
 
     /**
      * Create the options of one request.
@@ -68,7 +70,19 @@ public final class SpeechOptions {
             @Nullable Float repeatPenalty,
             @Nullable Float speed,
             @Nullable Float loudness) {
-        this(speakerReference, maxFrames, topK, seed, temperature, topP, repeatPenalty, speed, loudness, null);
+        this(
+                speakerReference,
+                maxFrames,
+                topK,
+                seed,
+                temperature,
+                topP,
+                repeatPenalty,
+                speed,
+                loudness,
+                null,
+                null,
+                null);
     }
 
     private SpeechOptions(
@@ -81,7 +95,9 @@ public final class SpeechOptions {
             @Nullable Float repeatPenalty,
             @Nullable Float speed,
             @Nullable Float loudness,
-            @Nullable String speakerReferenceText) {
+            @Nullable String speakerReferenceText,
+            @Nullable Float cfgScale,
+            @Nullable Integer flowSteps) {
         this.speakerReference = speakerReference == null ? null : speakerReference.clone();
         this.maxFrames = maxFrames;
         this.topK = topK;
@@ -92,6 +108,8 @@ public final class SpeechOptions {
         this.speed = speed;
         this.loudness = loudness;
         this.speakerReferenceText = speakerReferenceText;
+        this.cfgScale = cfgScale;
+        this.flowSteps = flowSteps;
     }
 
     /**
@@ -103,7 +121,43 @@ public final class SpeechOptions {
      */
     public SpeechOptions withSpeakerReferenceText(@Nullable String text) {
         return new SpeechOptions(
-                speakerReference, maxFrames, topK, seed, temperature, topP, repeatPenalty, speed, loudness, text);
+                speakerReference,
+                maxFrames,
+                topK,
+                seed,
+                temperature,
+                topP,
+                repeatPenalty,
+                speed,
+                loudness,
+                text,
+                cfgScale,
+                flowSteps);
+    }
+
+    /**
+     * These options with the guidance scale and the solver steps of a flow-matching model (llama.cpp
+     * b12459's {@code cfg_scale} and {@code flow_steps}, YuE2); another model refuses any value but
+     * {@code null}.
+     *
+     * @param guidance the classifier-free guidance scale, or {@code null} for the model's own
+     * @param steps the steps of the ODE solver, or {@code null} for the model's own
+     * @return a copy of these options with both
+     */
+    public SpeechOptions withGenerationControl(@Nullable Float guidance, @Nullable Integer steps) {
+        return new SpeechOptions(
+                speakerReference,
+                maxFrames,
+                topK,
+                seed,
+                temperature,
+                topP,
+                repeatPenalty,
+                speed,
+                loudness,
+                speakerReferenceText,
+                guidance,
+                steps);
     }
 
     /**
@@ -205,6 +259,24 @@ public final class SpeechOptions {
         return speakerReferenceText;
     }
 
+    /**
+     * The classifier-free guidance scale of the audio codes (a flow-matching model, YuE2).
+     *
+     * @return the scale, or {@code null} for the model's own
+     */
+    public @Nullable Float getCfgScale() {
+        return cfgScale;
+    }
+
+    /**
+     * The steps of the flow-matching ODE solver (YuE2).
+     *
+     * @return the steps, or {@code null} for the model's own
+     */
+    public @Nullable Integer getFlowSteps() {
+        return flowSteps;
+    }
+
     @Override
     public String toString() {
         return "SpeechOptions{speakerReference="
@@ -219,6 +291,8 @@ public final class SpeechOptions {
                 + ", loudness=" + loudness
                 + ", speakerReferenceText="
                 + (speakerReferenceText == null ? "none" : speakerReferenceText.length() + " chars")
+                + ", cfgScale=" + cfgScale
+                + ", flowSteps=" + flowSteps
                 + '}';
     }
 }
