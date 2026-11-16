@@ -1462,6 +1462,74 @@ void expect_whole_prompt_evaluated(const json &result, int prompt_tokens) {
 
 } // namespace
 
+TEST_F(CApi, AnEditedPromptTakesTheSharedPrefixFromTheCacheAndEvaluatesTheRest) {
+    // A request whose prompt shares a prefix with the one the slot holds keeps that prefix and
+    // removes the rest of the slot's sequence from the KV cache (llama_memory_seq_rm from the end of
+    // the prefix on), then evaluates the tokens after it. That removal is a scan of every cell before
+    // b12440 and a walk over the sequence's own positions since (#32380); either way exactly the
+    // tokens after the prefix are evaluated, and the slot answers what a fresh slot answers.
+    // Pinned to one slot, so the slot selection cannot pick another one.
+    const std::string base = "The quick brown fox ";
+    const std::string first = base + "jumps over the dog";
+    const std::string second = base + "naps in the sun";
+    const auto tokens_of = [](const std::string &text) {
+        int *ids = nullptr;
+        size_t count = 0;
+        EXPECT_EQ(jllama_tokenize(model_, text.c_str(), true, &ids, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+        std::vector<int> out(ids, ids + count);
+        jllama_tokens_free(ids);
+        return out;
+    };
+    const std::vector<int> first_tokens = tokens_of(first);
+    const std::vector<int> second_tokens = tokens_of(second);
+    size_t shared = 0;
+    while (shared < first_tokens.size() && shared < second_tokens.size() &&
+           first_tokens[shared] == second_tokens[shared]) {
+        ++shared;
+    }
+    ASSERT_GE(shared, base.size()) << "the two prompts share at least the bytes of the base";
+    ASSERT_LT(shared, first_tokens.size());
+    ASSERT_LT(shared, second_tokens.size());
+
+    const auto complete = [](const std::string &prompt, bool cache) {
+        json request = {{"prompt", prompt}, {"n_predict", 2}, {"temperature", 0}, {"id_slot", 0}};
+        if (!cache) {
+            request = without_prompt_cache(request);
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return json::parse(response.str());
+    };
+    const auto expect_prefix_reused = [](const json &result, size_t cached, size_t prompt_tokens) {
+        EXPECT_EQ(result.at("timings").at("cache_n").get<size_t>(), cached) << result.dump();
+        EXPECT_EQ(result.at("timings").at("prompt_n").get<size_t>(), prompt_tokens - cached) << result.dump();
+    };
+
+    // A cold slot evaluates the whole prompt; the answer of the second prompt is the reference.
+    const json reference = complete(second, false);
+    expect_whole_prompt_evaluated(reference, static_cast<int>(second_tokens.size()));
+    const json cold = complete(first, false);
+    expect_whole_prompt_evaluated(cold, static_cast<int>(first_tokens.size()));
+    // A request without the cache still leaves its prompt in the slot: the same prompt again takes
+    // all of it but the last token, which is evaluated again for its logits.
+    const json warm_first = complete(first, true);
+    expect_prefix_reused(warm_first, first_tokens.size() - 1, first_tokens.size());
+
+    // The slot holds the first prompt: the second takes the shared prefix and evaluates its tail.
+    const json edited = complete(second, true);
+    expect_prefix_reused(edited, shared, second_tokens.size());
+    // And back: the tail of the second prompt goes, the first prompt's tail is evaluated again.
+    const json back = complete(first, true);
+    expect_prefix_reused(back, shared, first_tokens.size());
+    // The second prompt again over the same prefix: what the slot answers does not depend on what
+    // was removed before. Compared with the third request over the cached prefix, not the first
+    // (F272): both evaluate the same tail in one batch after the same cached prefix.
+    const json edited_again = complete(second, true);
+    expect_prefix_reused(edited_again, shared, second_tokens.size());
+    EXPECT_EQ(edited_again.at("content"), edited.at("content")) << edited.dump() << "\n" << edited_again.dump();
+}
+
 TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate) {
     // The chat paths turn reasoning_budget_tokens into a budget over the thinking tags the template
     // declares, and the sampler forces the end tag once the budget is spent. The raw completion paths
