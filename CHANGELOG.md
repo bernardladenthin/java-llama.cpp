@@ -126,6 +126,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **`anthropics/claude-code-action` v1.0.278**, in step with the sibling repositories.
 - **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
   change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
   the sibling repositories.
