@@ -268,7 +268,9 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     }
 
     for (;;) {
-        int32_t remaining = gen.step_prompt(engine->n_batch);
+        // b12453: n_batch must not exceed the context's, which embeddings cap at n_ubatch (512, not
+        // the 2048 asked for at load); a larger one fails the prompt ("prompt processing failed")
+        int32_t remaining = gen.step_prompt(static_cast<int32_t>(llama_n_batch(engine->ctx)));
         if (remaining < 0) {
             common_sampler_free(smpl);
             err = "prompt processing failed";

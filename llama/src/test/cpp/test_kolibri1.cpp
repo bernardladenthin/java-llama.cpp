@@ -508,7 +508,8 @@ llama_batch_ext *make_batch(llama_context *ctx, const llama_token *tokens, size_
     for (size_t i = 0; i < n; ++i) {
         const int32_t idx = llama_batch_ext_add_token(batch, 0, tokens[i]);
         const llama_pos pos = first + (llama_pos)i;
-        if (idx < 0 || !llama_batch_ext_set_pos(batch, idx, &pos) || !llama_batch_ext_set_output_logits(batch, idx, true)) {
+        if (idx < 0 || !llama_batch_ext_set_pos(batch, idx, &pos) ||
+            !llama_batch_ext_set_output_logits(batch, idx, true)) {
             llama_batch_ext_free(batch);
             return nullptr;
         }

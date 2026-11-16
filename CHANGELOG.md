@@ -205,7 +205,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   there are devices (#31435; one fewer before). The WebUI moved to `ui/apps/chat` and is called
   Llama Chat (#32032): `build-webui` and the license check read it from there, the bundle is
   unchanged. Upstream deprecated the old batch API (#32306); the importance-matrix collection and
-  the Kolibri-1 test decode through `llama_batch_ext` / `llama_process` now.
+  the Kolibri-1 test decode through `llama_batch_ext` / `llama_process` now. The speech engine hands the speech helper the context's own batch size: from b12453 the helper refuses a larger one, which failed every synthesis ("prompt processing failed") with the 2048 the engine asked for and the 512 the context has.
 - **llama.cpp b12445** (from b12431, 14 upstream commits; pinned by commit, upstream has not tagged
   the number yet). What reaches a user of this library: a chat template may render JSON with
   `tojson(sort_keys=true)` (#32366; before it threw "not implemented", which failed the load of a
