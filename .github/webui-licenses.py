@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Generate or check the license texts of the npm packages in the embedded WebUI.
 
-  webui-licenses.py generate <llama.cpp>/tools/ui llama/legal/natives/webui-npm
-  webui-licenses.py check <llama.cpp>/tools/ui llama/legal/natives/webui-npm
+  webui-licenses.py generate <llama.cpp>/ui/apps/chat llama/legal/natives/webui-npm
+  webui-licenses.py check <llama.cpp>/ui/apps/chat llama/legal/natives/webui-npm
 """
 
 import argparse
@@ -17,7 +17,7 @@ from buildcheck.webuilicenses import check, check_reuse, generate
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("generate", "check"))
-    parser.add_argument("ui", help="llama.cpp's tools/ui directory at the pinned commit")
+    parser.add_argument("ui", help="llama.cpp's ui/apps/chat directory at the pinned commit")
     parser.add_argument("out", help="llama/legal/natives/webui-npm")
     args = parser.parse_args()
     if args.command == "generate":
@@ -28,7 +28,7 @@ def main():
     for problem in problems:
         print(f"::error::{problem}")
     if not problems:
-        print("WebUI license texts match tools/ui/package-lock.json")
+        print("WebUI license texts match ui/apps/chat/package-lock.json")
     return 1 if problems else 0
 
 

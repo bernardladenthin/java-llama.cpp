@@ -86,7 +86,7 @@ how many commits separate them:
 The threshold is a knob (`LLAMA_BUMP_MAX_DIFF_KB`, default `100`). This is a heuristic: diff size grows
 monotonically enough with the tag number that the helper binary-searches the intermediate tags safely.
 
-> **`tools/ui` (the WebUI) dominates the full diff** and is *auto-followed* — CI rebuilds the matching
+> **The WebUI (`ui/apps/chat`, `tools/ui` before b12453) dominates the full diff** and is *auto-followed* — CI rebuilds the matching
 > Svelte UI from the pinned `GIT_TAG`, so it needs no per-bump source review. To size the diff on the
 > code you actually review, set `LLAMA_BUMP_EXCLUDE_WEBUI=1` (the helper prints both figures regardless).
 
@@ -99,7 +99,7 @@ the commit count, and the `compare` / `.patch` URLs. Environment:
 | Var | Default | Meaning |
 |---|---|---|
 | `LLAMA_BUMP_MAX_DIFF_KB` | `100` | Per-step diff-size threshold, in KiB. |
-| `LLAMA_BUMP_EXCLUDE_WEBUI` | `0` | `1` = size the diff **excluding** `tools/ui`. |
+| `LLAMA_BUMP_EXCLUDE_WEBUI` | `0` | `1` = size the diff **excluding** the WebUI. |
 | `LLAMA_BUMP_CACHE` | `~/.cache/jllama-llamacpp-mirror` | Mirror-clone location (cloned once, then fetched). |
 
 Worked example — pin `b9859`, latest release `b9866` (full diff 133 KiB ≥ 100 KiB, so it chunks):
@@ -111,7 +111,7 @@ latest release : b9866
 threshold      : 100 KiB per step (full diff)
 
 next step      : b9859 -> b9862
-  diff size    : 45 KiB full  /  ...  KiB excluding tools/ui (auto-followed WebUI)
+  diff size    : 45 KiB full  /  ...  KiB excluding the WebUI (auto-followed)
   commits      : 3
   progress     : intermediate chunk — re-run this script after the bump for the next one
   review diff  : https://github.com/ggml-org/llama.cpp/compare/b9859...b9862
@@ -151,12 +151,12 @@ for each:
 
 `llama/legal/natives/` holds the license texts of everything compiled into the natives, taken from
 the pinned commit. On a bump: regenerate the WebUI's npm texts whenever
-`tools/ui/package-lock.json` changed (the `WebUI license texts` workflow fails the pull request
+`ui/apps/chat/package-lock.json` changed (the `WebUI license texts` workflow fails the pull request
 otherwise, and so does `build-webui`; the digest is taken over LF line ends, so a Windows checkout
 records the same one as CI),
 
 ```bash
-python3 .github/webui-licenses.py generate <llama.cpp at the new pin>/tools/ui llama/legal/natives/webui-npm
+python3 .github/webui-licenses.py generate <llama.cpp at the new pin>/ui/apps/chat llama/legal/natives/webui-npm
 ```
 
 and compare `LICENSE`, `licenses/` and `vendor/` of the new pin with the folders there (a new

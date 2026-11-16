@@ -24,7 +24,7 @@
 #
 # Env:
 #   LLAMA_BUMP_MAX_DIFF_KB   per-step diff-size threshold in KiB (default 100)
-#   LLAMA_BUMP_EXCLUDE_WEBUI if "1", size the diff EXCLUDING tools/ui (the auto-followed WebUI, which
+#   LLAMA_BUMP_EXCLUDE_WEBUI if "1", size the diff EXCLUDING the WebUI (tools/ui, ui/apps/chat from b12453) (the auto-followed WebUI, which
 #                            does not need per-bump review); default 0 = the full diff you paste/review
 #   LLAMA_BUMP_CACHE         mirror-clone location (default ~/.cache/jllama-llamacpp-mirror)
 #
@@ -116,14 +116,14 @@ fi
 # diff byte size between the current ref and a tag number, honoring the WebUI-exclusion toggle
 diffsize() {
     if [ "$EXCLUDE_WEBUI" = "1" ]; then
-        git -C "$CACHE" diff "$1" "b$2" -- . ':(exclude)tools/ui' 2>/dev/null | wc -c
+        git -C "$CACHE" diff "$1" "b$2" -- . ':(exclude)tools/ui' ':(exclude)ui/apps/chat' 2>/dev/null | wc -c
     else
         git -C "$CACHE" diff "$1" "b$2" 2>/dev/null | wc -c
     fi
 }
 
 scope="full diff"
-[ "$EXCLUDE_WEBUI" = "1" ] && scope="diff excluding tools/ui"
+[ "$EXCLUDE_WEBUI" = "1" ] && scope="diff excluding the WebUI"
 echo "current pin    : b$cur$( [ "$curref" = "b$cur" ] || echo " (virtual: not tagged upstream yet, resolved to $curref)")"
 echo "latest release : b$target"
 echo "threshold      : ${THRESHOLD_KB} KiB per step (${scope})"
@@ -157,11 +157,11 @@ else
 fi
 
 full=$(git -C "$CACHE" diff "$curref" "b$next" | wc -c)
-noui=$(git -C "$CACHE" diff "$curref" "b$next" -- . ':(exclude)tools/ui' | wc -c)
+noui=$(git -C "$CACHE" diff "$curref" "b$next" -- . ':(exclude)tools/ui' ':(exclude)ui/apps/chat' | wc -c)
 commits=$(git -C "$CACHE" rev-list --count "$curref".."b$next")
 echo
 echo "next step      : b$cur -> b$next"
-echo "  diff size    : $((full / 1024)) KiB full  /  $((noui / 1024)) KiB excluding tools/ui (auto-followed WebUI)"
+echo "  diff size    : $((full / 1024)) KiB full  /  $((noui / 1024)) KiB excluding the WebUI (auto-followed)"
 echo "  commits      : $commits"
 if [ "$next" -eq "$target" ]; then
     echo "  progress     : reaches the latest release — final chunk"

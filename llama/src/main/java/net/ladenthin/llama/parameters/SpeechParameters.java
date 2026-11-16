@@ -19,7 +19,9 @@ import org.jspecify.annotations.Nullable;
  * shape the backbone sampler (top-p also the acoustic code predictor), the last two the delivery of a
  * model that supports it (Zonos3). Another model refuses a speed other than {@code 1} or a loudness
  * other than {@code 0}, with an {@link net.ladenthin.llama.exception.InvalidRequestException}, as it
- * refuses values out of range. The C counterpart is {@code jllama_tts_options}.
+ * refuses values out of range. {@code speakerReferenceText} (b12453) is the transcript of the speaker
+ * reference, which Fish Audio S2 puts into its prompt and the other models ignore. The C counterpart is
+ * {@code jllama_tts_options}.
  */
 @Builder(toBuilder = true)
 @Getter
@@ -86,6 +88,10 @@ public final class SpeechParameters {
     // Target loudness in LUFS, < 0; 0 leaves it to the model.
     @Builder.Default
     private final float loudness = MODEL_DEFAULT_LOUDNESS;
+
+    // The transcript of the speaker reference, or null. A model that puts it into its prompt (Fish Audio
+    // S2, llama.cpp b12453) follows the reference's voice more closely; the others ignore it.
+    private final @Nullable String speakerReferenceText;
 
     /**
      * The options of a synthesis that sets none.

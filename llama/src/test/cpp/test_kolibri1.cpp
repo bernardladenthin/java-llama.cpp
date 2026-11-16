@@ -502,25 +502,32 @@ bool load(const std::string &path, Loaded &out) {
     return out.ctx != nullptr;
 }
 
+// llama.h's batch of the given tokens of sequence 0 at positions first.., each with its logits
+llama_batch_ext *make_batch(llama_context *ctx, const llama_token *tokens, size_t n, llama_pos first) {
+    llama_batch_ext *batch = llama_batch_ext_init(ctx);
+    for (size_t i = 0; i < n; ++i) {
+        const int32_t idx = llama_batch_ext_add_token(batch, 0, tokens[i]);
+        const llama_pos pos = first + (llama_pos)i;
+        if (idx < 0 || !llama_batch_ext_set_pos(batch, idx, &pos) ||
+            !llama_batch_ext_set_output_logits(batch, idx, true)) {
+            llama_batch_ext_free(batch);
+            return nullptr;
+        }
+    }
+    return batch;
+}
+
 // logits of every position, decoding the whole sequence in one batch
 std::vector<std::vector<float>> run_batch(Loaded &m, const std::vector<llama_token> &tokens) {
-    llama_batch batch = llama_batch_init((int32_t)tokens.size(), 0, 1);
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        batch.token[i] = tokens[i];
-        batch.pos[i] = (llama_pos)i;
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = 1;
-    }
-    batch.n_tokens = (int32_t)tokens.size();
     std::vector<std::vector<float>> res;
-    if (llama_decode(m.ctx, batch) == 0) {
+    llama_batch_ext *batch = make_batch(m.ctx, tokens.data(), tokens.size(), 0);
+    if (batch != nullptr && llama_process(m.ctx, LLAMA_PROCESS_TYPE_DECODE, batch) == 0) {
         for (size_t i = 0; i < tokens.size(); ++i) {
             const float *l = llama_get_logits_ith(m.ctx, (int32_t)i);
             res.emplace_back(l, l + N_VOCAB);
         }
     }
-    llama_batch_free(batch);
+    llama_batch_ext_free(batch);
     return res;
 }
 
@@ -528,22 +535,17 @@ std::vector<std::vector<float>> run_batch(Loaded &m, const std::vector<llama_tok
 std::vector<std::vector<float>> run_incremental(Loaded &m, const std::vector<llama_token> &tokens) {
     llama_memory_clear(llama_get_memory(m.ctx), true);
     std::vector<std::vector<float>> res;
-    llama_batch batch = llama_batch_init(1, 0, 1);
     for (size_t i = 0; i < tokens.size(); ++i) {
-        batch.token[0] = tokens[i];
-        batch.pos[0] = (llama_pos)i;
-        batch.n_seq_id[0] = 1;
-        batch.seq_id[0][0] = 0;
-        batch.logits[0] = 1;
-        batch.n_tokens = 1;
-        if (llama_decode(m.ctx, batch) != 0) {
+        llama_batch_ext *batch = make_batch(m.ctx, &tokens[i], 1, (llama_pos)i);
+        const bool ok = batch != nullptr && llama_process(m.ctx, LLAMA_PROCESS_TYPE_DECODE, batch) == 0;
+        llama_batch_ext_free(batch);
+        if (!ok) {
             res.clear();
             break;
         }
         const float *l = llama_get_logits_ith(m.ctx, 0);
         res.emplace_back(l, l + N_VOCAB);
     }
-    llama_batch_free(batch);
     return res;
 }
 

@@ -125,6 +125,7 @@ struct synthesis_options {
     float repeat_penalty = 1.0f;        ///< repetition penalty of the backbone, 1 = off
     float speed = 1.0f;                 ///< speaking speed relative to the model's pace, > 0
     float loudness = 0.0f;              ///< target loudness in LUFS, < 0; 0 = the model's own
+    std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2), "" for none
 };
 
 // The refusal for values no model can take, or "" when the request may go on. Whether the model

@@ -192,7 +192,8 @@ public class OpenAiCompatServerSpeechTest {
                     "/tts",
                     "{\"input\":\"Guten Morgen.\",\"voice\":\"male\",\"lang\":\"de\",\"n_predict\":200,"
                             + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"repeat_penalty\":1.1,"
-                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_b64\":\""
+                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_text\":\"Guten Tag.\","
+                            + "\"speaker_ref_b64\":\""
                             + Base64.getEncoder().encodeToString(reference) + "\"}");
             assertThat(answer.text(), answer.code, is(200));
             assertThat(answer.contentType, is("audio/wav"));
@@ -209,6 +210,7 @@ public class OpenAiCompatServerSpeechTest {
             // a multipart form sends every field as a string; upstream reads it as the number
             assertThat(set.getLoudness(), is(-20.0f));
             assertArrayEquals(reference, set.getSpeakerReference());
+            assertThat(set.getSpeakerReferenceText(), is("Guten Tag."));
         }
     }
 
@@ -226,6 +228,7 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getSeed(), is((Integer) null));
             assertThat(set.getTemperature(), is((Float) null));
             assertThat(set.getSpeakerReference() == null, is(true));
+            assertThat(set.getSpeakerReferenceText(), is((String) null));
 
             // a null "n_predict" is an absent one: the alias still counts
             answer = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"n_predict\":null,\"max_tokens\":32}");
@@ -300,15 +303,19 @@ public class OpenAiCompatServerSpeechTest {
         assertThat(
                 SpeechOptions.defaults().toString(),
                 is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                        + " topP=null, repeatPenalty=null, speed=null, loudness=null}"));
+                        + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none}"));
         assertThat(
                 new SpeechOptions(new byte[3], 1, 2, 3, 0.25f).toString(),
                 is("SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25,"
-                        + " topP=null, repeatPenalty=null, speed=null, loudness=null}"));
+                        + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none}"));
         assertThat(
                 new SpeechOptions(null, null, null, null, null, 0.5f, 1.2f, 0.8f, -18.0f).toString(),
                 is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                        + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0}"));
+                        + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0, speakerReferenceText=none}"));
+        // the transcript is named by its length, like the reference by its size
+        assertThat(
+                SpeechOptions.defaults().withSpeakerReferenceText("Hi there.").toString(),
+                containsString("speakerReferenceText=9 chars"));
     }
 
     @Test

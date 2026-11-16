@@ -35,6 +35,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <atomic>
 #include <chrono>
@@ -2876,7 +2878,9 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     jllama_tts_options_init(&options);
     const jllama_tts::synthesis_options engine;
     EXPECT_EQ(options.struct_size, sizeof(jllama_tts_options));
-    EXPECT_EQ(sizeof(jllama_tts_options), 64u) << "llama-ffm's TTS_OPTIONS lays out 64 bytes";
+    EXPECT_EQ(sizeof(jllama_tts_options), 72u) << "llama-ffm's TTS_OPTIONS lays out 72 bytes";
+    EXPECT_EQ(offsetof(jllama_tts_options, speaker_reference_text), 64u)
+        << "b12453 appended the transcript behind the 64 bytes of 6.1.0's header";
     EXPECT_EQ(options.speaker_reference_path, nullptr);
     EXPECT_EQ(options.lang, nullptr);
     EXPECT_EQ(options.voice, nullptr);
@@ -2888,6 +2892,7 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     EXPECT_FLOAT_EQ(options.repeat_penalty, 1.0f);
     EXPECT_FLOAT_EQ(options.speed, 1.0f);
     EXPECT_FLOAT_EQ(options.loudness, 0.0f);
+    EXPECT_EQ(options.speaker_reference_text, nullptr);
 }
 
 // What is checked before the model is touched, so a pointer that is no engine never reaches it: a
@@ -3103,6 +3108,40 @@ TEST_F(CApiZonos3, ASpeedAndALoudnessAreSpokenAndChangeTheAudio) {
     std::vector<unsigned char> same_bucket;
     ASSERT_EQ(speak(2.01f, 0.0f, &same_bucket), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(same_bucket, faster) << "2.0 and 2.01 times 15 bytes per second share bucket 27";
+}
+
+// b12453 appended the reference's transcript (Fish S2) to jllama_tts_options. A caller of the older
+// header declares 64 bytes, and the library must not read past them: the pointer behind is not one,
+// and reading it would end the process. A model that does not use a transcript (ZONOS3) speaks the
+// same with one as without.
+TEST_F(CApiZonos3, AnOlderHeadersOptionsAndATranscriptTheModelDoesNotUseLeaveTheAudioAsIs) {
+    std::vector<unsigned char> own;
+    ASSERT_EQ(speak(1.0f, 0.0f, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    const auto synthesize = [](const jllama_tts_options &options, std::vector<unsigned char> *wav) {
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 40;
+    options.seed = 7;
+    options.struct_size = offsetof(jllama_tts_options, speaker_reference_text);
+    options.speaker_reference_text = reinterpret_cast<const char *>(static_cast<uintptr_t>(1));
+    std::vector<unsigned char> older;
+    ASSERT_EQ(synthesize(options, &older), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(older, own);
+
+    options.struct_size = sizeof(jllama_tts_options);
+    options.speaker_reference_text = "This is what the reference says.";
+    std::vector<unsigned char> transcribed;
+    ASSERT_EQ(synthesize(options, &transcribed), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(transcribed, own);
 }
 
 TEST_F(CApiZonos3, ADeliveryNoModelCanTakeIsRefusedAndTheModelAnswersTheNext) {

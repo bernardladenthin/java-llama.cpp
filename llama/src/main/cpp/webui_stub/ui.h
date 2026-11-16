@@ -5,7 +5,7 @@
 #pragma once
 
 // ui.h — minimal stand-in for the WebUI asset interface that llama.cpp's
-// tools/ui (CMake target "llama-ui") normally GENERATES into ui.h / ui.cpp at
+// ui/apps/chat (tools/ui before b12453; CMake target "llama-ui-assets") normally GENERATES into ui.h / ui.cpp at
 // build time via scripts/ui-assets.cmake (before upstream #28445: the embed.cpp host tool).
 //
 // The upstream HTTP transport (tools/server/server-http.cpp) does

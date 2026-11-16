@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """The license texts of the npm packages compiled into the embedded llama.cpp WebUI.
 
-build-webui bundles llama.cpp's tools/ui with npm and embeds the result in every library natives
+build-webui bundles llama.cpp's ui/apps/chat with npm and embeds the result in every library natives
 jar (webui-generated/ui.cpp), and the bundle strips every legal comment. So the texts travel in
-llama/legal/natives/webui-npm/, generated from the pinned tools/ui:
+llama/legal/natives/webui-npm/, generated from the pinned ui/apps/chat:
 
 - `closure()` -- a static upper bound of the packages the bundle can contain: the bare imports
-  of tools/ui/src (tests, stories and type-only imports left out), closed over the runtime
+  of ui/apps/chat/src (tests, stories and type-only imports left out), closed over the runtime
   dependencies package-lock.json records. Upper bound on purpose: shipping a text for a package
   that tree-shaking dropped is harmless, missing one is not.
 - `generate()` -- each package's own license/notice files, byte for byte from the tarball
@@ -72,7 +72,7 @@ def lockfile_digest(ui):
 
 
 def imports(ui):
-    """Bare package names imported by tools/ui/src."""
+    """Bare package names imported by ui/apps/chat/src."""
     roots = set(IMPLICIT)
     for folder, _, files in os.walk(Path(ui) / "src"):
         for name in files:
@@ -217,7 +217,7 @@ def generate(ui, out, fetch=None, workers=12):
         for package, files in zip(packages, texts):
             writer.writerow([package["name"], package["version"], package["license"],
                              ";".join(name for name, _ in files), package["resolved"]])
-    (out / "LOCKFILE.sha256").write_bytes(f"{lockfile_digest(ui)}  tools/ui/package-lock.json\n".encode("utf-8"))
+    (out / "LOCKFILE.sha256").write_bytes(f"{lockfile_digest(ui)}  ui/apps/chat/package-lock.json\n".encode("utf-8"))
     return packages
 
 
@@ -276,14 +276,14 @@ def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
 
 
 def check(ui, out):
-    """[] when the texts in `out` cover this tools/ui: its lockfile, its imports, every listed file."""
-    regenerate = ("run `python3 .github/webui-licenses.py generate <llama.cpp>/tools/ui "
+    """[] when the texts in `out` cover this ui/apps/chat: its lockfile, its imports, every listed file."""
+    regenerate = ("run `python3 .github/webui-licenses.py generate <llama.cpp>/ui/apps/chat "
                   "llama/legal/natives/webui-npm` and commit the result")
     recorded = (Path(out) / "LOCKFILE.sha256").read_text(encoding="utf-8").split()[0]
     actual = lockfile_digest(ui)
     problems = []
     if recorded != actual:
-        problems.append(f"tools/ui/package-lock.json is {actual}, the WebUI license texts were generated "
+        problems.append(f"ui/apps/chat/package-lock.json is {actual}, the WebUI license texts were generated "
                         f"from {recorded}: {regenerate}")
     # A new import of a package the lockfile already had changes no hash.
     lock = json.loads((Path(ui) / "package-lock.json").read_text(encoding="utf-8"))

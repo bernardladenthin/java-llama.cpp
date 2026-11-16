@@ -163,7 +163,8 @@ final class SpeechApiSupport {
      * Parse a request of llama.cpp's own speech route, {@code POST /tts}: {@code input} (or
      * {@code prompt}) is the text, {@code voice} and {@code lang} as the model names them,
      * {@code response_format} {@code wav}, {@code pcm} (32-bit float samples) or {@code pcm16},
-     * {@code speaker_ref_b64} an audio file to clone the voice from, {@code n_predict} (or
+     * {@code speaker_ref_b64} an audio file to clone the voice from and {@code speaker_ref_text} its
+     * transcript (b12453, for a model that puts it into its prompt), {@code n_predict} (or
      * {@code max_tokens}) the frame cap, {@code top_k}, {@code top_p}, {@code repeat_penalty},
      * {@code seed} and {@code temperature} the sampling, {@code speed} and {@code loudness} the
      * delivery of a model that supports it (b12431); {@code stream} is refused, this server answers
@@ -228,15 +229,22 @@ final class SpeechApiSupport {
             throw new IllegalArgumentException("Field 'top_p': must be between 0 and 1");
         }
         return new SpeechOptions(
-                reference,
-                integerOrNull(frames, FIELD_N_PREDICT),
-                integerOrNull(request.path("top_k"), "top_k"),
-                integerOrNull(request.path("seed"), "seed"),
-                temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null,
-                topP,
-                floatOrNull(request.path("repeat_penalty"), "repeat_penalty"),
-                floatOrNull(request.path("speed"), "speed"),
-                floatOrNull(request.path("loudness"), "loudness"));
+                        reference,
+                        integerOrNull(frames, FIELD_N_PREDICT),
+                        integerOrNull(request.path("top_k"), "top_k"),
+                        integerOrNull(request.path("seed"), "seed"),
+                        temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null,
+                        topP,
+                        floatOrNull(request.path("repeat_penalty"), "repeat_penalty"),
+                        floatOrNull(request.path("speed"), "speed"),
+                        floatOrNull(request.path("loudness"), "loudness"))
+                .withSpeakerReferenceText(textOrNull(request.path("speaker_ref_text")));
+    }
+
+    /** A string field as upstream reads it with {@code json_value}: absent or empty is unset. */
+    private static @Nullable String textOrNull(JsonNode node) {
+        String text = node.asText("");
+        return text.isEmpty() ? null : text;
     }
 
     /**

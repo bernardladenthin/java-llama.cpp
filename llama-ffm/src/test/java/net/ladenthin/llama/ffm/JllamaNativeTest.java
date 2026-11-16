@@ -230,6 +230,9 @@ class JllamaNativeTest {
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("repeat_penalty")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("speed")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(0.0f));
+            assertThat(JllamaNative.TTS_OPTIONS.byteSize(), is(72L));
+            assertThat(JllamaNative.offset("speaker_reference_text"), is(64L));
+            assertThat(options.get(ADDRESS, JllamaNative.offset("speaker_reference_text")), is(MemorySegment.NULL));
 
             MemorySegment filled = JllamaNative.ttsOptions(arena,
                     SpeechParameters.builder().voice("alba").maxFrames(9).speed(1.5f).loudness(-20f).build());
@@ -238,6 +241,12 @@ class JllamaNativeTest {
             assertThat(filled.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(-20f));
             assertThat(filled.get(ADDRESS, JllamaNative.offset("voice")).reinterpret(16).getString(0), is("alba"));
             assertThat(filled.get(ADDRESS, JllamaNative.offset("lang")), is(MemorySegment.NULL));
+            assertThat(filled.get(ADDRESS, JllamaNative.offset("speaker_reference_text")), is(MemorySegment.NULL));
+
+            MemorySegment transcribed = JllamaNative.ttsOptions(
+                    arena, SpeechParameters.builder().speakerReferenceText("Hello there.").build());
+            assertThat(transcribed.get(ADDRESS, JllamaNative.offset("speaker_reference_text"))
+                    .reinterpret(16).getString(0), is("Hello there."));
         }
     }
 

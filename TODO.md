@@ -351,6 +351,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12445 to b12453 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
+- **Fish Audio S2** (#32330): the transcript of the speaker reference is passed through every layer
+  (`SpeechParameters.speakerReferenceText`, `jllama_tts_options`, `FfmTextToSpeech`, `/tts`'s
+  `speaker_ref_text`); no Fish S2 pair in `models.csv` and no generator for one, so only the
+  pass-through and an older header's struct are tested (`CApiZonos3`), not a Fish S2 prompt.
+
 **From b12431 to b12445 (2026-11-16)** -- 14 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Nothing open.
 

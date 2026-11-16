@@ -231,6 +231,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     inp.prompt = prompt.c_str();
     inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
+    // b12453 (#32330): the reference's transcript, which Fish S2 puts into its prompt; the others ignore it
+    inp.speaker_ref_text = options.speaker_reference_text.empty() ? nullptr : options.speaker_reference_text.c_str();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = top_p;
@@ -266,7 +268,9 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     }
 
     for (;;) {
-        int32_t remaining = gen.step_prompt(engine->n_batch);
+        // b12453: n_batch must not exceed the context's, which embeddings cap at n_ubatch (512, not
+        // the 2048 asked for at load); a larger one fails the prompt ("prompt processing failed")
+        int32_t remaining = gen.step_prompt(static_cast<int32_t>(llama_n_batch(engine->ctx)));
         if (remaining < 0) {
             common_sampler_free(smpl);
             err = "prompt processing failed";

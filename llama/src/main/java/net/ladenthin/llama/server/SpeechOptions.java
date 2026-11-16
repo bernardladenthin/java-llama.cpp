@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 public final class SpeechOptions {
 
     private static final SpeechOptions DEFAULTS =
-            new SpeechOptions(null, null, null, null, null, null, null, null, null);
+            new SpeechOptions(null, null, null, null, null, null, null, null, null, null);
 
     private final byte @Nullable [] speakerReference;
     private final @Nullable Integer maxFrames;
@@ -25,6 +25,7 @@ public final class SpeechOptions {
     private final @Nullable Float repeatPenalty;
     private final @Nullable Float speed;
     private final @Nullable Float loudness;
+    private final @Nullable String speakerReferenceText;
 
     /**
      * Create the options of one request.
@@ -67,6 +68,20 @@ public final class SpeechOptions {
             @Nullable Float repeatPenalty,
             @Nullable Float speed,
             @Nullable Float loudness) {
+        this(speakerReference, maxFrames, topK, seed, temperature, topP, repeatPenalty, speed, loudness, null);
+    }
+
+    private SpeechOptions(
+            byte @Nullable [] speakerReference,
+            @Nullable Integer maxFrames,
+            @Nullable Integer topK,
+            @Nullable Integer seed,
+            @Nullable Float temperature,
+            @Nullable Float topP,
+            @Nullable Float repeatPenalty,
+            @Nullable Float speed,
+            @Nullable Float loudness,
+            @Nullable String speakerReferenceText) {
         this.speakerReference = speakerReference == null ? null : speakerReference.clone();
         this.maxFrames = maxFrames;
         this.topK = topK;
@@ -76,6 +91,19 @@ public final class SpeechOptions {
         this.repeatPenalty = repeatPenalty;
         this.speed = speed;
         this.loudness = loudness;
+        this.speakerReferenceText = speakerReferenceText;
+    }
+
+    /**
+     * These options with the transcript of the speaker reference (llama.cpp b12453's
+     * {@code speaker_ref_text}), which a model that puts it into its prompt (Fish Audio S2) uses.
+     *
+     * @param text the transcript, or {@code null} for none
+     * @return a copy of these options with the transcript
+     */
+    public SpeechOptions withSpeakerReferenceText(@Nullable String text) {
+        return new SpeechOptions(
+                speakerReference, maxFrames, topK, seed, temperature, topP, repeatPenalty, speed, loudness, text);
     }
 
     /**
@@ -168,6 +196,15 @@ public final class SpeechOptions {
         return loudness;
     }
 
+    /**
+     * The transcript of the speaker reference (a model that puts it into its prompt, Fish Audio S2).
+     *
+     * @return the transcript, or {@code null} for none
+     */
+    public @Nullable String getSpeakerReferenceText() {
+        return speakerReferenceText;
+    }
+
     @Override
     public String toString() {
         return "SpeechOptions{speakerReference="
@@ -180,6 +217,8 @@ public final class SpeechOptions {
                 + ", repeatPenalty=" + repeatPenalty
                 + ", speed=" + speed
                 + ", loudness=" + loudness
+                + ", speakerReferenceText="
+                + (speakerReferenceText == null ? "none" : speakerReferenceText.length() + " chars")
                 + '}';
     }
 }

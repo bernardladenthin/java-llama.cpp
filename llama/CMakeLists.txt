@@ -330,7 +330,7 @@ set(GGML_RPC      ON  CACHE BOOL "" FORCE)
 set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
 # b9305 removed the top-level LLAMA_BUILD_WEBUI -> LLAMA_BUILD_UI shim; set the
 # new name directly. (The old name no longer forwards at top level; the shim
-# survives in tools/ui/CMakeLists.txt but that subdir is not configured in
+# survives in ui/apps/chat/CMakeLists.txt (tools/ui/ before b12453) but that subdir is not configured in
 # FetchContent mode, so the old setting would be inert anyway.)
 set(LLAMA_BUILD_UI OFF CACHE BOOL "" FORCE)
 # b9284 flipped LLAMA_BUILD_APP default to ON; we don't build the unified binary
@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12445)
-set(JLLAMA_GIT_COMMIT "ef3848f9d7d4cf7b6b2abfc3b4c960b55d6d9e91")   # the commit the number b12445 names (not tagged yet on 2026-11-16; the newest tag is b12431)
+set(JLLAMA_GIT_TAG    b12453)
+set(JLLAMA_GIT_COMMIT "c7518dbec59281c430ca5278ab4e60eadbc88b13")   # the commit the number b12453 names (not tagged yet on 2026-11-16; the newest tag is b12442)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -1015,7 +1015,7 @@ endif()
 # wiring) stays excluded for now; this first step just makes the HTTP layer build
 # and link.
 #
-# server-http.cpp does `#include "ui.h"` — the WebUI asset table that tools/ui
+# server-http.cpp does `#include "ui.h"` — the WebUI asset table that ui/apps/chat
 # normally GENERATES.  The WebUI is built once in CI (the build-webui job) and
 # shared to every native build as a generated, platform-independent ui.cpp/ui.h;
 # the "WebUI assets" block below compiles it in when present and otherwise falls

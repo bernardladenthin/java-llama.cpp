@@ -123,6 +123,9 @@ class TextToSpeechBackendTest {
         float speed;
         float loudness;
 
+        @Nullable
+        String referenceText;
+
         @Override
         public byte[] synthesize(String text, SpeechParameters parameters) {
             String speakerReferenceAudioPath = parameters.getSpeakerReferenceAudioPath();
@@ -137,6 +140,7 @@ class TextToSpeechBackendTest {
             this.repeatPenalty = parameters.getRepeatPenalty();
             this.speed = parameters.getSpeed();
             this.loudness = parameters.getLoudness();
+            this.referenceText = parameters.getSpeakerReferenceText();
             if (speakerReferenceAudioPath != null) {
                 try {
                     this.referenceBytes = Files.readAllBytes(Paths.get(speakerReferenceAudioPath));
@@ -169,6 +173,7 @@ class TextToSpeechBackendTest {
         assertThat(engine.repeatPenalty, is(equalTo(SpeechParameters.REPEAT_PENALTY_OFF)));
         assertThat(engine.speed, is(equalTo(SpeechParameters.MODEL_DEFAULT_SPEED)));
         assertThat(engine.loudness, is(equalTo(SpeechParameters.MODEL_DEFAULT_LOUDNESS)));
+        assertThat(engine.referenceText, is(nullValue()));
         assertThat(backend.voices(), is(equalTo(Collections.singletonList("alba"))));
         assertThat(backend.toString(), containsString("maxFrames=512"));
     }
@@ -195,6 +200,19 @@ class TextToSpeechBackendTest {
         assertThat(engine.repeatPenalty, is(equalTo(1.1f)));
         assertThat(engine.speed, is(equalTo(1.5f)));
         assertThat(engine.loudness, is(equalTo(-20f)));
+    }
+
+    @Test
+    void theTranscriptOfTheReferenceReachesTheEngine() throws IOException {
+        RecordingEngine engine = new RecordingEngine();
+        SpeechOptions options =
+                new SpeechOptions(CLIP, null, null, null, null).withSpeakerReferenceText("What the clip says.");
+        new TextToSpeechBackend(engine).synthesize("hi", null, null, options);
+        assertThat(engine.referenceText, is(equalTo("What the clip says.")));
+        assertThat(engine.referenceBytes, is(equalTo(CLIP)));
+        // the copy keeps every other option, the original stays without a transcript
+        assertThat(options.getSpeakerReference(), is(equalTo(CLIP)));
+        assertThat(new SpeechOptions(CLIP, null, null, null, null).getSpeakerReferenceText(), is(nullValue()));
     }
 
     @Test
