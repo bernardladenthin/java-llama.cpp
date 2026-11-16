@@ -196,12 +196,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
-- **llama.cpp b12440** (from b12431, 9 upstream commits; pinned by commit, upstream has not tagged
+- **llama.cpp b12445** (from b12431, 14 upstream commits; pinned by commit, upstream has not tagged
   the number yet). What reaches a user of this library: a chat template may render JSON with
   `tojson(sort_keys=true)` (#32366; before it threw "not implemented", which failed the load of a
   model whose template does that); removing a sequence from the KV cache no longer scans every cell
   (#32380); a CUDA `MUL_MAT_ID` with an odd number of weight columns no longer aborts on AMD (#32385);
-  the Vulkan radix top-k picks ties deterministically (#31931).
+  the Vulkan radix top-k picks ties deterministically (#31931), the Vulkan flash attention no longer
+  overflows its shared memory on NVIDIA in fp32 (#32244) and Vulkan conv3d splits K (#29929); the
+  gated-delta-net MMA kernel runs on AMD CDNA (#31327).
 - **llama.cpp b12431** (from b12416, 15 upstream commits; pinned by commit, which upstream has
   tagged b12431). What reaches a user of this library: a `reasoning_effort` the chat template raises
   on (e.g. `max` on Qwen3.8) is an `InvalidRequestException` naming the levels the template supports

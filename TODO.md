@@ -351,7 +351,7 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
-**From b12431 to b12440 (2026-11-16)** -- 9 upstream commits, pinned by commit (not tagged yet);
+**From b12431 to b12445 (2026-11-16)** -- 14 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Nothing open.
 
 **From b12416 to b12431 (2026-11-16)** -- 15 upstream commits, pinned by commit (upstream has
