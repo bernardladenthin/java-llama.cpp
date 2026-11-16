@@ -22,7 +22,7 @@ texts are not needed here.
 
 | Component | Version | Compiled into | SPDX | Texts | Source |
 |---|---|---|---|---|---|
-| llama.cpp (ggml / llama / mtmd / llama-common / tools/server / CPU+Metal+GPU kernels / WebUI own code) | b12431 a946eb541a6d3051496bdcc451a0fa85772b8dfd (texts unchanged since fa3645feb) | all 23 jars + both AARs | MIT | `llama.cpp` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/LICENSE |
+| llama.cpp (ggml / llama / mtmd / llama-common / tools/server / CPU+Metal+GPU kernels / WebUI own code) | b12440 5cb95167983f7484febb0e97c7b00887e265ebcf (texts unchanged since fa3645feb) | all 23 jars + both AARs | MIT | `llama.cpp` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/LICENSE |
 | nlohmann/json | 3.12.0 + vendor/nlohmann/json-deep-nesting.patch | library jars | MIT | `nlohmann-json` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/licenses/LICENSE-jsonhpp |
 | cpp-httplib | v0.65.0 | library jars | MIT | `cpp-httplib` | https://github.com/ggml-org/llama.cpp/blob/fa3645feb5f47cbb30df5e6d031c22543d43d240/vendor/cpp-httplib/LICENSE |
 | BoringSSL (ssl + crypto; static; OPENSSL_NO_ASM) | 0.20261105.0 = 3dc4b63808921e914a3fb1fa61869abc3938781b | library jars except cpu-android-* and cpu-linux-s390x | Apache-2.0 | `boringssl` | https://boringssl.googlesource.com/boringssl/+/refs/tags/0.20261105.0/LICENSE |

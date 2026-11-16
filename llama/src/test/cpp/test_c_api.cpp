@@ -1240,6 +1240,58 @@ TEST(CApiTemplate, AChatTemplateMayChainComparisonsAndUnpackArguments) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AChatTemplateMayRenderJsonWithSortedKeys) {
+    // Jinja since b12440 (upstream #32366): tojson(sort_keys=true) orders the keys of every object, at
+    // every level, as Python's json.dumps does; before, it threw "not implemented", which a template
+    // rendering the tools that way turned into a failed load. Without the flag the order is the input's.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-sortkeys");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- for message in messages -%}"
+                             "<{{ message.role }}>{{ message.content }}</{{ message.role }}>"
+                             "{%- endfor -%}"
+                             "{%- if tools is defined and tools -%}"
+                             "[{{ tools[0] | tojson(sort_keys=true) }}|{{ tools[0] | tojson }}]"
+                             "{%- endif -%}"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned rendered;
+    EXPECT_EQ(jllama_apply_template(model,
+                                    R"({"messages":[{"role":"user","content":"Hi"}],)"
+                                    R"("tools":[{"type":"function","function":{"name":"f","description":"d",)"
+                                    R"("parameters":{"type":"object","properties":{}}}}]})",
+                                    &rendered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const std::string text = rendered.str();
+    const size_t open = text.find('[');
+    const size_t bar = text.find('|', open);
+    ASSERT_NE(open, std::string::npos) << text;
+    ASSERT_NE(bar, std::string::npos) << text;
+    const std::string sorted = text.substr(open + 1, bar - open - 1);
+    const std::string unsorted = text.substr(bar + 1, text.find(']', bar) - bar - 1);
+    // sorted: "function" before "type", and inside it "description" < "name" < "parameters"
+    EXPECT_LT(sorted.find("\"function\""), sorted.find("\"type\": \"function\"")) << sorted;
+    EXPECT_LT(sorted.find("\"description\""), sorted.find("\"name\"")) << sorted;
+    EXPECT_LT(sorted.find("\"name\""), sorted.find("\"parameters\"")) << sorted;
+    EXPECT_LT(sorted.find("\"properties\""), sorted.find("\"type\": \"object\"")) << sorted;
+    // the same object without the flag keeps "type" first, so the flag is what sorted it
+    EXPECT_LT(unsorted.find("\"type\""), unsorted.find("\"function\"")) << unsorted;
+    EXPECT_NE(sorted, unsorted);
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTheLevels) {
     // Since b12431 (upstream #32332) the template probe keeps the reasoning_effort levels a template
     // raises on, and the chat parser refuses such a level with an invalid_argument naming the levels
