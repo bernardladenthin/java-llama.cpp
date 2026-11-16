@@ -351,7 +351,7 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
-**From b12453 to b12461 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
+**From b12453 to b12463 (2026-11-16)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
 - **YuE2-3B** (#32369): stereo WAV output, `cfgScale` / `flowSteps` and the model's own frame cap are
   passed through every layer and tested with the generator's ZONOS3 pair (mono, both fields refused)
