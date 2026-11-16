@@ -6,6 +6,7 @@ package net.ladenthin.llama.ffm;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.foreign.MemorySegment;
@@ -15,6 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.TextToSpeech;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -43,12 +45,13 @@ class FfmTextToSpeechTest {
         final CountDownLatch releaseSynthesize = new CountDownLatch(1);
         volatile boolean speakerReference;
         volatile float lastTemperature = Float.NaN;
+        volatile SpeechParameters lastParameters;
         volatile List<String> voices = List.of();
 
         @Override
-        public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
-                String voice, int maxFrames, int topK, int seed, float temperature) {
-            lastTemperature = temperature;
+        public byte[] synthesize(MemorySegment handle, String text, SpeechParameters parameters) {
+            lastParameters = parameters;
+            lastTemperature = parameters.getTemperature();
             events.add("synthesize entered");
             insideSynthesize.countDown();
             try {
@@ -141,6 +144,20 @@ class FfmTextToSpeechTest {
 
         assertThat(tts.synthesize("hi", null, null, "alba", 10, 1, 1, 0.0f), is(WAV));
         assertThat(backend.lastTemperature, is(0.0f));
+    }
+
+    @Test
+    void synthesizeHandsTheParametersToTheBackend() {
+        GatedBackend backend = new GatedBackend();
+        backend.releaseSynthesize.countDown();
+        FfmTextToSpeech tts = new FfmTextToSpeech(MemorySegment.NULL, backend);
+        SpeechParameters parameters = SpeechParameters.builder().speed(1.5f).loudness(-20f).topP(0.9f).build();
+
+        assertThat(tts.synthesize("hi", parameters), is(WAV));
+        assertThat(backend.lastParameters, is(sameInstance(parameters)));
+        tts.synthesize("hi", null, "en", "alba", 10, 1, 1, 0.5f);
+        assertThat(backend.lastParameters.getVoice(), is("alba"));
+        assertThat(backend.lastParameters.getSpeed(), is(SpeechParameters.MODEL_DEFAULT_SPEED));
     }
 
     @Test

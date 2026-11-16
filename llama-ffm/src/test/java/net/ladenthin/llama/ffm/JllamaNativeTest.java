@@ -12,6 +12,8 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import net.ladenthin.llama.value.LlamaCppVersion;
 import net.ladenthin.llama.value.LogLevel;
 import org.junit.jupiter.api.BeforeAll;
@@ -206,6 +209,48 @@ class JllamaNativeTest {
             MemorySegment count = JllamaNative.longSlot(arena);
             IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                     () -> JllamaNative.call(JllamaNative.TTS_VOICES, MemorySegment.NULL, names, count));
+            assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
+        }
+    }
+
+    /**
+     * {@code jllama_tts_options} as the library lays it out: jllama_tts_options_init writes its own
+     * sizeof into struct_size, which must be this module's layout, and the defaults land where the
+     * layout reads them. A field the header gains without the layout fails here, not as a corrupt
+     * struct in a synthesis.
+     */
+    @Test
+    void ttsOptionsLayoutIsTheLibrarysAndItsDefaultsLeaveEverythingToTheModel() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment options = arena.allocate(JllamaNative.TTS_OPTIONS);
+            JllamaNative.invoke(JllamaNative.TTS_OPTIONS_INIT, options);
+            assertThat(options.get(JAVA_LONG, 0), is(JllamaNative.TTS_OPTIONS.byteSize()));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("temperature")), is(-1.0f));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("top_p")), is(1.0f));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("repeat_penalty")), is(1.0f));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("speed")), is(1.0f));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(0.0f));
+
+            MemorySegment filled = JllamaNative.ttsOptions(arena,
+                    SpeechParameters.builder().voice("alba").maxFrames(9).speed(1.5f).loudness(-20f).build());
+            assertThat(filled.get(JAVA_INT, JllamaNative.offset("max_frames")), is(9));
+            assertThat(filled.get(JAVA_FLOAT, JllamaNative.offset("speed")), is(1.5f));
+            assertThat(filled.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(-20f));
+            assertThat(filled.get(ADDRESS, JllamaNative.offset("voice")).reinterpret(16).getString(0), is("alba"));
+            assertThat(filled.get(ADDRESS, JllamaNative.offset("lang")), is(MemorySegment.NULL));
+        }
+    }
+
+    /** The options call resolves and refuses a null handle before it reads the options. */
+    @Test
+    void ttsSynthesizeOptionsRefusesANullHandle() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment wav = JllamaNative.pointerSlot(arena);
+            MemorySegment length = JllamaNative.longSlot(arena);
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> JllamaNative.call(JllamaNative.TTS_SYNTHESIZE, MemorySegment.NULL,
+                            JllamaNative.cString(arena, "hi"), JllamaNative.ttsOptions(arena, SpeechParameters.defaults()),
+                            wav, length));
             assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
         }
     }

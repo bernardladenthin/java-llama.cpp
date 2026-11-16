@@ -13,13 +13,18 @@ import org.jspecify.annotations.Nullable;
  */
 public final class SpeechOptions {
 
-    private static final SpeechOptions DEFAULTS = new SpeechOptions(null, null, null, null, null);
+    private static final SpeechOptions DEFAULTS =
+            new SpeechOptions(null, null, null, null, null, null, null, null, null);
 
     private final byte @Nullable [] speakerReference;
     private final @Nullable Integer maxFrames;
     private final @Nullable Integer topK;
     private final @Nullable Integer seed;
     private final @Nullable Float temperature;
+    private final @Nullable Float topP;
+    private final @Nullable Float repeatPenalty;
+    private final @Nullable Float speed;
+    private final @Nullable Float loudness;
 
     /**
      * Create the options of one request.
@@ -36,11 +41,41 @@ public final class SpeechOptions {
             @Nullable Integer topK,
             @Nullable Integer seed,
             @Nullable Float temperature) {
+        this(speakerReference, maxFrames, topK, seed, temperature, null, null, null, null);
+    }
+
+    /**
+     * Create the options of one request, with the sampling and delivery fields of llama.cpp b12431.
+     *
+     * @param speakerReference an audio file (WAV, MP3, ...) whose voice is cloned, or {@code null}
+     * @param maxFrames the cap on the generated audio frames, or {@code null}
+     * @param topK the top-k of the sampler, or {@code null}
+     * @param seed the seed of the sampler, or {@code null}
+     * @param temperature the temperature the audio frames are sampled at, or {@code null}
+     * @param topP the top-p of the sampler and the code predictor, or {@code null}
+     * @param repeatPenalty the repetition penalty of the sampler, or {@code null}
+     * @param speed the speaking speed relative to the model's pace, or {@code null}
+     * @param loudness the target loudness in LUFS, or {@code null}
+     */
+    public SpeechOptions(
+            byte @Nullable [] speakerReference,
+            @Nullable Integer maxFrames,
+            @Nullable Integer topK,
+            @Nullable Integer seed,
+            @Nullable Float temperature,
+            @Nullable Float topP,
+            @Nullable Float repeatPenalty,
+            @Nullable Float speed,
+            @Nullable Float loudness) {
         this.speakerReference = speakerReference == null ? null : speakerReference.clone();
         this.maxFrames = maxFrames;
         this.topK = topK;
         this.seed = seed;
         this.temperature = temperature;
+        this.topP = topP;
+        this.repeatPenalty = repeatPenalty;
+        this.speed = speed;
+        this.loudness = loudness;
     }
 
     /**
@@ -97,6 +132,42 @@ public final class SpeechOptions {
         return temperature;
     }
 
+    /**
+     * The top-p of the sampler and the acoustic code predictor.
+     *
+     * @return the top-p, or {@code null} for none
+     */
+    public @Nullable Float getTopP() {
+        return topP;
+    }
+
+    /**
+     * The repetition penalty of the sampler.
+     *
+     * @return the penalty, or {@code null} for none
+     */
+    public @Nullable Float getRepeatPenalty() {
+        return repeatPenalty;
+    }
+
+    /**
+     * The speaking speed relative to the model's own pace (a model with delivery control).
+     *
+     * @return the speed, or {@code null} for the model's own
+     */
+    public @Nullable Float getSpeed() {
+        return speed;
+    }
+
+    /**
+     * The target loudness in LUFS (a model with delivery control).
+     *
+     * @return the loudness, or {@code null} for the model's own
+     */
+    public @Nullable Float getLoudness() {
+        return loudness;
+    }
+
     @Override
     public String toString() {
         return "SpeechOptions{speakerReference="
@@ -105,6 +176,10 @@ public final class SpeechOptions {
                 + ", topK=" + topK
                 + ", seed=" + seed
                 + ", temperature=" + temperature
+                + ", topP=" + topP
+                + ", repeatPenalty=" + repeatPenalty
+                + ", speed=" + speed
+                + ", loudness=" + loudness
                 + '}';
     }
 }

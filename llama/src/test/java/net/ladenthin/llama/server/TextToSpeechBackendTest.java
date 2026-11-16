@@ -27,6 +27,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Collections;
 import java.util.List;
 import net.ladenthin.llama.TextToSpeech;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
@@ -117,24 +118,25 @@ class TextToSpeechBackendTest {
         int topK;
         int seed;
         float temperature;
+        float topP;
+        float repeatPenalty;
+        float speed;
+        float loudness;
 
         @Override
-        public byte[] synthesize(
-                String text,
-                @Nullable String speakerReferenceAudioPath,
-                @Nullable String language,
-                @Nullable String voice,
-                int maxFrames,
-                int topK,
-                int seed,
-                float temperature) {
+        public byte[] synthesize(String text, SpeechParameters parameters) {
+            String speakerReferenceAudioPath = parameters.getSpeakerReferenceAudioPath();
             this.referencePath = speakerReferenceAudioPath;
-            this.language = language;
-            this.voice = voice;
-            this.maxFrames = maxFrames;
-            this.topK = topK;
-            this.seed = seed;
-            this.temperature = temperature;
+            this.language = parameters.getLanguage();
+            this.voice = parameters.getVoice();
+            this.maxFrames = parameters.getMaxFrames();
+            this.topK = parameters.getTopK();
+            this.seed = parameters.getSeed();
+            this.temperature = parameters.getTemperature();
+            this.topP = parameters.getTopP();
+            this.repeatPenalty = parameters.getRepeatPenalty();
+            this.speed = parameters.getSpeed();
+            this.loudness = parameters.getLoudness();
             if (speakerReferenceAudioPath != null) {
                 try {
                     this.referenceBytes = Files.readAllBytes(Paths.get(speakerReferenceAudioPath));
@@ -163,6 +165,10 @@ class TextToSpeechBackendTest {
         assertThat(engine.topK, is(equalTo(4)));
         assertThat(engine.seed, is(equalTo(0)));
         assertThat(engine.temperature, is(equalTo(TextToSpeech.MODEL_DEFAULT_TEMPERATURE)));
+        assertThat(engine.topP, is(equalTo(SpeechParameters.TOP_P_OFF)));
+        assertThat(engine.repeatPenalty, is(equalTo(SpeechParameters.REPEAT_PENALTY_OFF)));
+        assertThat(engine.speed, is(equalTo(SpeechParameters.MODEL_DEFAULT_SPEED)));
+        assertThat(engine.loudness, is(equalTo(SpeechParameters.MODEL_DEFAULT_LOUDNESS)));
         assertThat(backend.voices(), is(equalTo(Collections.singletonList("alba"))));
         assertThat(backend.toString(), containsString("maxFrames=512"));
     }
@@ -178,6 +184,17 @@ class TextToSpeechBackendTest {
         assertThat(engine.topK, is(equalTo(9)));
         assertThat(engine.seed, is(equalTo(11)));
         assertThat(engine.temperature, is(equalTo(0.5f)));
+    }
+
+    @Test
+    void theSamplingAndDeliveryOfARequestReachTheEngine() throws IOException {
+        RecordingEngine engine = new RecordingEngine();
+        new TextToSpeechBackend(engine)
+                .synthesize("hi", null, null, new SpeechOptions(null, null, null, null, null, 0.9f, 1.1f, 1.5f, -20f));
+        assertThat(engine.topP, is(equalTo(0.9f)));
+        assertThat(engine.repeatPenalty, is(equalTo(1.1f)));
+        assertThat(engine.speed, is(equalTo(1.5f)));
+        assertThat(engine.loudness, is(equalTo(-20f)));
     }
 
     @Test

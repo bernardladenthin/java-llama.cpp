@@ -588,6 +588,45 @@ JLLAMA_API jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts
                                                            size_t *length);
 
 /**
+ * The options of one synthesis (jllama_tts_synthesize_options), filled by
+ * jllama_tts_options_init with the values that leave every choice to the engine or the model.
+ * `struct_size` is sizeof(jllama_tts_options) of the caller's header: a later version of this
+ * library appends fields and reads only the bytes a caller declared, so set it through
+ * jllama_tts_options_init rather than by hand. The strings may be null and are not kept after the
+ * call. Since 6.1.0.
+ */
+typedef struct jllama_tts_options {
+    size_t struct_size;                 /**< sizeof(jllama_tts_options), set by jllama_tts_options_init */
+    const char *speaker_reference_path; /**< a WAV to clone the voice from, or null */
+    const char *lang;                   /**< the model's language, or null for its default */
+    const char *voice;                  /**< a predefined or template voice, or null */
+    int max_frames;                     /**< cap on the generated frames, <= 0 = 512 */
+    int top_k;                          /**< top-k of the sampling, <= 0 = the engine's default */
+    unsigned int seed;                  /**< sampler and codec seed (default 0) */
+    float temperature;                  /**< audio frame temperature, < 0 = the model's default, 0 = greedy */
+    float top_p;                        /**< top-p of the backbone and the code predictor, 0 or 1 = off */
+    float repeat_penalty;               /**< repetition penalty of the backbone over the generation, 1 = off */
+    float speed;    /**< speaking speed relative to the model's pace, > 0 (1 = its own; Zonos3 only) */
+    float loudness; /**< target loudness in LUFS, < 0 (0 = the model's own; Zonos3 only) */
+} jllama_tts_options;
+
+/** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */
+JLLAMA_API void jllama_tts_options_init(jllama_tts_options *options);
+
+/**
+ * jllama_tts_synthesize_temperature with every option of llama.cpp's /tts route (b12431): top-p and
+ * the repetition penalty of the backbone sampler, and the delivery -- `speed` and `loudness` -- of a
+ * model that supports it (Zonos3). A model without delivery control refuses a speed other than 1 or
+ * a loudness other than 0, and values out of range (top_p outside [0, 1], a repetition penalty, speed
+ * or temperature that is not a number, a speed <= 0, a loudness > 0) are refused before the model is
+ * touched; both are JLLAMA_STATUS_INVALID_REQUEST. A null `options` is the defaults. The other
+ * jllama_tts_synthesize* functions are this one with their arguments and the defaults. Since 6.1.0.
+ */
+JLLAMA_API jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text,
+                                                       const jllama_tts_options *options, unsigned char **wav,
+                                                       size_t *length);
+
+/**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
  * mtmd_helper_cap::audio_gen_spk_ref (Qwen3-TTS, Pocket TTS) for a projector that takes audio in --
  * one converted without its voice encoder does not, and reports false. jllama_tts_synthesize

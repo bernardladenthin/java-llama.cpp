@@ -191,7 +191,8 @@ public class OpenAiCompatServerSpeechTest {
                     "POST",
                     "/tts",
                     "{\"input\":\"Guten Morgen.\",\"voice\":\"male\",\"lang\":\"de\",\"n_predict\":200,"
-                            + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"speaker_ref_b64\":\""
+                            + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"repeat_penalty\":1.1,"
+                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_b64\":\""
                             + Base64.getEncoder().encodeToString(reference) + "\"}");
             assertThat(answer.text(), answer.code, is(200));
             assertThat(answer.contentType, is("audio/wav"));
@@ -202,6 +203,11 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getTopK(), is(7));
             assertThat(set.getSeed(), is(42));
             assertThat(set.getTemperature(), is(0.5f));
+            assertThat(set.getTopP(), is(0.9f));
+            assertThat(set.getRepeatPenalty(), is(1.1f));
+            assertThat(set.getSpeed(), is(1.25f));
+            // a multipart form sends every field as a string; upstream reads it as the number
+            assertThat(set.getLoudness(), is(-20.0f));
             assertArrayEquals(reference, set.getSpeakerReference());
         }
     }
@@ -262,7 +268,11 @@ public class OpenAiCompatServerSpeechTest {
                 "{\"input\":\"Hi\",\"speaker_ref_b64\":\"not base64!\"}",
                 "{\"input\":\"Hi\",\"top_k\":\"many\"}",
                 "{\"input\":\"Hi\",\"n_predict\":1.5}",
-                "{\"input\":\"Hi\",\"temperature\":-1}"
+                "{\"input\":\"Hi\",\"temperature\":-1}",
+                "{\"input\":\"Hi\",\"top_p\":1.5}",
+                "{\"input\":\"Hi\",\"top_p\":-0.1}",
+                "{\"input\":\"Hi\",\"speed\":\"fast\"}",
+                "{\"input\":\"Hi\",\"loudness\":true}"
             };
             for (String body : refused) {
                 Answer answer = send(server.getPort(), "POST", "/tts", body);
@@ -289,10 +299,16 @@ public class OpenAiCompatServerSpeechTest {
         }
         assertThat(
                 SpeechOptions.defaults().toString(),
-                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null}"));
+                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
+                        + " topP=null, repeatPenalty=null, speed=null, loudness=null}"));
         assertThat(
                 new SpeechOptions(new byte[3], 1, 2, 3, 0.25f).toString(),
-                is("SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25}"));
+                is("SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25,"
+                        + " topP=null, repeatPenalty=null, speed=null, loudness=null}"));
+        assertThat(
+                new SpeechOptions(null, null, null, null, null, 0.5f, 1.2f, 0.8f, -18.0f).toString(),
+                is("SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
+                        + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0}"));
     }
 
     @Test
@@ -330,7 +346,8 @@ public class OpenAiCompatServerSpeechTest {
                 {"{\"input\":\"\"}", "'input'"},
                 {"{\"input\":\"Hi\",\"response_format\":\"mp3\"}", "response_format"},
                 {"{\"input\":\"Hi\",\"stream_format\":\"sse\"}", "stream_format"},
-                {"{\"input\":\"Hi\",\"speed\":1.5}", "'speed'"},
+                {"{\"input\":\"Hi\",\"speed\":\"fast\"}", "'speed'"},
+                {"{\"input\":\"Hi\",\"top_p\":2}", "'top_p'"},
             };
             for (String[] row : refused) {
                 Answer answer = send(server.getPort(), "POST", "/v1/audio/speech", row[0]);
@@ -338,6 +355,28 @@ public class OpenAiCompatServerSpeechTest {
                 assertThat(row[0], answer.text(), containsString(row[1]));
             }
             assertThat(speech.calls.size(), is(0));
+        }
+    }
+
+    @Test
+    public void aSpeechRequestHandsSpeedLoudnessAndTheTtsFieldsToTheEngineAsUpstreamDoes() throws IOException {
+        // b12431 (#32020): upstream's /v1/audio/speech keeps every field of the request, speed included
+        FakeSpeech speech = new FakeSpeech();
+        try (OpenAiCompatServer server = server(speech)) {
+            Answer answer = send(
+                    server.getPort(),
+                    "POST",
+                    "/v1/audio/speech",
+                    "{\"input\":\"Hi\",\"voice\":{\"id\":\"male\"},\"speed\":0.75,\"loudness\":-23,"
+                            + "\"top_k\":5,\"top_p\":0.8,\"seed\":9}");
+            assertThat(answer.text(), answer.code, is(200));
+            SpeechOptions set = speech.options.get(0);
+            assertThat(set.getSpeed(), is(0.75f));
+            assertThat(set.getLoudness(), is(-23.0f));
+            assertThat(set.getTopK(), is(5));
+            assertThat(set.getTopP(), is(0.8f));
+            assertThat(set.getSeed(), is(9));
+            assertThat(set.getRepeatPenalty(), is((Float) null));
         }
     }
 

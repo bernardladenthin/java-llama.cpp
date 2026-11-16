@@ -17,6 +17,12 @@ being refreshed on every version bump.
 Refreshed at b12387: upstream added server_context::set_video_decoder() where the two
 declarations sat; only context moved, the + lines are unchanged.
 
+Refreshed at b12416: upstream #32154 moved slot selection into server_slot_sched, so the
+threshold is impl->slot_sched.slot_prompt_similarity now. It is set from
+params_base.slot_prompt_similarity at the same place of load_model() as before; the accessors
+read and write that member instead. This applied cleanly and failed to compile -- the applier
+cannot see a member that moved.
+
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 index 93b70ed4e..2ddcab7bc 100644
 --- a/tools/server/server-context.cpp
@@ -26,11 +32,11 @@ index 93b70ed4e..2ddcab7bc 100644
  }
  
 +float server_context::get_slot_prompt_similarity() const {
-+    return impl->slot_prompt_similarity;
++    return impl->slot_sched.slot_prompt_similarity;
 +}
 +
 +void server_context::set_slot_prompt_similarity(float value) {
-+    impl->slot_prompt_similarity = value;
++    impl->slot_sched.slot_prompt_similarity = value;
 +}
 +
  server_context_meta server_context::get_meta() const {

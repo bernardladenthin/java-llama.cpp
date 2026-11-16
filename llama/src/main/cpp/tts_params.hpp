@@ -15,6 +15,8 @@
 #include "common.h"
 #include "cpu_params.hpp"
 
+#include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace jllama_tts {
@@ -102,6 +104,60 @@ enum class predefined_voice {
         return lang;
     }
     return "english";
+}
+
+// ---------------------------------------------------------------------------
+// What one synthesis asks for besides its text. Every value starts at the one that leaves the choice
+// to the engine or the model, so a caller that sets nothing synthesises as before these fields
+// existed. top_p, repeat_penalty, speed and loudness came with llama.cpp b12431 (#32020, Zonos3):
+// upstream's /tts reads all four, mtmd_helper_gen_audio_inp carries top_p, speed and loudness, and
+// the backbone sampler takes top_p and the repetition penalty.
+// ---------------------------------------------------------------------------
+struct synthesis_options {
+    std::string speaker_reference_path; ///< a clip to clone the voice from, "" for none
+    std::string lang;                   ///< the model's language, "" for its default
+    std::string voice;                  ///< a predefined or template voice, "" for the default
+    int max_frames = 0;                 ///< cap on the generated frames, <= 0 for 512
+    int top_k = 0;                      ///< top-k, <= 0 for the engine's defaults
+    uint32_t seed = 0;                  ///< sampler and codec seed
+    float temperature = -1.0f;          ///< audio frame temperature, < 0 = the model's default
+    float top_p = 1.0f;                 ///< top-p of the backbone and the code predictor, 0 or 1 = off
+    float repeat_penalty = 1.0f;        ///< repetition penalty of the backbone, 1 = off
+    float speed = 1.0f;                 ///< speaking speed relative to the model's pace, > 0
+    float loudness = 0.0f;              ///< target loudness in LUFS, < 0; 0 = the model's own
+};
+
+// The refusal for values no model can take, or "" when the request may go on. Whether the model
+// supports speed and loudness at all is mtmd_helper_gen_audio_set_input's answer (it returns 2);
+// the ranges are upstream's (set_input for speed and loudness, the /tts schema for top_p).
+[[nodiscard]] inline std::string synthesis_options_refusal(const synthesis_options &options) {
+    if (std::isnan(options.temperature)) {
+        return "temperature must be a number";
+    }
+    if (!std::isfinite(options.top_p) || options.top_p < 0.0f || options.top_p > 1.0f) {
+        return "top_p must be between 0 and 1";
+    }
+    if (!std::isfinite(options.repeat_penalty) || options.repeat_penalty <= 0.0f) {
+        return "repeat_penalty must be > 0 (1 = off)";
+    }
+    if (!std::isfinite(options.speed) || options.speed <= 0.0f) {
+        return "speed must be > 0 (1 = the model's own pace)";
+    }
+    if (!std::isfinite(options.loudness) || options.loudness > 0.0f) {
+        return "loudness must be < 0 LUFS (0 = the model's own loudness)";
+    }
+    return "";
+}
+
+// Whether the request leaves speed and loudness to the model: only then may a model without
+// delivery control (every one but Zonos3 at b12431) speak it.
+[[nodiscard]] inline bool synthesis_uses_delivery(const synthesis_options &options) {
+    return options.speed != 1.0f || options.loudness != 0.0f;
+}
+
+// The top-p handed on, 1 (off) for 0 -- upstream's "0 to use the defaults".
+[[nodiscard]] inline float synthesis_top_p(const synthesis_options &options) {
+    return options.top_p > 0.0f && options.top_p < 1.0f ? options.top_p : 1.0f;
 }
 
 } // namespace jllama_tts

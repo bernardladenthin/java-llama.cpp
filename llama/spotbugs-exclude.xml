@@ -642,6 +642,8 @@ SPDX-License-Identifier: MIT
         <Or>
             <Method name="parse"/>
             <Method name="parseTts"/>
+            <Method name="parseOptions"/>
+            <Method name="floatOrNull"/>
             <Method name="sampleRate"/>
         </Or>
     </Match>
@@ -753,6 +755,21 @@ SPDX-License-Identifier: MIT
     -->
     <Match>
         <Class name="net.ladenthin.llama.parameters.TrainingParameters"/>
+        <Bug pattern="MRC_METHOD_RETURNS_CONSTANT"/>
+        <Method name="~\$default\$.*"/>
+    </Match>
+    <!--
+        TextToSpeech's native backend unpacks a SpeechParameters into the positional arguments of
+        its JNI method: reading every getter of the parameter object is what the method is for.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.TextToSpeech$1"/>
+        <Bug pattern="CE_CLASS_ENVY"/>
+        <Method name="synthesize"/>
+    </Match>
+    <!-- SpeechParameters: the same Lombok @Builder.Default methods, for the same reason. -->
+    <Match>
+        <Class name="net.ladenthin.llama.parameters.SpeechParameters"/>
         <Bug pattern="MRC_METHOD_RETURNS_CONSTANT"/>
         <Method name="~\$default\$.*"/>
     </Match>

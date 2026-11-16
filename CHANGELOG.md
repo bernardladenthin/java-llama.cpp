@@ -53,7 +53,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `response_format` `wav` or `pcm` (`audio/pcm;rate=<n>;encoding=signed-int;bits=16`). The server
   takes the engine as a `SpeechBackend`: `new OpenAiCompatServer(model, config, textToSpeech)`, or
   any implementation of the interface. Without one the route answers `501`; `stream_format` other
-  than `audio`, a `speed` other than 1 and another `response_format` are `400`. `GET /props` lists
+  than `audio` and another `response_format` are `400`. `GET /props` lists
   the engine's `voices`.
 - **`POST /tts` on `OpenAiCompatServer`**, llama.cpp's own speech route: `input` (or `prompt`),
   `voice`, `lang`, `speaker_ref_b64` (an audio file whose voice is cloned), `n_predict`, `top_k`,
@@ -70,6 +70,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   with several `--in-file`. Inputs are GGUF or the legacy binary format, the output either; one
   input converts a file between the two. Matrices whose chunk sizes or tensor shapes differ are
   refused; two models of the same shape are not told apart, so the inputs have to be one model's.
+- **`TextToSpeech.synthesize(text, SpeechParameters)`** (and `FfmTextToSpeech`,
+  `jllama_tts_synthesize_options()` with `jllama_tts_options` / `jllama_tts_options_init()` in the C
+  API): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
+  (`topK`, `topP`, `repeatPenalty`, `seed`, `temperature`) and the delivery of a model that controls
+  it, `speed` and `loudness` (llama.cpp b12431, ZONOS3 Mini). A model without delivery control
+  refuses a speed other than 1 or a loudness other than 0, and values out of range (a top-p outside
+  `[0, 1]`, a speed or repetition penalty `<= 0`, a loudness `> 0`) are refused before the model is
+  touched; both are an `InvalidRequestException` (`JLLAMA_STATUS_INVALID_REQUEST`). The
+  `jllama_tts_options` struct carries its own size, so a later field is added without another
+  function. `OpenAiCompatServer`'s `/tts` reads `top_p`, `repeat_penalty`, `speed` and `loudness`
+  (also as strings, as a multipart form sends them), and its `/v1/audio/speech` every `/tts` field,
+  as upstream converts the request since b12431 -- a `speed` other than 1 is no longer a `400`.
+  ZONOS3 Mini joins the CI model set (`ZonosTtsIntegrationTest`), and the C++ suite writes a random
+  ZONOS3 pair of its own (`CApiZonos3`), so the delivery path runs in every C++ test job without a
+  download.
 - **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
   frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what
@@ -181,6 +196,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12445** (from b12431, 14 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). What reaches a user of this library: a chat template may render JSON with
+  `tojson(sort_keys=true)` (#32366; before it threw "not implemented", which failed the load of a
+  model whose template does that); removing a sequence from the KV cache no longer scans every cell
+  (#32380); a CUDA `MUL_MAT_ID` with an odd number of weight columns no longer aborts on AMD (#32385);
+  the Vulkan radix top-k picks ties deterministically (#31931), the Vulkan flash attention no longer
+  overflows its shared memory on NVIDIA in fp32 (#32244) and Vulkan conv3d splits K (#29929); the
+  gated-delta-net MMA kernel runs on AMD CDNA (#31327).
+- **llama.cpp b12431** (from b12416, 15 upstream commits; pinned by commit, which upstream has
+  tagged b12431). What reaches a user of this library: a `reasoning_effort` the chat template raises
+  on (e.g. `max` on Qwen3.8) is an `InvalidRequestException` naming the levels the template supports
+  (#32332; before it failed inside the template render); an empty stop string is ignored (#32093);
+  the TTS routes of `NativeServer` take `speed` and `loudness` for models that support them, and
+  Zonos3 is a new TTS model (#32020); higgs v3 STT and VibeVoice-ASR for audio input (#32329);
+  MiniMax-M3.1 (#32301); four more Jinja features (#32352); an x86 VNNI Q2_0 dot product (#26348).
+- **llama.cpp b12416** (from b12408, 8 upstream commits; pinned by commit, two past upstream's tag
+  b12414). What reaches a user of this library: the Anthropic Messages route of `OpenAiCompatServer`
+  maps `output_config.effort` to `reasoning_effort`, as upstream does since #32321 (llama.cpp's own route
+  in `NativeServer` has it from upstream); a slot's cache is cleared when the server's LoRA adapters
+  change also upstream now (#30367), which this library did through `patches/0021` already; slot
+  selection moved into upstream's `server_slot_sched` (#32154) without a change in behaviour; Inkling 2's
+  image tokens are placed correctly in its chat template (#32294); stb_image synced (#32305).
 - **llama.cpp b12408** (from b12387, 21 upstream commits; pinned by commit, one past upstream's tag
   b12407). No header this library includes changed, and every patch applies unchanged. What reaches a
   user of this library: a `grammar_triggers` entry of an unknown `type` used to end the process (an

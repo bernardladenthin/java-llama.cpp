@@ -13,7 +13,9 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
+import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.StructLayout;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +24,7 @@ import java.util.function.BiConsumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.SpeechParameters;
 
 /**
  * The {@code jllama_*} functions of {@code jllama_api.h} as method handles, one per declaration, plus
@@ -155,11 +158,28 @@ final class JllamaNative {
 
     // -- text to speech -------------------------------------------------------------------------------
     static final MethodHandle TTS_LOAD = downcall("jllama_tts_load", json(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
-    static final MethodHandle TTS_SYNTHESIZE = downcall(
-            "jllama_tts_synthesize_temperature",
-            json(
-                    ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_FLOAT, ADDRESS,
-                    ADDRESS));
+    /**
+     * {@code jllama_tts_options} of {@code jllama_api.h}: a {@code size_t}, three pointers, three
+     * {@code int}s and five {@code float}s, 64 bytes on every 64-bit platform, without padding.
+     */
+    static final StructLayout TTS_OPTIONS = MemoryLayout.structLayout(
+            JAVA_LONG.withName("struct_size"),
+            ADDRESS.withName("speaker_reference_path"),
+            ADDRESS.withName("lang"),
+            ADDRESS.withName("voice"),
+            JAVA_INT.withName("max_frames"),
+            JAVA_INT.withName("top_k"),
+            JAVA_INT.withName("seed"),
+            JAVA_FLOAT.withName("temperature"),
+            JAVA_FLOAT.withName("top_p"),
+            JAVA_FLOAT.withName("repeat_penalty"),
+            JAVA_FLOAT.withName("speed"),
+            JAVA_FLOAT.withName("loudness"));
+
+    static final MethodHandle TTS_OPTIONS_INIT =
+            downcall("jllama_tts_options_init", FunctionDescriptor.ofVoid(ADDRESS));
+    static final MethodHandle TTS_SYNTHESIZE =
+            downcall("jllama_tts_synthesize_options", json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
             downcall("jllama_tts_supports_speaker_reference", json(ADDRESS, ADDRESS));
     static final MethodHandle TTS_VOICES = downcall("jllama_tts_voices", json(ADDRESS, ADDRESS, ADDRESS));
@@ -343,6 +363,33 @@ final class JllamaNative {
     /** A C string in {@code arena}, or NULL for a {@code null} value. */
     static MemorySegment cString(Arena arena, String value) {
         return value == null ? MemorySegment.NULL : arena.allocateFrom(value, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A {@code jllama_tts_options} of {@code parameters} in {@code arena}: filled by
+     * {@code jllama_tts_options_init} first, so {@code struct_size} is the library's own, then set
+     * field by field. The strings live in {@code arena} as long as the struct.
+     */
+    static MemorySegment ttsOptions(Arena arena, SpeechParameters parameters) {
+        MemorySegment options = arena.allocate(TTS_OPTIONS);
+        invoke(TTS_OPTIONS_INIT, options);
+        options.set(ADDRESS, offset("speaker_reference_path"), cString(arena, parameters.getSpeakerReferenceAudioPath()));
+        options.set(ADDRESS, offset("lang"), cString(arena, parameters.getLanguage()));
+        options.set(ADDRESS, offset("voice"), cString(arena, parameters.getVoice()));
+        options.set(JAVA_INT, offset("max_frames"), parameters.getMaxFrames());
+        options.set(JAVA_INT, offset("top_k"), parameters.getTopK());
+        options.set(JAVA_INT, offset("seed"), parameters.getSeed());
+        options.set(JAVA_FLOAT, offset("temperature"), parameters.getTemperature());
+        options.set(JAVA_FLOAT, offset("top_p"), parameters.getTopP());
+        options.set(JAVA_FLOAT, offset("repeat_penalty"), parameters.getRepeatPenalty());
+        options.set(JAVA_FLOAT, offset("speed"), parameters.getSpeed());
+        options.set(JAVA_FLOAT, offset("loudness"), parameters.getLoudness());
+        return options;
+    }
+
+    /** The byte offset of a field of {@link #TTS_OPTIONS}. */
+    static long offset(String field) {
+        return TTS_OPTIONS.byteOffset(MemoryLayout.PathElement.groupElement(field));
     }
 
     /** A {@code const char *const *} of {@code strings} in {@code arena} (a null element is ""). */

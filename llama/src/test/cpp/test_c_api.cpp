@@ -16,6 +16,7 @@
 #include "jllama_java_enum_values.h"
 #include "rpc_support.hpp"
 #include "tiny_llama_gguf.hpp"
+#include "tts_params.hpp"
 #include "tts_wav.hpp"
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
@@ -1239,6 +1240,106 @@ TEST(CApiTemplate, AChatTemplateMayChainComparisonsAndUnpackArguments) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AChatTemplateMayRenderJsonWithSortedKeys) {
+    // Jinja since b12440 (upstream #32366): tojson(sort_keys=true) orders the keys of every object, at
+    // every level, as Python's json.dumps does; before, it threw "not implemented", which a template
+    // rendering the tools that way turned into a failed load. Without the flag the order is the input's.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-sortkeys");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- for message in messages -%}"
+                             "<{{ message.role }}>{{ message.content }}</{{ message.role }}>"
+                             "{%- endfor -%}"
+                             "{%- if tools is defined and tools -%}"
+                             "[{{ tools[0] | tojson(sort_keys=true) }}|{{ tools[0] | tojson }}]"
+                             "{%- endif -%}"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned rendered;
+    EXPECT_EQ(jllama_apply_template(model,
+                                    R"({"messages":[{"role":"user","content":"Hi"}],)"
+                                    R"("tools":[{"type":"function","function":{"name":"f","description":"d",)"
+                                    R"("parameters":{"type":"object","properties":{}}}}]})",
+                                    &rendered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const std::string text = rendered.str();
+    const size_t open = text.find('[');
+    const size_t bar = text.find('|', open);
+    ASSERT_NE(open, std::string::npos) << text;
+    ASSERT_NE(bar, std::string::npos) << text;
+    const std::string sorted = text.substr(open + 1, bar - open - 1);
+    const std::string unsorted = text.substr(bar + 1, text.find(']', bar) - bar - 1);
+    // sorted: "function" before "type", and inside it "description" < "name" < "parameters"
+    EXPECT_LT(sorted.find("\"function\""), sorted.find("\"type\": \"function\"")) << sorted;
+    EXPECT_LT(sorted.find("\"description\""), sorted.find("\"name\"")) << sorted;
+    EXPECT_LT(sorted.find("\"name\""), sorted.find("\"parameters\"")) << sorted;
+    EXPECT_LT(sorted.find("\"properties\""), sorted.find("\"type\": \"object\"")) << sorted;
+    // the same object without the flag keeps "type" first, so the flag is what sorted it
+    EXPECT_LT(unsorted.find("\"type\""), unsorted.find("\"function\"")) << unsorted;
+    EXPECT_NE(sorted, unsorted);
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTheLevels) {
+    // Since b12431 (upstream #32332) the template probe keeps the reasoning_effort levels a template
+    // raises on, and the chat parser refuses such a level with an invalid_argument naming the levels
+    // it supports; a level the template renders still renders.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-effort");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- if reasoning_effort is defined and reasoning_effort == 'max' -%}"
+                             "{{ raise_exception('max is not supported') }}"
+                             "{%- endif -%}"
+                             "{%- for message in messages -%}"
+                             "<{{ message.role }}>{{ message.content }}</{{ message.role }}>"
+                             "{%- endfor -%}"
+                             "[{{ reasoning_effort if reasoning_effort is defined else 'none' }}]"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned response;
+    EXPECT_EQ(jllama_chat_completions(model,
+                                      R"({"messages":[{"role":"user","content":"Hi"}],"reasoning_effort":"max",)"
+                                      R"("max_tokens":2,"temperature":0})",
+                                      &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("supported levels"), std::string::npos) << error;
+    EXPECT_NE(error.find("high"), std::string::npos) << error;
+    EXPECT_EQ(error.find("max,"), std::string::npos) << error;
+
+    Owned high;
+    EXPECT_EQ(jllama_chat_completions(model,
+                                      R"({"messages":[{"role":"user","content":"Hi"}],"reasoning_effort":"high",)"
+                                      R"("max_tokens":2,"temperature":0})",
+                                      &high.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
     // A chat template can add stop strings of its own (upstream's Laguna workaround adds
     // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
@@ -1360,6 +1461,74 @@ void expect_whole_prompt_evaluated(const json &result, int prompt_tokens) {
 }
 
 } // namespace
+
+TEST_F(CApi, AnEditedPromptTakesTheSharedPrefixFromTheCacheAndEvaluatesTheRest) {
+    // A request whose prompt shares a prefix with the one the slot holds keeps that prefix and
+    // removes the rest of the slot's sequence from the KV cache (llama_memory_seq_rm from the end of
+    // the prefix on), then evaluates the tokens after it. That removal is a scan of every cell before
+    // b12440 and a walk over the sequence's own positions since (#32380); either way exactly the
+    // tokens after the prefix are evaluated, and the slot answers what a fresh slot answers.
+    // Pinned to one slot, so the slot selection cannot pick another one.
+    const std::string base = "The quick brown fox ";
+    const std::string first = base + "jumps over the dog";
+    const std::string second = base + "naps in the sun";
+    const auto tokens_of = [](const std::string &text) {
+        int *ids = nullptr;
+        size_t count = 0;
+        EXPECT_EQ(jllama_tokenize(model_, text.c_str(), true, &ids, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+        std::vector<int> out(ids, ids + count);
+        jllama_tokens_free(ids);
+        return out;
+    };
+    const std::vector<int> first_tokens = tokens_of(first);
+    const std::vector<int> second_tokens = tokens_of(second);
+    size_t shared = 0;
+    while (shared < first_tokens.size() && shared < second_tokens.size() &&
+           first_tokens[shared] == second_tokens[shared]) {
+        ++shared;
+    }
+    ASSERT_GE(shared, base.size()) << "the two prompts share at least the bytes of the base";
+    ASSERT_LT(shared, first_tokens.size());
+    ASSERT_LT(shared, second_tokens.size());
+
+    const auto complete = [](const std::string &prompt, bool cache) {
+        json request = {{"prompt", prompt}, {"n_predict", 2}, {"temperature", 0}, {"id_slot", 0}};
+        if (!cache) {
+            request = without_prompt_cache(request);
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return json::parse(response.str());
+    };
+    const auto expect_prefix_reused = [](const json &result, size_t cached, size_t prompt_tokens) {
+        EXPECT_EQ(result.at("timings").at("cache_n").get<size_t>(), cached) << result.dump();
+        EXPECT_EQ(result.at("timings").at("prompt_n").get<size_t>(), prompt_tokens - cached) << result.dump();
+    };
+
+    // A cold slot evaluates the whole prompt; the answer of the second prompt is the reference.
+    const json reference = complete(second, false);
+    expect_whole_prompt_evaluated(reference, static_cast<int>(second_tokens.size()));
+    const json cold = complete(first, false);
+    expect_whole_prompt_evaluated(cold, static_cast<int>(first_tokens.size()));
+    // A request without the cache still leaves its prompt in the slot: the same prompt again takes
+    // all of it but the last token, which is evaluated again for its logits.
+    const json warm_first = complete(first, true);
+    expect_prefix_reused(warm_first, first_tokens.size() - 1, first_tokens.size());
+
+    // The slot holds the first prompt: the second takes the shared prefix and evaluates its tail.
+    const json edited = complete(second, true);
+    expect_prefix_reused(edited, shared, second_tokens.size());
+    // And back: the tail of the second prompt goes, the first prompt's tail is evaluated again.
+    const json back = complete(first, true);
+    expect_prefix_reused(back, shared, first_tokens.size());
+    // The second prompt again over the same prefix: what the slot answers does not depend on what
+    // was removed before. Compared with the third request over the cached prefix, not the first
+    // (F272): both evaluate the same tail in one batch after the same cached prefix.
+    const json edited_again = complete(second, true);
+    expect_prefix_reused(edited_again, shared, second_tokens.size());
+    EXPECT_EQ(edited_again.at("content"), edited.at("content")) << edited.dump() << "\n" << edited_again.dump();
+}
 
 TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfTheChatTemplate) {
     // The chat paths turn reasoning_budget_tokens into a budget over the thinking tags the template
@@ -2699,6 +2868,66 @@ TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
     EXPECT_FALSE(jllama_rpc_server_listening());
 }
 
+// jllama_tts_options (b12431): the defaults leave every choice to the engine or the model, and
+// struct_size is the library's own sizeof, which the FFM layout of llama-ffm is held to as well.
+TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
+    jllama_tts_options options;
+    std::memset(&options, 0x7f, sizeof(options));
+    jllama_tts_options_init(&options);
+    const jllama_tts::synthesis_options engine;
+    EXPECT_EQ(options.struct_size, sizeof(jllama_tts_options));
+    EXPECT_EQ(sizeof(jllama_tts_options), 64u) << "llama-ffm's TTS_OPTIONS lays out 64 bytes";
+    EXPECT_EQ(options.speaker_reference_path, nullptr);
+    EXPECT_EQ(options.lang, nullptr);
+    EXPECT_EQ(options.voice, nullptr);
+    EXPECT_EQ(options.max_frames, engine.max_frames);
+    EXPECT_EQ(options.top_k, engine.top_k);
+    EXPECT_EQ(options.seed, engine.seed);
+    EXPECT_FLOAT_EQ(options.temperature, engine.temperature);
+    EXPECT_FLOAT_EQ(options.top_p, 1.0f);
+    EXPECT_FLOAT_EQ(options.repeat_penalty, 1.0f);
+    EXPECT_FLOAT_EQ(options.speed, 1.0f);
+    EXPECT_FLOAT_EQ(options.loudness, 0.0f);
+}
+
+// What is checked before the model is touched, so a pointer that is no engine never reaches it: a
+// struct_size that does not hold the field is the caller's mistake, a value no model can take the
+// request's fault -- the out-parameters stay untouched either way.
+TEST(CApiTts, TheOptionsAreCheckedBeforeTheModel) {
+    int not_a_tts = 0;
+    auto *tts = reinterpret_cast<jllama_tts_model *>(&not_a_tts);
+    unsigned char sentinel = 0;
+    unsigned char *wav = &sentinel;
+    size_t length = 7;
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.struct_size = 4;
+    EXPECT_EQ(jllama_tts_synthesize_options(tts, "Hi", &options, &wav, &length), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_NE(std::string(jllama_last_error()).find("struct_size"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(wav, &sentinel);
+    EXPECT_EQ(length, 7u);
+
+    const auto expect_refused = [&](const jllama_tts_options &o, const char *name) {
+        unsigned char *out = nullptr;
+        size_t n = 0;
+        EXPECT_EQ(jllama_tts_synthesize_options(tts, "Hi", &o, &out, &n), JLLAMA_STATUS_INVALID_REQUEST) << name;
+        EXPECT_NE(std::string(jllama_last_error()).find(name), std::string::npos) << jllama_last_error();
+        EXPECT_EQ(out, nullptr);
+    };
+    jllama_tts_options_init(&options);
+    options.speed = 0.0f;
+    expect_refused(options, "speed");
+    jllama_tts_options_init(&options);
+    options.loudness = 3.0f;
+    expect_refused(options, "loudness");
+    jllama_tts_options_init(&options);
+    options.top_p = 2.0f;
+    expect_refused(options, "top_p");
+    jllama_tts_options_init(&options);
+    options.repeat_penalty = -1.0f;
+    expect_refused(options, "repeat_penalty");
+}
+
 TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     jllama_tts_model *tts = nullptr;
     EXPECT_EQ(jllama_tts_load("/nonexistent/backbone.gguf", "/nonexistent/mmproj.gguf", 0, 1, &tts),
@@ -2729,6 +2958,15 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
                                                 nullptr, nullptr, 10, 1, 1, -1.0f, &wav, &length),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(wav, nullptr);
+    // The options variant (b12431) is the one every other ends in.
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    EXPECT_EQ(jllama_tts_synthesize_options(nullptr, "Hi", &options, &wav, &length), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    EXPECT_EQ(jllama_tts_synthesize_options(reinterpret_cast<jllama_tts_model *>(&not_a_tts), "Hi", &options, nullptr,
+                                            &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    jllama_tts_options_init(nullptr); // ignored
     bool supported = true;
     EXPECT_EQ(jllama_tts_supports_speaker_reference(nullptr, &supported), JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
@@ -2751,6 +2989,128 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
               JLLAMA_STATUS_INVALID_ARGUMENT);
     jllama_tts_free(nullptr);
     jllama_bytes_free(nullptr);
+}
+
+// A random ZONOS3 pair (tiny_llama_gguf.hpp), the one speech pipeline with delivery control
+// (llama.cpp b12431, #32020): every synthesis runs the real pipeline -- the condition tokens of the
+// prompt, the codebook heads, the ZAC codec, the iSTFT -- on noise weights, so what is asserted is the
+// contract, not the sound. Its delivery is the part no other model in the C++ suite reaches: a speed
+// and a loudness are spoken (another pipeline answers 2 from set_input), and they change the prompt,
+// so the same seed gives other audio.
+class CApiZonos3 : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path() = jllama_test::write_tiny_zonos3_gguf();
+        mmproj_path() = jllama_test::write_tiny_zonos3_mmproj_gguf();
+        ASSERT_FALSE(model_path().empty());
+        ASSERT_FALSE(mmproj_path().empty());
+        ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(model_path().c_str());
+        std::remove(mmproj_path().c_str());
+    }
+    static std::string &model_path() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj_path() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    // A synthesis of 40 frames with a fixed seed; the status, and the WAV in *wav. Fewer frames give no
+    // audio: the ten codebooks are delayed by one row each behind three rows of codec silence, so the
+    // codec has a frame to decode only once a code row has passed through all of them.
+    static jllama_status speak(float speed, float loudness, std::vector<unsigned char> *wav, int max_frames = 40) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = 7;
+        options.speed = speed;
+        options.loudness = loudness;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+};
+
+TEST_F(CApiZonos3, ItsVoiceIsListedAndItClonesNone) {
+    char **names = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tts_voices(tts(), &names, &count), JLLAMA_STATUS_OK);
+    ASSERT_EQ(count, 1u);
+    EXPECT_STREQ(names[0], "test");
+    jllama_strings_free(names, count);
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "the mmproj has no speaker encoder";
+    // its voice speaks, by name and as the default; another name is the request's fault
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 40;
+    unsigned char *wav = nullptr;
+    size_t length = 0;
+    options.voice = "test";
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &wav, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_bytes_free(wav);
+    wav = nullptr;
+    options.voice = "nobody";
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &wav, &length), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("test"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(wav, nullptr);
+}
+
+TEST_F(CApiZonos3, ASynthesisIsAWavAtTheCodecsRate) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(1.0f, 0.0f, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
+    EXPECT_EQ(le32(wav, 24), 44100u) << "ZONOS3's ZAC codec resamples to 44.1 kHz";
+    std::vector<unsigned char> again;
+    ASSERT_EQ(speak(1.0f, 0.0f, &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same audio";
+}
+
+TEST_F(CApiZonos3, ASpeedAndALoudnessAreSpokenAndChangeTheAudio) {
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> faster;
+    std::vector<unsigned char> quieter;
+    ASSERT_EQ(speak(1.0f, 0.0f, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(2.0f, 0.0f, &faster), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(1.0f, -28.0f, &quieter), JLLAMA_STATUS_OK) << jllama_last_error();
+    // other condition tokens in the prompt, so another hidden state and other codes for one seed
+    EXPECT_NE(faster, own);
+    EXPECT_NE(quieter, own);
+    EXPECT_NE(faster, quieter);
+    // the buckets: two speeds in one speaking-rate bucket are one prompt
+    std::vector<unsigned char> same_bucket;
+    ASSERT_EQ(speak(2.01f, 0.0f, &same_bucket), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(same_bucket, faster) << "2.0 and 2.01 times 15 bytes per second share bucket 27";
+}
+
+TEST_F(CApiZonos3, ADeliveryNoModelCanTakeIsRefusedAndTheModelAnswersTheNext) {
+    EXPECT_EQ(speak(0.0f, 0.0f, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("speed"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(1.0f, 3.0f, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("loudness"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(1.0f, 0.0f, nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 
 TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {

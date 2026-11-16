@@ -351,6 +351,26 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12431 to b12445 (2026-11-16)** -- 14 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged, every drop-check read: all still needed. Nothing open.
+
+**From b12416 to b12431 (2026-11-16)** -- 15 upstream commits, pinned by commit (upstream has
+tagged the number); every patch applies unchanged, every drop-check read: all still needed. Open, none
+of it blocking:
+- **TTS `speed` and `loudness`** (#32020): done -- `SpeechParameters` / `jllama_tts_options` carry
+  them with top-p and the repetition penalty through `TextToSpeech`, the C API, `FfmTextToSpeech` and
+  both speech routes of `OpenAiCompatServer`; ZONOS3 Mini is in `models.csv`
+  (`ZonosTtsIntegrationTest`), and the C++ suite generates a random ZONOS3 pair (`CApiZonos3`: speed
+  and loudness spoken and changing the audio, verified red without the engine passing them on). Not
+  measured locally with the real model (the sandbox could not download it): the first CI run is the
+  check that a slower speed speaks longer and a loudness changes the real audio.
+- VibeVoice-ASR and higgs v3 STT have no model in `models.csv`.
+
+**From b12408 to b12416 (2026-11-15)** -- 8 upstream commits, pinned by commit (two past the tag
+b12414). `0021` cut to its `init()` hunk (upstream #30367 took the other), `0003` pointed at the moved
+member, `server-slot-sched.cpp` and `vendor::hash` added to the build, `output_config.effort` mapped in
+the Java Anthropic route. Open, none of it blocking: nothing.
+
 **From b12387 to b12408 (2026-11-15)** -- 21 upstream commits, pinned by commit (one past the tag
 b12407); every patch applies unchanged, every drop-check read: all still needed. No source change
 here; a grammar trigger of an unknown type no longer ends the process, and a streamed response keeps the connection (two `CApi` tests). Open, none of
@@ -681,8 +701,8 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
   the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
   copies the line `ggml-backend.cpp` already has), `0020` (validate leaf allocations before
-  reusing a graph allocation), `0021` (invalidate the slot prompt cache when server LoRA adapters
-  change; both hunks have independent drop-checks in `CLAUDE.md`), `0022` (batch an expert's tokens
+  reusing a graph allocation), `0021` (start every slot with the server's LoRA adapters; its other half,
+  clearing the cache when the server's adapters change, went upstream as #30367 at b12416), `0022` (batch an expert's tokens
   through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
   its switch, which exists for measurements here; the evidence is
   `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`), `0023` (IBM Z: drop the duplicate `<vecintrin.h>`

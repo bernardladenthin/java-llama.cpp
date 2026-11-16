@@ -929,22 +929,76 @@ jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const cha
                                                 const char *speaker_reference_path, const char *lang, const char *voice,
                                                 int max_frames, int top_k, unsigned int seed, float temperature,
                                                 unsigned char **wav, size_t *length) {
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.speaker_reference_path = speaker_reference_path;
+    options.lang = lang;
+    options.voice = voice;
+    options.max_frames = max_frames;
+    options.top_k = top_k;
+    options.seed = seed;
+    options.temperature = temperature;
+    return jllama_tts_synthesize_options(tts, text, &options, wav, length);
+}
+
+void jllama_tts_options_init(jllama_tts_options *options) {
+    if (options == nullptr) {
+        return;
+    }
+    const jllama_tts::synthesis_options defaults;
+    options->struct_size = sizeof(jllama_tts_options);
+    options->speaker_reference_path = nullptr;
+    options->lang = nullptr;
+    options->voice = nullptr;
+    options->max_frames = defaults.max_frames;
+    options->top_k = defaults.top_k;
+    options->seed = defaults.seed;
+    options->temperature = defaults.temperature;
+    options->top_p = defaults.top_p;
+    options->repeat_penalty = defaults.repeat_penalty;
+    options->speed = defaults.speed;
+    options->loudness = defaults.loudness;
+}
+
+jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
+                                            unsigned char **wav, size_t *length) {
     if (tts == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
     }
     if (text == nullptr || wav == nullptr || length == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text, wav and length must not be null");
     }
+    // The caller's struct may be one of an older header: only its first struct_size bytes are its
+    // own, the rest keeps the defaults. A size that does not even hold the field itself is no struct.
+    jllama_tts_options given;
+    jllama_tts_options_init(&given);
+    if (options != nullptr) {
+        if (options->struct_size < sizeof(size_t)) {
+            return fail(JLLAMA_STATUS_INVALID_ARGUMENT,
+                        "options->struct_size must be sizeof(jllama_tts_options), see jllama_tts_options_init");
+        }
+        std::memcpy(&given, options, std::min(options->struct_size, sizeof(jllama_tts_options)));
+    }
     *wav = nullptr;
     *length = 0;
     try {
+        jllama_tts::synthesis_options synthesis;
+        synthesis.speaker_reference_path = given.speaker_reference_path != nullptr ? given.speaker_reference_path : "";
+        synthesis.lang = given.lang != nullptr ? given.lang : "";
+        synthesis.voice = given.voice != nullptr ? given.voice : "";
+        synthesis.max_frames = given.max_frames;
+        synthesis.top_k = given.top_k;
+        synthesis.seed = given.seed;
+        synthesis.temperature = given.temperature;
+        synthesis.top_p = given.top_p;
+        synthesis.repeat_penalty = given.repeat_penalty;
+        synthesis.speed = given.speed;
+        synthesis.loudness = given.loudness;
         std::vector<uint8_t> bytes;
         std::string err;
         bool request_fault = false;
-        if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text,
-                                           speaker_reference_path != nullptr ? speaker_reference_path : "",
-                                           lang != nullptr ? lang : "", voice != nullptr ? voice : "", max_frames,
-                                           top_k, seed, temperature, bytes, err, &request_fault)) {
+        if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text, synthesis, bytes, err,
+                                           &request_fault)) {
             return fail(request_fault ? JLLAMA_STATUS_INVALID_REQUEST : JLLAMA_STATUS_ERROR, err.c_str());
         }
         auto *out = static_cast<unsigned char *>(std::malloc(std::max<size_t>(bytes.size(), 1)));

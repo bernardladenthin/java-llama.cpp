@@ -318,3 +318,75 @@ TEST(TtsPredefinedVoice, ASpeakerReferenceIsKeptAloneAndRefusedNextToAVoice) {
     EXPECT_EQ(choose_predefined_voice(5, false, true), predefined_voice::NOT_USED);
     EXPECT_EQ(choose_predefined_voice(5, true, true), predefined_voice::CONFLICT);
 }
+
+// The options of one synthesis (b12431, #32020): every default leaves the choice to the engine or the
+// model, and a value no model can take is refused before engine_synthesize touches the model. The
+// ranges are upstream's: speed > 0 and loudness < 0 LUFS (mtmd_helper_gen_audio_set_input), top_p in
+// [0, 1] (the /tts schema); a repetition penalty must be > 0, as the sampler divides by it.
+TEST(TtsSynthesisOptions, TheDefaultsAreAcceptedAndLeaveTheDeliveryToTheModel) {
+    const jllama_tts::synthesis_options defaults;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(defaults), "");
+    EXPECT_FALSE(jllama_tts::synthesis_uses_delivery(defaults));
+    EXPECT_FLOAT_EQ(jllama_tts::synthesis_top_p(defaults), 1.0f);
+    EXPECT_LT(defaults.temperature, 0.0f);
+    EXPECT_FLOAT_EQ(defaults.speed, 1.0f);
+    EXPECT_FLOAT_EQ(defaults.loudness, 0.0f);
+    EXPECT_FLOAT_EQ(defaults.repeat_penalty, 1.0f);
+}
+
+TEST(TtsSynthesisOptions, ValuesInRangeAreAcceptedAndAskForDelivery) {
+    jllama_tts::synthesis_options options;
+    options.speed = 1.25f;
+    options.loudness = -20.0f;
+    options.top_p = 0.9f;
+    options.repeat_penalty = 1.1f;
+    options.temperature = 0.0f;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(options), "");
+    EXPECT_TRUE(jllama_tts::synthesis_uses_delivery(options));
+    EXPECT_FLOAT_EQ(jllama_tts::synthesis_top_p(options), 0.9f);
+    options.speed = 1.0f;
+    EXPECT_TRUE(jllama_tts::synthesis_uses_delivery(options)) << "a loudness alone asks for delivery";
+    options.loudness = 0.0f;
+    options.speed = 0.5f;
+    EXPECT_TRUE(jllama_tts::synthesis_uses_delivery(options)) << "a speed alone asks for delivery";
+}
+
+TEST(TtsSynthesisOptions, TopPOfZeroOrOneIsOff) {
+    jllama_tts::synthesis_options options;
+    options.top_p = 0.0f;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(options), "");
+    EXPECT_FLOAT_EQ(jllama_tts::synthesis_top_p(options), 1.0f);
+    options.top_p = 1.0f;
+    EXPECT_FLOAT_EQ(jllama_tts::synthesis_top_p(options), 1.0f);
+}
+
+TEST(TtsSynthesisOptions, ValuesNoModelCanTakeAreRefusedByName) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    struct refused {
+        void (*set)(jllama_tts::synthesis_options &, float);
+        float value;
+        const char *names;
+    };
+    const refused cases[] = {
+        {[](jllama_tts::synthesis_options &o, float v) { o.speed = v; }, 0.0f, "speed"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.speed = v; }, -1.0f, "speed"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.speed = v; }, nan, "speed"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.speed = v; }, inf, "speed"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.loudness = v; }, 0.5f, "loudness"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.loudness = v; }, nan, "loudness"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.loudness = v; }, -inf, "loudness"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.top_p = v; }, 1.5f, "top_p"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.top_p = v; }, -0.1f, "top_p"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.top_p = v; }, nan, "top_p"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.repeat_penalty = v; }, 0.0f, "repeat_penalty"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.repeat_penalty = v; }, nan, "repeat_penalty"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.temperature = v; }, nan, "temperature"},
+    };
+    for (const refused &c : cases) {
+        jllama_tts::synthesis_options options;
+        c.set(options, c.value);
+        const std::string refusal = jllama_tts::synthesis_options_refusal(options);
+        EXPECT_NE(refusal.find(c.names), std::string::npos) << c.names << " = " << c.value << ": " << refusal;
+    }
+}
