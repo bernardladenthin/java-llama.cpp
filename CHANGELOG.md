@@ -181,6 +181,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12431** (from b12416, 15 upstream commits; pinned by commit, which upstream has
+  tagged b12431). What reaches a user of this library: a `reasoning_effort` the chat template raises
+  on (e.g. `max` on Qwen3.8) is an `InvalidRequestException` naming the levels the template supports
+  (#32332; before it failed inside the template render); an empty stop string is ignored (#32093);
+  the TTS routes of `NativeServer` take `speed` and `loudness` for models that support them, and
+  Zonos3 is a new TTS model (#32020); higgs v3 STT and VibeVoice-ASR for audio input (#32329);
+  MiniMax-M3.1 (#32301); four more Jinja features (#32352); an x86 VNNI Q2_0 dot product (#26348).
 - **llama.cpp b12416** (from b12408, 8 upstream commits; pinned by commit, two past upstream's tag
   b12414). What reaches a user of this library: the Anthropic Messages route of `OpenAiCompatServer`
   maps `output_config.effort` to `reasoning_effort`, as upstream does since #32321 (llama.cpp's own route

@@ -1239,6 +1239,54 @@ TEST(CApiTemplate, AChatTemplateMayChainComparisonsAndUnpackArguments) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTheLevels) {
+    // Since b12431 (upstream #32332) the template probe keeps the reasoning_effort levels a template
+    // raises on, and the chat parser refuses such a level with an invalid_argument naming the levels
+    // it supports; a level the template renders still renders.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-effort");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- if reasoning_effort is defined and reasoning_effort == 'max' -%}"
+                             "{{ raise_exception('max is not supported') }}"
+                             "{%- endif -%}"
+                             "{%- for message in messages -%}"
+                             "<{{ message.role }}>{{ message.content }}</{{ message.role }}>"
+                             "{%- endfor -%}"
+                             "[{{ reasoning_effort if reasoning_effort is defined else 'none' }}]"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned response;
+    EXPECT_EQ(jllama_chat_completions(model,
+                                      R"({"messages":[{"role":"user","content":"Hi"}],"reasoning_effort":"max",)"
+                                      R"("max_tokens":2,"temperature":0})",
+                                      &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("supported levels"), std::string::npos) << error;
+    EXPECT_NE(error.find("high"), std::string::npos) << error;
+    EXPECT_EQ(error.find("max,"), std::string::npos) << error;
+
+    Owned high;
+    EXPECT_EQ(jllama_chat_completions(model,
+                                      R"({"messages":[{"role":"user","content":"Hi"}],"reasoning_effort":"high",)"
+                                      R"("max_tokens":2,"temperature":0})",
+                                      &high.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
     // A chat template can add stop strings of its own (upstream's Laguna workaround adds
     // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
