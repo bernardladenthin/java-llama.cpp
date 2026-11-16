@@ -82,7 +82,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   function. `OpenAiCompatServer`'s `/tts` reads `top_p`, `repeat_penalty`, `speed` and `loudness`
   (also as strings, as a multipart form sends them), and its `/v1/audio/speech` every `/tts` field,
   as upstream converts the request since b12431 -- a `speed` other than 1 is no longer a `400`.
-  ZONOS3 Mini joins the CI model set (`ZonosTtsIntegrationTest`).
+  ZONOS3 Mini joins the CI model set (`ZonosTtsIntegrationTest`), and the C++ suite writes a random
+  ZONOS3 pair of its own (`CApiZonos3`), so the delivery path runs in every C++ test job without a
+  download.
 - **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
   frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what

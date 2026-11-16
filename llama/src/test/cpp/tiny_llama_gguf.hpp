@@ -805,6 +805,217 @@ inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jll
     return ok ? path : std::string();
 }
 
+// The pair of a random ZONOS3 (llama.cpp b12431, #32020): the one speech pipeline with delivery
+// control, whose prompt carries a loudness and a speaking-rate condition token picked by the
+// request's loudness and speed. Small enough to synthesize in a unit test, written in the layout
+// upstream's converter writes (conversion/zonos3.py).
+//
+// The backbone: two layers, a gated delta net (GDN) and an attention layer (full_attention_interval
+// 2), both dense (leading_dense_block_count = block_count, so no expert tensors), with the routed
+// residuals of the architecture (attn_res_score, ffn_res_score, output_res_score). The vocabulary is
+// the GPT-2 byte tokens behind <|unused_0|> <|unused_1|> <|bos|> <|eos|> (ids 0-3, BOS 2, EOS 3, both
+// added to every tokenization), and the condition tokens the pipeline looks up by name.
+inline std::string write_tiny_zonos3_gguf(const std::string &prefix = "jllama-zonos3") {
+    constexpr int EMBD = 32, N_HEAD_A = 2, HEAD = 16, FF = 64, GDN_HEADS = 2, GDN_HEAD_DIM = 8, GDN_KERNEL = 4;
+    constexpr int D_INNER = GDN_HEADS * GDN_HEAD_DIM;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(23);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "zonos3";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 8192);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), 2);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD_A);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_A);
+    gguf_set_val_u32(g, (a + ".attention.key_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".attention.value_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 10000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
+    gguf_set_val_u32(g, (a + ".full_attention_interval").c_str(), 2);
+    gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), GDN_KERNEL);
+    gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), D_INNER);
+    gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), GDN_HEAD_DIM);
+    gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), GDN_HEADS);
+    gguf_set_val_u32(g, (a + ".ssm.group_count").c_str(), GDN_HEADS);
+    gguf_set_val_u32(g, (a + ".leading_dense_block_count").c_str(), 2);
+    gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".moe_latent_size").c_str(), 16);
+
+    std::vector<std::string> tokens = {"<|unused_0|>", "<|unused_1|>", "<|bos|>", "<|eos|>"};
+    std::vector<int32_t> token_types(tokens.size(), 3);
+    for (const std::string &t : byte_tokens()) {
+        tokens.push_back(t);
+        token_types.push_back(1);
+    }
+    std::vector<std::string> conditions = {"<|text_pad|>"};
+    for (int i = 0; i < 10; ++i) { // nine loudness edges, ten buckets
+        conditions.push_back("<|loudness_" + std::to_string(i) + "|>");
+    }
+    conditions.push_back("<|loudness_unk|>");
+    conditions.push_back("<|fmax_unk|>");
+    for (int i = 0; i < 30; ++i) { // 29 speaking-rate edges
+        conditions.push_back("<|speaking_rate_" + std::to_string(i) + "|>");
+    }
+    conditions.push_back("<|speaking_rate_unk|>");
+    tokens.insert(tokens.end(), conditions.begin(), conditions.end());
+    token_types.resize(tokens.size(), 3);
+    const int n_vocab = static_cast<int>(tokens.size());
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merges[] = {"Ġ Ġ"}; // never applies
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "zonos3");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 2);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 3);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_bos_token", true);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_eos_token", true);
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    auto ones = [&](const std::string &name, std::initializer_list<int64_t> ne) {
+        const std::vector<int64_t> d(ne);
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(d.size()), d.data());
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = 1.0f;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+        return t;
+    };
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, "output_res_score.weight", {EMBD}, 1.0f);
+    for (int il = 0; il < 2; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "attn_res_score.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_res_score.weight", {EMBD}, 1.0f);
+        if (il == 0) { // the gated delta net
+            add_random_tensor(g, ctx, rng, p + "attn_qkv.weight", {EMBD, 3 * D_INNER}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_gate.weight", {EMBD, D_INNER}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ssm_conv1d.weight", {GDN_KERNEL, 3 * D_INNER}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ssm_dt.bias", {GDN_HEADS}, 1.0f);
+            // -A_log.exp(): negative, so the state decays
+            ggml_tensor *ssm_a = add_random_tensor(g, ctx, rng, p + "ssm_a", {GDN_HEADS}, 1.0f);
+            for (int64_t i = 0; i < ggml_nelements(ssm_a); ++i) {
+                ((float *)ssm_a->data)[i] = -0.5f;
+            }
+            add_random_tensor(g, ctx, rng, p + "ssm_alpha.weight", {EMBD, GDN_HEADS}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ssm_beta.weight", {EMBD, GDN_HEADS}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ssm_norm.weight", {GDN_HEAD_DIM}, 1.0f);
+            add_random_tensor(g, ctx, rng, p + "ssm_out.weight", {D_INNER, EMBD}, 0.1f);
+        } else { // attention with a per-head output gate and a weighted QK norm on Q
+            add_random_tensor(g, ctx, rng, p + "attn_q.weight", {EMBD, N_HEAD_A * HEAD}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_k.weight", {EMBD, N_HEAD_A * HEAD}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_v.weight", {EMBD, N_HEAD_A * HEAD}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD_A * HEAD, EMBD}, 0.1f);
+            ones(p + "attn_q_norm.weight", {HEAD, N_HEAD_A});
+            add_random_tensor(g, ctx, rng, p + "attn_gate.weight", {EMBD, N_HEAD_A}, 0.1f);
+        }
+        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {EMBD, FF}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {EMBD, FF}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {FF, EMBD}, 0.1f);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The mmproj of the backbone above: the ten codebook heads and the summed code embedding
+// (a.gen.code.*, 4098 rows per codebook: the codes, the end of audio and the pad), one predefined
+// voice ("test", three rows) and the ZAC codec decoder (a.gen.wav.*) at the shapes llama.cpp fixes --
+// five stages, the patch-up between them, the 2948 rows of the two iSTFT branches, the 736 x 735
+// resampler -- with every free width made small and no transformer layer in a stage (the loader
+// takes a stage without one). No speaker encoder, so the pair clones no voice. The weights are
+// small, so the log magnitudes the iSTFT exponentiates stay near zero.
+inline std::string write_tiny_zonos3_mmproj_gguf(const std::string &prefix = "jllama-zonos3-mmproj") {
+    constexpr int EMBD = 32, N_CB = 10, N_CB_ROWS = 4098, N_CODES = 4096, SEM = 8, LATENT = 8, STAGE = 8, K = 3,
+                  PW = 16;
+    constexpr int SPEC_ROWS = 736 + 2 + 2208 + 2;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(29);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_bool(g, "clip.has_gen_audio_encoder", true);
+    gguf_set_val_str(g, "clip.gen.audio.projector_type", "zonos3_gen");
+    gguf_set_val_u32(g, "clip.gen.audio.projection_dim", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.embedding_length", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.feed_forward_length", 0);
+    gguf_set_val_u32(g, "clip.gen.audio.block_count", 0);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", 0);
+    gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-5f);
+
+    ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: noise of that magnitude (weights); otherwise every element is value (norms, biases)
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, value < 0 ? -value : 0.0f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    add("a.gen.code.head.weight", {EMBD, N_CB * N_CB_ROWS}, -0.1f);
+    add("a.gen.code.out_embd.weight", {EMBD, N_CB * N_CB_ROWS}, -0.05f);
+    add("voice.test", {EMBD, 3}, -0.1f);
+
+    const std::string w = "a.gen.wav";
+    auto convnext = [&](const std::string &q, int c) {
+        add(q + ".dw.weight", {K, c}, -0.1f);
+        add(q + ".dw.bias", {c}, 0.0f);
+        add(q + ".norm.weight", {c}, 1.0f);
+        add(q + ".norm.bias", {c}, 0.0f);
+        add(q + ".pw1.weight", {c, PW}, -0.1f);
+        add(q + ".pw1.bias", {PW}, 0.0f);
+        add(q + ".pw2.weight", {PW, c}, -0.1f);
+        add(q + ".pw2.bias", {c}, 0.0f);
+    };
+    add(w + ".sem.table", {SEM, N_CODES}, -0.1f);
+    add(w + ".sem.bias", {SEM}, 0.0f);
+    convnext(w + ".sem.0", SEM);
+    add(w + ".sem.out.weight", {SEM, LATENT}, -0.1f);
+    add(w + ".sem.out.bias", {LATENT}, 0.0f);
+    add(w + ".res.table", {LATENT, (N_CB - 1) * N_CODES}, -0.1f);
+    add(w + ".res.bias", {LATENT, N_CB - 1}, 0.0f);
+    // each stage projects to STAGE channels; between two stages the patch-up halves them
+    int channels = LATENT;
+    for (int s = 0; s < 5; ++s) {
+        add(w + ".stage." + std::to_string(s) + ".in.weight", {channels, STAGE}, -0.1f);
+        channels = s < 4 ? STAGE / 2 : STAGE;
+    }
+    convnext(w + ".head.0", STAGE);
+    add(w + ".head.norm.weight", {STAGE}, 1.0f);
+    add(w + ".head.norm.bias", {STAGE}, 0.0f);
+    add(w + ".head.out.weight", {STAGE, SPEC_ROWS}, -0.01f);
+    add(w + ".head.out.bias", {SPEC_ROWS}, 0.0f);
+    add(w + ".mixer.weight", {3, 2}, -0.1f);
+    add(w + ".resample.weight", {736, 735}, -0.01f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // A 2x2 red PNG, base64: an image stb_image decodes, small enough to inline, for the projector above.
 constexpr const char *TINY_PNG_BASE64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";

@@ -357,8 +357,10 @@ of it blocking:
 - **TTS `speed` and `loudness`** (#32020): done -- `SpeechParameters` / `jllama_tts_options` carry
   them with top-p and the repetition penalty through `TextToSpeech`, the C API, `FfmTextToSpeech` and
   both speech routes of `OpenAiCompatServer`; ZONOS3 Mini is in `models.csv`
-  (`ZonosTtsIntegrationTest`). Not measured locally (the sandbox could not download the model): the
-  first CI run is the check that a slower speed speaks longer and a loudness changes the audio.
+  (`ZonosTtsIntegrationTest`), and the C++ suite generates a random ZONOS3 pair (`CApiZonos3`: speed
+  and loudness spoken and changing the audio, verified red without the engine passing them on). Not
+  measured locally with the real model (the sandbox could not download it): the first CI run is the
+  check that a slower speed speaks longer and a loudness changes the real audio.
 - VibeVoice-ASR and higgs v3 STT have no model in `models.csv`.
 
 **From b12408 to b12416 (2026-11-15)** -- 8 upstream commits, pinned by commit (two past the tag

@@ -2871,6 +2871,128 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     jllama_bytes_free(nullptr);
 }
 
+// A random ZONOS3 pair (tiny_llama_gguf.hpp), the one speech pipeline with delivery control
+// (llama.cpp b12431, #32020): every synthesis runs the real pipeline -- the condition tokens of the
+// prompt, the codebook heads, the ZAC codec, the iSTFT -- on noise weights, so what is asserted is the
+// contract, not the sound. Its delivery is the part no other model in the C++ suite reaches: a speed
+// and a loudness are spoken (another pipeline answers 2 from set_input), and they change the prompt,
+// so the same seed gives other audio.
+class CApiZonos3 : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path() = jllama_test::write_tiny_zonos3_gguf();
+        mmproj_path() = jllama_test::write_tiny_zonos3_mmproj_gguf();
+        ASSERT_FALSE(model_path().empty());
+        ASSERT_FALSE(mmproj_path().empty());
+        ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(model_path().c_str());
+        std::remove(mmproj_path().c_str());
+    }
+    static std::string &model_path() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj_path() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    // A synthesis of 40 frames with a fixed seed; the status, and the WAV in *wav. Fewer frames give no
+    // audio: the ten codebooks are delayed by one row each behind three rows of codec silence, so the
+    // codec has a frame to decode only once a code row has passed through all of them.
+    static jllama_status speak(float speed, float loudness, std::vector<unsigned char> *wav, int max_frames = 40) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = 7;
+        options.speed = speed;
+        options.loudness = loudness;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+};
+
+TEST_F(CApiZonos3, ItsVoiceIsListedAndItClonesNone) {
+    char **names = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tts_voices(tts(), &names, &count), JLLAMA_STATUS_OK);
+    ASSERT_EQ(count, 1u);
+    EXPECT_STREQ(names[0], "test");
+    jllama_strings_free(names, count);
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "the mmproj has no speaker encoder";
+    // its voice speaks, by name and as the default; another name is the request's fault
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 40;
+    unsigned char *wav = nullptr;
+    size_t length = 0;
+    options.voice = "test";
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &wav, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_bytes_free(wav);
+    wav = nullptr;
+    options.voice = "nobody";
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &wav, &length), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("test"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(wav, nullptr);
+}
+
+TEST_F(CApiZonos3, ASynthesisIsAWavAtTheCodecsRate) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(1.0f, 0.0f, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
+    EXPECT_EQ(le32(wav, 24), 44100u) << "ZONOS3's ZAC codec resamples to 44.1 kHz";
+    std::vector<unsigned char> again;
+    ASSERT_EQ(speak(1.0f, 0.0f, &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same audio";
+}
+
+TEST_F(CApiZonos3, ASpeedAndALoudnessAreSpokenAndChangeTheAudio) {
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> faster;
+    std::vector<unsigned char> quieter;
+    ASSERT_EQ(speak(1.0f, 0.0f, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(2.0f, 0.0f, &faster), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(1.0f, -28.0f, &quieter), JLLAMA_STATUS_OK) << jllama_last_error();
+    // other condition tokens in the prompt, so another hidden state and other codes for one seed
+    EXPECT_NE(faster, own);
+    EXPECT_NE(quieter, own);
+    EXPECT_NE(faster, quieter);
+    // the buckets: two speeds in one speaking-rate bucket are one prompt
+    std::vector<unsigned char> same_bucket;
+    ASSERT_EQ(speak(2.01f, 0.0f, &same_bucket), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(same_bucket, faster) << "2.0 and 2.01 times 15 bytes per second share bucket 27";
+}
+
+TEST_F(CApiZonos3, ADeliveryNoModelCanTakeIsRefusedAndTheModelAnswersTheNext) {
+    EXPECT_EQ(speak(0.0f, 0.0f, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("speed"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(1.0f, 3.0f, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("loudness"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(1.0f, 0.0f, nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
 TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {
     EXPECT_EQ(jllama_finetune("{not json"), JLLAMA_STATUS_ERROR);
     EXPECT_NE(std::string(jllama_last_error()).find("invalid training config"), std::string::npos);
