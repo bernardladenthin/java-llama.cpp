@@ -196,7 +196,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
-- **llama.cpp b12459** (from b12453, 6 upstream commits; pinned by commit, upstream has not tagged
+- **llama.cpp b12461** (from b12453, 8 upstream commits; pinned by commit, upstream has not tagged
   the number yet). YuE2-3B sings lyrics (#32369), in **stereo**: the speech engine reads the channel
   count of the model and writes the interleaved samples into a WAV header that says so (until now every
   WAV was written as mono, which would have played a stereo song at half its length), and the `pcm`
