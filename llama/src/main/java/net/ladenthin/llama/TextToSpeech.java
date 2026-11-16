@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.loader.LlamaLoader;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -34,7 +35,7 @@ public final class TextToSpeech implements AutoCloseable {
      * The audio frame temperature that leaves the choice to the model: what every {@code synthesize}
      * overload without a temperature passes.
      */
-    public static final float MODEL_DEFAULT_TEMPERATURE = -1.0f;
+    public static final float MODEL_DEFAULT_TEMPERATURE = SpeechParameters.MODEL_DEFAULT_TEMPERATURE;
 
     /**
      * The native calls behind {@link TextToSpeech}. The JNI methods stay in this class (their symbol
@@ -56,27 +57,12 @@ public final class TextToSpeech implements AutoCloseable {
         /**
          * Synthesizes speech.
          *
-         * @param handle                    a handle returned by {@link #load}
-         * @param text                      the text to speak
-         * @param speakerReferenceAudioPath reference clip, or {@code null}
-         * @param language                  language name, or {@code null}
-         * @param voice                     voice preset, or {@code null}
-         * @param maxFrames                 cap on generated audio frames
-         * @param topK                      top-k cutoff
-         * @param seed                      sampler seed
-         * @param temperature               audio frame temperature, negative for the model's default
+         * @param handle     a handle returned by {@link #load}
+         * @param text       the text to speak
+         * @param parameters everything else the synthesis reads
          * @return the WAV bytes
          */
-        byte[] synthesize(
-                long handle,
-                String text,
-                @Nullable String speakerReferenceAudioPath,
-                @Nullable String language,
-                @Nullable String voice,
-                int maxFrames,
-                int topK,
-                int seed,
-                float temperature);
+        byte[] synthesize(long handle, String text, SpeechParameters parameters);
 
         /**
          * Whether the loaded pair clones a voice from a speaker reference.
@@ -111,18 +97,21 @@ public final class TextToSpeech implements AutoCloseable {
         }
 
         @Override
-        public byte[] synthesize(
-                long handle,
-                String text,
-                @Nullable String speakerReferenceAudioPath,
-                @Nullable String language,
-                @Nullable String voice,
-                int maxFrames,
-                int topK,
-                int seed,
-                float temperature) {
+        public byte[] synthesize(long handle, String text, SpeechParameters parameters) {
             return synthesizeNative(
-                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
+                    handle,
+                    text,
+                    parameters.getSpeakerReferenceAudioPath(),
+                    parameters.getLanguage(),
+                    parameters.getVoice(),
+                    parameters.getMaxFrames(),
+                    parameters.getTopK(),
+                    parameters.getSeed(),
+                    parameters.getTemperature(),
+                    parameters.getTopP(),
+                    parameters.getRepeatPenalty(),
+                    parameters.getSpeed(),
+                    parameters.getLoudness());
         }
 
         @Override
@@ -197,7 +186,7 @@ public final class TextToSpeech implements AutoCloseable {
      * @return a 24&nbsp;kHz mono 16-bit WAV byte stream
      */
     public byte[] synthesize(String text) {
-        return synthesize(text, 512, 4, 0);
+        return synthesize(text, SpeechParameters.defaults());
     }
 
     /**
@@ -352,11 +341,41 @@ public final class TextToSpeech implements AutoCloseable {
             int topK,
             int seed,
             float temperature) {
+        return synthesize(
+                text,
+                SpeechParameters.builder()
+                        .speakerReferenceAudioPath(speakerReferenceAudioPath)
+                        .language(language)
+                        .voice(voice)
+                        .maxFrames(maxFrames)
+                        .topK(topK)
+                        .seed(seed)
+                        .temperature(temperature)
+                        .build());
+    }
+
+    /**
+     * Synthesize speech with every option llama.cpp's own {@code /tts} route reads: the voice, the
+     * sampling ({@code topK}, {@code topP}, {@code repeatPenalty}, {@code seed}, {@code temperature})
+     * and the delivery ({@code speed}, {@code loudness}; llama.cpp b12431, Zonos3). The other
+     * overloads are this one with their arguments and the defaults of {@link SpeechParameters}.
+     *
+     * <p>Refused as an {@link net.ladenthin.llama.exception.InvalidRequestException}: a speed other
+     * than {@code 1} or a loudness other than {@code 0} for a model without delivery control (every
+     * one but Zonos3), values out of range (a top-p outside {@code [0, 1]}, a repetition penalty or
+     * speed {@code <= 0}, a loudness {@code > 0}), and the voice and speaker-reference cases the
+     * other overloads describe.</p>
+     *
+     * @param text the text to speak
+     * @param parameters the options of this synthesis
+     * @return a mono 16-bit WAV byte stream at the pipeline's sample rate
+     * @throws IllegalStateException if this instance is closed
+     */
+    public byte[] synthesize(String text, SpeechParameters parameters) {
         lifecycleLock.readLock().lock();
         try {
             requireOpen();
-            return backend.synthesize(
-                    handle, text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
+            return backend.synthesize(handle, text, parameters);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -393,7 +412,11 @@ public final class TextToSpeech implements AutoCloseable {
             int maxFrames,
             int topK,
             int seed,
-            float temperature);
+            float temperature,
+            float topP,
+            float repeatPenalty,
+            float speed,
+            float loudness);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
 

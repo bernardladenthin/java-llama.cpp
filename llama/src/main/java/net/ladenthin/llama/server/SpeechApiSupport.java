@@ -16,7 +16,9 @@ import org.jspecify.annotations.Nullable;
  * the rules of llama.cpp's own route (b12238, {@code convert_speech_to_tts}): {@code input} is the
  * text, {@code voice} a name or {@code {"id": name}}, {@code response_format} {@code wav} (the
  * default here, where OpenAI's is {@code mp3}) or {@code pcm} (raw signed 16-bit little-endian mono
- * samples), {@code speed} only {@code 1.0}, {@code instructions} ignored. Pure: no HTTP, no model.
+ * samples), {@code instructions} ignored, and every other field read as {@code /tts} reads it --
+ * upstream converts the request into a {@code /tts} body and keeps all its fields, {@code speed}
+ * included since b12431 (#32020; refused before for any value but {@code 1}). Pure: no HTTP, no model.
  */
 final class SpeechApiSupport {
 
@@ -146,10 +148,6 @@ final class SpeechApiSupport {
         if (!streamFormat.isEmpty() && !"audio".equals(streamFormat)) {
             throw new IllegalArgumentException("Only 'audio' stream_format is supported for speech");
         }
-        JsonNode speed = request.path("speed");
-        if (!speed.isMissingNode() && !speed.isNull() && (!speed.isNumber() || speed.asDouble() != 1.0)) {
-            throw new IllegalArgumentException("'speed' is not supported for speech");
-        }
         JsonNode voice = request.path("voice");
         String voiceName = voice.isObject() ? voice.path("id").asText("") : voice.asText("");
         String language = request.path("lang").asText("");
@@ -158,7 +156,7 @@ final class SpeechApiSupport {
                 voiceName.isEmpty() ? null : voiceName,
                 language.isEmpty() ? null : language,
                 FORMAT_PCM.equals(format) ? Format.PCM16 : Format.WAV,
-                SpeechOptions.defaults());
+                parseOptions(request));
     }
 
     /**
@@ -166,9 +164,10 @@ final class SpeechApiSupport {
      * {@code prompt}) is the text, {@code voice} and {@code lang} as the model names them,
      * {@code response_format} {@code wav}, {@code pcm} (32-bit float samples) or {@code pcm16},
      * {@code speaker_ref_b64} an audio file to clone the voice from, {@code n_predict} (or
-     * {@code max_tokens}) the frame cap, {@code top_k}, {@code seed} and {@code temperature} the
-     * sampling. {@code top_p} and {@code repeat_penalty} are read by upstream's server only and are
-     * ignored here; {@code stream} is refused, this server answers the audio in one piece.
+     * {@code max_tokens}) the frame cap, {@code top_k}, {@code top_p}, {@code repeat_penalty},
+     * {@code seed} and {@code temperature} the sampling, {@code speed} and {@code loudness} the
+     * delivery of a model that supports it (b12431); {@code stream} is refused, this server answers
+     * the audio in one piece.
      *
      * @param request the request body
      * @return the parsed request
@@ -198,6 +197,18 @@ final class SpeechApiSupport {
         } else {
             throw new IllegalArgumentException("\"response_format\" must be \"wav\", \"pcm\" or \"pcm16\"");
         }
+        String voice = request.path("voice").asText("");
+        String language = request.path("lang").asText("");
+        return new Request(
+                input,
+                voice.isEmpty() ? null : voice,
+                language.isEmpty() ? null : language,
+                format,
+                parseOptions(request));
+    }
+
+    /** The /tts fields besides the text, voice, language and format, shared by both routes. */
+    private static SpeechOptions parseOptions(JsonNode request) {
         byte[] reference = null;
         String encoded = request.path("speaker_ref_b64").asText("");
         if (!encoded.isEmpty()) {
@@ -212,19 +223,41 @@ final class SpeechApiSupport {
         if (temperature.isNumber() && temperature.asDouble() < 0.0) {
             throw new IllegalArgumentException("Field 'temperature': must not be negative");
         }
-        String voice = request.path("voice").asText("");
-        String language = request.path("lang").asText("");
-        return new Request(
-                input,
-                voice.isEmpty() ? null : voice,
-                language.isEmpty() ? null : language,
-                format,
-                new SpeechOptions(
-                        reference,
-                        integerOrNull(frames, FIELD_N_PREDICT),
-                        integerOrNull(request.path("top_k"), "top_k"),
-                        integerOrNull(request.path("seed"), "seed"),
-                        temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null));
+        Float topP = floatOrNull(request.path("top_p"), "top_p");
+        if (topP != null && (topP < 0.0f || topP > 1.0f)) {
+            throw new IllegalArgumentException("Field 'top_p': must be between 0 and 1");
+        }
+        return new SpeechOptions(
+                reference,
+                integerOrNull(frames, FIELD_N_PREDICT),
+                integerOrNull(request.path("top_k"), "top_k"),
+                integerOrNull(request.path("seed"), "seed"),
+                temperature.isNumber() ? Float.valueOf((float) temperature.asDouble()) : null,
+                topP,
+                floatOrNull(request.path("repeat_penalty"), "repeat_penalty"),
+                floatOrNull(request.path("speed"), "speed"),
+                floatOrNull(request.path("loudness"), "loudness"));
+    }
+
+    /**
+     * An absent or null field is unset; anything but a number is the request's fault. A number
+     * given as a string is read as one, as upstream reads the fields of a multipart form.
+     */
+    private static @Nullable Float floatOrNull(JsonNode node, String name) {
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (node.isNumber()) {
+            return (float) node.asDouble();
+        }
+        if (node.isTextual()) {
+            try {
+                return Float.parseFloat(node.asText().trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Field '" + name + "': must be a number", e);
+            }
+        }
+        throw new IllegalArgumentException("Field '" + name + "': must be a number");
     }
 
     /** An absent or null field is unset; anything but an integer is the request's fault. */

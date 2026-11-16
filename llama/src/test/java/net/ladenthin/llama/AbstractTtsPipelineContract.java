@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -66,6 +67,15 @@ public abstract class AbstractTtsPipelineContract {
         Assumptions.assumeTrue(model != null && new File(model).exists(), "speech model not set or missing: " + model);
         Assumptions.assumeTrue(mmproj != null && new File(mmproj).exists(), "its mmproj not set or missing: " + mmproj);
         tts = new TextToSpeech(model, mmproj, Integer.getInteger(TestConstants.PROP_TEST_NGL, 0), 0);
+    }
+
+    /**
+     * The pair under test, for the tests a subclass adds about what only its pipeline does.
+     *
+     * @return the loaded pair
+     */
+    protected TextToSpeech tts() {
+        return tts;
     }
 
     @AfterAll
@@ -129,6 +139,57 @@ public abstract class AbstractTtsPipelineContract {
         assertWellFormedAudibleWav(tts.synthesize("Hello.", null, null, null, MAX_FRAMES, 4, 1, 0.0f));
         assertWellFormedAudibleWav(
                 tts.synthesize("Hello.", null, null, null, MAX_FRAMES, 4, 1, TextToSpeech.MODEL_DEFAULT_TEMPERATURE));
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("top-p and a repetition penalty of the backbone sampler are accepted")
+    public void topPAndARepetitionPenaltyAreAccepted() {
+        assertWellFormedAudibleWav(tts.synthesize(
+                "Hello.",
+                SpeechParameters.builder()
+                        .maxFrames(MAX_FRAMES)
+                        .seed(1)
+                        .topP(0.9f)
+                        .repeatPenalty(1.1f)
+                        .build()));
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("a speed and loudness are spoken by a model with delivery control, else the request's fault")
+    public void aDeliveryIsSpokenOrRefusedAsTheRequestsFault() {
+        // b12431 (#32020): only Zonos3 controls its delivery; llama.cpp offers no capability to ask first
+        SpeechParameters delivery = SpeechParameters.builder()
+                .maxFrames(MAX_FRAMES)
+                .seed(1)
+                .speed(1.25f)
+                .loudness(-20.0f)
+                .build();
+        try {
+            assertWellFormedAudibleWav(tts.synthesize("Hello.", delivery));
+        } catch (InvalidRequestException e) {
+            assertTrue(e.getMessage().contains("does not support speed or loudness"), e.getMessage());
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("options no model can take are the request's fault, and the model answers the next one")
+    public void optionsOutOfRangeAreRefusedAsTheRequestsFault() {
+        SpeechParameters[] refused = {
+            SpeechParameters.builder().speed(0.0f).build(),
+            SpeechParameters.builder().speed(Float.NaN).build(),
+            SpeechParameters.builder().loudness(1.0f).build(),
+            SpeechParameters.builder().topP(1.5f).build(),
+            SpeechParameters.builder().repeatPenalty(0.0f).build(),
+            SpeechParameters.builder().temperature(Float.NaN).build()
+        };
+        for (SpeechParameters parameters : refused) {
+            assertThrows(
+                    InvalidRequestException.class, () -> tts.synthesize("Hello.", parameters), parameters::toString);
+        }
+        assertWellFormedAudibleWav(tts.synthesize("Hello.", MAX_FRAMES, 4, 1));
     }
 
     /** RIFF/WAVE, PCM mono 16-bit at a positive rate, consistent sizes and at least one non-zero sample. */

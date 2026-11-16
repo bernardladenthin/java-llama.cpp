@@ -317,6 +317,21 @@ public class TestConstants {
     /** The mmproj of {@link #DEFAULT_CHATTERBOX_MODEL_PATH}. */
     public static final String DEFAULT_CHATTERBOX_MMPROJ_PATH = resolveModelPath("models/mmproj-chatterbox-F16.gguf");
 
+    /**
+     * System property overriding the ZONOS3 backbone of {@code ZonosTtsIntegrationTest}
+     * ({@link #DEFAULT_ZONOS_MODEL_PATH} when unset).
+     */
+    public static final String PROP_ZONOS_MODEL = LlamaSystemProperties.PREFIX + ".tts.zonos.model";
+
+    /** System property overriding the mmproj of {@link #PROP_ZONOS_MODEL}. */
+    public static final String PROP_ZONOS_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.zonos.mmproj";
+
+    /** CI's ZONOS3 Mini backbone, the pipeline with delivery control (.github/models.csv, feature {@code zonos}). */
+    public static final String DEFAULT_ZONOS_MODEL_PATH = resolveModelPath("models/ZONOS3-Mini-Q8_0.gguf");
+
+    /** The mmproj of {@link #DEFAULT_ZONOS_MODEL_PATH}. */
+    public static final String DEFAULT_ZONOS_MMPROJ_PATH = resolveModelPath("models/mmproj-ZONOS3-Mini-F32.gguf");
+
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");
 

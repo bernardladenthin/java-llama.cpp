@@ -19,15 +19,16 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import net.ladenthin.llama.TextToSpeech;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.jspecify.annotations.Nullable;
 
 /** The {@link SpeechBackend} over a loaded {@link TextToSpeech}, with its default sampling settings. */
 final class TextToSpeechBackend implements SpeechBackend {
 
     /** The frame cap, top-k and seed of {@link TextToSpeech#synthesize(String)}. */
-    private static final int MAX_FRAMES = 512;
+    private static final int MAX_FRAMES = SpeechParameters.DEFAULT_MAX_FRAMES;
 
-    private static final int TOP_K = 4;
+    private static final int TOP_K = SpeechParameters.DEFAULT_TOP_K;
     private static final int SEED = 0;
 
     private static final String REFERENCE_PREFIX = "jllama-speaker-ref";
@@ -37,27 +38,13 @@ final class TextToSpeechBackend implements SpeechBackend {
     interface Engine {
 
         /**
-         * {@link TextToSpeech#synthesize(String, String, String, String, int, int, int, float)}.
+         * {@link TextToSpeech#synthesize(String, SpeechParameters)}.
          *
          * @param text the text to speak
-         * @param speakerReferenceAudioPath a clip of the voice to clone, or {@code null}
-         * @param language the language, or {@code null}
-         * @param voice a predefined voice, or {@code null}
-         * @param maxFrames the frame cap
-         * @param topK the sampler's top-k
-         * @param seed the sampler's seed
-         * @param temperature the audio frame temperature
+         * @param parameters the options of the synthesis
          * @return the WAV bytes
          */
-        byte[] synthesize(
-                String text,
-                @Nullable String speakerReferenceAudioPath,
-                @Nullable String language,
-                @Nullable String voice,
-                int maxFrames,
-                int topK,
-                int seed,
-                float temperature);
+        byte[] synthesize(String text, SpeechParameters parameters);
 
         /**
          * {@link TextToSpeech#getVoices()}.
@@ -72,17 +59,8 @@ final class TextToSpeechBackend implements SpeechBackend {
     TextToSpeechBackend(final TextToSpeech speech) {
         this(new Engine() {
             @Override
-            public byte[] synthesize(
-                    String text,
-                    @Nullable String speakerReferenceAudioPath,
-                    @Nullable String language,
-                    @Nullable String voice,
-                    int maxFrames,
-                    int topK,
-                    int seed,
-                    float temperature) {
-                return speech.synthesize(
-                        text, speakerReferenceAudioPath, language, voice, maxFrames, topK, seed, temperature);
+            public byte[] synthesize(String text, SpeechParameters parameters) {
+                return speech.synthesize(text, parameters);
             }
 
             @Override
@@ -108,6 +86,10 @@ final class TextToSpeechBackend implements SpeechBackend {
         Integer topK = options.getTopK();
         Integer seed = options.getSeed();
         Float temperature = options.getTemperature();
+        Float topP = options.getTopP();
+        Float repeatPenalty = options.getRepeatPenalty();
+        Float speed = options.getSpeed();
+        Float loudness = options.getLoudness();
         byte[] reference = options.getSpeakerReference();
         // TextToSpeech reads a speaker reference from a file (llama.cpp decodes it by its content)
         Path referenceFile = null;
@@ -117,13 +99,19 @@ final class TextToSpeechBackend implements SpeechBackend {
             }
             return speech.synthesize(
                     text,
-                    referenceFile == null ? null : referenceFile.toString(),
-                    language,
-                    voice,
-                    maxFrames == null || maxFrames <= 0 ? MAX_FRAMES : maxFrames,
-                    topK == null || topK <= 0 ? TOP_K : topK,
-                    seed == null ? SEED : seed,
-                    temperature == null ? TextToSpeech.MODEL_DEFAULT_TEMPERATURE : temperature);
+                    SpeechParameters.builder()
+                            .speakerReferenceAudioPath(referenceFile == null ? null : referenceFile.toString())
+                            .language(language)
+                            .voice(voice)
+                            .maxFrames(maxFrames == null || maxFrames <= 0 ? MAX_FRAMES : maxFrames)
+                            .topK(topK == null || topK <= 0 ? TOP_K : topK)
+                            .seed(seed == null ? SEED : seed)
+                            .temperature(temperature == null ? SpeechParameters.MODEL_DEFAULT_TEMPERATURE : temperature)
+                            .topP(topP == null ? SpeechParameters.TOP_P_OFF : topP)
+                            .repeatPenalty(repeatPenalty == null ? SpeechParameters.REPEAT_PENALTY_OFF : repeatPenalty)
+                            .speed(speed == null ? SpeechParameters.MODEL_DEFAULT_SPEED : speed)
+                            .loudness(loudness == null ? SpeechParameters.MODEL_DEFAULT_LOUDNESS : loudness)
+                            .build());
         } finally {
             if (referenceFile != null) {
                 deleteReferenceFile(referenceFile);

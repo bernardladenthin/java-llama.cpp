@@ -566,6 +566,8 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.tts.pocket.mmproj` | `models/mmproj-pocket-tts-english.gguf` (test self-skips if missing) | test | `PocketTtsIntegrationTest` | Path to its mmproj. |
 | `net.ladenthin.llama.tts.chatterbox.model` | `models/chatterbox-Q8_0.gguf` (test self-skips if missing) | test | `ChatterboxIntegrationTest` | Path to a Chatterbox backbone; CI's is the multilingual `ggml-org/chatterbox-GGUF`. The same contract. |
 | `net.ladenthin.llama.tts.chatterbox.mmproj` | `models/mmproj-chatterbox-F16.gguf` (test self-skips if missing) | test | `ChatterboxIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.tts.zonos.model` | `models/ZONOS3-Mini-Q8_0.gguf` (test self-skips if missing) | test | `ZonosTtsIntegrationTest` | Path to a ZONOS3 backbone (`ggml-org/ZONOS3-Mini-GGUF`), the pipeline with delivery control; the same contract plus speed and loudness. |
+| `net.ladenthin.llama.tts.zonos.mmproj` | `models/mmproj-ZONOS3-Mini-F32.gguf` (test self-skips if missing) | test | `ZonosTtsIntegrationTest` | Path to its mmproj. |
 | `net.ladenthin.llama.realtime.model` | `models/LFM3-Audio-2B-Q4_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to a model that holds a spoken conversation on `NativeServer`'s `/v1/realtime` (audio in, text and audio out), CI's is LFM3-Audio. |
 | `net.ladenthin.llama.realtime.mmproj` | `models/mmproj-LFM3-Audio-2B-Q8_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
@@ -986,8 +988,24 @@ try (TextToSpeech tts = new TextToSpeech(
 One more overload ends in a `float temperature`: the temperature a pipeline samples its audio
 frames at (Pocket TTS; `0` is greedy, `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` the model's own).
 
+Every option of llama.cpp's own `/tts` route goes in a `SpeechParameters` (llama.cpp b12431): the
+voice, the sampling (`topK`, `topP`, `repeatPenalty`, `seed`, `temperature`) and the delivery,
+`speed` (relative to the model's own pace) and `loudness` (LUFS, below 0). Only a model with
+delivery control speaks those two, **ZONOS3 Mini** (`ggml-org/ZONOS3-Mini-GGUF`) at this pin;
+another one refuses a speed other than 1 or a loudness other than 0 with an
+`InvalidRequestException`, as it refuses values out of range:
+
+```java
+try (TextToSpeech tts = new TextToSpeech(
+        "models/ZONOS3-Mini-Q8_0.gguf", "models/mmproj-ZONOS3-Mini-F32.gguf")) {
+    byte[] wav = tts.synthesize("The old lighthouse keeper climbed the stairs.",
+            SpeechParameters.builder().voice("Imogen_en-British_F_1").speed(0.8f).loudness(-20f)
+                    .maxFrames(600).build());
+}
+```
+
 `FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's
-`jllama_tts_synthesize_temperature`.
+`jllama_tts_synthesize_options` (a `jllama_tts_options` struct, filled by `jllama_tts_options_init`).
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS
@@ -1132,7 +1150,7 @@ built-in WebUI" below). It serves:
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data` with `usage`; a request with TEI's `texts` is answered as TEI's bare `[{index, score[, text]}]` array, `text` on `return_text`, as upstream; the query and each document are a string or `{"text": string or [strings]}`, as upstream reads them since llama.cpp b11820, and one with an `image` -- which upstream ranks through the projector -- is a `400` rather than its text alone; `NativeServer` serves upstream's route with images) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |
-| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`; on the command line `--tts-model <gguf> --tts-mmproj <gguf>`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`; `501` without one |
+| `POST /v1/audio/speech` | a `SpeechBackend` handed to the server (`new OpenAiCompatServer(model, config, textToSpeech)`; on the command line `--tts-model <gguf> --tts-mmproj <gguf>`): `input`, `voice`, `lang`, `response_format` `wav` / `pcm`, and every field of `/tts` (`speed` and `loudness` included, b12431); `501` without one |
 | `POST /tts` | the same `SpeechBackend`, with llama.cpp's own fields: `input` / `prompt`, `voice`, `lang`, `speaker_ref_b64`, `n_predict`, `top_k`, `seed`, `temperature`, `response_format` `wav` / `pcm` (float) / `pcm16`; `stream` is refused |
 | `GET /v1/models` | the configured model id |
 | `GET /metrics` | native server and per-slot token/cache counters (JSON) |

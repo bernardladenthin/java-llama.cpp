@@ -1712,7 +1712,8 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
     JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
-    jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature) {
+    jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature, jfloat top_p, jfloat repeat_penalty,
+    jfloat speed, jfloat loudness) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
@@ -1722,10 +1723,21 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
         const std::string voice = jvoice == nullptr ? std::string() : parse_jstring(env, jvoice);
         unsigned char *wav = nullptr;
         size_t length = 0;
-        const jllama_status status = jllama_tts_synthesize_temperature(
-            reinterpret_cast<jllama_tts_model *>(handle), text.c_str(), speaker_reference_path.c_str(), lang.c_str(),
-            voice.c_str(), static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed),
-            static_cast<float>(temperature), &wav, &length);
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.speaker_reference_path = speaker_reference_path.c_str();
+        options.lang = lang.c_str();
+        options.voice = voice.c_str();
+        options.max_frames = static_cast<int>(max_frames);
+        options.top_k = static_cast<int>(top_k);
+        options.seed = static_cast<unsigned int>(seed);
+        options.temperature = static_cast<float>(temperature);
+        options.top_p = static_cast<float>(top_p);
+        options.repeat_penalty = static_cast<float>(repeat_penalty);
+        options.speed = static_cast<float>(speed);
+        options.loudness = static_cast<float>(loudness);
+        const jllama_status status = jllama_tts_synthesize_options(reinterpret_cast<jllama_tts_model *>(handle),
+                                                                   text.c_str(), &options, &wav, &length);
         if (status != JLLAMA_STATUS_OK) {
             throw_api_status(env, status);
             return nullptr;

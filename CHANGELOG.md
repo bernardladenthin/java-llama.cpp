@@ -53,7 +53,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `response_format` `wav` or `pcm` (`audio/pcm;rate=<n>;encoding=signed-int;bits=16`). The server
   takes the engine as a `SpeechBackend`: `new OpenAiCompatServer(model, config, textToSpeech)`, or
   any implementation of the interface. Without one the route answers `501`; `stream_format` other
-  than `audio`, a `speed` other than 1 and another `response_format` are `400`. `GET /props` lists
+  than `audio` and another `response_format` are `400`. `GET /props` lists
   the engine's `voices`.
 - **`POST /tts` on `OpenAiCompatServer`**, llama.cpp's own speech route: `input` (or `prompt`),
   `voice`, `lang`, `speaker_ref_b64` (an audio file whose voice is cloned), `n_predict`, `top_k`,
@@ -70,6 +70,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   with several `--in-file`. Inputs are GGUF or the legacy binary format, the output either; one
   input converts a file between the two. Matrices whose chunk sizes or tensor shapes differ are
   refused; two models of the same shape are not told apart, so the inputs have to be one model's.
+- **`TextToSpeech.synthesize(text, SpeechParameters)`** (and `FfmTextToSpeech`,
+  `jllama_tts_synthesize_options()` with `jllama_tts_options` / `jllama_tts_options_init()` in the C
+  API): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
+  (`topK`, `topP`, `repeatPenalty`, `seed`, `temperature`) and the delivery of a model that controls
+  it, `speed` and `loudness` (llama.cpp b12431, ZONOS3 Mini). A model without delivery control
+  refuses a speed other than 1 or a loudness other than 0, and values out of range (a top-p outside
+  `[0, 1]`, a speed or repetition penalty `<= 0`, a loudness `> 0`) are refused before the model is
+  touched; both are an `InvalidRequestException` (`JLLAMA_STATUS_INVALID_REQUEST`). The
+  `jllama_tts_options` struct carries its own size, so a later field is added without another
+  function. `OpenAiCompatServer`'s `/tts` reads `top_p`, `repeat_penalty`, `speed` and `loudness`
+  (also as strings, as a multipart form sends them), and its `/v1/audio/speech` every `/tts` field,
+  as upstream converts the request since b12431 -- a `speed` other than 1 is no longer a `400`.
+  ZONOS3 Mini joins the CI model set (`ZonosTtsIntegrationTest`).
 - **`TextToSpeech.synthesize(..., float temperature)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_temperature()` in the C API): the temperature a pipeline samples its audio
   frames at (Pocket TTS, llama.cpp b12218); `TextToSpeech.MODEL_DEFAULT_TEMPERATURE` (-1) is what

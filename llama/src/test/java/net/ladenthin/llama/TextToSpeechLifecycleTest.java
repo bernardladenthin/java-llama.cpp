@@ -6,6 +6,7 @@ package net.ladenthin.llama;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Arrays;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +47,7 @@ public class TextToSpeechLifecycleTest {
         volatile @Nullable String lastLanguage;
         volatile @Nullable String lastVoice;
         volatile float lastTemperature = Float.NaN;
+        volatile @Nullable SpeechParameters lastParameters;
 
         @Override
         public long load(String modelPath, String mmprojPath, int gpuLayers, int threads) {
@@ -52,19 +55,11 @@ public class TextToSpeechLifecycleTest {
         }
 
         @Override
-        public byte[] synthesize(
-                long handle,
-                String text,
-                @Nullable String speakerReferenceAudioPath,
-                @Nullable String language,
-                @Nullable String voice,
-                int maxFrames,
-                int topK,
-                int seed,
-                float temperature) {
-            lastTemperature = temperature;
-            lastLanguage = language;
-            lastVoice = voice;
+        public byte[] synthesize(long handle, String text, SpeechParameters parameters) {
+            lastParameters = parameters;
+            lastTemperature = parameters.getTemperature();
+            lastLanguage = parameters.getLanguage();
+            lastVoice = parameters.getVoice();
             insideSynthesize.incrementAndGet();
             try {
                 synthesizeEntered.countDown();
@@ -184,6 +179,63 @@ public class TextToSpeechLifecycleTest {
             assertThat(backend.lastTemperature, is(TextToSpeech.MODEL_DEFAULT_TEMPERATURE));
             assertThat(TextToSpeech.MODEL_DEFAULT_TEMPERATURE < 0.0f, is(true));
         }
+    }
+
+    @Test
+    public void synthesize_withParameters_handsEveryOptionToTheBackend() {
+        FakeBackend backend = new FakeBackend();
+        SpeechParameters parameters = SpeechParameters.builder()
+                .speakerReferenceAudioPath("ref.wav")
+                .language("en")
+                .voice("female")
+                .maxFrames(64)
+                .topK(7)
+                .seed(42)
+                .temperature(0.5f)
+                .topP(0.9f)
+                .repeatPenalty(1.1f)
+                .speed(1.25f)
+                .loudness(-20.0f)
+                .build();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            assertThat(tts.synthesize("hello", parameters), is(WAV));
+            assertThat(backend.lastParameters, is(sameInstance(parameters)));
+        }
+    }
+
+    @Test
+    public void synthesize_shortOverloads_passTheDefaultSamplingAndDelivery() {
+        FakeBackend backend = new FakeBackend();
+        try (TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0)) {
+            tts.synthesize("hello");
+            SpeechParameters p = backend.lastParameters;
+            assertThat(p.getMaxFrames(), is(512));
+            assertThat(p.getTopK(), is(4));
+            assertThat(p.getSeed(), is(0));
+            assertThat(p.getTopP(), is(SpeechParameters.TOP_P_OFF));
+            assertThat(p.getRepeatPenalty(), is(SpeechParameters.REPEAT_PENALTY_OFF));
+            assertThat(p.getSpeed(), is(1.0f));
+            assertThat(p.getLoudness(), is(0.0f));
+
+            tts.synthesize("hello", "ref.wav", "de", "male", 64, 9, 3, 0.25f);
+            p = backend.lastParameters;
+            assertThat(p.getSpeakerReferenceAudioPath(), is("ref.wav"));
+            assertThat(p.getMaxFrames(), is(64));
+            assertThat(p.getTopK(), is(9));
+            assertThat(p.getSeed(), is(3));
+            assertThat(p.getTemperature(), is(0.25f));
+            assertThat(p.getSpeed(), is(SpeechParameters.MODEL_DEFAULT_SPEED));
+            assertThat(p.getLoudness(), is(SpeechParameters.MODEL_DEFAULT_LOUDNESS));
+        }
+    }
+
+    @Test
+    public void synthesize_withParameters_afterClose_throwsWithoutCallingTheBackend() {
+        FakeBackend backend = new FakeBackend();
+        TextToSpeech tts = new TextToSpeech(backend, "model.gguf", "mmproj.gguf", 0, 0);
+        tts.close();
+        assertThrows(IllegalStateException.class, () -> tts.synthesize("hello", SpeechParameters.defaults()));
+        assertThat(backend.lastParameters, is((SpeechParameters) null));
     }
 
     @Test

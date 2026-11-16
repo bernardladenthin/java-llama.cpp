@@ -16,6 +16,7 @@
 #include "jllama_java_enum_values.h"
 #include "rpc_support.hpp"
 #include "tiny_llama_gguf.hpp"
+#include "tts_params.hpp"
 #include "tts_wav.hpp"
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
@@ -2747,6 +2748,66 @@ TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
     EXPECT_FALSE(jllama_rpc_server_listening());
 }
 
+// jllama_tts_options (b12431): the defaults leave every choice to the engine or the model, and
+// struct_size is the library's own sizeof, which the FFM layout of llama-ffm is held to as well.
+TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
+    jllama_tts_options options;
+    std::memset(&options, 0x7f, sizeof(options));
+    jllama_tts_options_init(&options);
+    const jllama_tts::synthesis_options engine;
+    EXPECT_EQ(options.struct_size, sizeof(jllama_tts_options));
+    EXPECT_EQ(sizeof(jllama_tts_options), 64u) << "llama-ffm's TTS_OPTIONS lays out 64 bytes";
+    EXPECT_EQ(options.speaker_reference_path, nullptr);
+    EXPECT_EQ(options.lang, nullptr);
+    EXPECT_EQ(options.voice, nullptr);
+    EXPECT_EQ(options.max_frames, engine.max_frames);
+    EXPECT_EQ(options.top_k, engine.top_k);
+    EXPECT_EQ(options.seed, engine.seed);
+    EXPECT_FLOAT_EQ(options.temperature, engine.temperature);
+    EXPECT_FLOAT_EQ(options.top_p, 1.0f);
+    EXPECT_FLOAT_EQ(options.repeat_penalty, 1.0f);
+    EXPECT_FLOAT_EQ(options.speed, 1.0f);
+    EXPECT_FLOAT_EQ(options.loudness, 0.0f);
+}
+
+// What is checked before the model is touched, so a pointer that is no engine never reaches it: a
+// struct_size that does not hold the field is the caller's mistake, a value no model can take the
+// request's fault -- the out-parameters stay untouched either way.
+TEST(CApiTts, TheOptionsAreCheckedBeforeTheModel) {
+    int not_a_tts = 0;
+    auto *tts = reinterpret_cast<jllama_tts_model *>(&not_a_tts);
+    unsigned char sentinel = 0;
+    unsigned char *wav = &sentinel;
+    size_t length = 7;
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.struct_size = 4;
+    EXPECT_EQ(jllama_tts_synthesize_options(tts, "Hi", &options, &wav, &length), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_NE(std::string(jllama_last_error()).find("struct_size"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(wav, &sentinel);
+    EXPECT_EQ(length, 7u);
+
+    const auto expect_refused = [&](const jllama_tts_options &o, const char *name) {
+        unsigned char *out = nullptr;
+        size_t n = 0;
+        EXPECT_EQ(jllama_tts_synthesize_options(tts, "Hi", &o, &out, &n), JLLAMA_STATUS_INVALID_REQUEST) << name;
+        EXPECT_NE(std::string(jllama_last_error()).find(name), std::string::npos) << jllama_last_error();
+        EXPECT_EQ(out, nullptr);
+    };
+    jllama_tts_options_init(&options);
+    options.speed = 0.0f;
+    expect_refused(options, "speed");
+    jllama_tts_options_init(&options);
+    options.loudness = 3.0f;
+    expect_refused(options, "loudness");
+    jllama_tts_options_init(&options);
+    options.top_p = 2.0f;
+    expect_refused(options, "top_p");
+    jllama_tts_options_init(&options);
+    options.repeat_penalty = -1.0f;
+    expect_refused(options, "repeat_penalty");
+}
+
 TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     jllama_tts_model *tts = nullptr;
     EXPECT_EQ(jllama_tts_load("/nonexistent/backbone.gguf", "/nonexistent/mmproj.gguf", 0, 1, &tts),
@@ -2777,6 +2838,15 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
                                                 nullptr, nullptr, 10, 1, 1, -1.0f, &wav, &length),
               JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(wav, nullptr);
+    // The options variant (b12431) is the one every other ends in.
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    EXPECT_EQ(jllama_tts_synthesize_options(nullptr, "Hi", &options, &wav, &length), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    EXPECT_EQ(jllama_tts_synthesize_options(reinterpret_cast<jllama_tts_model *>(&not_a_tts), "Hi", &options, nullptr,
+                                            &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    jllama_tts_options_init(nullptr); // ignored
     bool supported = true;
     EXPECT_EQ(jllama_tts_supports_speaker_reference(nullptr, &supported), JLLAMA_STATUS_INVALID_ARGUMENT);
     EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");

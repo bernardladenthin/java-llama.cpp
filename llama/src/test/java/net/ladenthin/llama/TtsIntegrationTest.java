@@ -6,6 +6,7 @@ package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -13,6 +14,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -127,6 +130,31 @@ public class TtsIntegrationTest {
         // caller; without the engine clearing it, the second synthesis failed in prompt processing.
         assertWellFormedWav(tts().synthesize("first", MAX_FRAMES, 4, 0), false);
         assertWellFormedWav(tts().synthesize("second", MAX_FRAMES, 4, 0), false);
+    }
+
+    @Test
+    @DisplayName("a speed or loudness is refused as the request's fault: Qwen3-TTS has no delivery control")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void refusesSpeedAndLoudnessAsTheRequestsFault() {
+        // llama.cpp b12431 (#32020): set_input answers 2 for a pipeline without delivery control
+        for (SpeechParameters parameters : new SpeechParameters[] {
+            SpeechParameters.builder().maxFrames(MAX_FRAMES).speed(1.5f).build(),
+            SpeechParameters.builder().maxFrames(MAX_FRAMES).loudness(-20.0f).build()
+        }) {
+            InvalidRequestException refused =
+                    assertThrows(InvalidRequestException.class, () -> tts().synthesize("hello", parameters));
+            assertTrue(refused.getMessage().contains("does not support speed or loudness"), refused.getMessage());
+        }
+        // the defaults of every field go through, top-p and the penalty with them
+        assertWellFormedWav(
+                tts().synthesize(
+                                "hello",
+                                SpeechParameters.builder()
+                                        .maxFrames(MAX_FRAMES)
+                                        .topP(0.9f)
+                                        .repeatPenalty(1.1f)
+                                        .build()),
+                false);
     }
 
     /**

@@ -354,12 +354,12 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 **From b12416 to b12431 (2026-11-16)** -- 15 upstream commits, pinned by commit (upstream has
 tagged the number); every patch applies unchanged, every drop-check read: all still needed. Open, none
 of it blocking:
-- **TTS `speed` and `loudness`** (#32020, for models that support them, Zonos3 first): `NativeServer`'s
-  `/tts` takes them from upstream; `TextToSpeech`, `jllama_tts_synthesize_*`, `FfmTextToSpeech` and
-  `OpenAiCompatServer`'s `/tts` and `/v1/audio/speech` (where `speed` other than 1 is refused) do not
-  pass them on yet. `set_input()` answers 2 for a value the model rejects, which would be
-  `JLLAMA_STATUS_INVALID_REQUEST`.
-- Zonos3, VibeVoice-ASR and higgs v3 STT have no model in `models.csv`.
+- **TTS `speed` and `loudness`** (#32020): done -- `SpeechParameters` / `jllama_tts_options` carry
+  them with top-p and the repetition penalty through `TextToSpeech`, the C API, `FfmTextToSpeech` and
+  both speech routes of `OpenAiCompatServer`; ZONOS3 Mini is in `models.csv`
+  (`ZonosTtsIntegrationTest`). Not measured locally (the sandbox could not download the model): the
+  first CI run is the check that a slower speed speaks longer and a loudness changes the audio.
+- VibeVoice-ASR and higgs v3 STT have no model in `models.csv`.
 
 **From b12408 to b12416 (2026-11-15)** -- 8 upstream commits, pinned by commit (two past the tag
 b12414). `0021` cut to its `init()` hunk (upstream #30367 took the other), `0003` pointed at the moved

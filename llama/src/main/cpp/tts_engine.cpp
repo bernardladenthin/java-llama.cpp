@@ -105,9 +105,12 @@ bool engine_supports_speaker_reference(const tts_engine *engine) {
     return engine != nullptr && engine->speaker_reference;
 }
 
-bool engine_synthesize(tts_engine *engine, const std::string &text, const std::string &speaker_reference_path,
-                       const std::string &lang, const std::string &voice, int n_predict, int top_k, uint32_t seed,
-                       float temperature, std::vector<uint8_t> &out_wav, std::string &err, bool *request_fault) {
+bool engine_synthesize(tts_engine *engine, const std::string &text, const synthesis_options &options,
+                       std::vector<uint8_t> &out_wav, std::string &err, bool *request_fault) {
+    const std::string &speaker_reference_path = options.speaker_reference_path;
+    const std::string &lang = options.lang;
+    const std::string &voice = options.voice;
+    const int top_k = options.top_k;
     // Set where the request is what was refused (a voice the model does not have, a speaker
     // reference it cannot use or read): the C API answers those as an invalid request.
     const auto refuse = [&](const std::string &message) {
@@ -124,6 +127,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         err = "engine is null";
         return false;
     }
+    // Values no model can take, before anything is loaded.
+    const std::string invalid = synthesis_options_refusal(options);
+    if (!invalid.empty()) {
+        return refuse(invalid);
+    }
     // Serialize against concurrent calls on the same engine.
     std::lock_guard<std::mutex> engine_lock(engine->synthesize_mutex);
 
@@ -134,10 +142,25 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         return refuse(refusal);
     }
 
+    const int max_new = options.max_frames > 0 ? options.max_frames : 512;
+    const float top_p = synthesis_top_p(options);
+
+    // The backbone sampler: top-k always, the repetition penalty over the whole generation and top-p
+    // when the request asks for them (upstream's /tts sets penalty_last_n to the frame cap the same way).
     common_params_sampling sparams;
     sparams.top_k = top_k > 0 ? top_k : 4;
-    sparams.seed = seed;
-    sparams.samplers = {COMMON_SAMPLER_TYPE_TOP_K};
+    sparams.seed = options.seed;
+    sparams.samplers = {};
+    if (options.repeat_penalty != 1.0f) {
+        sparams.penalty_repeat = options.repeat_penalty;
+        sparams.penalty_last_n = max_new;
+        sparams.samplers.push_back(COMMON_SAMPLER_TYPE_PENALTIES);
+    }
+    sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
+    if (top_p < 1.0f) {
+        sparams.top_p = top_p;
+        sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_P);
+    }
     common_sampler *smpl = common_sampler_init(engine->model, sparams);
     if (smpl == nullptr) {
         err = "failed to init sampler";
@@ -210,12 +233,15 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     inp.speaker_ref = speaker_bitmap.get();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
-    inp.top_p = 1.0f;
-    inp.seed = seed;
+    inp.top_p = top_p;
+    inp.seed = options.seed;
     // b12233 (#31655): the audio frame temperature, < 0 = the model's default (what the struct starts with)
-    if (temperature >= 0.0f) {
-        inp.temp = temperature;
+    if (options.temperature >= 0.0f) {
+        inp.temp = options.temperature;
     }
+    // b12431 (#32020): delivery, for a model that supports it; set_input answers 2 for another one
+    inp.speed = options.speed;
+    inp.loudness = options.loudness;
     // We do our own WAV framing (pcm_to_wav16_bytes) rather than trust upstream's own writer, so
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;
@@ -226,7 +252,14 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     // ("inconsistent sequence positions", X = <last position> > Y = 0).
     llama_memory_seq_rm(llama_get_memory(engine->ctx), inp.seq_id, -1, -1);
 
-    if (gen.set_input(&inp) != 0) {
+    const int32_t input_status = gen.set_input(&inp);
+    if (input_status == 2) {
+        // the ranges are checked above, so what is left is a model without delivery control
+        common_sampler_free(smpl);
+        return refuse(synthesis_uses_delivery(options) ? "the model does not support speed or loudness"
+                                                       : "the TTS input is invalid for the model");
+    }
+    if (input_status != 0) {
         common_sampler_free(smpl);
         err = "failed to set TTS input (prompt/speaker-reference/lang rejected)";
         return false;
@@ -251,7 +284,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         return t;
     };
 
-    const int max_new = n_predict > 0 ? n_predict : 512;
     int n_frames = 0;
     llama_token sampled = sample_semantic_code();
     const float *h_state = llama_get_embeddings_ith(engine->ctx, -1);
