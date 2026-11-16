@@ -27,6 +27,16 @@ public class SpeechParametersTest {
         assertThat(defaults.getRepeatPenalty(), is(1.0f));
         assertThat(defaults.getSpeed(), is(1.0f));
         assertThat(defaults.getLoudness(), is(0.0f));
+        assertThat(defaults.getSpeakerReferenceText(), is(nullValue()));
+    }
+
+    @Test
+    void theTranscriptOfTheReferenceIsKeptByACopy() {
+        SpeechParameters transcribed = SpeechParameters.builder()
+                .speakerReferenceText("What the clip says.")
+                .build();
+        assertThat(transcribed.getSpeakerReferenceText(), is("What the clip says."));
+        assertThat(transcribed.toBuilder().seed(2).build().getSpeakerReferenceText(), is("What the clip says."));
     }
 
     @Test

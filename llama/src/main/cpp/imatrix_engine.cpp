@@ -334,24 +334,16 @@ int compute(const std::string &model_path, const std::string &text_path, const s
 
     // Every token asks for its output: the last layer computes only the rows somebody wants, and with
     // the default (the last token alone) its feed-forward matrices would see one row and be skipped.
-    const std::unique_ptr<llama_batch, void (*)(llama_batch *)> batch(
-        new llama_batch(llama_batch_init(opts.chunk_size, 0, 1)), [](llama_batch *b) {
-            llama_batch_free(*b);
-            delete b;
-        });
+    common_batch batch(ctx.get());
     for (int chunk = 0; chunk < n_chunks; ++chunk) {
         const llama_token *first = tokens.data() + static_cast<size_t>(chunk) * static_cast<size_t>(opts.chunk_size);
         llama_memory_clear(llama_get_memory(ctx.get()), true);
-        batch->n_tokens = opts.chunk_size;
+        batch.clear();
         for (int i = 0; i < opts.chunk_size; ++i) {
             // every chunk starts like a prompt, as llama-imatrix does
-            batch->token[i] = i == 0 && add_bos ? llama_vocab_bos(vocab) : first[i];
-            batch->pos[i] = i;
-            batch->n_seq_id[i] = 1;
-            batch->seq_id[i][0] = 0;
-            batch->logits[i] = 1;
+            batch.add(i == 0 && add_bos ? llama_vocab_bos(vocab) : first[i], i, 0, true);
         }
-        if (llama_decode(ctx.get(), *batch) != 0) {
+        if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
             throw std::runtime_error("evaluating chunk " + std::to_string(chunk + 1) +
                                      " of the calibration text failed");
         }

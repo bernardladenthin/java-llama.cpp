@@ -958,6 +958,7 @@ void jllama_tts_options_init(jllama_tts_options *options) {
     options->repeat_penalty = defaults.repeat_penalty;
     options->speed = defaults.speed;
     options->loudness = defaults.loudness;
+    options->speaker_reference_text = nullptr;
 }
 
 jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
@@ -994,6 +995,7 @@ jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *t
         synthesis.repeat_penalty = given.repeat_penalty;
         synthesis.speed = given.speed;
         synthesis.loudness = given.loudness;
+        synthesis.speaker_reference_text = given.speaker_reference_text != nullptr ? given.speaker_reference_text : "";
         std::vector<uint8_t> bytes;
         std::string err;
         bool request_fault = false;

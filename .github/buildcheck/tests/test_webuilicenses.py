@@ -91,7 +91,7 @@ class WebuiLicensesTest(unittest.TestCase):
 
     def test_check_reports_a_changed_lockfile(self):
         self.generated()
-        (self.out / "LOCKFILE.sha256").write_text("0" * 64 + "  tools/ui/package-lock.json\n")
+        (self.out / "LOCKFILE.sha256").write_text("0" * 64 + "  ui/apps/chat/package-lock.json\n")
         problems = webuilicenses.check(self.ui, self.out)
         self.assertEqual(len(problems), 1)
         self.assertIn("webui-licenses.py generate", problems[0])

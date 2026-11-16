@@ -608,6 +608,9 @@ typedef struct jllama_tts_options {
     float repeat_penalty;               /**< repetition penalty of the backbone over the generation, 1 = off */
     float speed;    /**< speaking speed relative to the model's pace, > 0 (1 = its own; Zonos3 only) */
     float loudness; /**< target loudness in LUFS, < 0 (0 = the model's own; Zonos3 only) */
+    /** the transcript of the speaker reference, or null: a model that puts it into the prompt (Fish
+     *  Audio S2, b12453) speaks with the reference's voice more closely; the others ignore it */
+    const char *speaker_reference_text;
 } jllama_tts_options;
 
 /** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */

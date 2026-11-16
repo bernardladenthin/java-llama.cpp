@@ -1713,7 +1713,7 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
     JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
     jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature, jfloat top_p, jfloat repeat_penalty,
-    jfloat speed, jfloat loudness) {
+    jfloat speed, jfloat loudness, jstring jspeaker_reference_text) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
@@ -1721,6 +1721,8 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
             jspeaker_reference_path == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_path);
         const std::string lang = jlang == nullptr ? std::string() : parse_jstring(env, jlang);
         const std::string voice = jvoice == nullptr ? std::string() : parse_jstring(env, jvoice);
+        const std::string speaker_reference_text =
+            jspeaker_reference_text == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_text);
         unsigned char *wav = nullptr;
         size_t length = 0;
         jllama_tts_options options;
@@ -1736,6 +1738,7 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
         options.repeat_penalty = static_cast<float>(repeat_penalty);
         options.speed = static_cast<float>(speed);
         options.loudness = static_cast<float>(loudness);
+        options.speaker_reference_text = speaker_reference_text.c_str();
         const jllama_status status = jllama_tts_synthesize_options(reinterpret_cast<jllama_tts_model *>(handle),
                                                                    text.c_str(), &options, &wav, &length);
         if (status != JLLAMA_STATUS_OK) {

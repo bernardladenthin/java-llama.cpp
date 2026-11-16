@@ -196,6 +196,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12453** (from b12445, 8 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). Fish Audio S2 speaks (#32330): `SpeechParameters.speakerReferenceText`, the C
+  API's `jllama_tts_options.speaker_reference_text` (the struct grows from 64 to 72 bytes; a caller
+  of the older header keeps working, the library reads only the bytes it declares) and `/tts`'s
+  `speaker_ref_text` carry the transcript of the speaker reference, which Fish S2 puts into its
+  prompt and the other models ignore. `--tensor-split` and `--fit-target` take as many values as
+  there are devices (#31435; one fewer before). The WebUI moved to `ui/apps/chat` and is called
+  Llama Chat (#32032): `build-webui` and the license check read it from there, the bundle is
+  unchanged. Upstream deprecated the old batch API (#32306); the importance-matrix collection and
+  the Kolibri-1 test decode through `llama_batch_ext` / `llama_process` now.
 - **llama.cpp b12445** (from b12431, 14 upstream commits; pinned by commit, upstream has not tagged
   the number yet). What reaches a user of this library: a chat template may render JSON with
   `tojson(sort_keys=true)` (#32366; before it threw "not implemented", which failed the load of a

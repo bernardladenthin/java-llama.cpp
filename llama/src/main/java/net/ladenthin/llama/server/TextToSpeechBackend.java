@@ -111,6 +111,7 @@ final class TextToSpeechBackend implements SpeechBackend {
                             .repeatPenalty(repeatPenalty == null ? SpeechParameters.REPEAT_PENALTY_OFF : repeatPenalty)
                             .speed(speed == null ? SpeechParameters.MODEL_DEFAULT_SPEED : speed)
                             .loudness(loudness == null ? SpeechParameters.MODEL_DEFAULT_LOUDNESS : loudness)
+                            .speakerReferenceText(options.getSpeakerReferenceText())
                             .build());
         } finally {
             if (referenceFile != null) {
