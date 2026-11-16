@@ -600,7 +600,7 @@ typedef struct jllama_tts_options {
     const char *speaker_reference_path; /**< a WAV to clone the voice from, or null */
     const char *lang;                   /**< the model's language, or null for its default */
     const char *voice;                  /**< a predefined or template voice, or null */
-    int max_frames;                     /**< cap on the generated frames, <= 0 = 512 */
+    int max_frames;                     /**< cap on the generated frames, <= 0 = the model's own (512 for most) */
     int top_k;                          /**< top-k of the sampling, <= 0 = the engine's default */
     unsigned int seed;                  /**< sampler and codec seed (default 0) */
     float temperature;                  /**< audio frame temperature, < 0 = the model's default, 0 = greedy */
@@ -611,6 +611,12 @@ typedef struct jllama_tts_options {
     /** the transcript of the speaker reference, or null: a model that puts it into the prompt (Fish
      *  Audio S2, b12453) speaks with the reference's voice more closely; the others ignore it */
     const char *speaker_reference_text;
+    /** classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.
+     *  Only a model that supports it (YuE2, b12459); another refuses any other value */
+    float cfg_scale;
+    /** steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
+     *  model's own. Only a model that supports it (YuE2, b12459); another refuses any other value */
+    int flow_steps;
 } jllama_tts_options;
 
 /** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */

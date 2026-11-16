@@ -34,6 +34,8 @@ struct tts_engine {
     bool speaker_reference = false;
     // The predefined voices of the projector (b12061, #31429), read once at load; empty for most models.
     std::vector<std::string> voices;
+    // mtmd_gen_audio_info::n_channels (b12459): 1 for every model but YuE2, which is stereo.
+    int channels = 1;
     // The model's chat templates: a "tts" one (LFM3-Audio, b11941) renders the prompt to speak.
     common_chat_templates_ptr templates;
     // Serializes engine_synthesize: it drives llama_decode (via mtmd_helper::gen_audio) on the
@@ -76,11 +78,13 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         engine_free(engine);
         return nullptr;
     }
-    if (mtmd_gen_audio_get_info(engine->mctx.get()).type == MTMD_GEN_AUDIO_TYPE_NONE) {
+    const mtmd_gen_audio_info info = mtmd_gen_audio_get_info(engine->mctx.get());
+    if (info.type == MTMD_GEN_AUDIO_TYPE_NONE) {
         err = "mmproj does not support audio generation: " + mmproj_path;
         engine_free(engine);
         return nullptr;
     }
+    engine->channels = info.n_channels > 0 ? info.n_channels : 1;
     // The capability names the pipeline (Qwen3-TTS, Pocket TTS), not the file: a Pocket TTS projector
     // converted without its voice encoder takes no audio in (no input sample rate), and a reference
     // clip then fails to decode -- found by CI's pair, which ships predefined voices instead.
@@ -142,7 +146,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         return refuse(refusal);
     }
 
-    const int max_new = options.max_frames > 0 ? options.max_frames : 512;
     const float top_p = synthesis_top_p(options);
 
     // The backbone sampler: top-k always, the repetition penalty over the whole generation and top-p
@@ -153,7 +156,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     sparams.samplers = {};
     if (options.repeat_penalty != 1.0f) {
         sparams.penalty_repeat = options.repeat_penalty;
-        sparams.penalty_last_n = max_new;
+        sparams.penalty_last_n = synthesis_penalty_window(options.max_frames);
         sparams.samplers.push_back(COMMON_SAMPLER_TYPE_PENALTIES);
     }
     sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
@@ -209,14 +212,18 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     }
 
     // b11796 (#30902): the helper is default-constructed and initialised explicitly; init() leaves it
-    // invalid for a projector without audio generation (checked at load, but the contract is here).
+    // invalid for a projector without audio generation (checked at load, but the contract is here),
+    // and since b12459 also for a context too small for the model's pipeline.
     mtmd_helper::gen_audio gen;
     gen.init(engine->ctx, engine->mctx.get());
     if (!gen.valid()) {
         common_sampler_free(smpl);
-        err = "failed to initialise audio generation: the mmproj does not support it";
+        err = "failed to initialise audio generation: the context cannot run the audio generation of this model";
         return false;
     }
+    // b12459: the caller's frame cap, else the model's own (512 for most; a model that stops by
+    // itself, YuE2, names none) -- upstream's /tts and llama-tts do the same.
+    const int max_new = gen.max_frames(options.max_frames);
     // upstream's defaults (b11796: a `stream` flag joined the struct, off for a one-shot synthesis);
     // every field the caller controls is set below
     // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
@@ -244,6 +251,9 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     // b12431 (#32020): delivery, for a model that supports it; set_input answers 2 for another one
     inp.speed = options.speed;
     inp.loudness = options.loudness;
+    // b12459 (#32369): guidance and solver steps, for a model that supports them; set_input answers 2 otherwise
+    inp.cfg_scale = options.cfg_scale;
+    inp.flow_steps = options.flow_steps;
     // We do our own WAV framing (pcm_to_wav16_bytes) rather than trust upstream's own writer, so
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;
@@ -256,10 +266,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
 
     const int32_t input_status = gen.set_input(&inp);
     if (input_status == 2) {
-        // the ranges are checked above, so what is left is a model without delivery control
+        // the ranges are checked above, so what is left is a model without delivery or generation control
         common_sampler_free(smpl);
-        return refuse(synthesis_uses_delivery(options) ? "the model does not support speed or loudness"
-                                                       : "the TTS input is invalid for the model");
+        return refuse(synthesis_uses_generation_control(options) ? "the model does not support cfg_scale or flow_steps"
+                      : synthesis_uses_delivery(options)         ? "the model does not support speed or loudness"
+                                                                 : "the TTS input is invalid for the model");
     }
     if (input_status != 0) {
         common_sampler_free(smpl);
@@ -324,12 +335,12 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         return false;
     }
 
-    // out_type=PCM: raw F32LE samples.
+    // out_type=PCM: raw F32LE samples, the channels interleaved (b12459: YuE2 is stereo).
     const auto *samples = reinterpret_cast<const float *>(data);
     const size_t n_samples = data_len / sizeof(float);
     std::vector<float> audio(samples, samples + n_samples);
 
-    out_wav = pcm_to_wav16_bytes(audio, sample_rate);
+    out_wav = pcm_to_wav16_bytes(audio, sample_rate, engine->channels);
     return true;
 }
 

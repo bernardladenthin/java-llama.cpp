@@ -68,3 +68,28 @@ TEST(TtsWav, ClampsAndEncodesSamplesLittleEndian) {
     EXPECT_EQ(sample(2), -32767);
     EXPECT_EQ(sample(3), -32768);
 }
+
+// b12459: llama.cpp's PCM output is interleaved by channel (YuE2 is stereo). A stereo file must say
+// two channels, double the byte rate and block alignment, and keep the samples in their order --
+// written as mono, a song would play at half its length with the channels alternating sample by sample.
+TEST(TtsWav, StereoSamplesStayInterleavedAndTheHeaderSaysTwoChannels) {
+    const std::vector<float> lr = {0.5f, -0.5f, 0.25f, -0.25f}; // two frames: L R L R
+    const std::vector<uint8_t> wav = pcm_to_wav16_bytes(lr, 44100, 2);
+    ASSERT_EQ(wav.size(), 44u + lr.size() * 2);
+    EXPECT_EQ(read_u16(wav, 22), 2u);         // channels
+    EXPECT_EQ(read_u32(wav, 24), 44100u);     // the rate per channel
+    EXPECT_EQ(read_u32(wav, 28), 44100u * 4); // byte rate = rate * channels * 2
+    EXPECT_EQ(read_u16(wav, 32), 4u);         // block align = channels * 2
+    EXPECT_EQ(read_u32(wav, 40), 8u);         // data size
+    auto sample = [&](int i) -> int16_t {
+        const size_t off = 44 + i * 2;
+        return (int16_t)((uint16_t)wav[off] | ((uint16_t)wav[off + 1] << 8));
+    };
+    EXPECT_EQ(sample(0), 16383);
+    EXPECT_EQ(sample(1), -16383);
+    EXPECT_EQ(sample(2), 8191);
+    EXPECT_EQ(sample(3), -8191);
+    // a count below one is mono, the one-argument call too
+    EXPECT_EQ(read_u16(pcm_to_wav16_bytes(lr, 44100, 0), 22), 1u);
+    EXPECT_EQ(read_u16(pcm_to_wav16_bytes(lr, 44100), 22), 1u);
+}

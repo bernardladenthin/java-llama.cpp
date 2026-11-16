@@ -160,8 +160,8 @@ final class JllamaNative {
     static final MethodHandle TTS_LOAD = downcall("jllama_tts_load", json(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
     /**
      * {@code jllama_tts_options} of {@code jllama_api.h}: a {@code size_t}, three pointers, three
-     * {@code int}s, five {@code float}s and the pointer to the speaker reference's transcript (b12453),
-     * 72 bytes on every 64-bit platform, without padding.
+     * {@code int}s, five {@code float}s, the pointer to the speaker reference's transcript (b12453),
+     * then a {@code float} and an {@code int} (b12459), 80 bytes on every 64-bit platform, without padding.
      */
     static final StructLayout TTS_OPTIONS = MemoryLayout.structLayout(
             JAVA_LONG.withName("struct_size"),
@@ -176,7 +176,9 @@ final class JllamaNative {
             JAVA_FLOAT.withName("repeat_penalty"),
             JAVA_FLOAT.withName("speed"),
             JAVA_FLOAT.withName("loudness"),
-            ADDRESS.withName("speaker_reference_text"));
+            ADDRESS.withName("speaker_reference_text"),
+            JAVA_FLOAT.withName("cfg_scale"),
+            JAVA_INT.withName("flow_steps"));
 
     static final MethodHandle TTS_OPTIONS_INIT =
             downcall("jllama_tts_options_init", FunctionDescriptor.ofVoid(ADDRESS));
@@ -387,6 +389,8 @@ final class JllamaNative {
         options.set(JAVA_FLOAT, offset("speed"), parameters.getSpeed());
         options.set(JAVA_FLOAT, offset("loudness"), parameters.getLoudness());
         options.set(ADDRESS, offset("speaker_reference_text"), cString(arena, parameters.getSpeakerReferenceText()));
+        options.set(JAVA_FLOAT, offset("cfg_scale"), parameters.getCfgScale());
+        options.set(JAVA_INT, offset("flow_steps"), parameters.getFlowSteps());
         return options;
     }
 

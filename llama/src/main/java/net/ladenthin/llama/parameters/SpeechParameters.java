@@ -20,8 +20,11 @@ import org.jspecify.annotations.Nullable;
  * model that supports it (Zonos3). Another model refuses a speed other than {@code 1} or a loudness
  * other than {@code 0}, with an {@link net.ladenthin.llama.exception.InvalidRequestException}, as it
  * refuses values out of range. {@code speakerReferenceText} (b12453) is the transcript of the speaker
- * reference, which Fish Audio S2 puts into its prompt and the other models ignore. The C counterpart is
- * {@code jllama_tts_options}.
+ * reference, which Fish Audio S2 puts into its prompt and the other models ignore. {@code cfgScale} and
+ * {@code flowSteps} (b12459) are the guidance and the solver steps of a flow-matching model (YuE2); 0
+ * leaves both to the model, and another model refuses any other value. A {@code maxFrames} of 0 or less
+ * leaves the frame cap to the model (512 for most; a model that stops by itself names none). The C
+ * counterpart is {@code jllama_tts_options}.
  */
 @Builder(toBuilder = true)
 @Getter
@@ -58,7 +61,7 @@ public final class SpeechParameters {
     // A predefined or template voice, or null for the model's default.
     private final @Nullable String voice;
 
-    // Cap on the generated audio frames (longer = longer audio).
+    // Cap on the generated audio frames (longer = longer audio); 0 or less leaves it to the model.
     @Builder.Default
     private final int maxFrames = DEFAULT_MAX_FRAMES;
 
@@ -92,6 +95,14 @@ public final class SpeechParameters {
     // The transcript of the speaker reference, or null. A model that puts it into its prompt (Fish Audio
     // S2, llama.cpp b12453) follows the reference's voice more closely; the others ignore it.
     private final @Nullable String speakerReferenceText;
+
+    // Classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.
+    // Only a model that supports it (YuE2, llama.cpp b12459); another refuses any other value.
+    private final float cfgScale;
+
+    // Steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
+    // model's own. Only a model that supports it (YuE2, llama.cpp b12459); another refuses any other value.
+    private final int flowSteps;
 
     /**
      * The options of a synthesis that sets none.

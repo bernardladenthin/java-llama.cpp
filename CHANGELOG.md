@@ -196,6 +196,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12459** (from b12453, 6 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). YuE2-3B sings lyrics (#32369), in **stereo**: the speech engine reads the channel
+  count of the model and writes the interleaved samples into a WAV header that says so (until now every
+  WAV was written as mono, which would have played a stereo song at half its length), and the `pcm`
+  answers of the speech routes name `channels=2`. Its two options go through every layer:
+  `SpeechParameters.cfgScale` / `flowSteps`, the C API's `jllama_tts_options.cfg_scale` /
+  `flow_steps` (the struct grows from 72 to 80 bytes; an older caller keeps working) and `/tts`'s
+  `cfg_scale` / `flow_steps`; 0 leaves both to the model, and every other model refuses another value
+  with an `InvalidRequestException` naming them. A frame cap of 0 or less is now the model's own (512
+  for most, none for YuE2, which stops by itself), and `/tts` without `n_predict` passes 0 as upstream
+  does; the Java `SpeechParameters` default stays 512. A context too small for a model's audio pipeline
+  is refused with a message saying so (#32369). Also the Inkling chat parser (#32381) and OpenCL kernel
+  fixes.
 - **llama.cpp b12453** (from b12445, 8 upstream commits; pinned by commit, upstream has not tagged
   the number yet). Fish Audio S2 speaks (#32330): `SpeechParameters.speakerReferenceText`, the C
   API's `jllama_tts_options.speaker_reference_text` (the struct grows from 64 to 72 bytes; a caller

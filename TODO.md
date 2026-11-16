@@ -351,6 +351,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12453 to b12459 (2026-11-16)** -- 6 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
+- **YuE2-3B** (#32369): stereo WAV output, `cfgScale` / `flowSteps` and the model's own frame cap are
+  passed through every layer and tested with the generator's ZONOS3 pair (mono, both fields refused)
+  and the WAV writer (stereo); no YuE2 pair in `models.csv` and no generator for one, so a stereo
+  synthesis and the two fields' effect are not tested end to end.
+
 **From b12445 to b12453 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
 - **Fish Audio S2** (#32330): the transcript of the speaker reference is passed through every layer

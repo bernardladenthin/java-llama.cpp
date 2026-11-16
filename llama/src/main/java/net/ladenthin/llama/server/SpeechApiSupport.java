@@ -45,6 +45,8 @@ final class SpeechApiSupport {
     /** Where a canonical WAV header carries its sample rate, as a little-endian 32-bit integer. */
     private static final int WAV_SAMPLE_RATE_OFFSET = 24;
 
+    private static final int WAV_CHANNELS_OFFSET = 22;
+
     private SpeechApiSupport() {}
 
     /** What a request asked the audio to be answered as. */
@@ -167,7 +169,8 @@ final class SpeechApiSupport {
      * transcript (b12453, for a model that puts it into its prompt), {@code n_predict} (or
      * {@code max_tokens}) the frame cap, {@code top_k}, {@code top_p}, {@code repeat_penalty},
      * {@code seed} and {@code temperature} the sampling, {@code speed} and {@code loudness} the
-     * delivery of a model that supports it (b12431); {@code stream} is refused, this server answers
+     * delivery of a model that supports it (b12431), {@code cfg_scale} and {@code flow_steps} the
+     * guidance and solver steps of a flow-matching model (b12459, YuE2); {@code stream} is refused, this server answers
      * the audio in one piece.
      *
      * @param request the request body
@@ -238,7 +241,10 @@ final class SpeechApiSupport {
                         floatOrNull(request.path("repeat_penalty"), "repeat_penalty"),
                         floatOrNull(request.path("speed"), "speed"),
                         floatOrNull(request.path("loudness"), "loudness"))
-                .withSpeakerReferenceText(textOrNull(request.path("speaker_ref_text")));
+                .withSpeakerReferenceText(textOrNull(request.path("speaker_ref_text")))
+                .withGenerationControl(
+                        floatOrNull(request.path("cfg_scale"), "cfg_scale"),
+                        integerOrNull(request.path("flow_steps"), "flow_steps"));
     }
 
     /** A string field as upstream reads it with {@code json_value}: absent or empty is unset. */
@@ -307,9 +313,9 @@ final class SpeechApiSupport {
     static String contentType(byte[] wav, Format format) {
         switch (format) {
             case PCM16:
-                return pcmContentType(sampleRate(wav));
+                return pcmContentType(sampleRate(wav), channels(wav));
             case PCM_FLOAT:
-                return "audio/pcm;rate=" + sampleRate(wav) + ";encoding=float;bits=32";
+                return pcmType(sampleRate(wav), channels(wav)) + ";encoding=float;bits=32";
             default:
                 return CONTENT_TYPE_WAV;
         }
@@ -319,7 +325,7 @@ final class SpeechApiSupport {
      * The samples of a WAV file as 32-bit floats in [-1, 1), little-endian: what {@code /tts}
      * answers for {@code response_format: pcm}.
      *
-     * @param wav a 16-bit mono WAV file with the canonical 44-byte header
+     * @param wav a 16-bit WAV file with the canonical 44-byte header (stereo samples stay interleaved)
      * @return four bytes per sample
      */
     static byte[] pcmFloat(byte[] wav) {
@@ -350,6 +356,19 @@ final class SpeechApiSupport {
     }
 
     /**
+     * The channel count a WAV file declares: 2 for a stereo model (YuE2, b12459), whose samples are
+     * interleaved, 1 for every other.
+     *
+     * @param wav a WAV file with the canonical 44-byte header
+     * @return its channel count
+     * @throws IllegalArgumentException if the bytes are no such file
+     */
+    static int channels(byte[] wav) {
+        sampleRate(wav); // validates the header
+        return (wav[WAV_CHANNELS_OFFSET] & 0xFF) | (wav[WAV_CHANNELS_OFFSET + 1] & 0xFF) << 8;
+    }
+
+    /**
      * The samples of a WAV file without its header: what {@code response_format: pcm} answers.
      *
      * @param wav a WAV file with the canonical 44-byte header
@@ -362,12 +381,19 @@ final class SpeechApiSupport {
 
     /**
      * The {@code Content-Type} of a {@code pcm} answer, which carries what the missing header would
-     * have said, as upstream's does.
+     * have said, as upstream's does: the rate, and the channel count for more than one channel
+     * (b12459), whose samples are interleaved.
      *
      * @param sampleRate the sample rate in Hz
+     * @param channels the channel count
      * @return the content type
      */
-    static String pcmContentType(int sampleRate) {
-        return "audio/pcm;rate=" + sampleRate + ";encoding=signed-int;bits=16";
+    static String pcmContentType(int sampleRate, int channels) {
+        return pcmType(sampleRate, channels) + ";encoding=signed-int;bits=16";
+    }
+
+    /** {@code audio/pcm} with the rate and, for more than one channel, the channel count. */
+    private static String pcmType(int sampleRate, int channels) {
+        return "audio/pcm;rate=" + sampleRate + (channels > 1 ? ";channels=" + channels : "");
     }
 }

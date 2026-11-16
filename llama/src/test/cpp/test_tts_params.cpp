@@ -382,6 +382,11 @@ TEST(TtsSynthesisOptions, ValuesNoModelCanTakeAreRefusedByName) {
         {[](jllama_tts::synthesis_options &o, float v) { o.repeat_penalty = v; }, 0.0f, "repeat_penalty"},
         {[](jllama_tts::synthesis_options &o, float v) { o.repeat_penalty = v; }, nan, "repeat_penalty"},
         {[](jllama_tts::synthesis_options &o, float v) { o.temperature = v; }, nan, "temperature"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.cfg_scale = v; }, -0.5f, "cfg_scale"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.cfg_scale = v; }, nan, "cfg_scale"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.cfg_scale = v; }, inf, "cfg_scale"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.flow_steps = static_cast<int>(v); }, -1.0f, "flow_steps"},
+        {[](jllama_tts::synthesis_options &o, float v) { o.flow_steps = static_cast<int>(v); }, 1025.0f, "flow_steps"},
     };
     for (const refused &c : cases) {
         jllama_tts::synthesis_options options;
@@ -389,4 +394,28 @@ TEST(TtsSynthesisOptions, ValuesNoModelCanTakeAreRefusedByName) {
         const std::string refusal = jllama_tts::synthesis_options_refusal(options);
         EXPECT_NE(refusal.find(c.names), std::string::npos) << c.names << " = " << c.value << ": " << refusal;
     }
+}
+
+// b12459 (#32369): guidance and solver steps start at the model's own and, set, ask for a model that
+// supports them (YuE2); the range ends are upstream's. The frame cap is the model's without the
+// caller's, but the repetition-penalty window stays 512 then: a model that stops by itself names no cap.
+TEST(TtsSynthesisOptions, GuidanceAndSolverStepsAreTheModelsUntilSet) {
+    jllama_tts::synthesis_options options;
+    EXPECT_FLOAT_EQ(options.cfg_scale, 0.0f);
+    EXPECT_EQ(options.flow_steps, 0);
+    EXPECT_FALSE(jllama_tts::synthesis_uses_generation_control(options));
+    options.cfg_scale = 1.0f;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(options), "");
+    EXPECT_TRUE(jllama_tts::synthesis_uses_generation_control(options)) << "1 is no guidance, but not the default";
+    options.cfg_scale = 0.0f;
+    options.flow_steps = 1;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(options), "");
+    EXPECT_TRUE(jllama_tts::synthesis_uses_generation_control(options));
+    options.flow_steps = 1024;
+    EXPECT_EQ(jllama_tts::synthesis_options_refusal(options), "");
+    EXPECT_FALSE(jllama_tts::synthesis_uses_delivery(options)) << "the two kinds are refused with their own names";
+
+    EXPECT_EQ(jllama_tts::synthesis_penalty_window(0), 512);
+    EXPECT_EQ(jllama_tts::synthesis_penalty_window(-1), 512);
+    EXPECT_EQ(jllama_tts::synthesis_penalty_window(40), 40);
 }

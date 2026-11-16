@@ -1713,7 +1713,7 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(
     JNIEnv *env, jclass clazz, jlong handle, jstring jtext, jstring jspeaker_reference_path, jstring jlang,
     jstring jvoice, jint max_frames, jint top_k, jint seed, jfloat temperature, jfloat top_p, jfloat repeat_penalty,
-    jfloat speed, jfloat loudness, jstring jspeaker_reference_text) {
+    jfloat speed, jfloat loudness, jstring jspeaker_reference_text, jfloat cfg_scale, jint flow_steps) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
         const std::string text = parse_jstring(env, jtext);
@@ -1739,6 +1739,8 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
         options.speed = static_cast<float>(speed);
         options.loudness = static_cast<float>(loudness);
         options.speaker_reference_text = speaker_reference_text.c_str();
+        options.cfg_scale = static_cast<float>(cfg_scale);
+        options.flow_steps = static_cast<int>(flow_steps);
         const jllama_status status = jllama_tts_synthesize_options(reinterpret_cast<jllama_tts_model *>(handle),
                                                                    text.c_str(), &options, &wav, &length);
         if (status != JLLAMA_STATUS_OK) {
