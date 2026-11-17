@@ -197,6 +197,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
+  throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a
+  model loaded with `--ignore-eos` and `--grammar` / `--json-schema` fails to load. The C++ suite holds
+  both, and several upstream changes of the last bumps that had no test here: the empty stop string,
+  `allOf` over numbers in a JSON schema, the Jinja of b12431, media URLs on private addresses (refused
+  without `--media-allow-private-urls`), every load mode reading the same weights, a 30 s audio clip as
+  one chunk, and the TTS template's normalizer. Also CUDA, Vulkan and PLaMo tokenizer speedups.
 - **llama.cpp b12480** (from b12463, 17 upstream commits; pinned by commit, upstream has not tagged
   the number yet). The WebUI moves to SvelteKit 3 and its built-in service worker (#32463) and compiles
   the sources of Llama UI, upstream's new design system in `ui/lib/ui` (#32468): `build-webui` and the

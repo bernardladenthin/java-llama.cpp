@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.callback.CancellationToken;
 import net.ladenthin.llama.callback.ToolHandler;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.ChatRequest;
 import net.ladenthin.llama.parameters.InferenceParameters;
@@ -188,7 +189,6 @@ public class LlamaModelTest {
     public void testGenerateGrammar() {
         InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
-                .withIgnoreEos(true)
                 .withNPredict(nPredict);
         StringBuilder sb = new StringBuilder();
         int chunks = 0;
@@ -266,10 +266,22 @@ public class LlamaModelTest {
     }
 
     @Test
-    public void testCompleteGrammar() {
+    public void testGrammarNextToIgnoreEosIsTheCallersFault() {
+        // Since llama.cpp b12489 (#32377) a grammar next to a ban of the end-of-generation tokens is
+        // refused when the sampler starts (the sampler crashed where only the end could follow); the
+        // server answers 400, this library InvalidRequestException.
         InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
                 .withGrammar("root ::= (\"a\" | \"b\")+")
                 .withIgnoreEos(true)
+                .withNPredict(nPredict);
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> model.complete(params));
+        assertTrue(e.getMessage().contains("EOG tokens cannot be banned"), e.getMessage());
+    }
+
+    @Test
+    public void testCompleteGrammar() {
+        InferenceParameters params = new InferenceParameters(GRAMMAR_PROMPT)
+                .withGrammar("root ::= (\"a\" | \"b\")+")
                 .withNPredict(nPredict);
         CompletionResult result = model.completeWithStats(params);
         String output = result.getText();

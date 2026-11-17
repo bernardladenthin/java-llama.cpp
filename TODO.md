@@ -351,6 +351,15 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12480 to b12490 (2026-11-17)** -- 10 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged. Open, none of it blocking:
+- **The reason of a refused argument parse** (e.g. `--ignore-eos` next to `--grammar`, b12489) reaches
+  stderr only: upstream's `common_params_parse` prints it and answers false, so `jllama_model_load` and
+  `LlamaModel` report "Failed to parse model parameters". Carrying the message needs a hook upstream does
+  not have (or capturing stderr), not done.
+- **Not yet tested, from the review of the last bumps**: control characters in pythonic tool arguments
+  (#31937, needs a parser test over an LFM2 template) and the `--tensor-split` count limit (#31435).
+
 **From b12463 to b12480 (2026-11-17)** -- 17 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:
 - **Minimax-Music3** (#32435) and **Kokoro's `tts_dict`** (#32397): new speech pipelines that reach

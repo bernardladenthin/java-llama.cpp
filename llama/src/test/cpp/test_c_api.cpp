@@ -308,6 +308,129 @@ TEST_F(CApi, AGrammarTriggerOfAnUnknownTypeIsTheCallersFault) {
         << jllama_last_error();
 }
 
+TEST_F(CApi, IgnoreEosNextToAGrammarIsTheCallersFault) {
+    // Since b12489 (upstream #32377) a grammar next to a ban of the end-of-generation tokens -- which is
+    // what ignore_eos is, a logit bias of -inf on every EOG token -- is refused when the sampler starts:
+    // the grammar could reach a state where only the end may follow, and the sampler crashed there. The
+    // server answers it as an invalid request, so this library throws InvalidRequestException.
+    const auto refused = [this](const json &request) {
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST)
+            << request.dump();
+        EXPECT_NE(std::string(jllama_last_error()).find("EOG tokens cannot be banned"), std::string::npos)
+            << jllama_last_error();
+    };
+    const json base = {{"prompt", "Hi"}, {"n_predict", 2}, {"temperature", 0}};
+    json grammar = base;
+    grammar["grammar"] = "root ::= \"a\"";
+    grammar["ignore_eos"] = true;
+    refused(grammar);
+    json schema = base;
+    schema["json_schema"] = {{"type", "object"}, {"properties", {{"a", {{"type", "string"}}}}}};
+    schema["ignore_eos"] = true;
+    refused(schema);
+    // the same ban written out as a logit bias: false is -inf
+    json bias = base;
+    bias["grammar"] = "root ::= \"a\"";
+    bias["logit_bias"] = json::array({json::array({">", false})});
+    refused(bias);
+    // each half alone still answers
+    Owned response;
+    json only_grammar = base;
+    only_grammar["grammar"] = "root ::= \"a\"";
+    EXPECT_EQ(jllama_completions(model_, only_grammar.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    json only_ignore = base;
+    only_ignore["ignore_eos"] = true;
+    EXPECT_EQ(jllama_completions(model_, only_ignore.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    // and so does a negative bias that is not -inf
+    json soft = bias;
+    soft["logit_bias"] = json::array({json::array({">", -5.0})});
+    EXPECT_EQ(jllama_completions(model_, soft.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApi, AModelLoadedWithIgnoreEosAndAGrammarIsRefused) {
+    // The same combination as server defaults fails the argument parse (b12489, common/arg.cpp); either
+    // one alone loads.
+    for (const char *constraint : {"--grammar", "--json-schema"}) {
+        const std::string value = std::string(constraint) == "--grammar" ? "root ::= \"a\"" : R"({"type":"object"})";
+        const std::vector<std::string> args = {"jllama", "-m", path_,         "-c",       "128", "-ngl",        "0",
+                                               "-t",     "2",  "--no-warmup", constraint, value, "--ignore-eos"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *model = nullptr;
+        EXPECT_NE(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                  JLLAMA_STATUS_OK)
+            << constraint;
+        EXPECT_EQ(model, nullptr);
+        // upstream's parser prints the reason ("--ignore-eos is not supported with --grammar or
+        // --json-schema") to stderr and answers false, so the load names only the parse
+        EXPECT_NE(std::string(jllama_last_error()).find("Failed to parse model parameters"), std::string::npos)
+            << jllama_last_error();
+        jllama_model_free(model);
+    }
+}
+
+TEST_F(CApi, AnEmptyStopStringIsIgnored) {
+    // Upstream #32093 (b12416..b12431): an empty stop string matched at once, so a request with
+    // "stop": "" or [""] ended before its first token. It is dropped now, and the answer is the one
+    // without it.
+    const json base = {
+        {"prompt", "Hello"}, {"n_predict", 6}, {"temperature", 0}, {"ignore_eos", true}, {"cache_prompt", false}};
+    Owned plain;
+    ASSERT_EQ(jllama_completions(model_, base.dump().c_str(), &plain.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json expected = json::parse(plain.str());
+    ASSERT_EQ(expected.at("stop_type").get<std::string>(), "limit") << plain.str();
+    for (const json &stop : {json(""), json::array({""}), json::array({"", ""})}) {
+        json request = base;
+        request["stop"] = stop;
+        Owned response;
+        ASSERT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = json::parse(response.str());
+        EXPECT_EQ(j.at("stop_type").get<std::string>(), "limit") << stop.dump();
+        EXPECT_EQ(j.at("tokens_predicted").get<int>(), 6) << stop.dump();
+        EXPECT_EQ(j.at("content"), expected.at("content")) << stop.dump();
+    }
+}
+
+TEST(CApiLoadModes, EveryLoadModeReadsTheSameWeights) {
+    // A load mode decides how the file is read, never what is read. b12233..b12283 (#26014) rewrote
+    // the direct-I/O reader on Windows (aligned chunks, the file pointer moved by hand): an offset off
+    // by a chunk loads other bytes and answers without an error. The tensors of this GGUF are aligned
+    // to 32 bytes, not to a sector, so the unaligned path is the one taken.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-load-modes");
+    ASSERT_FALSE(path.empty());
+    const json request = {{"prompt", "Hello"}, {"n_predict", 6},     {"temperature", 0},
+                          {"n_probs", 3},      {"ignore_eos", true}, {"cache_prompt", false}};
+    std::vector<json> answers;
+    for (const char *mode : {"none", "mmap", "dio"}) {
+        const std::vector<std::string> args = {"jllama", "-m",          path, "-c", "128",         "-ngl",
+                                               "0",      "--no-warmup", "-t", "2",  "--load-mode", mode};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *model = nullptr;
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                  JLLAMA_STATUS_OK)
+            << mode << ": " << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = json::parse(response.str());
+        answers.push_back({{"content", j.at("content")}, {"probs", j.at("completion_probabilities")}});
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(answers[1], answers[0]) << "mmap";
+    EXPECT_EQ(answers[2], answers[0]) << "dio";
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
     Owned response;
     ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":2,"temperature":0})", &response.s),
@@ -1324,6 +1447,37 @@ TEST(CApiTemplate, AnIntegerOutsideItsRangeSaturatesInAChatTemplate) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AChatTemplateMayUseTheJinjaOfB12431) {
+    // Jinja since b12431 (upstream #32352, #32396): floor division, comparison of strings, a unary
+    // minus after a keyword, sum with a start value, and a caller that outlives its call block. A
+    // template that used any of them failed to parse or rendered something else, which fails the load.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-jinja-b12431");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{%- set ns = namespace(f=none) -%}"
+                             "{%- macro keep() -%}{%- set ns.f = caller -%}{%- endmacro -%}"
+                             "{%- macro outer(p) -%}{%- call keep() -%}[{{ p }}]{%- endcall -%}{%- endmacro -%}"
+                             "{%- for message in messages -%}{{ message.content }}{%- endfor -%}"
+                             "|{{ 7 // 2 }},{{ -7 // 2 }},{{ 'VBD' > 'VB' }},{{ 1 if false else -1 }}"
+                             ",{{ [1, 2]|sum(start=10) }}|{{ outer('a') }}{{ outer('b') }}{{ ns.f() }}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned rendered;
+    EXPECT_EQ(jllama_apply_template(model, R"({"messages":[{"role":"user","content":"x"}]})", &rendered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(rendered.str(), "x|3,-4,True,-1,13|[b]") << "outer() renders nothing, the kept caller the last block";
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTheLevels) {
     // Since b12431 (upstream #32332) the template probe keeps the reasoning_effort levels a template
     // raises on, and the chat parser refuses such a level with an invalid_argument naming the levels
@@ -1623,6 +1777,8 @@ TEST(CApiReasoningBudget, ARawCompletionWithMessagesKeepsTheReasoningBudgetOfThe
     json with_schema = request;
     with_schema["json_schema"] = json{{"type", "string"}};
     with_schema["n_predict"] = 4;
+    // b12489 (#32377) refuses a grammar next to ignore_eos; the grammar decides where the answer ends
+    with_schema.erase("ignore_eos");
     Owned constrained;
     ASSERT_EQ(jllama_completions(model, with_schema.dump().c_str(), &constrained.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
@@ -1782,6 +1938,22 @@ TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
     EXPECT_EQ(jllama_json_schema_to_grammar("{bad", &grammar.s), JLLAMA_STATUS_ERROR);
     EXPECT_EQ(grammar.s, nullptr);
     EXPECT_EQ(jllama_json_schema_to_grammar(nullptr, &grammar.s), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(CApiStatic, AnAllOfOverNumbersIsOneRangeAndAnEmptyOneIsRefused) {
+    // Upstream #31834 (b12233..b12283): allOf over number or integer schemas is merged into one range.
+    // Before, the merge took them for objects and the grammar asked for "{...}", which no number is.
+    Owned grammar;
+    ASSERT_EQ(jllama_json_schema_to_grammar(
+                  R"({"allOf":[{"type":"integer","minimum":1},{"type":"integer","maximum":5}]})", &grammar.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(grammar.str().find("\"{\""), std::string::npos) << grammar.str();
+    EXPECT_NE(grammar.str().find("[1-5]"), std::string::npos) << grammar.str();
+    EXPECT_EQ(jllama_json_schema_to_grammar(
+                  R"({"allOf":[{"type":"integer","minimum":6},{"type":"integer","maximum":5}]})", &grammar.s),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("empty numeric range"), std::string::npos) << jllama_last_error();
 }
 
 // patches/0022's switch through the C API: it reaches the CPU backend's entry points, round-trips,
@@ -2134,6 +2306,56 @@ std::vector<uint8_t> base64_bytes(const std::string &text) {
         }
     }
     return out;
+}
+
+TEST(CApiAudio, AClipOfThirtySecondsIsOneChunkAndOneSampleMoreIsTwo) {
+    // Upstream #30403 (b12309..b12387): the chunk count is the samples over a chunk's hop, rounded up.
+    // Before, a clip just short of or exactly 30 s (480000 samples at 16 kHz) got a second chunk of
+    // padding alone, 375 embeddings of silence more in the prompt.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-audio-chunks";
+    spec.n_ctx_train = 1024;
+    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string mmproj = write_tiny_audio_mmproj_gguf();
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(mmproj.empty());
+    jllama_model *model = load_tiny(path, {"--mmproj", mmproj, "-c", "1024", "-b", "1024", "-ub", "1024"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string marker = json::parse(meta.str()).value("media_marker", std::string());
+    ASSERT_FALSE(marker.empty());
+    Owned text_only;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"hear  now","n_predict":1,"temperature":0})", &text_only.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(text_only.str()).at("tokens_evaluated").get<int>();
+    const auto evaluated = [&](size_t samples) {
+        std::vector<float> tone(samples);
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+        }
+        const json request = {
+            {"prompt",
+             {{"prompt_string", "hear " + marker + " now"},
+              {"multimodal_data", json::array({base64_of(jllama_tts::pcm_to_wav16_bytes(tone, 16000))})}}},
+            {"n_predict", 1},
+            {"temperature", 0},
+            {"cache_prompt", false}};
+        Owned completion;
+        if (jllama_completions(model, request.dump().c_str(), &completion.s) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return -1;
+        }
+        return json::parse(completion.str()).at("tokens_evaluated").get<int>();
+    };
+    EXPECT_EQ(evaluated(479999), text_tokens + 375);
+    EXPECT_EQ(evaluated(480000), text_tokens + 375);
+    EXPECT_EQ(evaluated(480001), text_tokens + 750);
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(mmproj, ignored);
 }
 
 TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
@@ -3350,8 +3572,10 @@ TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
 
 // The tts template of a speech model may look words up in dictionaries the model carries (llama.cpp
 // b12480, #32397: tts_dict(name, key), for Kokoro's pronunciation lexicon; the arrays are read
-// through the new llama_model_meta_arr_n / llama_model_meta_arr_str). The random ZONOS3 with a
-// template that speaks the dictionary's entry for a known text and the text itself otherwise: a
+// through the new llama_model_meta_arr_n / llama_model_meta_arr_str), and rewrite the text with the
+// normalizer's builtins (b12233..b12283, #32053: tts_norm_sub, tts_norm_scan). The random ZONOS3 with a
+// template that speaks the dictionary's entry for a known text and the text with every number replaced
+// by N otherwise: a
 // looked-up word gives exactly the audio of its entry, an unknown one its own. A dictionary with
 // fewer values than keys is ignored, so a template that names it fails the synthesis by its name.
 class CApiTtsDict : public ::testing::Test {
@@ -3360,7 +3584,7 @@ class CApiTtsDict : public ::testing::Test {
         const std::string tmpl = "{%- set text = messages[0].content -%}"
                                  "{%- if text == 'broken' -%}{{ tts_dict('broken', text) }}"
                                  "{%- else -%}{%- set entry = tts_dict('lex', text) -%}"
-                                 "{{ entry.say if entry else text }}{%- endif -%}";
+                                 "{{ entry.say if entry else tts_norm_sub(text, '%d+', 'N') }}{%- endif -%}";
         const std::vector<jllama_test::tiny_tts_dict> dicts = {
             {"lex", {"Hi.", "foo"}, {R"({"say":"Hello."})", R"({"say":"Goodbye."})"}},
             {"broken", {"a", "b"}, {R"({"say":"x"})"}},
@@ -3426,6 +3650,17 @@ TEST_F(CApiTtsDict, AWordOutsideTheDictionaryIsSpokenAsItIs) {
     ASSERT_EQ(speak("Hello.", &entry), JLLAMA_STATUS_OK) << jllama_last_error();
     ASSERT_EQ(speak("Hi", &unknown), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_NE(unknown, entry) << "'Hi' is no key (the key is 'Hi.'), so tts_dict answers none";
+}
+
+TEST_F(CApiTtsDict, TheNormalizerOfTheTemplateRewritesTheText) {
+    std::vector<unsigned char> digits;
+    std::vector<unsigned char> replaced;
+    std::vector<unsigned char> other;
+    ASSERT_EQ(speak("7 cats", &digits), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("N cats", &replaced), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("M cats", &other), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(digits, replaced) << "tts_norm_sub(text, '%d+', 'N') turned 7 into N";
+    EXPECT_NE(replaced, other) << "two texts give two prompts, so the comparison above can fail";
 }
 
 TEST_F(CApiTtsDict, AMalformedDictionaryIsIgnoredAndATemplateNamingItFails) {
@@ -3780,6 +4015,79 @@ int tokens_evaluated(jllama_model *model, const std::string &request) {
         return -1;
     }
     return json::parse(completion.str()).at("tokens_evaluated").get<int>();
+}
+
+TEST(CApiMediaUrls, AnImageUrlOnAPrivateAddressIsRefusedUnlessTheModelAllowsIt) {
+    // Upstream #32115 (b12309..b12387): the server fetches an http(s) media URL only from a public
+    // address -- loopback, RFC 1918, link-local and CGNAT are refused, every redirect checked again --
+    // unless it was started with --media-allow-private-urls. A loopback server serves the image here.
+    httplib::Server images;
+    const std::vector<uint8_t> png = base64_bytes(TINY_PNG_BASE64);
+    images.Get("/tiny.png", [&png](const httplib::Request &, httplib::Response &res) {
+        res.set_content(std::string(png.begin(), png.end()), "image/png");
+    });
+    const int port = images.bind_to_any_port("127.0.0.1");
+    std::thread listener([&images]() { images.listen_after_bind(); });
+    images.wait_until_ready();
+
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-media-urls");
+    const std::string mmproj = write_tiny_mmproj_gguf("jllama-c-api-media-urls-mmproj");
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(mmproj.empty());
+    const auto load = [&](bool allow) {
+        std::vector<std::string> args = {"jllama", "-m",   path, "--mmproj",    mmproj, "-c",
+                                         "128",    "-ngl", "0",  "--no-warmup", "-t",   "2"};
+        if (allow) {
+            args.push_back("--media-allow-private-urls");
+        }
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *model = nullptr;
+        EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return model;
+    };
+    const auto chat = [](const std::string &url) {
+        return json{{"messages", json::array({json{{"role", "user"},
+                                                   {"content", json::array({json{{"type", "text"}, {"text", "look"}},
+                                                                            json{{"type", "image_url"},
+                                                                                 {"image_url", {{"url", url}}}}})}}})},
+                    {"max_tokens", 1},
+                    {"temperature", 0},
+                    {"cache_prompt", false}}
+            .dump();
+    };
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/tiny.png";
+    const std::string data_url = std::string("data:image/png;base64,") + TINY_PNG_BASE64;
+
+    jllama_model *strict = load(false);
+    ASSERT_NE(strict, nullptr);
+    Owned refused;
+    EXPECT_EQ(jllama_chat_completions(strict, chat(url).c_str(), &refused.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("not a public address"), std::string::npos) << jllama_last_error();
+    // the same image inline is no URL and answers
+    Owned inline_image;
+    ASSERT_EQ(jllama_chat_completions(strict, chat(data_url).c_str(), &inline_image.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int expected = json::parse(inline_image.str()).at("usage").at("prompt_tokens").get<int>();
+    jllama_model_free(strict);
+
+    jllama_model *open = load(true);
+    ASSERT_NE(open, nullptr);
+    Owned fetched;
+    ASSERT_EQ(jllama_chat_completions(open, chat(url).c_str(), &fetched.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(fetched.str()).at("usage").at("prompt_tokens").get<int>(), expected)
+        << "the fetched image is the inline one";
+    jllama_model_free(open);
+
+    images.stop();
+    listener.join();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(mmproj, ignored);
 }
 
 class CApiVideo : public ::testing::Test {
