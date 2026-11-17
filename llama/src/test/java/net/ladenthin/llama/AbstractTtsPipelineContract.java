@@ -167,7 +167,9 @@ public abstract class AbstractTtsPipelineContract {
                 .loudness(-20.0f)
                 .build();
         try {
-            assertWellFormedAudibleWav(tts.synthesize("Hello.", delivery));
+            // not "Hello.": ZONOS3 ends that within its codebook delay at a faster speed (measured: at 1.25
+            // the 40 frames are silence, at 2.0 there is no audio at all), which says nothing about delivery
+            assertWellFormedAudibleWav(tts.synthesize("Hello, this is a longer sentence to speak.", delivery));
         } catch (InvalidRequestException e) {
             assertTrue(e.getMessage().contains("does not support speed or loudness"), e.getMessage());
         }

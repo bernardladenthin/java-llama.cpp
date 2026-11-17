@@ -834,12 +834,19 @@ inline std::string write_tiny_mmproj_gguf(const std::string &prefix = "jllama-mm
 // convolutions over a 16-bin mel spectrogram, one transformer layer of width 16 over the 1500
 // positions of a 30 s chunk), four frames stacked into one, and the projection to the model's
 // N_EMBD. Loaded with --mmproj it lets the server hear: a clip of up to 30 s is one chunk and 375
-// embeddings, so the model needs a context that holds them. (The stack factor has to divide 1500:
-// llama.cpp counts the embeddings of a chunk before it builds the graph, and the two counts agree
-// only then -- with 8 it expected 187, computed 188 and aborted.) llama.cpp computes the mel filter
+// embeddings, so the model needs a context that holds them. llama.cpp computes the mel filter
 // bank itself; like the model, what the encoder hears is noise.
-inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jllama-mmproj-audio") {
-    constexpr int A_EMBD = 16, A_HEAD = 2, A_FF = 32, A_LAYER = 1, A_MEL = 16, A_POS = 1500, STACK = 4, HIDDEN = 32;
+//
+// a_embd and stack are the two shapes that decide how llama.cpp stacks the 1500 encoder frames of a
+// chunk (measured at b12493, see CApiAudio): with a stack factor that divides 1500 every shape
+// agrees. With one that does not, llama.cpp counts align(3000, stack) / stack / 2 embeddings before
+// it builds the graph, and the graph pads with GGML_PAD, which rounds by bit mask and is right only
+// for a power of two: a stride a_embd * stack that is none (Ultravox v0.5: 1280 * 8) pads less than
+// a row and keeps the count, one that is (16 * 8) pads a whole row more and aborts the process.
+inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jllama-mmproj-audio", int a_embd = 16,
+                                                int stack = 4) {
+    const int A_EMBD = a_embd, STACK = stack;
+    constexpr int A_HEAD = 2, A_FF = 32, A_LAYER = 1, A_MEL = 16, A_POS = 1500, HIDDEN = 32;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
     const std::string path = (std::filesystem::temp_directory_path() /

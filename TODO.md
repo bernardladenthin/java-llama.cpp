@@ -518,11 +518,19 @@ reduced, `0027` and `0028` new.
 joined `models.csv` (feature `decision`, 97 MB, Apache-2.0, decision type `laya`; **not run locally**:
 Hugging Face was not reachable from the sandbox it was added in, so the first Publish run is its
 measurement). `AudioInputIntegrationTest` runs on Ultravox v0.5 / Llama-3.2-1B since 2026-11-17
-(feature `audio`, 2.2 GB; not run locally either, its first Publish run is the measurement).
-And one finding for upstream, not
-filed: an ultravox projector whose stack factor does not divide 1500 aborts the process on the first
-clip ("Invalid number of output tokens", expected 187, got 188) -- whether a real ultravox GGUF
-(stack factor 8) reaches that was not checked.
+(feature `audio`, 2.2 GB; run locally against the pair, 8 of 8 green: typed, streamed, raw prompt
+object, a 35 s clip two chunks, determinism, an image refused).
+And one finding for upstream, not filed, measured at b12493 against the real pair: llama.cpp stacks
+the 1500 encoder frames of a chunk with `build_stack` (`mtmd-graph.cpp`), which pads with `GGML_PAD`
+-- a bit-mask rounding that is right only for a power of two -- and counts the embeddings first as
+`align(3000, stack) / stack / 2`. Ultravox v0.5 (stack 8, stride 1280 * 8 = 10240) gets 187 per chunk
+from both, and drops the last 4 frames (80 ms) Python's `StackAudioFrames` keeps (188). A projector
+whose stride is a power of two (a Whisper encoder 512 or 1024 wide, stack 8) gets 188 from the graph
+and aborts the process with "Invalid number of output tokens". Guards:
+`CApiAudio.AStackFactorThatDoesNotDivideTheFramesKeepsUpstreamsCount` and
+`AStackStrideThatIsAPowerOfTwoAbortsTheProcess`, the second a death test that turns red once
+upstream fixes it. A local patch (count and pad both `ceil(1500 / stack)`) would add one embedding per
+chunk for Ultravox v0.5 and was not made.
 
 **From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
 in the request fields, their limits or the response keys.

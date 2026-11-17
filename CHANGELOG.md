@@ -206,7 +206,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   scales of NVFP4 and FP8 checkpoints are applied, on a dense, a mixture-of-experts, a recurrent and a
   Qwen3-Next model (whose delta net ignored the scale of its output projection before #32393).
   `AudioInputIntegrationTest` runs in CI now, on Ultravox v0.5 over Llama-3.2-1B (`models.csv` feature
-  `audio`, 2.2 GB); it skipped itself everywhere before, for want of an audio model in the set.
+  `audio`, 2.2 GB); it skipped itself everywhere before, for want of an audio model in the set. It
+  covers the typed and streamed chat, the raw prompt object, a 35 s clip as two Whisper chunks,
+  determinism, and an image refused by the audio-only projector. Comparing the real pair with the C++
+  suite's generated projector found an upstream defect: llama.cpp drops the last 80 ms of every 30 s
+  chunk of Ultravox v0.5, and aborts the process for an Ultravox projector whose stack stride is a
+  power of two (TODO.md); the C++ suite pins both. The speech contract's delivery case speaks a longer
+  sentence: ZONOS3 ends "Hello." within its codebook delay at a faster speed, which gave silence.
 - **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
   throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a

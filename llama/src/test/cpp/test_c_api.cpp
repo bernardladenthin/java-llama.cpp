@@ -2436,6 +2436,72 @@ TEST(CApiAudio, AClipOfThirtySecondsIsOneChunkAndOneSampleMoreIsTwo) {
     std::filesystem::remove(mmproj, ignored);
 }
 
+namespace {
+// The embeddings a 30 s tone adds to a raw prompt, for a projector of the given encoder width and
+// stack factor; -1 when the request failed.
+int embeddings_of_a_chunk(int a_embd, int stack) {
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-audio-stack";
+    spec.n_ctx_train = 1024;
+    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string mmproj = write_tiny_audio_mmproj_gguf("jllama-mmproj-audio-stack", a_embd, stack);
+    jllama_model *model = load_tiny(path, {"--mmproj", mmproj, "-c", "1024", "-b", "1024", "-ub", "1024"});
+    if (model == nullptr) {
+        return -1;
+    }
+    Owned meta;
+    jllama_model_meta(model, &meta.s);
+    const std::string marker = json::parse(meta.str()).value("media_marker", std::string());
+    const auto evaluated = [&](bool with_clip) {
+        std::vector<float> tone(480000);
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+        }
+        json request = {{"n_predict", 1}, {"temperature", 0}, {"cache_prompt", false}};
+        if (with_clip) {
+            request["prompt"] = {
+                {"prompt_string", "hear " + marker + " now"},
+                {"multimodal_data", json::array({base64_of(jllama_tts::pcm_to_wav16_bytes(tone, 16000))})}};
+        } else {
+            request["prompt"] = "hear  now";
+        }
+        Owned completion;
+        if (jllama_completions(model, request.dump().c_str(), &completion.s) != JLLAMA_STATUS_OK) {
+            return -1;
+        }
+        return json::parse(completion.str()).at("tokens_evaluated").get<int>();
+    };
+    const int text = evaluated(false);
+    const int clip = evaluated(true);
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(mmproj, ignored);
+    return text < 0 || clip < 0 ? -1 : clip - text;
+}
+} // namespace
+
+TEST(CApiAudio, AStackFactorThatDoesNotDivideTheFramesKeepsUpstreamsCount) {
+    // Ultravox v0.5 (CI's audio pair) stacks 8 of the 1500 encoder frames of a 30 s chunk: measured
+    // with the real pair, every chunk is 187 prompt tokens (a 2.6 s and a 35 s clip: 37, 224, 411).
+    // Python's StackAudioFrames pads 1500 to 1504 and gives 188; llama.cpp counts 187 and its graph
+    // keeps 187, dropping the last 4 frames (80 ms), because GGML_PAD rounds a stride that is no power
+    // of two (1280 * 8) by bit mask. An encoder 20 wide has the same property (160) and the same count.
+    EXPECT_EQ(embeddings_of_a_chunk(20, 8), 187);
+    // a stack factor that divides 1500 agrees in every shape
+    EXPECT_EQ(embeddings_of_a_chunk(20, 4), 375);
+    EXPECT_EQ(embeddings_of_a_chunk(16, 4), 375);
+}
+
+TEST(CApiAudio, AStackStrideThatIsAPowerOfTwoAbortsTheProcess) {
+    // The other half of the defect above: with 16 * 8 = 128 GGML_PAD pads a whole row, the graph gives
+    // 188 embeddings, llama.cpp expects 187 and calls GGML_ABORT -- the end of a JVM, for an Ultravox
+    // projector over a Whisper encoder 512 or 1024 wide. Not filed upstream. This test turns red once
+    // llama.cpp counts and builds the same rows; then the count above says which of the two it chose.
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_DEATH(embeddings_of_a_chunk(16, 8), "Invalid number of output tokens");
+}
+
 TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
     // Audio input (llama.cpp discussion #13759): no audio model is in CI's set, so the Java test of
     // it skips itself everywhere. The generator's Whisper-style projector makes the random model
