@@ -3592,6 +3592,237 @@ TEST_F(CApiPocketTts, APackWithoutVoicesSpeaksWithoutOne) {
     jllama_tts_free(tts);
 }
 
+// A random Qwen3-TTS pair (tiny_llama_gguf.hpp), in the layout of CI's real 12Hz-1.7B-Base pair: the
+// backbone samples the first code of a frame from its codec head, the code predictor the other three,
+// code2wav turns them into 1920 samples a frame at 24 kHz. Without a speaker encoder it clones no voice.
+class CApiQwen3Tts : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        backbone() = jllama_test::write_tiny_qwen3tts_gguf();
+        mmproj() = jllama_test::write_tiny_qwen3tts_mmproj_gguf();
+        ASSERT_FALSE(backbone().empty());
+        ASSERT_FALSE(mmproj().empty());
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), mmproj().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(backbone().c_str());
+        std::remove(mmproj().c_str());
+    }
+    static std::string &backbone() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_status speak(const char *text, std::vector<unsigned char> *wav, int max_frames = 10,
+                               unsigned seed = 7, const char *lang = nullptr) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = seed;
+        options.lang = lang;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+    static long frames_of(const std::vector<unsigned char> &wav) {
+        const size_t samples = (wav.size() - 44) / 2;
+        return samples % 1920 == 0 ? static_cast<long>(samples / 1920) : -1;
+    }
+};
+
+TEST_F(CApiQwen3Tts, ASynthesisIsAWavOfWholeFramesAt24kHz) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak("hello world", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(le32(wav, 24), 24000u);
+    EXPECT_EQ(frames_of(wav), 10) << wav.size();
+    EXPECT_EQ(wav[22] | wav[23] << 8, 1) << "mono";
+    std::vector<unsigned char> again;
+    ASSERT_EQ(speak("hello world", &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same audio";
+    std::vector<unsigned char> other;
+    ASSERT_EQ(speak("hello world", &other, 10, 8), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(wav, other) << "the backbone and the code predictor sample";
+}
+
+TEST_F(CApiQwen3Tts, Code2wavDecodesAcrossItsSeventyTwoFrameWindow) {
+    // code2wav decodes 72 frames at a time and carries its convolution and attention state into the
+    // next window: 72 frames are one window, 73 and 150 cross it, and the first 72 frames of a longer
+    // synthesis are the same samples as a synthesis that stops there
+    std::vector<unsigned char> one;
+    std::vector<unsigned char> two;
+    std::vector<unsigned char> three;
+    ASSERT_EQ(speak("hello world", &one, 72), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &two, 73), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &three, 150), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(frames_of(one), 72);
+    EXPECT_EQ(frames_of(two), 73);
+    EXPECT_EQ(frames_of(three), 150);
+    ASSERT_GE(three.size(), one.size());
+    EXPECT_TRUE(std::equal(one.begin() + 44, one.end(), three.begin() + 44))
+        << "the window boundary must not change the samples before it";
+}
+
+TEST_F(CApiQwen3Tts, TheLanguageIsATokenOfThePromptAndAnUnknownOneFails) {
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> english;
+    std::vector<unsigned char> en;
+    std::vector<unsigned char> german;
+    ASSERT_EQ(speak("hello world", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &english, 10, 7, "english"), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &en, 10, 7, "en"), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &german, 10, 7, "de"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(own, english) << "without a language this library sends \"english\"";
+    EXPECT_EQ(en, english) << "llama.cpp maps the code to the name";
+    EXPECT_NE(german, english) << "another <|codec_language_*|> token in the prompt";
+    // a language the vocabulary has no token for fails in set_input; llama.cpp's /tts answers a
+    // server error too (ERROR_TYPE_SERVER), not the request's fault
+    EXPECT_EQ(speak("hello world", nullptr, 10, 7, "klingon"), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(speak("hello world", nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApiQwen3Tts, WithTopKOneTheSeedDoesNotMatter) {
+    // top_k reaches the backbone sampler and the code predictor: 1 makes both greedy
+    const auto greedy = [](unsigned seed, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 10;
+        options.seed = seed;
+        options.top_k = 1;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "hello world", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    std::vector<unsigned char> a;
+    std::vector<unsigned char> b;
+    ASSERT_EQ(greedy(7, &a), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(greedy(8, &b), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(a, b);
+    std::vector<unsigned char> sampled;
+    ASSERT_EQ(speak("hello world", &sampled), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(a, sampled);
+}
+
+TEST_F(CApiQwen3Tts, ItClonesNoVoiceAndATranscriptAloneChangesNothing) {
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "the mmproj has no speaker encoder";
+    char **names = nullptr;
+    size_t count = 7;
+    ASSERT_EQ(jllama_tts_voices(tts(), &names, &count), JLLAMA_STATUS_OK);
+    EXPECT_EQ(count, 0u);
+    jllama_strings_free(names, count);
+    // the transcript of b12491 (#32438) continues a reference; without one it is not used
+    std::vector<unsigned char> own;
+    ASSERT_EQ(speak("hello world", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 10;
+    options.seed = 7;
+    options.speaker_reference_text = "what the reference says";
+    unsigned char *bytes = nullptr;
+    size_t length = 0;
+    ASSERT_EQ(jllama_tts_synthesize_options(tts(), "hello world", &options, &bytes, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(std::vector<unsigned char>(bytes, bytes + length), own);
+    jllama_bytes_free(bytes);
+}
+
+// The same backbone with the speaker encoder in its mmproj, as CI's real pair: it clones a voice from a
+// clip. The clip becomes one row of the prompt (the speaker embedding), so a reference changes the
+// audio of a seed, and two references change it differently.
+TEST(CApiQwen3TtsClone, AReferenceClipClonesTheVoice) {
+    const std::string backbone = jllama_test::write_tiny_qwen3tts_gguf("jllama-qwen3tts-clone");
+    const std::string mmproj = jllama_test::write_tiny_qwen3tts_mmproj_gguf("jllama-qwen3tts-clone-mmproj", true);
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
+    bool supported = false;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts, &supported), JLLAMA_STATUS_OK);
+    EXPECT_TRUE(supported);
+    const auto clip = [](float hz) {
+        std::vector<float> tone(24000);
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.4f * std::sin(2.0f * 3.14159265f * hz * static_cast<float>(i) / 24000.0f);
+        }
+        const std::string path = (std::filesystem::temp_directory_path() /
+                                  ("jllama-qwen3tts-ref-" + std::to_string(static_cast<int>(hz)) + ".wav"))
+                                     .string();
+        const std::vector<uint8_t> wav = jllama_tts::pcm_to_wav16_bytes(tone, 24000);
+        std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(wav.data()), wav.size());
+        return path;
+    };
+    const std::string low = clip(220.0f);
+    const std::string high = clip(880.0f);
+    const auto speak = [&](const char *reference, std::vector<unsigned char> *wav, const char *transcript = nullptr) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        // greedy over 30 frames: a random backbone of two layers moves its sampling distribution only a
+        // little for one more prompt row (measured: the row reaches the prompt, 22 rows instead of 21,
+        // and the seeded draws of top-k 4 stayed the same), while an argmax over 30 frames of four codes
+        // flips as soon as the hidden state moves
+        options.max_frames = 30;
+        options.top_k = 1;
+        options.seed = 7;
+        options.speaker_reference_path = reference;
+        options.speaker_reference_text = transcript;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts, "hello world", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> cloned_low;
+    std::vector<unsigned char> cloned_low_again;
+    std::vector<unsigned char> cloned_high;
+    ASSERT_EQ(speak(nullptr, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(low.c_str(), &cloned_low), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(low.c_str(), &cloned_low_again), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(high.c_str(), &cloned_high), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(cloned_low, own) << "the speaker embedding is a row of the prompt";
+    EXPECT_EQ(cloned_low, cloned_low_again);
+    EXPECT_NE(cloned_low, cloned_high) << "another clip, another speaker embedding";
+    // the transcript (b12491, #32438) needs the reference encoder this mmproj lacks: llama.cpp warns and
+    // clones from the speaker embedding alone
+    std::vector<unsigned char> with_transcript;
+    ASSERT_EQ(speak(low.c_str(), &with_transcript, "what the clip says"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(with_transcript, cloned_low);
+    // a file that is no audio is the request's fault, and the model answers the next one
+    EXPECT_EQ(speak(backbone.c_str(), nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("speaker reference"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(nullptr, nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tts_free(tts);
+    for (const std::string &p : {backbone, mmproj, low, high}) {
+        std::remove(p.c_str());
+    }
+}
+
 // A random ZONOS3 pair (tiny_llama_gguf.hpp), the one speech pipeline with delivery control
 // (llama.cpp b12431, #32020): every synthesis runs the real pipeline -- the condition tokens of the
 // prompt, the codebook heads, the ZAC codec, the iSTFT -- on noise weights, so what is asserted is the
