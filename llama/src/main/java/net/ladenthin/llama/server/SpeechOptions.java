@@ -114,7 +114,8 @@ public final class SpeechOptions {
 
     /**
      * These options with the transcript of the speaker reference (llama.cpp b12453's
-     * {@code speaker_ref_text}), which a model that puts it into its prompt (Fish Audio S2) uses.
+     * {@code speaker_ref_text}), which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) uses to
+     * continue the reference speech; the other models ignore it.
      *
      * @param text the transcript, or {@code null} for none
      * @return a copy of these options with the transcript
@@ -251,7 +252,7 @@ public final class SpeechOptions {
     }
 
     /**
-     * The transcript of the speaker reference (a model that puts it into its prompt, Fish Audio S2).
+     * The transcript of the speaker reference (Fish Audio S2, Qwen3-TTS since b12491).
      *
      * @return the transcript, or {@code null} for none
      */

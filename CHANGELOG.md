@@ -197,6 +197,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12493** (from b12490, 3 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). Qwen3-TTS clones a voice more closely from the transcript of the speaker reference
+  (#32438, its "ICL" mode): `SpeechParameters.speakerReferenceText` / `jllama_tts_options` /
+  `/tts`'s `speaker_ref_text` reach it unchanged. It needs a clip of 30 s or less and an mmproj
+  converted with the reference encoder; an older one, such as CI's, clones from the speaker embedding
+  as before. Also OpenCL and CUDA kernel work.
 - **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
   throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a

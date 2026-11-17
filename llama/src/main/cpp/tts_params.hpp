@@ -125,7 +125,7 @@ struct synthesis_options {
     float repeat_penalty = 1.0f;        ///< repetition penalty of the backbone, 1 = off
     float speed = 1.0f;                 ///< speaking speed relative to the model's pace, > 0
     float loudness = 0.0f;              ///< target loudness in LUFS, < 0; 0 = the model's own
-    std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2), "" for none
+    std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2, Qwen3-TTS), "" for none
     float cfg_scale = 0.0f;             ///< guidance scale of the audio codes, > 0; 0 = the model's own (YuE2)
     int flow_steps = 0;                 ///< flow-matching solver steps, 1..1024; 0 = the model's own (YuE2)
 };

@@ -351,6 +351,13 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12490 to b12493 (2026-11-17)** -- 3 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged. Open, none of it blocking:
+- **Qwen3-TTS's ICL mode** (#32438) is not tested with a reference encoder: CI's mmproj
+  (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF` at `ca27d74`) predates it, and `TtsIntegrationTest` holds the
+  fallback. Moving the pair to a reconverted mmproj flips that test; it then has to assert that the
+  transcript changes the audio.
+
 **From b12480 to b12490 (2026-11-17)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:
 - **The reason of a refused argument parse** (e.g. `--ignore-eos` next to `--grammar`, b12489) reaches

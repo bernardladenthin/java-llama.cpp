@@ -20,7 +20,9 @@ import org.jspecify.annotations.Nullable;
  * model that supports it (Zonos3). Another model refuses a speed other than {@code 1} or a loudness
  * other than {@code 0}, with an {@link net.ladenthin.llama.exception.InvalidRequestException}, as it
  * refuses values out of range. {@code speakerReferenceText} (b12453) is the transcript of the speaker
- * reference, which Fish Audio S2 puts into its prompt and the other models ignore. {@code cfgScale} and
+ * reference, which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) clones the voice from
+ * more closely (its "ICL" mode: a clip of 30 s or less and an mmproj with the reference encoder, else
+ * the speaker embedding alone); the other models ignore it. {@code cfgScale} and
  * {@code flowSteps} (b12459) are the guidance and the solver steps of a flow-matching model (YuE2); 0
  * leaves both to the model, and another model refuses any other value. A {@code maxFrames} of 0 or less
  * leaves the frame cap to the model (512 for most; a model that stops by itself names none). The C
@@ -92,8 +94,8 @@ public final class SpeechParameters {
     @Builder.Default
     private final float loudness = MODEL_DEFAULT_LOUDNESS;
 
-    // The transcript of the speaker reference, or null. A model that puts it into its prompt (Fish Audio
-    // S2, llama.cpp b12453) follows the reference's voice more closely; the others ignore it.
+    // The transcript of the speaker reference, or null. Fish Audio S2 (llama.cpp b12453) and Qwen3-TTS
+    // (b12491) follow the reference's voice more closely with it; the others ignore it.
     private final @Nullable String speakerReferenceText;
 
     // Classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.

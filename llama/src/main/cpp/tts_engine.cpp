@@ -238,7 +238,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     inp.prompt = prompt.c_str();
     inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
-    // b12453 (#32330): the reference's transcript, which Fish S2 puts into its prompt; the others ignore it
+    // b12453 (#32330): the reference's transcript, which Fish S2 puts into its prompt and Qwen3-TTS (b12491,
+    // #32438) continues the reference speech from; the others ignore it
     inp.speaker_ref_text = options.speaker_reference_text.empty() ? nullptr : options.speaker_reference_text.c_str();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;

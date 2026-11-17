@@ -608,8 +608,9 @@ typedef struct jllama_tts_options {
     float repeat_penalty;               /**< repetition penalty of the backbone over the generation, 1 = off */
     float speed;    /**< speaking speed relative to the model's pace, > 0 (1 = its own; Zonos3 only) */
     float loudness; /**< target loudness in LUFS, < 0 (0 = the model's own; Zonos3 only) */
-    /** the transcript of the speaker reference, or null: a model that puts it into the prompt (Fish
-     *  Audio S2, b12453) speaks with the reference's voice more closely; the others ignore it */
+    /** the transcript of the speaker reference, or null: Fish Audio S2 (b12453) and Qwen3-TTS (b12491,
+     *  with an mmproj that carries the reference encoder) speak with the reference's voice more
+     *  closely; the others ignore it */
     const char *speaker_reference_text;
     /** classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.
      *  Only a model that supports it (YuE2, b12459); another refuses any other value */
