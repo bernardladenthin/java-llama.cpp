@@ -3402,6 +3402,196 @@ TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
     jllama_bytes_free(nullptr);
 }
 
+// A random Pocket TTS pair (tiny_llama_gguf.hpp), in the layout of CI's real english_2026-04 pair:
+// the T5 Unigram vocabulary with its three control tokens, the flow net, the end-of-speech head and
+// the Mimi decoder. What makes its lengths exact is the end-of-speech head: with a bias of +100 it
+// fires at the first frame, and llama.cpp then speaks 5 more frames for a chunk of up to 6 tokens and
+// 3 for a longer one; with -100 it never fires and a chunk ends at its budget of
+// ceil((tokens / 3 + 2) * 12.5) frames. A frame is 1920 samples (12.5 per second at 24 kHz).
+class CApiPocketTts : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        backbone() = jllama_test::write_tiny_pockettts_gguf();
+        never() = jllama_test::write_tiny_pockettts_mmproj_gguf("jllama-pockettts-never", -100.0f);
+        at_once() = jllama_test::write_tiny_pockettts_mmproj_gguf("jllama-pockettts-at-once", 100.0f);
+        no_voices() = jllama_test::write_tiny_pockettts_mmproj_gguf("jllama-pockettts-no-voices", 100.0f, {});
+        ASSERT_FALSE(backbone().empty());
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), never().c_str(), 0, 2, &budget_tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), at_once().c_str(), 0, 2, &eos_tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(budget_tts());
+        jllama_tts_free(eos_tts());
+        budget_tts() = nullptr;
+        eos_tts() = nullptr;
+        for (const std::string &p : {backbone(), never(), at_once(), no_voices()}) {
+            std::remove(p.c_str());
+        }
+    }
+    static std::string &backbone() {
+        static std::string p;
+        return p;
+    }
+    static std::string &never() {
+        static std::string p;
+        return p;
+    }
+    static std::string &at_once() {
+        static std::string p;
+        return p;
+    }
+    static std::string &no_voices() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&budget_tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_tts_model *&eos_tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_status speak(jllama_tts_model *tts, const char *text, std::vector<unsigned char> *wav,
+                               const char *voice = nullptr, int seed = 7, float temperature = -1.0f) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 0;
+        options.seed = seed;
+        options.voice = voice;
+        if (temperature >= 0.0f) {
+            options.temperature = temperature;
+        }
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts, text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+    // the frames of a 16-bit mono WAV, -1 when its samples are no whole number of frames
+    static long frames_of(const std::vector<unsigned char> &wav) {
+        const size_t samples = (wav.size() - 44) / 2;
+        return samples % 1920 == 0 ? static_cast<long>(samples / 1920) : -1;
+    }
+};
+
+TEST_F(CApiPocketTts, ItsPredefinedVoicesAreListedAndItClonesNone) {
+    char **names = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tts_voices(budget_tts(), &names, &count), JLLAMA_STATUS_OK);
+    ASSERT_EQ(count, 2u);
+    EXPECT_STREQ(names[0], "alba");
+    EXPECT_STREQ(names[1], "marius");
+    jllama_strings_free(names, count);
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(budget_tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "the english pack has no speaker encoder";
+}
+
+TEST_F(CApiPocketTts, ASynthesisIsAWavOfWholeFramesAt24kHz) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(eos_tts(), "Hi.", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(le32(wav, 24), 24000u);
+    EXPECT_EQ(wav[22] | wav[23] << 8, 1) << "mono";
+    EXPECT_EQ(frames_of(wav), 5) << "end of speech at the first frame, 5 frames after it for a short chunk";
+    std::vector<unsigned char> again;
+    ASSERT_EQ(speak(eos_tts(), "Hi.", &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same audio";
+}
+
+TEST_F(CApiPocketTts, ALongerChunkGetsThreeFramesAfterTheEndOfSpeech) {
+    std::vector<unsigned char> wav;
+    // "Hello." is 7 tokens already (the space piece, H, e, l, l, o, .): the pieces are lower case
+    ASSERT_EQ(speak(eos_tts(), "Hello.", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(frames_of(wav), 3) << "more than 6 tokens: 3 frames after the end of speech";
+}
+
+TEST_F(CApiPocketTts, WithoutTheEndOfSpeechAChunkEndsAtItsBudget) {
+    std::vector<unsigned char> short_text;
+    std::vector<unsigned char> long_text;
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &short_text), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "hello world hello world hello world.", &long_text), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const long a = frames_of(short_text);
+    const long b = frames_of(long_text);
+    // "Hi." is 4 tokens (the space piece, H, i, .): ceil((4 / 3 + 2) * 12.5) = 42
+    EXPECT_EQ(a, 42);
+    EXPECT_GT(b, a) << "the budget grows with the text";
+}
+
+TEST_F(CApiPocketTts, ALongTextIsSpokenInChunksOfFiftyTokens) {
+    // 60 sentences of two tokens each: the reference splits after the sentence ends
+    // into chunks of at most 50 tokens, each re-prompted on the voice and ended by its own end of
+    // speech -- 3 frames for a chunk of more than 6 tokens
+    std::string text;
+    for (int i = 0; i < 60; ++i) {
+        text += "a.";
+    }
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(eos_tts(), text.c_str(), &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    // 121 tokens (the space piece, "A", then 60 times "." and "a" pairs): sentences merged greedily
+    // up to 50 tokens give chunks of 49, 50 and 22, three ends of speech of 3 frames each
+    EXPECT_EQ(frames_of(wav), 9);
+}
+
+TEST_F(CApiPocketTts, AVoiceChangesTheAudioAndTheFirstIsTheDefault) {
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> alba;
+    std::vector<unsigned char> marius;
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &alba, "alba"), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &marius, "marius"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(own, alba) << "without a voice the first predefined one speaks";
+    EXPECT_NE(alba, marius);
+    EXPECT_EQ(speak(budget_tts(), "Hi.", nullptr, "nobody"), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("marius"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(budget_tts(), "Hi.", nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApiPocketTts, TheSeedAndTheFlowTemperatureChangeTheAudio) {
+    std::vector<unsigned char> seven;
+    std::vector<unsigned char> eight;
+    std::vector<unsigned char> cold;
+    std::vector<unsigned char> cold_other_seed;
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &seven, nullptr, 7), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &eight, nullptr, 8), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(seven, eight) << "the flow net starts from noise of the seed";
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &cold, nullptr, 7, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &cold_other_seed, nullptr, 8, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(cold, seven) << "a temperature of 0 scales the noise away";
+    EXPECT_EQ(cold, cold_other_seed) << "without noise the seed does not matter";
+}
+
+TEST_F(CApiPocketTts, APackWithoutVoicesSpeaksWithoutOne) {
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone().c_str(), no_voices().c_str(), 0, 2, &tts), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    char **names = nullptr;
+    size_t count = 7;
+    ASSERT_EQ(jllama_tts_voices(tts, &names, &count), JLLAMA_STATUS_OK);
+    EXPECT_EQ(count, 0u);
+    jllama_strings_free(names, count);
+    std::vector<unsigned char> wav;
+    EXPECT_EQ(speak(tts, "Hi.", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(frames_of(wav), 5);
+    // without predefined voices a voice reaches only a "tts" template, which this pack has none of:
+    // the name is not refused but left unused, as upstream's /tts, its realtime route and llama-tts do
+    std::vector<unsigned char> named;
+    EXPECT_EQ(speak(tts, "Hi.", &named, "alba"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(named, wav);
+    jllama_tts_free(tts);
+}
+
 // A random ZONOS3 pair (tiny_llama_gguf.hpp), the one speech pipeline with delivery control
 // (llama.cpp b12431, #32020): every synthesis runs the real pipeline -- the condition tokens of the
 // prompt, the codebook heads, the ZAC codec, the iSTFT -- on noise weights, so what is asserted is the
