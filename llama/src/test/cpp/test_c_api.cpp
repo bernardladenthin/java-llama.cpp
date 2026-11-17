@@ -3823,6 +3823,171 @@ TEST(CApiQwen3TtsClone, AReferenceClipClonesTheVoice) {
     }
 }
 
+// A random LFM3-Audio pair (tiny_llama_gguf.hpp), in the layout of CI's real 2B pair: the "tts"
+// template renders the prompt, the backbone's hidden state seeds three MaskGIT passes of the
+// depthformer over the 12 codebooks, the codec decoder turns each frame into six STFT frames and the
+// host ISTFT into 1920 samples at 24 kHz. A frame with the end-of-audio code in any codebook ends it.
+class CApiLfm3Tts : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        backbone() = jllama_test::write_tiny_lfm3_gguf();
+        mmproj() = jllama_test::write_tiny_lfm3_mmproj_gguf();
+        ASSERT_FALSE(backbone().empty());
+        ASSERT_FALSE(mmproj().empty());
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), mmproj().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(backbone().c_str());
+        std::remove(mmproj().c_str());
+    }
+    static std::string &backbone() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_status speak(const char *text, std::vector<unsigned char> *wav, int max_frames = 10,
+                               unsigned seed = 7, const char *lang = nullptr, const char *voice = nullptr,
+                               float temperature = -1.0f) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = seed;
+        options.lang = lang;
+        options.voice = voice;
+        if (temperature >= 0.0f) {
+            options.temperature = temperature;
+        }
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+};
+
+TEST_F(CApiLfm3Tts, AFrameIs1920SamplesAt24kHzAcrossTheDecoderWindow) {
+    // greedy: the end-of-audio row has the logit 0, which never beats 16 random codes, so the frame cap
+    // decides the length; 31 frames cross the codec decoder's 30-frame window
+    for (int frames : {1, 2, 10, 31}) {
+        std::vector<unsigned char> wav;
+        ASSERT_EQ(speak("hello world", &wav, frames, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(le32(wav, 24), 24000u);
+        EXPECT_EQ(wav[22] | wav[23] << 8, 1) << "mono";
+        EXPECT_EQ((wav.size() - 44) / 2, static_cast<size_t>(frames) * 1920u) << frames;
+    }
+    // the decoder carries its window and the ISTFT its overlap: a frame's samples are final once the
+    // next one is decoded, so 29 frames of a 30-frame and a 31-frame synthesis are the same
+    std::vector<unsigned char> thirty;
+    std::vector<unsigned char> thirty_one;
+    ASSERT_EQ(speak("hello world", &thirty, 30, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &thirty_one, 31, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const size_t settled = 44 + 29u * 1920u * 2u;
+    // (after the header, which carries the length)
+    EXPECT_TRUE(std::equal(thirty.begin() + 44, thirty.begin() + settled, thirty_one.begin() + 44));
+}
+
+TEST_F(CApiLfm3Tts, TheSeedAndTheTemperatureDecideTheCodes) {
+    std::vector<unsigned char> greedy_seven;
+    std::vector<unsigned char> greedy_eight;
+    ASSERT_EQ(speak("hello world", &greedy_seven, 10, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &greedy_eight, 10, 8, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    // the seed also shuffles the order MaskGIT reveals the codebooks in, which greedy codes depend on
+    std::vector<unsigned char> warm_seven;
+    std::vector<unsigned char> warm_seven_again;
+    ASSERT_EQ(speak("hello world", &warm_seven, 10, 7, nullptr, nullptr, 0.3f), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &warm_seven_again, 10, 7, nullptr, nullptr, 0.3f), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(warm_seven, warm_seven_again) << "the same seed gives the same audio";
+    EXPECT_NE(warm_seven, greedy_seven) << "a temperature samples";
+}
+
+TEST_F(CApiLfm3Tts, TheTemplateNamesTheLanguageAndTheVoice) {
+    // the model has the two voices of its template as predefined voices (llama.cpp hardcodes them):
+    // no voice is the first, female; male renders another system turn; another name is refused
+    char **names = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tts_voices(tts(), &names, &count), JLLAMA_STATUS_OK);
+    ASSERT_EQ(count, 2u);
+    EXPECT_STREQ(names[0], "female");
+    EXPECT_STREQ(names[1], "male");
+    jllama_strings_free(names, count);
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> female;
+    std::vector<unsigned char> male;
+    std::vector<unsigned char> german;
+    ASSERT_EQ(speak("hello world", &own, 30, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &female, 30, 7, nullptr, "female", 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &male, 30, 7, nullptr, "male", 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("hello world", &german, 30, 7, "de", nullptr, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(own, female);
+    EXPECT_NE(male, female);
+    EXPECT_NE(german, own) << "another language in the system turn";
+    EXPECT_EQ(speak("hello world", nullptr, 10, 7, nullptr, "robot"), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("male"), std::string::npos) << jllama_last_error();
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported);
+}
+
+TEST(CApiLfm3TtsEnd, TheEndOfAudioAtTheFirstFrameLeavesNoAudio) {
+    const std::string backbone = jllama_test::write_tiny_lfm3_gguf("jllama-lfm3-end");
+    const std::string mmproj = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-end-mmproj", 100.0f);
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 10;
+    options.temperature = 0.0f;
+    unsigned char *bytes = nullptr;
+    size_t length = 0;
+    // an end of audio is no frame: the first one leaves nothing to return, which the engine reports
+    EXPECT_EQ(jllama_tts_synthesize_options(tts, "hello world", &options, &bytes, &length), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("no audio"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(bytes, nullptr);
+    jllama_tts_free(tts);
+    std::remove(backbone.c_str());
+    std::remove(mmproj.c_str());
+}
+
+TEST(CApiLfm3TtsEnd, WithoutItsTtsTemplateTheModelCannotSpeak) {
+    // the pipeline starts in audio only after a prompt ending in <|audio_start|>, which only the
+    // "tts" template writes; the bare text ends in text, and llama.cpp refuses it in set_input
+    const std::string backbone = jllama_test::write_tiny_lfm3_gguf("jllama-lfm3-no-template", false);
+    const std::string mmproj = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-no-template-mmproj");
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 10;
+    unsigned char *bytes = nullptr;
+    size_t length = 0;
+    EXPECT_EQ(jllama_tts_synthesize_options(tts, "hello world", &options, &bytes, &length), JLLAMA_STATUS_ERROR);
+    jllama_tts_free(tts);
+    std::remove(backbone.c_str());
+    std::remove(mmproj.c_str());
+}
+
 // A random ZONOS3 pair (tiny_llama_gguf.hpp), the one speech pipeline with delivery control
 // (llama.cpp b12431, #32020): every synthesis runs the real pipeline -- the condition tokens of the
 // prompt, the codebook heads, the ZAC codec, the iSTFT -- on noise weights, so what is asserted is the
