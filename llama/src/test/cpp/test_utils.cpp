@@ -1529,3 +1529,106 @@ TEST(ContentOnlyParseUtf8, IncompleteTrailingSequence_DroppedNotReplaced) {
     EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xE2\x82")));
     EXPECT_EQ(content, "abc");
 }
+
+// ============================================================
+// Pythonic tool arguments with control characters (upstream #31937, b12480..b12490)
+//
+//   LFM2-style models write a tool call as Python, `[python(code='a<LF>b')]`, and
+//   upstream converts the arguments to JSON (normalize_quotes_to_json). Until #31937
+//   a raw control character inside a quoted argument was copied verbatim, so the
+//   `arguments` string returned to the client was not JSON, and a request that sent
+//   that history back failed. The template is LFM2-8B-A1B's chat template, verbatim
+//   from upstream's models/templates (the one upstream's own test uses).
+// ============================================================
+
+namespace {
+
+constexpr const char *LFM2_TEMPLATE = R"TMPL({{- bos_token -}}
+{%- set system_prompt = "" -%}
+{%- set ns = namespace(system_prompt="") -%}
+{%- if messages[0]["role"] == "system" -%}
+	{%- set ns.system_prompt = messages[0]["content"] -%}
+	{%- set messages = messages[1:] -%}
+{%- endif -%}
+{%- if tools -%}
+	{%- set ns.system_prompt = ns.system_prompt + ("\n" if ns.system_prompt else "") + "List of tools: <|tool_list_start|>[" -%}
+	{%- for tool in tools -%}
+		{%- if tool is not string -%}
+			{%- set tool = tool | tojson -%}
+		{%- endif -%}
+		{%- set ns.system_prompt = ns.system_prompt + tool -%}
+		{%- if not loop.last -%}
+			{%- set ns.system_prompt = ns.system_prompt + ", " -%}
+		{%- endif -%}
+	{%- endfor -%}
+	{%- set ns.system_prompt = ns.system_prompt + "]<|tool_list_end|>" -%}
+{%- endif -%}
+{%- if ns.system_prompt -%}
+	{{- "<|im_start|>system\n" + ns.system_prompt + "<|im_end|>\n" -}}
+{%- endif -%}
+{%- for message in messages -%}
+	{{- "<|im_start|>" + message["role"] + "\n" -}}
+	{%- set content = message["content"] -%}
+	{%- if content is not string -%}
+		{%- set content = content | tojson -%}
+	{%- endif -%}
+	{%- if message["role"] == "tool" -%}
+		{%- set content = "<|tool_response_start|>" + content + "<|tool_response_end|>" -%}
+	{%- endif -%}
+	{{- content + "<|im_end|>\n" -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+	{{- "<|im_start|>assistant\n" -}}
+{%- endif -%}
+)TMPL";
+
+// Parses `output` the way the server parses a finished answer of an LFM2 model that was
+// given the tool `python(code: string)`.
+common_chat_msg parse_lfm2_answer(const std::string &output) {
+    common_chat_templates_ptr tmpls = common_chat_templates_init(nullptr, LFM2_TEMPLATE, "<|startoftext|>");
+    common_chat_tool python;
+    python.name = "python";
+    python.description = "an ipython interpreter";
+    python.parameters = R"({"type":"object","properties":{"code":{"type":"string"}},"required":["code"]})";
+    common_chat_msg user;
+    user.role = "user";
+    user.content = "run it";
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.tools = {python};
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
+    const common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
+    common_chat_parser_params parser_params(params);
+    parser_params.parser = params.parser;
+    return common_chat_parse(common_chat_input(output), /*is_partial=*/false, parser_params);
+}
+
+} // namespace
+
+TEST(PythonicToolArguments, AnEscapedNewlineIsAlreadyValidJson) {
+    // The control of the test below: the same call with the newline written as an escape.
+    const common_chat_msg msg = parse_lfm2_answer("<|tool_call_start|>[python(code='a\\nb')]<|tool_call_end|>");
+    ASSERT_EQ(msg.tool_calls.size(), 1u);
+    EXPECT_EQ(msg.tool_calls[0].name, "python");
+    const json args = json::parse(msg.tool_calls[0].arguments);
+    EXPECT_EQ(args.at("code").get<std::string>(), "a\nb");
+}
+
+TEST(PythonicToolArguments, RawControlCharactersInAQuotedArgumentAreEscapedIntoValidJson) {
+    for (const char *quote : {"'", "\""}) {
+        const std::string raw = std::string("a\nb\tc\rd\x01") + "e";
+        const std::string output =
+            std::string("<|tool_call_start|>[python(code=") + quote + raw + quote + ")]<|tool_call_end|>";
+        const common_chat_msg msg = parse_lfm2_answer(output);
+        ASSERT_EQ(msg.tool_calls.size(), 1u) << "quote " << quote;
+        const std::string &arguments = msg.tool_calls[0].arguments;
+        for (char c : arguments) {
+            EXPECT_GE(static_cast<unsigned char>(c), 0x20u)
+                << "a raw control character reached the arguments: " << arguments;
+        }
+        json args;
+        ASSERT_NO_THROW(args = json::parse(arguments)) << arguments;
+        EXPECT_EQ(args.at("code").get<std::string>(), raw) << "quote " << quote;
+    }
+}

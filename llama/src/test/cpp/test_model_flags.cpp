@@ -222,3 +222,45 @@ TEST(JavaCliEnumContract, EverySamplerConstantNamesASamplerUpstreamKnows) {
     }
     EXPECT_GT(checked, 5);
 }
+
+// ---------------------------------------------------------------------------
+// --tensor-split and --fit-target take one value per device, up to llama_max_devices() (upstream
+// #31435, b12490). Before it the parser refused the last one (`>=`), so a list naming every
+// device the build can address failed the load. ModelParameters.setTensorSplit writes the list.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string one_value_per_device(size_t count) {
+    std::string list;
+    for (size_t i = 0; i < count; ++i) {
+        list += (i > 0 ? "," : "") + std::to_string(i + 1);
+    }
+    return list;
+}
+
+} // namespace
+
+TEST(DeviceLists, ATensorSplitForEveryDeviceIsAcceptedAndOneMoreIsRefused) {
+    const size_t max_devices = llama_max_devices();
+    ASSERT_GT(max_devices, 1u);
+    common_params params;
+    ASSERT_TRUE(server_parser_accepts("--tensor-split", one_value_per_device(max_devices), params));
+    for (size_t i = 0; i < max_devices; ++i) {
+        EXPECT_EQ(params.tensor_split[i], static_cast<float>(i + 1)) << "device " << i;
+    }
+    common_params refused;
+    EXPECT_FALSE(server_parser_accepts("--tensor-split", one_value_per_device(max_devices + 1), refused));
+}
+
+TEST(DeviceLists, AFitTargetForEveryDeviceIsAcceptedAndOneMoreIsRefused) {
+    const size_t max_devices = llama_max_devices();
+    common_params params;
+    ASSERT_TRUE(server_parser_accepts("--fit-target", one_value_per_device(max_devices), params));
+    ASSERT_GE(params.fit_params_target.size(), max_devices);
+    for (size_t i = 0; i < max_devices; ++i) {
+        EXPECT_EQ(params.fit_params_target[i], (i + 1) * 1024 * 1024) << "device " << i;
+    }
+    common_params refused;
+    EXPECT_FALSE(server_parser_accepts("--fit-target", one_value_per_device(max_devices + 1), refused));
+}
