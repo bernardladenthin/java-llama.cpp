@@ -197,6 +197,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12480** (from b12463, 17 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). The WebUI moves to SvelteKit 3 and its built-in service worker (#32463) and compiles
+  the sources of Llama UI, upstream's new design system in `ui/lib/ui` (#32468): `build-webui` and the
+  license check now check out that folder too, and the license texts of the WebUI's npm packages
+  (`llama/legal/natives/webui-npm/`) are generated anew, over the imports of the library's sources as
+  well (357 packages). Minimax-Music3 sings (#32435), and a TTS template can read a model's
+  pronunciation dictionaries (`tts_dict`, #32397, Kokoro); both reach `TextToSpeech` through upstream's
+  helper without a change here and are not tested end to end (no such pair in `models.csv`). Also the
+  output projection scale of Qwen3-Next (#32393) and CUDA, Vulkan, SYCL, OpenCL, Metal and WebGPU
+  kernel fixes.
 - **llama.cpp b12463** (from b12453, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). YuE2-3B sings lyrics (#32369), in **stereo**: the speech engine reads the channel
   count of the model and writes the interleaved samples into a WAV header that says so (until now every

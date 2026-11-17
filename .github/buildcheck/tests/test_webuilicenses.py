@@ -112,6 +112,20 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertIn("1 package(s) the WebUI sources can reach are not in packages.csv (testonly@1.0.0)",
                       problems[0])
 
+    def test_the_llama_ui_sources_next_to_the_app_are_imports_too(self):
+        # b12480: ui/apps/chat compiles ui/lib/ui/src/lib, which imports from the app's node_modules.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        library = Path(self.temp.name) / "ui" / "lib" / "ui" / "src" / "lib"
+        (app / "src").mkdir(parents=True)
+        library.mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (library / "index.ts").write_text("import { t } from 'testonly';\n")
+        (library / "format.spec.ts").write_text("import { x } from 'typesonly';\n")
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
     def test_check_reports_a_listed_file_without_its_section(self):
         self.generated()
         path = self.out / "THIRD-PARTY-LICENSES.txt"

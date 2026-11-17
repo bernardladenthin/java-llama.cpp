@@ -351,6 +351,12 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12463 to b12480 (2026-11-17)** -- 17 upstream commits, pinned by commit (not tagged yet);
+every patch applies unchanged. Open, none of it blocking:
+- **Minimax-Music3** (#32435) and **Kokoro's `tts_dict`** (#32397): new speech pipelines that reach
+  `TextToSpeech` through upstream's helper; no pair of either in `models.csv` and no generator for
+  them, so neither is tested end to end.
+
 **From b12453 to b12463 (2026-11-16)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
 - **YuE2-3B** (#32369): stereo WAV output, `cfgScale` / `flowSteps` and the model's own frame cap are

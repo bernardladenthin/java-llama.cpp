@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b12463**
+Current llama.cpp pinned version: **b12480**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -373,7 +373,7 @@ rejects anything else loudly.
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `aarpoms.py` | `verify-aar-poms.py` (`package-android-aar`, on the poms in mavenLocal) | both AAR poms carry exactly the core's compile-scope dependencies, at its versions and at `compile` (plus the CPU AAR, `type aar`, in the OpenCL one) |
 | `postrelease.py` | `post-release-check.py` (`post-release.yml`, after the release) | the published natives jars against `natives.csv`, their provenance with `patches.sha256` recomputed from the tag, the source archive's stamp and reproducible pack, the AAR invariants and poms, the cache-free tag build (docs/post-release-check.md, checks 3, 8, 9, 13, 14) |
-| `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports; a package npm resolved from a GitHub commit instead of the registry (`llama-brand`, b12316: the logo and favicons, CC BY-NC with a `BRAND-USAGE.md` that permits redistribution with software) is read from GitHub's archive of that commit, and a branch name or another host is refused; `check_reuse` holds `REUSE.toml`'s annotation of `THIRD-PARTY-LICENSES.txt` to the licenses `packages.csv` lists (and each to a text in `LICENSES/`), which `reuse lint` cannot see; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
+| `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports, those of Llama UI's sources in `ui/lib/ui` included (b12480); a package npm resolved from a GitHub commit instead of the registry (`llama-brand`, b12316: the logo and favicons, CC BY-NC with a `BRAND-USAGE.md` that permits redistribution with software) is read from GitHub's archive of that commit, and a branch name or another host is refused; `check_reuse` holds `REUSE.toml`'s annotation of `THIRD-PARTY-LICENSES.txt` to the licenses `packages.csv` lists (and each to a text in `LICENSES/`), which `reuse lint` cannot see; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
 |---|---|---|
@@ -1203,7 +1203,8 @@ Pipeline (`.github/workflows/publish.yml`):
 1. **`build-webui` job** (ubuntu — the *only* job that runs `npm`): resolves the
    pinned `b<nnnn>` tag from `llama/CMakeLists.txt`'s `JLLAMA_GIT_TAG` (checking out
    `JLLAMA_GIT_COMMIT` instead when that is set, see "Upgrading/Downgrading"), sparse-checks-out
-   `ggml-org/llama.cpp@<tag>` `ui/apps/chat` (`tools/ui` until b12453, upstream #32032), runs the upstream Svelte build
+   `ggml-org/llama.cpp@<tag>` `ui/apps/chat` (`tools/ui` until b12453, upstream #32032) and `ui/lib/ui` (Llama UI, whose
+   sources the app compiles since b12480, #32468), runs the upstream Svelte build
    (`npm ci && npm run build`), gzips `dist/` into `dist/_gzip/` (LLAMA_UI_GZIP
    parity), then runs upstream's own **`scripts/ui-assets.cmake`** (a plain `cmake -P`
    script, **no npm and no host executable**) to produce the platform-independent
@@ -1214,7 +1215,7 @@ Pipeline (`.github/workflows/publish.yml`):
    ("pre-built assets in `<UI_SOURCE_DIR>/dist`") over the tree npm just built — no
    second npm run, no Hugging Face download. `LLAMA_UI_GZIP` is upstream's own knob
    and replaced the job's hand-rolled gzip loop. The sparse checkout therefore needs
-   **`scripts` as well as `ui/apps/chat`**. **The completeness guard cannot be a bare
+   **`scripts` as well as `ui/apps/chat` and `ui/lib/ui`**. **The completeness guard cannot be a bare
    `grep LLAMA_UI_HAS_ASSETS`**: `ui.h.in` emits `/* #undef LLAMA_UI_HAS_ASSETS */`
    for an empty table, so that token is present either way and the check passes the
    failure case — the old `embed.cpp` emitted no such line, which is why the naive
@@ -1237,7 +1238,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b12463 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b12480 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/ui/apps/chat && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/ui/apps/chat -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -1277,7 +1278,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12463`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12480`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -2965,7 +2966,7 @@ the parameterized `CApiVocabOnly` case expands to 22 instances and `MoeRepack` t
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12463`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12480`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

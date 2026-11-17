@@ -570,10 +570,12 @@ jobs:
           path: llamacpp-ui
           # ui/apps/chat (tools/ui until b12453, #32032) holds the npm project AND the
           # ui.cpp.in / ui.h.in templates;
-          # scripts/ holds ui-assets.cmake, which consumes them. Both are needed
+          # ui/lib/ui holds Llama UI, whose sources the app compiles since b12480 (#32468);
+          # scripts/ holds ui-assets.cmake, which consumes them. All are needed
           # since upstream #28445 replaced the embed.cpp host tool.
           sparse-checkout: |
             ui/apps/chat
+            ui/lib/ui
             scripts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

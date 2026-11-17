@@ -8,7 +8,8 @@ jar (webui-generated/ui.cpp), and the bundle strips every legal comment. So the 
 llama/legal/natives/webui-npm/, generated from the pinned ui/apps/chat:
 
 - `closure()` -- a static upper bound of the packages the bundle can contain: the bare imports
-  of ui/apps/chat/src (tests, stories and type-only imports left out), closed over the runtime
+  of ui/apps/chat/src and, since b12480, of the Llama UI sources it compiles from ui/lib/ui/src/lib
+  (tests, stories and type-only imports left out), closed over the runtime
   dependencies package-lock.json records. Upper bound on purpose: shipping a text for a package
   that tree-shaking dropped is harmless, missing one is not.
 - `generate()` -- each package's own license/notice files, byte for byte from the tarball
@@ -71,10 +72,22 @@ def lockfile_digest(ui):
     return hashlib.sha256((Path(ui) / "package-lock.json").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
+def source_dirs(ui):
+    """The folders of sources the bundle compiles: the app's src, and Llama UI's next to it.
+
+    Since b12480 (upstream #32468) ui/apps/chat compiles the sources of ui/lib/ui (the package
+    @ggml-org/llama-ui, scripts/llama-ui.js), whose imports resolve from the app's node_modules, so
+    they reach the bundle like the app's own; upstream's scripts/ui-assets.cmake stages that folder
+    next to the app, at ../../lib/ui. Before it, the folder does not exist and the app's src is all.
+    """
+    library = Path(ui).parent.parent / "lib" / "ui" / "src" / "lib"
+    return [Path(ui) / "src"] + ([library] if library.is_dir() else [])
+
+
 def imports(ui):
-    """Bare package names imported by ui/apps/chat/src."""
+    """Bare package names imported by the sources the bundle compiles (source_dirs)."""
     roots = set(IMPLICIT)
-    for folder, _, files in os.walk(Path(ui) / "src"):
+    for folder, _, files in (walk for top in source_dirs(ui) for walk in os.walk(top)):
         for name in files:
             path = (Path(folder) / name).as_posix()
             if (not re.search(r"\.(ts|js|svelte|css|mjs)$", name) or name.endswith(".d.ts")

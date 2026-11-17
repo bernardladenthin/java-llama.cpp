@@ -38,14 +38,18 @@ jobs:
           COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
           echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
           echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
-      - name: Checkout llama.cpp ui/apps/chat at the pinned commit
+      - name: Checkout llama.cpp ui/apps/chat and ui/lib/ui at the pinned commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: ggml-org/llama.cpp
           ref: ${{ steps.tag.outputs.ref }}
           path: llamacpp-ui
-          sparse-checkout: ui/apps/chat
+          # ui/lib/ui: Llama UI, whose sources the app compiles since b12480 (#32468), so its
+          # imports are the bundle's too.
+          sparse-checkout: |
+            ui/apps/chat
+            ui/lib/ui
           sparse-checkout-cone-mode: true
       - name: Check the WebUI license texts against this package-lock.json
         run: python3 .github/webui-licenses.py check llamacpp-ui/ui/apps/chat llama/legal/natives/webui-npm
