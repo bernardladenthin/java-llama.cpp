@@ -815,7 +815,21 @@ inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jll
 // residuals of the architecture (attn_res_score, ffn_res_score, output_res_score). The vocabulary is
 // the GPT-2 byte tokens behind <|unused_0|> <|unused_1|> <|bos|> <|eos|> (ids 0-3, BOS 2, EOS 3, both
 // added to every tokenization), and the condition tokens the pipeline looks up by name.
-inline std::string write_tiny_zonos3_gguf(const std::string &prefix = "jllama-zonos3") {
+// A dictionary of a speech model for the tts template's tts_dict(name, key) (llama.cpp b12480, #32397):
+// written as tokenizer.tts_dict.<name>.keys / .values, both string arrays, the keys sorted by their
+// bytes and each value a JSON document. More values than keys or fewer make the dictionary malformed,
+// which llama.cpp ignores (the template then names an unknown dictionary).
+struct tiny_tts_dict {
+    std::string name;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+
+// tts_template: a "tts" chat template (tokenizer.chat_template.tts), empty for none; dicts: the
+// dictionaries it may look up, listed by name in tokenizer.tts_dicts.
+inline std::string write_tiny_zonos3_gguf(const std::string &prefix = "jllama-zonos3",
+                                          const std::string &tts_template = "",
+                                          const std::vector<tiny_tts_dict> &dicts = {}) {
     constexpr int EMBD = 32, N_HEAD_A = 2, HEAD = 16, FF = 64, GDN_HEADS = 2, GDN_HEAD_DIM = 8, GDN_KERNEL = 4;
     constexpr int D_INNER = GDN_HEADS * GDN_HEAD_DIM;
     static std::atomic<int> counter{0};
@@ -881,6 +895,26 @@ inline std::string write_tiny_zonos3_gguf(const std::string &prefix = "jllama-zo
     gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 3);
     gguf_set_val_bool(g, "tokenizer.ggml.add_bos_token", true);
     gguf_set_val_bool(g, "tokenizer.ggml.add_eos_token", true);
+    if (!tts_template.empty()) {
+        gguf_set_val_str(g, "tokenizer.chat_template.tts", tts_template.c_str());
+    }
+    if (!dicts.empty()) {
+        std::vector<const char *> names;
+        for (const tiny_tts_dict &d : dicts) {
+            names.push_back(d.name.c_str());
+            std::vector<const char *> keys;
+            std::vector<const char *> values;
+            for (const std::string &k : d.keys) {
+                keys.push_back(k.c_str());
+            }
+            for (const std::string &v : d.values) {
+                values.push_back(v.c_str());
+            }
+            gguf_set_arr_str(g, ("tokenizer.tts_dict." + d.name + ".keys").c_str(), keys.data(), keys.size());
+            gguf_set_arr_str(g, ("tokenizer.tts_dict." + d.name + ".values").c_str(), values.data(), values.size());
+        }
+        gguf_set_arr_str(g, "tokenizer.tts_dicts", names.data(), names.size());
+    }
 
     ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
@@ -1010,6 +1044,220 @@ inline std::string write_tiny_zonos3_mmproj_gguf(const std::string &prefix = "jl
     add(w + ".head.out.bias", {SPEC_ROWS}, 0.0f);
     add(w + ".mixer.weight", {3, 2}, -0.1f);
     add(w + ".resample.weight", {736, 735}, -0.01f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The pair of a random MiniMax Music 3 (llama.cpp b12480, #32435): songs from a caption and lyrics,
+// stereo at 44.1 kHz. In the layout upstream's converter writes (conversion/minimax_music3.py), with
+// every free width made small; what llama.cpp fixes stays (the token ids, 128 latent channels in two
+// halves of 64, a vocoder stride of 512, DiT heads of 64).
+//
+// The backbone is a qwen3 with classifier-free guidance (the uncond prompt runs as a second sequence,
+// so common_init doubles the sequences), tied output, and the checkpoint's vocabulary length: the
+// pipeline reads the logits of <|audio_end|> (151670) and of the 16384 semantic codes from 151675 on,
+// and looks for <|im_start|> (151644), <|audio_cfg|> (151654) and <|audio_start|> (151669) by id. The
+// GPT-2 byte tokens are ids 0-255, every other id a placeholder. Its "tts" template renders
+// <|im_start|> text <|audio_start|>, the frame of upstream's template without the caption and lyrics
+// cleanup, which needs a "[Tags]\n...\n[Lyrics]\n..." text.
+inline std::string write_tiny_music3_gguf(const std::string &prefix = "jllama-music3") {
+    constexpr int EMBD = 32, N_HEAD = 2, HEAD = 16, FF = 64, N_VOCAB = 151675 + 16384;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(31);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "qwen3";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 8192);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), 1);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.key_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".attention.value_length").c_str(), HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 10000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-6f);
+    gguf_set_val_bool(g, (a + ".classifier_free_guidance").c_str(), true);
+
+    std::vector<std::string> tokens = byte_tokens();
+    std::vector<int32_t> token_types(tokens.size(), 1);
+    tokens.reserve(N_VOCAB);
+    for (int id = static_cast<int>(tokens.size()); id < N_VOCAB; ++id) {
+        std::string name;
+        int32_t type = 3;
+        if (id == 151644) {
+            name = "<|im_start|>";
+        } else if (id == 151654) {
+            name = "<|audio_cfg|>";
+        } else if (id == 151669) {
+            name = "<|audio_start|>";
+        } else if (id == 151670) {
+            name = "<|audio_end|>";
+        } else if (id >= 151675) {
+            name = "<|audio_code_" + std::to_string(id - 151675) + "|>";
+        } else {
+            name = "<|unused_" + std::to_string(id) + "|>";
+            type = 1;
+        }
+        tokens.push_back(name);
+        token_types.push_back(type);
+    }
+    std::vector<const char *> token_ptrs;
+    token_ptrs.reserve(tokens.size());
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merges[] = {"Ġ Ġ"}; // never applies
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "qwen2");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 151670);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_bos_token", false);
+    gguf_set_val_str(g, "tokenizer.chat_template.tts",
+                     "{{- '<|im_start|>' ~ messages[0]['content'] ~ '<|audio_start|>' -}}");
+
+    ggml_init_params ip = {32u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, N_VOCAB}, 0.1f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {EMBD}, 1.0f);
+    const std::string p = "blk.0.";
+    add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "attn_q.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_k.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_v.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD, EMBD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_q_norm.weight", {HEAD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "attn_k_norm.weight", {HEAD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {EMBD, FF}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {EMBD, FF}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {FF, EMBD}, 0.1f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The mmproj of the backbone above: the RVQ depth decoder (a.gen.code.*: one layer over the backbone
+// hidden and a row per residual code, two residual codebooks of 16 codes, the embeddings of the 16384
+// semantic codes), the condition encoder (a.gen.cond.*: the mix of the depth decoder's three hidden
+// states and a k = 3 conv), the flow-matching DiT (a.gen.flow.*: one layer of one 64-wide head) and the
+// DAC vocoder (a.gen.vae.*: a k = 1 projection from the 64 latent channels of one stereo side, three
+// blocks of stride 8, four channels). The vocoder ends in tanh, so the samples stay in [-1, 1].
+inline std::string write_tiny_music3_mmproj_gguf(const std::string &prefix = "jllama-music3-mmproj") {
+    constexpr int EMBD = 32, N_HEAD = 2, FF = 64, N_CB = 2, N_CODES = 16, N_SEMANTIC = 16384;
+    constexpr int N_COND = 8, N_LATENT = 128, N_IN = 2 * N_LATENT + N_COND, DIT = 64, DIT_FF = 64, FREQ = 8, TIME = 16,
+                  VAE = 4;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(37);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_bool(g, "clip.has_gen_audio_encoder", true);
+    gguf_set_val_str(g, "clip.gen.audio.projector_type", "minimax_music3_gen");
+    gguf_set_val_u32(g, "clip.gen.audio.projection_dim", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.embedding_length", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.feed_forward_length", FF);
+    gguf_set_val_u32(g, "clip.gen.audio.block_count", 1);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", N_HEAD);
+    gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-6f);
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: noise of that magnitude (weights); otherwise every element is value (norms, biases)
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, value < 0 ? -value : 0.0f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    const std::string c = "a.gen.code";
+    add(c + ".blk.0.ln1.weight", {EMBD}, 1.0f);
+    add(c + ".blk.0.attn_q.weight", {EMBD, EMBD}, -0.1f);
+    add(c + ".blk.0.attn_k.weight", {EMBD, EMBD}, -0.1f);
+    add(c + ".blk.0.attn_v.weight", {EMBD, EMBD}, -0.1f);
+    add(c + ".blk.0.attn_out.weight", {EMBD, EMBD}, -0.1f);
+    add(c + ".blk.0.ln2.weight", {EMBD}, 1.0f);
+    add(c + ".blk.0.ffn_gate.weight", {EMBD, FF}, -0.1f);
+    add(c + ".blk.0.ffn_up.weight", {EMBD, FF}, -0.1f);
+    add(c + ".blk.0.ffn_down.weight", {FF, EMBD}, -0.1f);
+    add(c + ".position_embd.weight", {EMBD, N_CB + 1}, -0.1f);
+    add(c + ".post_ln.weight", {EMBD}, 1.0f);
+    add(c + ".proj_in.weight", {EMBD, EMBD}, -0.1f);
+    add(c + ".embd.weight", {EMBD, N_CODES, N_CB}, -0.1f);
+    add(c + ".head.weight", {EMBD, N_CODES, N_CB}, -0.1f);
+    add(c + ".out_embd.weight", {EMBD, N_SEMANTIC}, -0.1f);
+
+    add("a.gen.cond.layer_w", {N_CB + 1}, 1.0f / (N_CB + 1));
+    add("a.gen.cond.proj.weight", {3, EMBD, N_COND}, -0.1f);
+    add("a.gen.cond.proj.bias", {N_COND}, 0.0f);
+
+    const std::string f = "a.gen.flow";
+    add(f + ".time_freq", {FREQ}, -1.0f);
+    add(f + ".time_in.weight", {2 * FREQ, TIME}, -0.1f);
+    add(f + ".time_in.bias", {TIME}, 0.0f);
+    add(f + ".time_out.weight", {TIME, DIT}, -0.1f);
+    add(f + ".time_out.bias", {DIT}, 0.0f);
+    add(f + ".pre.weight", {N_IN, N_IN}, -0.01f);
+    add(f + ".proj_in.weight", {N_IN, DIT}, -0.05f);
+    add(f + ".proj_out.weight", {DIT, N_LATENT}, -0.05f);
+    add(f + ".post.weight", {N_LATENT, N_LATENT}, -0.01f);
+    add(f + ".blk.0.ln1.weight", {DIT}, 1.0f);
+    add(f + ".blk.0.ln1.bias", {DIT}, 0.0f);
+    add(f + ".blk.0.attn_q.weight", {DIT, DIT}, -0.1f);
+    add(f + ".blk.0.attn_k.weight", {DIT, DIT}, -0.1f);
+    add(f + ".blk.0.attn_v.weight", {DIT, DIT}, -0.1f);
+    add(f + ".blk.0.attn_out.weight", {DIT, DIT}, -0.1f);
+    add(f + ".blk.0.ln2.weight", {DIT}, 1.0f);
+    add(f + ".blk.0.ln2.bias", {DIT}, 0.0f);
+    add(f + ".blk.0.ffn_up.weight", {DIT, DIT_FF}, -0.1f);
+    add(f + ".blk.0.ffn_up.bias", {DIT_FF}, 0.0f);
+    add(f + ".blk.0.ffn_gate.weight", {DIT, DIT_FF}, -0.1f);
+    add(f + ".blk.0.ffn_gate.bias", {DIT_FF}, 0.0f);
+    add(f + ".blk.0.ffn_down.weight", {DIT_FF, DIT}, -0.1f);
+    add(f + ".blk.0.ffn_down.bias", {DIT}, 0.0f);
+
+    const std::string v = "a.gen.vae";
+    const auto snake = [&](const std::string &q) {
+        add(q + ".alpha", {VAE}, 1.0f);
+        add(q + ".beta", {VAE}, 0.5f);
+    };
+    add(v + ".in_proj.weight", {1, N_LATENT / 2, VAE}, -0.1f);
+    add(v + ".in_proj.bias", {VAE}, 0.0f);
+    add(v + ".conv_in.weight", {3, VAE, VAE}, -0.3f);
+    add(v + ".conv_in.bias", {VAE}, 0.0f);
+    for (int b = 0; b < 3; ++b) { // strides 8 * 8 * 8 = 512 samples per latent frame
+        const std::string q = v + ".blk." + std::to_string(b);
+        snake(q + ".snake");
+        add(q + ".up.weight", {16, VAE, VAE}, -0.3f);
+        add(q + ".up.bias", {VAE}, 0.0f);
+        for (int r = 0; r < 3; ++r) {
+            const std::string rq = q + ".res." + std::to_string(r);
+            snake(rq + ".snake1");
+            add(rq + ".conv1.weight", {7, VAE, VAE}, -0.1f);
+            add(rq + ".conv1.bias", {VAE}, 0.0f);
+            snake(rq + ".snake2");
+            add(rq + ".conv2.weight", {1, VAE, VAE}, -0.1f);
+            add(rq + ".conv2.bias", {VAE}, 0.0f);
+        }
+    }
+    snake(v + ".post_snake");
+    add(v + ".conv_out.weight", {7, VAE, 1}, -0.3f);
+    add(v + ".conv_out.bias", {1}, 0.0f);
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
     ggml_free(ctx);

@@ -204,7 +204,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`llama/legal/natives/webui-npm/`) are generated anew, over the imports of the library's sources as
   well (357 packages). Minimax-Music3 sings (#32435), and a TTS template can read a model's
   pronunciation dictionaries (`tts_dict`, #32397, Kokoro); both reach `TextToSpeech` through upstream's
-  helper without a change here and are not tested end to end (no such pair in `models.csv`). Also the
+  helper without a change here. The C++ suite's GGUF generator now writes a random MiniMax Music 3 pair
+  (`CApiMusic3`: a stereo song at 44.1 kHz, classifier-free guidance and the flow-matching steps
+  changing it, a long song decoded in two windows), and a ZONOS3 with a `tts` template and dictionaries
+  (`CApiTtsDict`: a word of the dictionary spoken as its entry, a malformed dictionary ignored); further
+  cases hold the saturating integer conversion of the Jinja templates and the `service-worker.js` route
+  of the embedded server without the UI. Not tested with real weights (no such pair in `models.csv`). Also the
   output projection scale of Qwen3-Next (#32393) and CUDA, Vulkan, SYCL, OpenCL, Metal and WebGPU
   kernel fixes.
 - **llama.cpp b12463** (from b12453, 10 upstream commits; pinned by commit, upstream has not tagged

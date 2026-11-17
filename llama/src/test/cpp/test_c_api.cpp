@@ -1294,6 +1294,36 @@ TEST(CApiTemplate, AChatTemplateMayRenderJsonWithSortedKeys) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AnIntegerOutsideItsRangeSaturatesInAChatTemplate) {
+    // Jinja since b12480 (upstream #32397, float_to_int): a float made an integer, and an integer
+    // product, sum or remainder computed through a double, saturate at the int64 limits and make NaN
+    // zero. Before, the plain cast was undefined behaviour outside the range (on x86-64 it gave
+    // INT64_MIN for both directions).
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-jinja-int");
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl =
+        "{%- for message in messages -%}{{ message.content }}{%- endfor -%}"
+        "[{{ 100000000000000000000000.0 | int }}|{{ -100000000000000000000000.0 | int }}|{{ 9223372036854775807 * 2 }}"
+        "|{{ [9223372036854775807, 9223372036854775807] | sum }}|{{ 2.5 | int }}]";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned rendered;
+    EXPECT_EQ(jllama_apply_template(model, R"({"messages":[{"role":"user","content":"x"}]})", &rendered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(rendered.str(), "x[9223372036854775807|-9223372036854775808|9223372036854775807|9223372036854775807|2]");
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTheLevels) {
     // Since b12431 (upstream #32332) the template probe keeps the reasoning_effort levels a template
     // raises on, and the chat parser refuses such a level with an invalid_argument naming the levels
@@ -3202,6 +3232,227 @@ TEST_F(CApiZonos3, GuidanceAndSolverStepsAreRefusedByAModelWithoutThem) {
     EXPECT_NE(std::string(jllama_last_error()).find("cfg_scale or flow_steps"), std::string::npos)
         << jllama_last_error();
     EXPECT_EQ(speak_with(0.0f, 0), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+// A random MiniMax Music 3 pair (tiny_llama_gguf.hpp, llama.cpp b12480, #32435): the first pipeline
+// in the suite whose backbone runs with classifier-free guidance (a second, unconditioned sequence
+// next to the prompt), whose audio comes out of flow matching (an ODE over the latents, solved in
+// cfg_scale and flow_steps) and whose WAV is stereo. On noise weights, so what is asserted is the
+// contract, not the music.
+class CApiMusic3 : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path() = jllama_test::write_tiny_music3_gguf();
+        mmproj_path() = jllama_test::write_tiny_music3_mmproj_gguf();
+        ASSERT_FALSE(model_path().empty());
+        ASSERT_FALSE(mmproj_path().empty());
+        ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(model_path().c_str());
+        std::remove(mmproj_path().c_str());
+    }
+    static std::string &model_path() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj_path() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_status sing(const char *text, float cfg_scale, int flow_steps, std::vector<unsigned char> *wav,
+                              int max_frames = 12) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = 11;
+        options.cfg_scale = cfg_scale;
+        options.flow_steps = flow_steps;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+};
+
+TEST_F(CApiMusic3, ASongIsAStereoWavAt44100Hz) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(sing("la la la", 0.0f, 2, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
+    EXPECT_EQ(le32(wav, 24), 44100u) << "the DAC vocoder's rate";
+    EXPECT_EQ(wav[22] | wav[23] << 8, 2) << "MiniMax Music 3 is stereo (mtmd_gen_audio_info::n_channels)";
+    // 16-bit stereo, and every latent frame is 512 samples per channel
+    const size_t samples = (wav.size() - 44) / 4;
+    EXPECT_EQ(samples % 512, 0u) << samples;
+    EXPECT_GT(samples, 0u);
+    std::vector<unsigned char> again;
+    ASSERT_EQ(sing("la la la", 0.0f, 2, &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same song";
+    std::vector<unsigned char> other;
+    ASSERT_EQ(sing("na na na", 0.0f, 2, &other), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(wav, other) << "another text is another prompt";
+}
+
+TEST_F(CApiMusic3, GuidanceAndSolverStepsAreTakenAndChangeTheSong) {
+    // b12459 passes cfg_scale and flow_steps through; ZONOS3 refuses them, this model takes both.
+    std::vector<unsigned char> own;
+    ASSERT_EQ(sing("la la la", 0.0f, 2, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::vector<unsigned char> stronger;
+    ASSERT_EQ(sing("la la la", 3.0f, 2, &stronger), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, stronger) << "a guidance scale of 3 is not the model's own 1.5";
+    // a scale of 1 runs no unconditioned sequence at all
+    std::vector<unsigned char> unguided;
+    ASSERT_EQ(sing("la la la", 1.0f, 2, &unguided), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, unguided);
+    std::vector<unsigned char> more_steps;
+    ASSERT_EQ(sing("la la la", 0.0f, 5, &more_steps), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, more_steps) << "the ODE solved in 5 steps ends elsewhere than in 2";
+    EXPECT_EQ(own.size(), more_steps.size()) << "the steps change the latents, not their number";
+}
+
+TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
+    std::vector<unsigned char> shorter;
+    std::vector<unsigned char> longer;
+    ASSERT_EQ(sing("la la la", 1.0f, 1, &shorter, 12), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(sing("la la la", 1.0f, 1, &longer, 24), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(longer.size(), shorter.size());
+    // past 200 frames the flow matching runs in windows of 200 every 100 frames, each cropped where
+    // it overlaps its neighbour; the song stays whole latent frames and keeps growing with the frames
+    std::vector<unsigned char> windowed;
+    ASSERT_EQ(sing("la la la", 1.0f, 1, &windowed, 260), JLLAMA_STATUS_OK) << jllama_last_error();
+    // 260 condition rows (the frame before them only moves the backbone past <|audio_start|>), in two
+    // windows: [0, 200) is 689 latent frames and loses its last 258, [100, 260) is 551 and loses its
+    // first 86, so 431 + 465 = 896 latent frames of 512 samples. One window over all 260 rows would be
+    // 895 (260 * 44100 / 24000 * 960 / 512), so the length tells the windows apart.
+    const size_t samples = (windowed.size() - 44) / 4;
+    EXPECT_EQ(samples, 896u * 512u) << samples;
+    EXPECT_GT(windowed.size(), 10 * longer.size()) << windowed.size() << " vs " << longer.size();
+    std::vector<unsigned char> again;
+    ASSERT_EQ(sing("la la la", 1.0f, 1, &again, 260), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(windowed, again) << "the windows start from the tail of the one before, the same each time";
+}
+
+// The tts template of a speech model may look words up in dictionaries the model carries (llama.cpp
+// b12480, #32397: tts_dict(name, key), for Kokoro's pronunciation lexicon; the arrays are read
+// through the new llama_model_meta_arr_n / llama_model_meta_arr_str). The random ZONOS3 with a
+// template that speaks the dictionary's entry for a known text and the text itself otherwise: a
+// looked-up word gives exactly the audio of its entry, an unknown one its own. A dictionary with
+// fewer values than keys is ignored, so a template that names it fails the synthesis by its name.
+class CApiTtsDict : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        const std::string tmpl = "{%- set text = messages[0].content -%}"
+                                 "{%- if text == 'broken' -%}{{ tts_dict('broken', text) }}"
+                                 "{%- else -%}{%- set entry = tts_dict('lex', text) -%}"
+                                 "{{ entry.say if entry else text }}{%- endif -%}";
+        const std::vector<jllama_test::tiny_tts_dict> dicts = {
+            {"lex", {"Hi.", "foo"}, {R"({"say":"Hello."})", R"({"say":"Goodbye."})"}},
+            {"broken", {"a", "b"}, {R"({"say":"x"})"}},
+        };
+        model_path() = jllama_test::write_tiny_zonos3_gguf("jllama-zonos3-dict", tmpl, dicts);
+        mmproj_path() = jllama_test::write_tiny_zonos3_mmproj_gguf();
+        ASSERT_FALSE(model_path().empty());
+        ASSERT_FALSE(mmproj_path().empty());
+        ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(model_path().c_str());
+        std::remove(mmproj_path().c_str());
+    }
+    static std::string &model_path() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj_path() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_status speak(const char *text, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 40;
+        options.seed = 7;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+};
+
+TEST_F(CApiTtsDict, AWordOfTheDictionaryIsSpokenAsItsEntry) {
+    std::vector<unsigned char> looked_up;
+    std::vector<unsigned char> entry;
+    std::vector<unsigned char> other;
+    ASSERT_EQ(speak("Hi.", &looked_up), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("Hello.", &entry), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("Goodbye.", &other), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(looked_up, entry) << "'Hi.' is in the dictionary, its entry says 'Hello.'";
+    EXPECT_NE(entry, other) << "two texts give two prompts, so the comparison above can fail";
+    std::vector<unsigned char> foo;
+    ASSERT_EQ(speak("foo", &foo), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(foo, other) << "the second key, found by the binary search over the sorted keys";
+}
+
+TEST_F(CApiTtsDict, AWordOutsideTheDictionaryIsSpokenAsItIs) {
+    std::vector<unsigned char> unknown;
+    std::vector<unsigned char> entry;
+    ASSERT_EQ(speak("Hello.", &entry), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("Hi", &unknown), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(unknown, entry) << "'Hi' is no key (the key is 'Hi.'), so tts_dict answers none";
+}
+
+TEST_F(CApiTtsDict, AMalformedDictionaryIsIgnoredAndATemplateNamingItFails) {
+    EXPECT_NE(speak("broken", nullptr), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("unknown dictionary 'broken'"), std::string::npos)
+        << jllama_last_error();
+    // the model answers the next request
+    EXPECT_EQ(speak("Hi.", nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApiTtsDict, TheDictionaryArraysAreKeptAndNoOtherArray) {
+    llama_model_params params = llama_model_default_params();
+    params.vocab_only = true;
+    llama_model *model = llama_model_load_from_file(model_path().c_str(), params);
+    ASSERT_NE(model, nullptr);
+    EXPECT_EQ(llama_model_meta_arr_n(model, "tokenizer.tts_dicts"), 2);
+    EXPECT_STREQ(llama_model_meta_arr_str(model, "tokenizer.tts_dicts", 0), "lex");
+    EXPECT_STREQ(llama_model_meta_arr_str(model, "tokenizer.tts_dicts", 1), "broken");
+    EXPECT_EQ(llama_model_meta_arr_str(model, "tokenizer.tts_dicts", 2), nullptr);
+    EXPECT_EQ(llama_model_meta_arr_str(model, "tokenizer.tts_dicts", -1), nullptr);
+    EXPECT_EQ(llama_model_meta_arr_n(model, "tokenizer.tts_dict.lex.keys"), 2);
+    EXPECT_STREQ(llama_model_meta_arr_str(model, "tokenizer.tts_dict.lex.values", 1), R"({"say":"Goodbye."})");
+    EXPECT_EQ(llama_model_meta_arr_n(model, "tokenizer.tts_dict.broken.values"), 1);
+    // only the tts_dict arrays are kept: the vocabulary is an array the model has, and still -1
+    EXPECT_EQ(llama_model_meta_arr_n(model, "tokenizer.ggml.tokens"), -1);
+    EXPECT_EQ(llama_model_meta_arr_n(model, "tokenizer.tts_dict.none.keys"), -1);
+    llama_model_free(model);
 }
 
 TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {

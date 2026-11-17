@@ -354,15 +354,19 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
 **From b12463 to b12480 (2026-11-17)** -- 17 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:
 - **Minimax-Music3** (#32435) and **Kokoro's `tts_dict`** (#32397): new speech pipelines that reach
-  `TextToSpeech` through upstream's helper; no pair of either in `models.csv` and no generator for
-  them, so neither is tested end to end.
+  `TextToSpeech` through upstream's helper. The generator covers both on random weights
+  (`CApiMusic3`, `CApiTtsDict`); with real weights neither is tested -- no pair in `models.csv`, and
+  Kokoro has no pipeline of its own in llama.cpp yet, only the template function.
+- **Qwen3-Next's output projection scale** (#32393, `ssm_out_s`): no generator model for `qwen3next`
+  (a gated delta net with experts), so the scale is not tested here.
 
 **From b12453 to b12463 (2026-11-16)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
 - **YuE2-3B** (#32369): stereo WAV output, `cfgScale` / `flowSteps` and the model's own frame cap are
   passed through every layer and tested with the generator's ZONOS3 pair (mono, both fields refused)
-  and the WAV writer (stereo); no YuE2 pair in `models.csv` and no generator for one, so a stereo
-  synthesis and the two fields' effect are not tested end to end.
+  and the WAV writer (stereo); no YuE2 pair in `models.csv` and no generator for one. Since b12480 a
+  stereo synthesis and the effect of both fields are tested end to end on the generator's MiniMax
+  Music 3 pair (`CApiMusic3`), which takes them the same way; YuE2 itself still is not.
 
 **From b12445 to b12453 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
