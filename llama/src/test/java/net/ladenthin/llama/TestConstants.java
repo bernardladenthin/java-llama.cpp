@@ -198,7 +198,8 @@ public class TestConstants {
     public static final String DEFAULT_DECISION_MODEL_PATH = resolveModelPath("models/tinylaya-for-testing-Q8_0.gguf");
 
     /**
-     * System property holding a path to an audio-input model GGUF (e.g. Ultravox / Qwen2.5-Omni).
+     * System property overriding the audio-input model GGUF ({@link #DEFAULT_AUDIO_MODEL_PATH} when unset;
+     * any Ultravox / Qwen2.5-Omni model works).
      * Consumed by {@code AudioInputIntegrationTest} (llama.cpp discussion #13759). The test self-skips
      * when this, the mmproj, or the audio clip is unset/missing.
      */
@@ -215,6 +216,16 @@ public class TestConstants {
      * {@code ContentPart.audioFile(Path)}.
      */
     public static final String PROP_AUDIO_PATH = LlamaSystemProperties.PREFIX + ".audio.input";
+
+    /**
+     * CI's audio-input model (.github/models.csv, feature {@code audio}): Ultravox v0.5 on Llama-3.2-1B.
+     * The default of {@link #PROP_AUDIO_MODEL_PATH}.
+     */
+    public static final String DEFAULT_AUDIO_MODEL_PATH = resolveModelPath("models/Llama-3.2-1B-Instruct-Q4_K_M.gguf");
+
+    /** The Ultravox projector of {@link #DEFAULT_AUDIO_MODEL_PATH}, the default of {@link #PROP_AUDIO_MMPROJ_PATH}. */
+    public static final String DEFAULT_AUDIO_MMPROJ_PATH =
+            resolveModelPath("models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf");
 
     /**
      * Path used by {@code AudioInputIntegrationTest} when {@link #PROP_AUDIO_PATH} is unset. Points at

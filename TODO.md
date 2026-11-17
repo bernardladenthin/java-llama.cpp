@@ -356,7 +356,9 @@ every patch applies unchanged. Open, none of it blocking:
 - **Qwen3-TTS's ICL mode** (#32438) is not tested with a reference encoder: CI's mmproj
   (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF` at `ca27d74`) predates it, and `TtsIntegrationTest` holds the
   fallback. Moving the pair to a reconverted mmproj flips that test; it then has to assert that the
-  transcript changes the audio.
+  transcript changes the audio. Looked on 2026-11-17: no reconverted mmproj in llama.cpp's format yet
+  (ggml-org's repo is still the August conversion; BricksDisplay's `Qwen3-TTS-12Hz-0.6B-GGUF` is another
+  project's format, `codec-*.gguf`). A new one carries the reference encoder as `a.gen.enc.*` tensors.
 
 **From b12480 to b12490 (2026-11-17)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:
@@ -370,10 +372,11 @@ every patch applies unchanged. Open, none of it blocking:
 - **Minimax-Music3** (#32435) and **Kokoro's `tts_dict`** (#32397): new speech pipelines that reach
   `TextToSpeech` through upstream's helper. The generator covers both on random weights
   (`CApiMusic3`, `CApiTtsDict`); with real weights neither is tested -- no pair in `models.csv`, and
-  Kokoro has no pipeline of its own in llama.cpp yet, only the template function.
-- **Qwen3-Next's output projection scale** (#32393, `ssm_out_s`): covered since 2026-11-17 by the
-  generator's `qwen3next` (`CApiWeightScales`, red with the fix reverted). Still open upstream, and not
-  patched here: the **legacy** delta-net layout (`ssm_in` instead of `attn_qkv` + `attn_gate`) multiplies
+  Kokoro has no pipeline of its own in llama.cpp yet, only the template function. ggml-org publishes
+  `MiniMax-Music3-GGUF` (Q8_0 9.1 GB + mmproj BF16 6.6 GB, licence "other"): too large for every Java
+  test job, so not in the set.
+- **Qwen3-Next's legacy delta-net layout ignores `ssm_in.scale`**, upstream and not patched here: the
+  layout (`ssm_in` instead of `attn_qkv` + `attn_gate`) multiplies
   `ssm_in` without its `ssm_in.scale`, which the generic loader reads (`build_qkvz` in
   `src/models/qwen3next.cpp`). Unreachable for a current conversion, which writes `attn_qkv`; an NVFP4
   or FP8 file in the old layout would be computed with the wrong magnitude.
@@ -384,14 +387,16 @@ every patch applies unchanged, every drop-check read: all still needed. Open, no
   passed through every layer and tested with the generator's ZONOS3 pair (mono, both fields refused)
   and the WAV writer (stereo); no YuE2 pair in `models.csv` and no generator for one. Since b12480 a
   stereo synthesis and the effect of both fields are tested end to end on the generator's MiniMax
-  Music 3 pair (`CApiMusic3`), which takes them the same way; YuE2 itself still is not.
+  Music 3 pair (`CApiMusic3`), which takes them the same way; YuE2 itself still is not. ggml-org's
+  `YuE2-3B-GGUF` is 5.4 GB (Q8_0 + mmproj BF16) and CC-BY-NC-4.0, so not in the set.
 
 **From b12445 to b12453 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
 - **Fish Audio S2** (#32330): the transcript of the speaker reference is passed through every layer
   (`SpeechParameters.speakerReferenceText`, `jllama_tts_options`, `FfmTextToSpeech`, `/tts`'s
   `speaker_ref_text`); no Fish S2 pair in `models.csv` and no generator for one, so only the
-  pass-through and an older header's struct are tested (`CApiZonos3`), not a Fish S2 prompt.
+  pass-through and an older header's struct are tested (`CApiZonos3`), not a Fish S2 prompt. ggml-org's
+  `s2-pro-GGUF` is 6.3 GB (Q8_0 + mmproj BF16), licence "other": not in the set.
 
 **From b12431 to b12445 (2026-11-16)** -- 14 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Nothing open.
@@ -512,8 +517,8 @@ reduced, `0027` and `0028` new.
 `SystemOneIntegrationTest`'s decision half runs in CI since upstream's `tinylaya-for-testing-Q8_0.gguf`
 joined `models.csv` (feature `decision`, 97 MB, Apache-2.0, decision type `laya`; **not run locally**:
 Hugging Face was not reachable from the sandbox it was added in, so the first Publish run is its
-measurement). Open: `AudioInputIntegrationTest` still skips itself everywhere -- an audio pair is
-~1 GB, or the generator's files are written by a build step the Java tests can read. Not decided.
+measurement). `AudioInputIntegrationTest` runs on Ultravox v0.5 / Llama-3.2-1B since 2026-11-17
+(feature `audio`, 2.2 GB; not run locally either, its first Publish run is the measurement).
 And one finding for upstream, not
 filed: an ultravox projector whose stack factor does not divide 1500 aborts the process on the first
 clip ("Invalid number of output tokens", expected 187, got 188) -- whether a real ultravox GGUF

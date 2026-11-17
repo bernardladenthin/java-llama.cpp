@@ -205,6 +205,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   as before. Also OpenCL and CUDA kernel work. The C++ suite now checks that the per-tensor weight
   scales of NVFP4 and FP8 checkpoints are applied, on a dense, a mixture-of-experts, a recurrent and a
   Qwen3-Next model (whose delta net ignored the scale of its output projection before #32393).
+  `AudioInputIntegrationTest` runs in CI now, on Ultravox v0.5 over Llama-3.2-1B (`models.csv` feature
+  `audio`, 2.2 GB); it skipped itself everywhere before, for want of an audio model in the set.
 - **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
   throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a
