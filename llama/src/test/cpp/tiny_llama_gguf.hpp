@@ -159,6 +159,15 @@ struct tiny_model_spec {
     bool cache_scales = false;
     float k_cache_scale = 1.0f;
     float v_cache_scale = 1.0f;
+    // Weight scales (NVFP4's second scale, an FP8 checkpoint's per-tensor scale): an F32 tensor
+    // <matrix>.scale next to a weight matrix, one value ({1}) or one per expert ({n_expert}), by which
+    // llama.cpp multiplies the matrix's product (build_lora_mm). Written next to every matrix that has
+    // one in llama.cpp's generic loader -- attention, feed-forward, experts, shared experts, the
+    // recurrent in/out projections, the output -- when weight_scale is not 0. With
+    // weight_scale_folded the matrices hold their weights times the scale instead and no scale tensor
+    // is written: the same random draws, so the two files are one model written two ways.
+    float weight_scale = 0.0f;
+    bool weight_scale_folded = false;
     // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
     // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
     // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
@@ -198,6 +207,19 @@ struct tiny_model_spec {
         return spec;
     }
 
+    // Qwen3-Next: a gated delta net (layer 0) and gated attention (layer 1), both with a mixture of
+    // experts and a shared expert behind them; the delta net reads its projections from attn_qkv and
+    // attn_gate (the converter's layout, not the legacy ssm_in).
+    static tiny_model_spec qwen3next(const std::string &prefix = "jllama-qwen3next") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "qwen3next";
+        spec.n_head_kv = 2;
+        spec.n_expert = 2;
+        spec.n_expert_used = 1;
+        return spec;
+    }
+
     // A decision model of type "openjev" (see decision_type).
     static tiny_model_spec decision(const std::string &prefix = "jllama-decision") {
         tiny_model_spec spec;
@@ -230,7 +252,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool hy_v3 = spec.arch == "hy_v3";
     const bool cohere2 = spec.arch == "cohere2";
     const bool mamba = spec.arch == "mamba";
+    const bool qwen3next = spec.arch == "qwen3next";
     constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
+    constexpr int GDN_HEADS = 2, GDN_HEAD_DIM = 8, GDN_INNER = GDN_HEADS * GDN_HEAD_DIM;
     const int ssm_inner = 2 * spec.n_embd; // the only expansion factor llama.cpp loads
     const int n_layer_all = spec.n_layer + spec.n_layer_nextn;
     gguf_set_val_str(g, "general.architecture", a.c_str());
@@ -253,6 +277,16 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), static_cast<uint32_t>(ssm_inner));
         gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), SSM_STATE);
         gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), SSM_DT_RANK);
+    }
+    if (qwen3next) {
+        gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+        gguf_set_val_u32(g, (a + ".expert_shared_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+        gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), SSM_CONV);
+        gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), GDN_INNER);
+        gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), GDN_HEAD_DIM);
+        gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), GDN_HEADS);
+        gguf_set_val_u32(g, (a + ".ssm.group_count").c_str(), GDN_HEADS);
+        gguf_set_val_u32(g, (a + ".full_attention_interval").c_str(), 2);
     }
     if (cohere2) {
         gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
@@ -395,6 +429,28 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
 
     ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
+    // a weight matrix with the scale llama.cpp's generic loader reads next to it (see weight_scale)
+    const auto matrix = [&](gguf_context *to, const std::string &name, std::initializer_list<int64_t> ne) {
+        ggml_tensor *t = add_random_tensor(to, ctx, rng, name, ne, 0.1f);
+        if (spec.weight_scale == 0.0f) {
+            return t;
+        }
+        const bool per_expert = name.find("_exps.") != std::string::npos;
+        if (spec.weight_scale_folded) {
+            auto *data = static_cast<float *>(t->data);
+            for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+                data[i] *= spec.weight_scale;
+            }
+            return t;
+        }
+        ggml_tensor *s = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, per_expert ? spec.n_expert : 1);
+        for (int64_t i = 0; i < ggml_nelements(s); ++i) {
+            static_cast<float *>(s->data)[i] = spec.weight_scale;
+        }
+        ggml_set_name(s, (name.substr(0, name.size() - std::string("weight").size()) + "scale").c_str());
+        gguf_add_tensor(to, s);
+        return t;
+    };
     ggml_tensor *token_embd = add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {spec.n_embd}, 1.0f);
     // cohere2 has no output layer of its own: the token embedding is the output
@@ -403,13 +459,25 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     if (!sentencepiece) {
         confine_output_to_ascii(output); // token ids are bytes there; every SentencePiece piece is printable
     }
+    if (!cohere2 && spec.weight_scale != 0.0f) {
+        if (spec.weight_scale_folded) {
+            for (int64_t i = 0; i < ggml_nelements(output); ++i) {
+                static_cast<float *>(output->data)[i] *= spec.weight_scale;
+            }
+        } else {
+            ggml_tensor *s = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+            *static_cast<float *>(s->data) = spec.weight_scale;
+            ggml_set_name(s, "output.scale");
+            gguf_add_tensor(g, s);
+        }
+    }
     gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
     for (int il = 0; il < n_layer_all; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
         gguf_context *to = shard != nullptr && il == spec.n_layer - 1 ? shard : g;
         if (mamba) {
             add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
-            add_random_tensor(to, ctx, rng, p + "ssm_in.weight", {spec.n_embd, 2 * ssm_inner}, 0.1f);
+            matrix(to, p + "ssm_in.weight", {spec.n_embd, 2 * ssm_inner});
             add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {SSM_CONV, ssm_inner}, 0.1f);
             add_random_tensor(to, ctx, rng, p + "ssm_conv1d.bias", {ssm_inner}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ssm_x.weight", {ssm_inner, SSM_DT_RANK + 2 * SSM_STATE}, 0.1f);
@@ -422,7 +490,40 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                 decay[i] = -std::fabs(decay[i]) - 0.1f;
             }
             add_random_tensor(to, ctx, rng, p + "ssm_d", {ssm_inner}, 1.0f);
-            add_random_tensor(to, ctx, rng, p + "ssm_out.weight", {ssm_inner, spec.n_embd}, 0.1f);
+            matrix(to, p + "ssm_out.weight", {ssm_inner, spec.n_embd});
+            continue;
+        }
+        if (qwen3next) {
+            add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "post_attention_norm.weight", {spec.n_embd}, 1.0f);
+            if (il % 2 == 0) { // the gated delta net
+                matrix(to, p + "attn_qkv.weight", {spec.n_embd, 3 * GDN_INNER});
+                matrix(to, p + "attn_gate.weight", {spec.n_embd, GDN_INNER});
+                add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {SSM_CONV, 3 * GDN_INNER}, 0.1f);
+                add_random_tensor(to, ctx, rng, p + "ssm_dt.bias", {GDN_HEADS}, 1.0f);
+                ggml_tensor *ssm_a = add_random_tensor(to, ctx, rng, p + "ssm_a", {GDN_HEADS}, 1.0f);
+                for (int64_t i = 0; i < ggml_nelements(ssm_a); ++i) {
+                    static_cast<float *>(ssm_a->data)[i] = -0.5f; // -A_log.exp(): the state decays
+                }
+                add_random_tensor(to, ctx, rng, p + "ssm_ba.weight", {spec.n_embd, 2 * GDN_HEADS}, 0.1f);
+                add_random_tensor(to, ctx, rng, p + "ssm_norm.weight", {GDN_HEAD_DIM}, 1.0f);
+                matrix(to, p + "ssm_out.weight", {GDN_INNER, spec.n_embd});
+            } else { // attention, the query carrying its output gate
+                matrix(to, p + "attn_q.weight", {spec.n_embd, 2 * spec.n_head * spec.head_dim});
+                matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+                matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+                matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
+                add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {spec.head_dim}, 1.0f);
+                add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
+            }
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, spec.n_expert}, 1.0f);
+            matrix(to, p + "ffn_gate_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert});
+            matrix(to, p + "ffn_down_exps.weight", {spec.n_ff, spec.n_embd, spec.n_expert});
+            matrix(to, p + "ffn_up_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert});
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_inp_shexp.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "ffn_gate_shexp.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_up_shexp.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_down_shexp.weight", {spec.n_ff, spec.n_embd});
             continue;
         }
         if (hy_v3) {
@@ -435,10 +536,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "nextn.hnorm.weight", {spec.n_embd}, 1.0f);
         }
         add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
-        add_random_tensor(to, ctx, rng, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 0.1f);
+        matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim});
+        matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+        matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+        matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
         if (spec.cache_scales) {
             // constants, so the random weights are those of the same model without scales
             for (const auto &scale : {std::pair<const char *, float>{"attn_k.k_scale", spec.k_cache_scale},
@@ -455,14 +556,14 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         if (spec.n_expert > 0) {
             // the router needs spread-out logits, or every token takes the same experts
             add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, spec.n_expert}, 1.0f);
-            add_random_tensor(to, ctx, rng, p + "ffn_gate_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert}, 0.1f);
-            add_random_tensor(to, ctx, rng, p + "ffn_down_exps.weight", {spec.n_ff, spec.n_embd, spec.n_expert}, 0.1f);
-            add_random_tensor(to, ctx, rng, p + "ffn_up_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert}, 0.1f);
+            matrix(to, p + "ffn_gate_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert});
+            matrix(to, p + "ffn_down_exps.weight", {spec.n_ff, spec.n_embd, spec.n_expert});
+            matrix(to, p + "ffn_up_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert});
             continue;
         }
-        add_random_tensor(to, ctx, rng, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_up.weight", {spec.n_embd, spec.n_ff}, 0.1f);
-        add_random_tensor(to, ctx, rng, p + "ffn_down.weight", {spec.n_ff, spec.n_embd}, 0.1f);
+        matrix(to, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff});
+        matrix(to, p + "ffn_up.weight", {spec.n_embd, spec.n_ff});
+        matrix(to, p + "ffn_down.weight", {spec.n_ff, spec.n_embd});
     }
     bool ok = gguf_write_to_file(g, path.c_str(), false);
     if (shard != nullptr) {

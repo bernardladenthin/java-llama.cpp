@@ -202,7 +202,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (#32438, its "ICL" mode): `SpeechParameters.speakerReferenceText` / `jllama_tts_options` /
   `/tts`'s `speaker_ref_text` reach it unchanged. It needs a clip of 30 s or less and an mmproj
   converted with the reference encoder; an older one, such as CI's, clones from the speaker embedding
-  as before. Also OpenCL and CUDA kernel work.
+  as before. Also OpenCL and CUDA kernel work. The C++ suite now checks that the per-tensor weight
+  scales of NVFP4 and FP8 checkpoints are applied, on a dense, a mixture-of-experts, a recurrent and a
+  Qwen3-Next model (whose delta net ignored the scale of its output projection before #32393).
 - **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
   throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a

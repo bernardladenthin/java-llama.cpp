@@ -371,8 +371,12 @@ every patch applies unchanged. Open, none of it blocking:
   `TextToSpeech` through upstream's helper. The generator covers both on random weights
   (`CApiMusic3`, `CApiTtsDict`); with real weights neither is tested -- no pair in `models.csv`, and
   Kokoro has no pipeline of its own in llama.cpp yet, only the template function.
-- **Qwen3-Next's output projection scale** (#32393, `ssm_out_s`): no generator model for `qwen3next`
-  (a gated delta net with experts), so the scale is not tested here.
+- **Qwen3-Next's output projection scale** (#32393, `ssm_out_s`): covered since 2026-11-17 by the
+  generator's `qwen3next` (`CApiWeightScales`, red with the fix reverted). Still open upstream, and not
+  patched here: the **legacy** delta-net layout (`ssm_in` instead of `attn_qkv` + `attn_gate`) multiplies
+  `ssm_in` without its `ssm_in.scale`, which the generic loader reads (`build_qkvz` in
+  `src/models/qwen3next.cpp`). Unreachable for a current conversion, which writes `attn_qkv`; an NVFP4
+  or FP8 file in the old layout would be computed with the wrong magnitude.
 
 **From b12453 to b12463 (2026-11-16)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:

@@ -2040,6 +2040,84 @@ std::string greedy_answer(jllama_model *model, int n_predict = 8) {
 
 } // namespace
 
+namespace {
+
+// What a model answers greedily, with the probabilities of every step: two models that compute the
+// same logits bit for bit answer the same here, and every other difference shows in the numbers.
+json scored_answer(const std::string &path) {
+    jllama_model *model = load_tiny(path, {});
+    EXPECT_NE(model, nullptr) << jllama_last_error();
+    if (model == nullptr) {
+        return json();
+    }
+    const json request = {{"prompt", "Hello there"}, {"n_predict", 6},       {"temperature", 0}, {"n_probs", 3},
+                          {"ignore_eos", true},      {"cache_prompt", false}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    json answer;
+    if (response.s != nullptr) {
+        const json j = json::parse(response.str());
+        answer = {{"content", j.at("content")}, {"probs", j.at("completion_probabilities")}};
+    }
+    jllama_model_free(model);
+    return answer;
+}
+
+// The same model written three ways: without scales, with a <matrix>.scale of 2 next to every weight
+// matrix that has one, and with the weights doubled instead. A factor of 2 is exact in floating
+// point, so (2W)x and 2(Wx) are the same bits: the scaled model must answer exactly like the folded
+// one, and differently from the plain one -- else the scales were not read at all.
+void expect_weight_scales_applied(tiny_model_spec spec) {
+    const std::string prefix = spec.prefix;
+    spec.prefix = prefix + "-plain";
+    const std::string plain = write_tiny_llama_gguf(spec);
+    spec.prefix = prefix + "-scaled";
+    spec.weight_scale = 2.0f;
+    const std::string scaled = write_tiny_llama_gguf(spec);
+    spec.prefix = prefix + "-folded";
+    spec.weight_scale_folded = true;
+    const std::string folded = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(plain.empty());
+    ASSERT_FALSE(scaled.empty());
+    ASSERT_FALSE(folded.empty());
+
+    const json with_scales = scored_answer(scaled);
+    ASSERT_FALSE(with_scales.is_null());
+    EXPECT_EQ(with_scales, scored_answer(folded)) << "a .scale tensor was not applied like the folded weights";
+    EXPECT_NE(with_scales, scored_answer(plain)) << "the scales changed nothing";
+    std::error_code ignored;
+    for (const std::string &path : {plain, scaled, folded}) {
+        std::filesystem::remove(path, ignored);
+    }
+}
+
+} // namespace
+
+TEST(CApiWeightScales, AScaleTensorIsTheSameModelAsTheScaledWeights) {
+    // The per-tensor weight scales of NVFP4 and FP8 checkpoints: llama.cpp loads a <matrix>.scale for
+    // every architecture in one generic pass and multiplies the product of its matrix by it -- but
+    // only where an architecture's graph passes the scale on, which is decided per call site. The
+    // plain decoder (attention, feed-forward, output), the decoder with experts (one scale per expert)
+    // and the recurrent model (its in and out projections).
+    tiny_model_spec dense;
+    dense.prefix = "jllama-c-api-scales-dense";
+    expect_weight_scales_applied(dense);
+    tiny_model_spec moe;
+    moe.prefix = "jllama-c-api-scales-moe";
+    moe.n_expert = 4;
+    moe.n_expert_used = 2;
+    expect_weight_scales_applied(moe);
+    expect_weight_scales_applied(tiny_model_spec::recurrent("jllama-c-api-scales-mamba"));
+}
+
+TEST(CApiWeightScales, QwenNextScalesEveryProjectionOfItsDeltaNet) {
+    // Qwen3-Next's delta net multiplied its output projection without ssm_out.scale until b12493
+    // (#32393), so an NVFP4 or FP8 model computed every recurrent layer with the wrong magnitude and
+    // loaded without a word. The generator's qwen3next has a delta net and an attention layer, both
+    // with experts and a shared expert, and every matrix of them carries a scale.
+    expect_weight_scales_applied(tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next"));
+}
+
 TEST(CApiShard, AnExtraShardInAnotherDirectoryCompletesTheModel) {
     // --shard (llama.cpp b12233, ModelParameters.addShard): an extra GGUF with tensors of the model,
     // wherever it lies. The generator writes the same weights twice, once whole and once with the last
