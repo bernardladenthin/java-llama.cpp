@@ -1875,9 +1875,9 @@ public final class ModelParameters extends CliParameters {
      * expensive.</p>
      *
      * <p>Upstream accepts a positive count or {@code -1} to disable, and <strong>rejects</strong>
-     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, because
-     * upstream's own rejection aborts the whole argv parse and surfaces only as
-     * {@code "Failed to parse model parameters"}, naming neither the flag nor the reason.</p>
+     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, so the
+     * mistake is an exception at the setter, not a refused load ({@code "Failed to parse model
+     * parameters: "} followed by llama.cpp's own message).</p>
      *
      * @param seconds idle seconds before the model is released, or {@code -1} to disable
      * @return this builder

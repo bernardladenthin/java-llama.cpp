@@ -667,8 +667,8 @@ public class ModelParametersTest {
     public void testVideoTimestampIntervalRejectsValuesAboveIntMax() {
         // The upstream field is int64_t but the flag is registered with an int handler, dispatched
         // through std::stoi -- so a larger value throws out_of_range, common_params_parse returns
-        // false, and the caller sees only "Failed to parse model parameters", naming neither the
-        // flag nor the reason.
+        // false, and the load fails long after the setter was called (until patch 0031 with
+        // "Failed to parse model parameters" alone, naming neither the flag nor the reason).
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE + 1L));
@@ -809,8 +809,8 @@ public class ModelParametersTest {
     @Test
     public void testSetSleepIdleSecondsRejectsTheValuesUpstreamRejects() {
         // Upstream's handler throws on 0 and on anything below -1, which aborts the whole argv parse
-        // and reaches the caller only as "Failed to parse model parameters". Reject here instead, so
-        // the message names the flag. This test replaced one that asserted 0 serialises to "0" --
+        // and fails the load (until patch 0031 as "Failed to parse model parameters" alone). Reject
+        // here instead, at the setter. This test replaced one that asserted 0 serialises to "0" --
         // it pinned a value the server cannot accept.
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(0));
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(-2));

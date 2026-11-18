@@ -366,9 +366,11 @@ TEST_F(CApi, AModelLoadedWithIgnoreEosAndAGrammarIsRefused) {
                   JLLAMA_STATUS_OK)
             << constraint;
         EXPECT_EQ(model, nullptr);
-        // upstream's parser prints the reason ("--ignore-eos is not supported with --grammar or
-        // --json-schema") to stderr and answers false, so the load names only the parse
+        // the refusal carries upstream's reason (patches/0031; before it, stderr had it alone)
         EXPECT_NE(std::string(jllama_last_error()).find("Failed to parse model parameters"), std::string::npos)
+            << jllama_last_error();
+        EXPECT_NE(std::string(jllama_last_error()).find("--ignore-eos is not supported with --grammar"),
+                  std::string::npos)
             << jllama_last_error();
         jllama_model_free(model);
     }
@@ -2784,7 +2786,7 @@ TEST(CApiZaya1, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
     // agree up to rounding -- a state written or read at the wrong place does not.
     const std::string path = write_tiny_llama_gguf(tiny_model_spec::zaya1("jllama-c-api-zaya1-ubatch"));
     ASSERT_FALSE(path.empty());
-    const json request = {{"prompt", "Hello there, how are you"},
+    const json request = {{"prompt", "Yellow paint, how are you"},
                           {"n_predict", 6},
                           {"temperature", 0},
                           {"n_probs", 3},
@@ -2812,6 +2814,163 @@ TEST(CApiZaya1, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiZaya1, TheQuantizerKeepsTheRouterAndTheGroupedConvolutionInF32) {
+    // b12521 (#32071): ZAYA1's top-1 router (ffn_router_*) and its grouped convolution kernels
+    // (cca_conv_grp) stay F32 when the model is quantized, every other matrix takes the type asked
+    // for. On the wide model every one of them fits a Q8_0 block, so it is the name that decides; the
+    // quantized model loads and answers.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::zaya1_wide("jllama-c-api-zaya1-quant"));
+    ASSERT_FALSE(path.empty());
+    const std::string out = path + ".q8_0.gguf";
+    ASSERT_EQ(jllama_quantize(path.c_str(), out.c_str(), /*LLAMA_FTYPE_MOSTLY_Q8_0*/ 7, 1, false), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    gguf_init_params params = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(out.c_str(), params);
+    ASSERT_NE(g, nullptr);
+    const auto type_of = [&](const std::string &name) {
+        const int64_t id = gguf_find_tensor(g, name.c_str());
+        EXPECT_GE(id, 0) << name;
+        return id >= 0 ? gguf_get_tensor_type(g, id) : GGML_TYPE_COUNT;
+    };
+    for (const char *name : {"blk.0.attn_q.weight", "blk.0.attn_output.weight", "blk.1.ffn_gate_up_exps.weight",
+                             "blk.1.ffn_down_exps.weight"}) {
+        EXPECT_EQ(type_of(name), GGML_TYPE_Q8_0) << name;
+    }
+    for (const char *name : {"blk.0.cca_conv_grp.weight", "blk.1.cca_conv_grp.weight", "blk.0.ffn_router_fc1.weight",
+                             "blk.0.ffn_router_fc2.weight", "blk.1.ffn_router_out.weight"}) {
+        EXPECT_EQ(type_of(name), GGML_TYPE_F32) << name;
+    }
+    gguf_free(g);
+    jllama_model *model = load_tiny(out, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model, 8).empty());
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(out, ignored);
+}
+
+TEST(CApiZaya1, TwoSlotsAtOnceAnswerAsEachAlone) {
+    // Two requests on two slots are decoded in one batch, each sequence with its own recurrent
+    // state (the convolution's last positions, the delayed value) next to its own KV rows. A state
+    // read from or written to the other sequence's row changes the probabilities of an answer. The
+    // random model's text is the same for both prompts, so it is the probabilities that are compared.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::zaya1("jllama-c-api-zaya1-slots"));
+    ASSERT_FALSE(path.empty());
+    // the same last tokens: what tells the answers apart has to come through the attention and the state
+    const std::vector<std::string> prompts = {"Hello there, how are you", "Yellow paint, how are you"};
+    const auto request = [](const std::string &prompt) {
+        return json{{"prompt", prompt}, {"n_predict", 4},     {"temperature", 0},
+                    {"n_probs", 3},     {"ignore_eos", true}, {"cache_prompt", false}}
+            .dump();
+    };
+    // the log-probabilities of the top tokens of every step
+    const auto logprobs = [](const Owned &response) {
+        std::vector<double> out;
+        const json steps = json::parse(response.str()).at("completion_probabilities");
+        for (size_t s = 0; s < steps.size(); ++s) {
+            const json &top = steps[s].at("top_logprobs");
+            for (size_t t = 0; t < top.size(); ++t) {
+                out.push_back(top[t].at("logprob").get<double>());
+            }
+        }
+        return out;
+    };
+    std::vector<std::vector<double>> alone;
+    {
+        jllama_model *model = load_tiny(path, {"-c", "128"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        for (const std::string &prompt : prompts) {
+            Owned response;
+            ASSERT_EQ(jllama_completions(model, request(prompt).c_str(), &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            alone.push_back(logprobs(response));
+        }
+        jllama_model_free(model);
+    }
+    ASSERT_EQ(alone[0].size(), 12u); // 4 steps of 3
+    ASSERT_EQ(alone[1].size(), 12u);
+    double apart = 0.0;
+    for (size_t i = 0; i < alone[0].size(); ++i) {
+        apart = std::max(apart, std::fabs(alone[0][i] - alone[1][i]));
+    }
+    EXPECT_GT(apart, 1e-3) << "the two prompts are answered with other probabilities";
+
+    jllama_model *model = load_tiny(path, {"-c", "128", "-np", "2"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::vector<Owned> together(prompts.size());
+    std::vector<jllama_status> status(prompts.size(), JLLAMA_STATUS_ERROR);
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < prompts.size(); ++i) {
+        threads.emplace_back(
+            [&, i]() { status[i] = jllama_completions(model, request(prompts[i]).c_str(), &together[i].s); });
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    for (size_t p = 0; p < prompts.size(); ++p) {
+        ASSERT_EQ(status[p], JLLAMA_STATUS_OK) << p;
+        const std::vector<double> got = logprobs(together[p]);
+        ASSERT_EQ(got.size(), alone[p].size()) << p;
+        for (size_t i = 0; i < got.size(); ++i) {
+            EXPECT_NEAR(got[i], alone[p][i], 1e-3) << "prompt " << p << ", value " << i;
+        }
+    }
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiThreads, ALongPromptsEmbeddingLookupGivesTheSameAnswerOnOneAndOnFourThreads) {
+    // Since b12517 (#32514) the CPU backend splits a GET_ROWS of at least 262144 elements over every
+    // thread (it was one). The token embedding lookup of 2100 tokens of width 128 in one batch is
+    // 268800 elements: on four threads each takes a share of the rows, on one thread one takes them
+    // all, and the logits must be the same.
+    tiny_model_spec spec = tiny_model_spec::wide(128, "jllama-c-api-get-rows");
+    spec.n_ctx_train = 4096;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    std::string prompt;
+    for (int i = 0; prompt.size() < 2100; ++i) {
+        prompt += static_cast<char>('a' + (i * 7) % 26);
+        if (i % 9 == 8) {
+            prompt += ' ';
+        }
+    }
+    const json request = {{"prompt", prompt}, {"n_predict", 2},     {"temperature", 0},
+                          {"n_probs", 3},     {"ignore_eos", true}, {"cache_prompt", false}};
+    std::vector<json> answers;
+    for (const char *threads : {"1", "4"}) {
+        const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "4096", "-b",    "4096", "-ub",
+                                               "4096",   "-ngl", "0",  "--no-warmup", "-t",   threads, "-tb",  threads};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *model = nullptr;
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = json::parse(response.str());
+        EXPECT_GE(j.at("timings").at("prompt_n").get<int>(), 2048) << "one batch over the threshold";
+        answers.push_back(j);
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(answers[0].at("content"), answers[1].at("content"));
+    const json &one = answers[0].at("completion_probabilities").at(0).at("top_logprobs");
+    const json &four = answers[1].at("completion_probabilities").at(0).at("top_logprobs");
+    ASSERT_EQ(one.size(), four.size());
+    for (size_t i = 0; i < one.size(); ++i) {
+        EXPECT_EQ(one[i].at("id"), four[i].at("id")) << i;
+        EXPECT_NEAR(one[i].at("logprob").get<double>(), four[i].at("logprob").get<double>(), 1e-4) << i;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiBatchSize, ABatchSizeBelowTwoIsRefusedInsteadOfEndingTheProcess) {
     // The server's load evaluates two tokens in one batch to learn whether the memory can drop part
     // of a sequence (common_context_can_seq_rm). With --batch-size 1 llama.cpp aborted the process in
@@ -2828,6 +2987,41 @@ TEST(CApiBatchSize, ABatchSizeBelowTwoIsRefusedInsteadOfEndingTheProcess) {
     ASSERT_NE(model, nullptr) << jllama_last_error();
     EXPECT_FALSE(greedy_answer(model, 4).empty());
     jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiParseErrors, AChatTemplateThatDoesNotParseIsRefusedWithItsErrorAndTheProcessGoesOn) {
+    // A --chat-template is verified after the arguments are read, and upstream's parse called
+    // exit(1) for that refusal (std::runtime_error, not std::invalid_argument): setChatTemplate()
+    // with a broken template ended the JVM. patches/0031 answers false for it like for any other
+    // refusal and keeps the reason, which the load names. The next load in the process works.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-bad-template");
+    ASSERT_FALSE(path.empty());
+    EXPECT_EQ(load_tiny(path, {"--jinja", "--chat-template", "{% if %}"}), nullptr);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("Failed to parse model parameters"), std::string::npos) << error;
+    EXPECT_NE(error.find("the supplied chat template is not supported"), std::string::npos) << error;
+    EXPECT_EQ(error.find("usage:"), std::string::npos) << "the usage text stays out: " << error;
+    jllama_model *model = load_tiny(path, {"--jinja", "--chat-template", "{{ messages[0].content }}"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiParseErrors, AnArgumentTheParserRefusesIsNamedWithoutTheUsageText) {
+    // an option's handler refusing its value (here a number the option cannot take) is wrapped by
+    // upstream into "error while handling argument ..." plus the option's usage; the load keeps the
+    // first part
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-bad-argument");
+    ASSERT_FALSE(path.empty());
+    EXPECT_EQ(load_tiny(path, {"--ctx-size", "not-a-number"}), nullptr);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("Failed to parse model parameters: error while handling argument \"--ctx-size\""),
+              std::string::npos)
+        << error;
+    EXPECT_EQ(error.find("usage:"), std::string::npos) << error;
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

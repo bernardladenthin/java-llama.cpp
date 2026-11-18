@@ -434,10 +434,10 @@ every patch applies unchanged. Open, none of it blocking:
 
 **From b12480 to b12490 (2026-11-17)** -- 10 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:
-- **The reason of a refused argument parse** (e.g. `--ignore-eos` next to `--grammar`, b12489) reaches
-  stderr only: upstream's `common_params_parse` prints it and answers false, so `jllama_model_load` and
-  `LlamaModel` report "Failed to parse model parameters". Carrying the message needs a hook upstream does
-  not have (or capturing stderr), not done.
+- ~~**The reason of a refused argument parse** (e.g. `--ignore-eos` next to `--grammar`, b12489) reaches
+  stderr only.~~ Done 2026-11-18 with patch `0031` (`common_params_parse_error()`): the load's message
+  carries it. Found on the way: an error that was no invalid argument -- a chat template that does not
+  parse -- made `common_params_parse` call `exit(1)` and end the JVM; the patch answers false there too.
 
 **From b12463 to b12480 (2026-11-17)** -- 17 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:

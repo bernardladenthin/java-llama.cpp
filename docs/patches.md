@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**20 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**21 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -42,6 +42,7 @@ match a binary to this page.
 | 0028 | [`0028-llama-quant-output-reads-utf8.patch`](#0028-llama-quant-output-reads-utf8patch) | llama: write the quantizer's output by its UTF-8 path on Windows | 1 | 2 |
 | 0029 | [`0029-server-media-file-reads-utf8.patch`](#0029-server-media-file-reads-utf8patch) | server: open a file:// media URL by its UTF-8 path on Windows | 1 | 1 |
 | 0030 | [`0030-common-arg-env-reads-utf8.patch`](#0030-common-arg-env-reads-utf8patch) | common: read an option's environment variable as UTF-8 on Windows | 1 | 2 |
+| 0031 | [`0031-common-params-parse-reports-its-error.patch`](#0031-common-params-parse-reports-its-errorpatch) | common: report a refused argument parse instead of ending the process | 2 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -880,4 +881,37 @@ was written: the Windows jobs of CI are its first run there.
 Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
 on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it
 on a Windows job.
+```
+
+## 0031-common-params-parse-reports-its-error.patch
+
+**Files (2):** `common/arg.h`, `common/arg.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common: report a refused argument parse instead of ending the process
+
+common_params_parse() (common/arg.cpp) printed every refusal to stderr and either answered false
+(an std::invalid_argument, as every option handler's error is wrapped) or called exit(1) (any other
+exception). The second covers what is checked after the arguments are read: a --chat-template
+that common_chat_verify_template() refuses throws std::runtime_error, so
+ModelParameters.setChatTemplate() with a template that does not parse ended the JVM with status 1
+(measured with a death test, b12521). And the reason of a refusal reached stderr only, so the C API
+and LlamaModel could only say "Failed to parse model parameters" (TODO.md, b12489: --ignore-eos next
+to --grammar).
+
+The patch answers false for every exception, with the parameters restored as for an invalid
+argument, and keeps the message in a thread-local string, common_params_parse_error(), cleared at
+the start of every parse. --help, --completion-bash, --version, --list-devices and --cache-list
+still exit(0): they are a command line's own requests, not an error.
+
+Guard: CApiParseErrors (test_c_api.cpp) -- a template that does not parse is refused with the
+template's error, and a value --override-kv refuses is named with the option -- and
+CApi.AModelLoadedWithIgnoreEosAndAGrammarIsRefused, which reads upstream's message for --ignore-eos
+next to --grammar; red without the patch (the first ends the test process, the others read only the
+generic message).
+
+Drop-check: drop this patch when common_params_parse() no longer calls exit() for an error and
+hands its reason to the caller.
 ```

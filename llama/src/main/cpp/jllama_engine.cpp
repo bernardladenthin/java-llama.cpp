@@ -328,7 +328,14 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     log_file_claim log_file;
     log_file.opened = argv_sets_log_file(rpc_argv);
     if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
-        throw std::runtime_error("Failed to parse model parameters");
+        // the reason without the usage text upstream appends after a blank line (patches/0031)
+        std::string reason = common_params_parse_error();
+        reason = reason.substr(0, reason.find("\n\n"));
+        while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) {
+            reason.pop_back();
+        }
+        throw std::runtime_error(reason.empty() ? "Failed to parse model parameters"
+                                                : "Failed to parse model parameters: " + reason);
     }
 
     // The server's load probes whether the memory can drop part of a sequence by evaluating two tokens

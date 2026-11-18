@@ -211,7 +211,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   takes the license files below a package's root when its license joins several with AND, so
   llama-brand's CSS (MIT, `css/LICENSE`) and fonts (OFL-1.1, `fonts/OFL.txt`) carry their texts;
   `LICENSES/OFL-1.1.txt` and the REUSE annotation follow. New: `CApiZaya1` (a random ZAYA1 answers,
-  restores a slot, and gives the same answer with the prompt in one batch and one token at a time).
+  restores a slot, gives the same answer with the prompt in one batch and one token at a time and in
+  two slots at once as in each alone -- the last two red with the delayed value head dropped -- and
+  keeps the router and the grouped convolution in F32 when quantized) and `CApiThreads` (the
+  embedding lookup of a 2100-token prompt gives the same answer on one and four threads; red with a
+  broken row split).
 - **A batch size below 2 is refused at load instead of ending the process.** The server evaluates
   two tokens in one batch while it loads (`common_context_can_seq_rm`), and with `--batch-size 1`
   (`ModelParameters.setBatchSize(1)`) llama.cpp aborted there (`GGML_ABORT` in
@@ -567,6 +571,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A chat template llama.cpp cannot parse fails the load instead of ending the process**, and every
+  refused load parameter names its reason. `common_params_parse` called `exit(1)` for any error that
+  was not an invalid argument -- the chat template check of `setChatTemplate` among them -- so the JVM
+  ended with the reason on stderr; for the others it answered `false` and the reason reached stderr
+  only, while the `LlamaException` said "Failed to parse model parameters". Patch `0031` returns
+  `false` there too and keeps the reason (`common_params_parse_error()`), which the load appends:
+  "Failed to parse model parameters: the supplied chat template is not supported: ...", or
+  `error while handling argument "--override-kv": ...` without the usage text
+  (`CApiParseErrors`, `LoadRefusalTest`). The requests of a command line -- `--help`,
+  `--completion-bash`, `--version`, `--list-devices`, `--cache-list` -- still end the process with
+  status 0, as upstream intends; none of them is a `ModelParameters` setter.
 - **A quantized model no longer carries the path of its importance matrix.**
   `LlamaQuantizer` / `jllama_quantize_imatrix` wrote the path they were given into
   `quantize.imatrix.file` (and passed on a path a matrix carried as its dataset), so a published

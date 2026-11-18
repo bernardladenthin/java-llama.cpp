@@ -234,6 +234,16 @@ struct tiny_model_spec {
         return spec;
     }
 
+    // ZAYA1 four times as wide (rows of 128, heads of 32): every matrix a Q8_0 block fits, so the
+    // quantizer decides by name which ones it keeps in F32.
+    static tiny_model_spec zaya1_wide(const std::string &prefix = "jllama-zaya1-wide") {
+        tiny_model_spec spec = zaya1(prefix);
+        spec.n_embd = 128;
+        spec.head_dim = 32;
+        spec.n_ff = 256;
+        return spec;
+    }
+
     // A decision model of type "openjev" (see decision_type).
     static tiny_model_spec decision(const std::string &prefix = "jllama-decision") {
         tiny_model_spec spec;
@@ -269,7 +279,8 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool qwen3next = spec.arch == "qwen3next";
     const bool zaya1 = spec.arch == "zaya1";
     constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
-    constexpr int ZAYA_CONV = 2, ZAYA_ROUTER = 16; // the only kernel llama.cpp's CCA takes
+    constexpr int ZAYA_CONV = 2;         // the only kernel llama.cpp's CCA takes
+    const int ZAYA_ROUTER = spec.n_embd; // the router's hidden width, as upstream's own arch test has it
     constexpr int GDN_HEADS = 2, GDN_HEAD_DIM = 8, GDN_INNER = GDN_HEADS * GDN_HEAD_DIM;
     const int ssm_inner = 2 * spec.n_embd; // the only expansion factor llama.cpp loads
     const int n_layer_all = spec.n_layer + spec.n_layer_nextn;
@@ -522,17 +533,19 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         if (zaya1) {
             const int n_group = spec.n_head + spec.n_head_kv;
             const int n_qk = n_group * spec.head_dim;
+            // the attention and its value heads drawn larger than the other matrices: at 0.1 the
+            // earlier tokens moved the logits by 1e-4, and a test of the state saw only the last token
             add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
-            matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim});
-            matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
-            matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+            add_random_tensor(to, ctx, rng, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim}, 0.5f);
+            add_random_tensor(to, ctx, rng, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 0.5f);
+            add_random_tensor(to, ctx, rng, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {ZAYA_CONV, n_qk}, 0.5f);
             add_random_tensor(to, ctx, rng, p + "ssm_conv1d.bias", {n_qk}, 0.1f);
             add_random_tensor(to, ctx, rng, p + "cca_conv_grp.weight",
                               {spec.head_dim, spec.head_dim, n_group, ZAYA_CONV}, 0.3f);
             add_random_tensor(to, ctx, rng, p + "cca_conv_grp.bias", {n_qk}, 0.1f);
             add_random_tensor(to, ctx, rng, p + "cca_temp.weight", {spec.n_head_kv}, 1.0f);
-            matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "attn_res_scale_hs.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "attn_resid_scale.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "attn_resid_scale.bias", {spec.n_embd}, 0.1f);
