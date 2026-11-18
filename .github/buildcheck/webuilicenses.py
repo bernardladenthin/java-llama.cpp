@@ -40,6 +40,11 @@ from pathlib import Path
 # with software (the WebUI's logo and favicons since b12316); without it the license text alone
 # would read as "not in a commercial distribution".
 LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors|brand-usage)([.-][^/]*)?$", re.I)
+# A license file below the root. Taken only from a package whose package.json joins several licenses
+# with AND: its parts carry their own texts there (llama-brand from npm since b12521: the CSS MIT in
+# css/LICENSE, the fonts OFL-1.1 in fonts/OFL.txt, next to the CC BY-NC marks). A package under one
+# license keeps only its root files; a nested one there belongs to something it vendors or ships aside.
+NESTED_LEGAL = re.compile(r"^[^/]+/(?:[^/]+/)+(licen[cs]e|copying|notice|ofl)([.-][^/]*)?$", re.I)
 # A dependency npm resolved from a GitHub repository at a commit, not from the registry.
 GITHUB_COMMIT = re.compile(r"^git\+(?:ssh://git@|https://)github\.com/([^/]+)/([^/#]+?)(?:\.git)?#([0-9a-f]{40})$")
 # The same dependency as npm writes it since b12387 (upstream #32112): GitHub's archive of the commit.
@@ -163,9 +168,11 @@ def _texts(package, fetch):
     """The package's own legal files from its source archive, or its declared license + author."""
     url = tarball_url(package)
     texts, author = [], ""
+    several = " AND " in (package["license"] or "")
     with tarfile.open(fileobj=io.BytesIO(fetch(url)), mode="r:gz") as archive:
         for member in sorted(archive.getmembers(), key=lambda m: m.name):
-            if member.isfile() and LEGAL.match(member.name):
+            nested = several and NESTED_LEGAL.match(member.name) and "/node_modules/" not in member.name
+            if member.isfile() and (LEGAL.match(member.name) or nested):
                 texts.append((member.name.split("/", 1)[1], archive.extractfile(member).read()))
             elif member.isfile() and member.name.count("/") == 1 and member.name.endswith("/package.json"):
                 meta = json.loads(archive.extractfile(member).read())

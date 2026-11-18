@@ -331,6 +331,14 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         throw std::runtime_error("Failed to parse model parameters");
     }
 
+    // The server's load probes whether the memory can drop part of a sequence by evaluating two tokens
+    // in one batch (common_context_can_seq_rm); with a smaller logical batch llama.cpp aborts the
+    // process there (GGML_ABORT in common_batch::get_sub_batch) -- the JVM, for a Java caller.
+    if (!vocab_only && params.n_batch < 2) {
+        throw std::invalid_argument("--batch-size must be at least 2 (got " + std::to_string(params.n_batch) +
+                                    "): the server evaluates two tokens in one batch when it loads the model");
+    }
+
     // A draft model nobody asks: upstream's speculative types default to none, and the parse above
     // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
     // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the

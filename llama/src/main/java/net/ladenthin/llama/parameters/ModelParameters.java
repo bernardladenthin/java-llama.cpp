@@ -221,7 +221,8 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the logical maximum batch size (default: 0).
+     * Set the logical maximum batch size (default: 0). The model refuses a size below 2 at load: the
+     * server evaluates two tokens in one batch while it loads, and a smaller batch would abort the process.
      *
      * @param batchSize the logical maximum batch size
      * @return this builder

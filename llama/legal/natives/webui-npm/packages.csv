@@ -16,7 +16,7 @@ package,version,license,files,tarball
 @floating-ui/core,1.8.0,MIT,LICENSE,https://registry.npmjs.org/@floating-ui/core/-/core-1.8.0.tgz
 @floating-ui/dom,1.8.0,MIT,LICENSE,https://registry.npmjs.org/@floating-ui/dom/-/dom-1.8.0.tgz
 @floating-ui/utils,0.2.12,MIT,LICENSE,https://registry.npmjs.org/@floating-ui/utils/-/utils-0.2.12.tgz
-@ggml-org/llama-brand,0.1.0,CC-BY-NC-4.0,BRAND-USAGE.md;LICENSE,https://codeload.github.com/ggml-org/llama-brand/tar.gz/f05540643c1ca2a18d732ed6491c839686da9a3a
+@ggml-org/llama-brand,0.1.0,CC-BY-NC-4.0 AND MIT AND OFL-1.1,BRAND-USAGE.md;LICENSE;css/LICENSE;fonts/OFL.txt,https://registry.npmjs.org/@ggml-org/llama-brand/-/llama-brand-0.1.0.tgz
 @hono/node-server,2.1.6,MIT,LICENSE,https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.6.tgz
 @iconify/types,2.0.0,MIT,license.txt,https://registry.npmjs.org/@iconify/types/-/types-2.0.0.tgz
 @iconify/utils,3.1.7,MIT,license.txt,https://registry.npmjs.org/@iconify/utils/-/utils-3.1.7.tgz

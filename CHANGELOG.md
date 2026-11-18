@@ -203,6 +203,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
+  tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
+  convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
+  `GET_ROWS` on all threads (#32514), and the WebUI's `@ggml-org/llama-brand` from npm instead of a
+  GitHub commit (#32544; declared `CC-BY-NC-4.0 AND MIT AND OFL-1.1`). The WebUI license list now
+  takes the license files below a package's root when its license joins several with AND, so
+  llama-brand's CSS (MIT, `css/LICENSE`) and fonts (OFL-1.1, `fonts/OFL.txt`) carry their texts;
+  `LICENSES/OFL-1.1.txt` and the REUSE annotation follow. New: `CApiZaya1` (a random ZAYA1 answers,
+  restores a slot, and gives the same answer with the prompt in one batch and one token at a time).
+- **A batch size below 2 is refused at load instead of ending the process.** The server evaluates
+  two tokens in one batch while it loads (`common_context_can_seq_rm`), and with `--batch-size 1`
+  (`ModelParameters.setBatchSize(1)`) llama.cpp aborted there (`GGML_ABORT` in
+  `common_batch::get_sub_batch`), taking the JVM with it. The load now fails with a
+  `LlamaException` naming the option (`CApiBatchSize`, red without the check).
 - **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
   tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
   `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before

@@ -2732,6 +2732,106 @@ TEST(CApiRecurrent, ARecurrentModelAnswersTheSameFromACachedPromptAndARestoredSl
     std::filesystem::remove_all(dir, ignored);
 }
 
+TEST(CApiZaya1, AZaya1ModelAnswersAndRestoresItsHybridState) {
+    // ZAYA1 (b12517, #32071) keeps two kinds of memory per layer: KV rows for its attention, and a
+    // recurrent state -- the queries and keys of the last positions for its convolution and the
+    // previous token's value for its delayed value head. The server treats it as a hybrid model
+    // (checkpoints, a slot file with both). A random ZAYA1 has to load, answer, answer the same over
+    // the cached prompt, and answer the same from a slot saved, erased and restored.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::zaya1("jllama-c-api-zaya1"));
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-zaya1-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("architecture").get<std::string>(), "zaya1") << meta.str();
+
+    const std::string first = greedy_answer(model, 16);
+    EXPECT_FALSE(first.empty());
+    const std::string second = greedy_answer(model, 16);
+    const std::string third = greedy_answer(model, 16);
+    EXPECT_EQ(second, third); // both over the cached prompt
+
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "zaya1.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json saved_json = json::parse(saved.str());
+    EXPECT_GT(saved_json.at("n_written").get<size_t>(), 0u);
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "zaya1.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json restored_json = json::parse(restored.str());
+    EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
+    EXPECT_EQ(greedy_answer(model, 16), third);
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiZaya1, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
+    // Evaluated whole, the convolution and the delayed value read the previous position from the
+    // batch itself; one token at a time (-ub 1) they read it from the recurrent state the step before
+    // left. Both are the same computation, so the answer and the probabilities of its first token
+    // agree up to rounding -- a state written or read at the wrong place does not.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::zaya1("jllama-c-api-zaya1-ubatch"));
+    ASSERT_FALSE(path.empty());
+    const json request = {{"prompt", "Hello there, how are you"},
+                          {"n_predict", 6},
+                          {"temperature", 0},
+                          {"n_probs", 3},
+                          {"ignore_eos", true},
+                          {"cache_prompt", false}};
+    std::vector<json> answers;
+    for (const std::vector<std::string> extra : {std::vector<std::string>{}, std::vector<std::string>{"-ub", "1"}}) {
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        answers.push_back(json::parse(response.str()));
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(answers[0].at("content"), answers[1].at("content"));
+    const json &batched = answers[0].at("completion_probabilities").at(0).at("top_logprobs");
+    const json &stepped = answers[1].at("completion_probabilities").at(0).at("top_logprobs");
+    ASSERT_EQ(batched.size(), stepped.size());
+    for (size_t i = 0; i < batched.size(); ++i) {
+        EXPECT_EQ(batched[i].at("id"), stepped[i].at("id")) << i;
+        EXPECT_NEAR(batched[i].at("logprob").get<double>(), stepped[i].at("logprob").get<double>(), 1e-3) << i;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiBatchSize, ABatchSizeBelowTwoIsRefusedInsteadOfEndingTheProcess) {
+    // The server's load evaluates two tokens in one batch to learn whether the memory can drop part
+    // of a sequence (common_context_can_seq_rm). With --batch-size 1 llama.cpp aborted the process in
+    // common_batch::get_sub_batch -- a JVM, for setBatchSize(1). The load is refused by name instead,
+    // the process goes on, and a batch of 2 loads and answers.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-batch-size");
+    ASSERT_FALSE(path.empty());
+    for (const char *size : {"1", "0"}) {
+        EXPECT_EQ(load_tiny(path, {"-b", size}), nullptr) << size;
+        EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 2"), std::string::npos)
+            << jllama_last_error();
+    }
+    jllama_model *model = load_tiny(path, {"-b", "2", "-ub", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model, 4).empty());
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 // The request of upstream's own /v1/systemone test: one question of each type.
 const char *const SYSTEMONE_REQUEST = R"({
   "state": "I was charged twice for my order last week and nobody has replied.",

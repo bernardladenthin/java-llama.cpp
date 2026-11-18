@@ -358,6 +358,20 @@ followed on 2026-11-18 (four more cases). Not covered by the generator: the mixe
 audio interleaved), whose switching the random backbone decides; CI's real pair covers it
 (`RealtimeNativeServerIntegrationTest`).
 
+**From b12515 to b12521 (2026-11-18)** -- 6 upstream commits (master; pinned by commit, the number is
+not tagged yet): the ZAYA1 architecture, `GET_ROWS` on all CPU threads, a WebGPU fix, the GGUF reader,
+and the WebUI's `llama-brand` from npm with its CSS (MIT) and fonts (OFL-1.1) declared next to the CC
+BY-NC marks. Every patch unchanged. The license collector takes the nested license files of a package
+under several licenses (llama-brand's, and none else: `pdfjs-dist`'s `cmaps/LICENSE` and `iccs/LICENSE`
+stay out, the package is one Apache-2.0). New: `CApiZaya1`, `CApiBatchSize` (a `--batch-size` below 2
+aborted the process at load, where the probe adds two tokens to a `llama_batch_ext` of the batch's size --
+the type since b11303, #29601, not bisected; now refused by name). Open, none of it blocking:
+- **ZAYA1 with real weights** is not tested: the generator's model has the architecture's shapes at a
+  hundredth of the width; the 8B checkpoint would be ~16 GB as F16.
+- **The batch-size abort is upstream's**: `server_context::load_model()` runs the same probe, so
+  `llama-server -b 1` should end the same way (not run here). Filed nowhere (the rule stands); the
+  check can go once the probe fits its batch.
+
 **From b12506 to b12515 (2026-11-18)** -- 9 upstream commits (master; pinned by commit, the number is
 not tagged yet, so the README's release link answers 404 until it is): a realtime session of the type
 `transcription` takes its prompt (#32507), CUDA's `NORM` + `MUL` fusion (#32454), benchmark-only random

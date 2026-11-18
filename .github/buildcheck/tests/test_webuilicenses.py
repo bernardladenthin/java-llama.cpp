@@ -266,6 +266,32 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/README.md"))
         self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/fonts/OFL.txt"))
 
+    def test_a_package_under_several_licenses_brings_the_texts_of_its_parts(self):
+        # llama-brand from npm (b12521): "CC-BY-NC-4.0 AND MIT AND OFL-1.1", the CSS's MIT text in
+        # css/LICENSE and the fonts' OFL in fonts/OFL.txt; a package under one license keeps only
+        # its root files (alpha's lib/LICENSE stays out).
+        lock = json.loads((self.ui / "package-lock.json").read_text())
+        lock["packages"]["node_modules/alpha"]["license"] = "CC-BY-NC-4.0 AND MIT AND OFL-1.1"
+        (self.ui / "package-lock.json").write_text(json.dumps(lock))
+        tarballs = {
+            "https://registry.npmjs.org/alpha/-/alpha-1.0.0.tgz": tarball({
+                "LICENSE": "marks license", "css/LICENSE": "css mit", "fonts/OFL.txt": "font ofl",
+                "README.md": "readme", "node_modules/x/LICENSE": "vendored"}),
+            "https://registry.npmjs.org/beta/-/beta-2.0.0.tgz": tarball({"LICENSE": "beta license",
+                                                                         "lib/LICENSE": "beta nested"}),
+            "https://registry.npmjs.org/svelte/-/svelte-5.0.0.tgz": tarball({"LICENSE": "svelte"}),
+        }
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        text = (self.out / "THIRD-PARTY-LICENSES.txt").read_text(encoding="utf-8")
+        for name in ("LICENSE", "css/LICENSE", "fonts/OFL.txt"):
+            self.assertIn(f"alpha@1.0.0 (CC-BY-NC-4.0 AND MIT AND OFL-1.1): {name}\n", text)
+        for content in ("marks license", "css mit", "font ofl"):
+            self.assertIn(content, text)
+        for content in ("readme", "vendored", "beta nested"):
+            self.assertNotIn(content, text)
+        self.assertTrue(webuilicenses.NESTED_LEGAL.match("package/fonts/OFL.txt"))
+        self.assertFalse(webuilicenses.NESTED_LEGAL.match("package/LICENSE"))
+
     def test_declared_ids_leave_the_operators_out(self):
         self.assertEqual(webuilicenses.declared_ids("(MPL-2.0 OR Apache-2.0)"), ["MPL-2.0", "Apache-2.0"])
         self.assertEqual(webuilicenses.declared_ids(""), [])

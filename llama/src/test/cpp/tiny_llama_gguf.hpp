@@ -220,6 +220,20 @@ struct tiny_model_spec {
         return spec;
     }
 
+    // ZAYA1 (Zyphra, b12517): every layer a CCA attention -- the queries and keys of the last two
+    // positions convolved (kernel 2, a recurrent state), the second of the two value heads the previous
+    // token's -- and a mixture of experts behind a router MLP that can also skip the experts (one class
+    // more than experts), with learned residual scales around both. Top-1 routing, 2 kv heads.
+    static tiny_model_spec zaya1(const std::string &prefix = "jllama-zaya1") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "zaya1";
+        spec.n_head_kv = 2;
+        spec.n_expert = 2;
+        spec.n_expert_used = 1;
+        return spec;
+    }
+
     // A decision model of type "openjev" (see decision_type).
     static tiny_model_spec decision(const std::string &prefix = "jllama-decision") {
         tiny_model_spec spec;
@@ -253,7 +267,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool cohere2 = spec.arch == "cohere2";
     const bool mamba = spec.arch == "mamba";
     const bool qwen3next = spec.arch == "qwen3next";
+    const bool zaya1 = spec.arch == "zaya1";
     constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
+    constexpr int ZAYA_CONV = 2, ZAYA_ROUTER = 16; // the only kernel llama.cpp's CCA takes
     constexpr int GDN_HEADS = 2, GDN_HEAD_DIM = 8, GDN_INNER = GDN_HEADS * GDN_HEAD_DIM;
     const int ssm_inner = 2 * spec.n_embd; // the only expansion factor llama.cpp loads
     const int n_layer_all = spec.n_layer + spec.n_layer_nextn;
@@ -287,6 +303,11 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), GDN_HEADS);
         gguf_set_val_u32(g, (a + ".ssm.group_count").c_str(), GDN_HEADS);
         gguf_set_val_u32(g, (a + ".full_attention_interval").c_str(), 2);
+    }
+    if (zaya1) {
+        gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), ZAYA_CONV);
+        gguf_set_val_u32(g, (a + ".router_hidden_size").c_str(), ZAYA_ROUTER);
+        gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
     }
     if (cohere2) {
         gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
@@ -471,6 +492,11 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             gguf_add_tensor(g, s);
         }
     }
+    if (zaya1) {
+        // the token embedding is shifted and scaled before the first layer
+        add_random_tensor(g, ctx, rng, "res_scale_in.weight", {spec.n_embd}, 1.0f);
+        add_random_tensor(g, ctx, rng, "res_scale_in.bias", {spec.n_embd}, 0.1f);
+    }
     gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
     for (int il = 0; il < n_layer_all; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
@@ -491,6 +517,44 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             }
             add_random_tensor(to, ctx, rng, p + "ssm_d", {ssm_inner}, 1.0f);
             matrix(to, p + "ssm_out.weight", {ssm_inner, spec.n_embd});
+            continue;
+        }
+        if (zaya1) {
+            const int n_group = spec.n_head + spec.n_head_kv;
+            const int n_qk = n_group * spec.head_dim;
+            add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim});
+            matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+            matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+            add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {ZAYA_CONV, n_qk}, 0.5f);
+            add_random_tensor(to, ctx, rng, p + "ssm_conv1d.bias", {n_qk}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "cca_conv_grp.weight",
+                              {spec.head_dim, spec.head_dim, n_group, ZAYA_CONV}, 0.3f);
+            add_random_tensor(to, ctx, rng, p + "cca_conv_grp.bias", {n_qk}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "cca_temp.weight", {spec.n_head_kv}, 1.0f);
+            matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "attn_res_scale_hs.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "attn_resid_scale.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "attn_resid_scale.bias", {spec.n_embd}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+            // the router: a projection, the previous layer's state mixed in, an MLP, one class more
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, ZAYA_ROUTER}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.bias", {ZAYA_ROUTER}, 0.1f);
+            if (il > 0) {
+                add_random_tensor(to, ctx, rng, p + "ffn_router_eda.weight", {ZAYA_ROUTER}, 1.0f);
+            }
+            add_random_tensor(to, ctx, rng, p + "ffn_router_norm.weight", {ZAYA_ROUTER}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_router_fc1.weight", {ZAYA_ROUTER, ZAYA_ROUTER}, 0.5f);
+            add_random_tensor(to, ctx, rng, p + "ffn_router_fc1.bias", {ZAYA_ROUTER}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ffn_router_fc2.weight", {ZAYA_ROUTER, ZAYA_ROUTER}, 0.5f);
+            add_random_tensor(to, ctx, rng, p + "ffn_router_fc2.bias", {ZAYA_ROUTER}, 0.1f);
+            add_random_tensor(to, ctx, rng, p + "ffn_router_out.weight", {ZAYA_ROUTER, spec.n_expert + 1}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "exp_probs_b.bias", {spec.n_expert + 1}, 0.1f);
+            matrix(to, p + "ffn_gate_up_exps.weight", {spec.n_embd, 2 * spec.n_ff, spec.n_expert});
+            matrix(to, p + "ffn_down_exps.weight", {spec.n_ff, spec.n_embd, spec.n_expert});
+            add_random_tensor(to, ctx, rng, p + "ffn_res_scale_hs.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.bias", {spec.n_embd}, 0.1f);
             continue;
         }
         if (qwen3next) {
