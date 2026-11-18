@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12522](https://img.shields.io/badge/llama.cpp-%23b12522-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12522)  
+[![llama.cpp b12525](https://img.shields.io/badge/llama.cpp-%23b12525-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12525)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  

@@ -279,6 +279,13 @@ found are fixed, these are what is left)
 - **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
   (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
   and the generator writes no such model.
+- **The `lfm3-d1` decision packing** (b12525, #32553): up to 16 questions of a `/v1/systemone` request
+  in one pass, kept apart in the full-attention mask. No model in `models.csv` has the type, and the
+  generator writes only `openjev` decision models; a generated `lfm3-d1` model on the LFM3 backbone
+  (non-causal, labels A..Z) would be the test.
+- **Upstream's Windows release builds with LLVM 22.1.8** (b12525, #32548, from Chocolatey); the
+  Windows CPU job here takes the image's clang. `patches/0017` keeps either building; following
+  upstream's version would be a decision of its own (sccache, the image's VS-bundled clang 22).
 - **The F32 accumulation** (b12309) needs a context long enough to overflow F16; not tested.
 - **`OriginGuard`** has no browser test (the rules are tested over a socket), and unlike upstream it
   has no page of its own to let a cross-site navigation through.

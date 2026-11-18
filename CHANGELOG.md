@@ -224,6 +224,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12525** (from b12522, 3 upstream commits): a decision model of the `lfm3-d1` type
+  (LiquidAI's d1-2B, d1-Omni-2B) answers up to 16 questions of a `/v1/systemone` request in one pass
+  (#32553), cpp-httplib 0.67.0 (#32563), and upstream's CI moved to LLVM 22.1.8 (#32548), for which it
+  cast the four `_mm_prefetch` calls that `patches/0017` replaces -- around the whole expression, so
+  the prefetch address is still wrong there; the patch was refreshed onto the new lines and keeps
+  the byte offset.
 - **llama.cpp b12522** (from b12521, 1 upstream commit): the CUDA module picks the FP16/BF16
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream

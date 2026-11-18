@@ -371,6 +371,11 @@ disproved. So this patch is ahead of upstream rather than diverging from it: the
 the moment the runner image ships a clang that makes the diagnostic fatal, and until then they
 compile four warnings and a prefetch address that is 18x/34x too far.
 
+At b12525 (#32548, upstream's CI moved to LLVM 22.1.8) upstream took exactly that form:
+`(const char *) (&x[ib] + sizeof(block_q4_0))` on all four calls -- the type half is fixed upstream
+now, the address is still 18x/34x too far. The patch was refreshed onto those lines (only the `-`
+side changed) and keeps both halves through ggml_prefetch_at.
+
 Runnable guard: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
 block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise. That test is red if this
 patch is dropped, and -- the case that matters -- also red if the cast is written around the
