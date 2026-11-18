@@ -4007,6 +4007,280 @@ TEST(CApiLfm3TtsEnd, TheEndOfAudioAtTheFirstFrameLeavesNoAudio) {
     std::remove(mmproj.c_str());
 }
 
+// The audio input half of the LFM3-Audio projector (lfm3a): the same random pair, its mmproj with the
+// encoder as well (write_tiny_lfm3_mmproj_gguf's audio_encoder), loaded as a model that hears. The
+// encoder downsamples the log-mel frames 8x in time, so a clip costs ((((frames + 1) / 2) + 1) / 2 + 1)
+// / 2 embeddings, its frames being the 400-sample windows of a 160-sample hop over the clip padded on
+// the right to a whole hop (mtmd_audio_preprocessor_lfm3a, no centre padding).
+class CApiLfm3Audio : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        backbone() = jllama_test::write_tiny_lfm3_gguf("jllama-lfm3-hear", true, true);
+        mmproj() = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-mmproj", 0.0f, true);
+        ASSERT_FALSE(backbone().empty());
+        ASSERT_FALSE(mmproj().empty());
+        model() = load_tiny(backbone(), {"--mmproj", mmproj(), "-c", "1024", "-b", "1024", "-ub", "1024"});
+        ASSERT_NE(model(), nullptr) << jllama_last_error();
+        Owned meta;
+        ASSERT_EQ(jllama_model_meta(model(), &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        marker() = json::parse(meta.str()).value("media_marker", std::string());
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model());
+        model() = nullptr;
+        std::remove(backbone().c_str());
+        std::remove(mmproj().c_str());
+    }
+    static std::string &backbone() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj() {
+        static std::string p;
+        return p;
+    }
+    static std::string &marker() {
+        static std::string m;
+        return m;
+    }
+    static jllama_model *&model() {
+        static jllama_model *m = nullptr;
+        return m;
+    }
+    static std::string wav_of(size_t samples, float frequency) {
+        std::vector<float> tone(samples);
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * frequency * static_cast<float>(i) / 16000.0f);
+        }
+        return base64_of(jllama_tts::pcm_to_wav16_bytes(tone, 16000));
+    }
+    // the prompt with one clip, greedy, with the top probabilities of the first token
+    static json hear(const std::string &wav, int n_predict = 1) {
+        const json request = {
+            {"prompt", {{"prompt_string", "hear " + marker() + " now"}, {"multimodal_data", json::array({wav})}}},
+            {"n_predict", n_predict},
+            {"temperature", 0},
+            {"n_probs", 5},
+            {"cache_prompt", false}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model(), request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()) : json::object();
+    }
+    static int embeddings_of(size_t samples) {
+        const size_t win = 400, hop = 160;
+        const size_t padded = samples <= win ? win : samples + (hop - (samples - win) % hop) % hop;
+        const int frames = static_cast<int>((padded - win) / hop + 1);
+        return ((((frames + 1) / 2) + 1) / 2 + 1) / 2;
+    }
+};
+
+TEST_F(CApiLfm3Audio, TheModelReportsThatItHears) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model(), &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json m = json::parse(meta.str());
+    EXPECT_TRUE(m.at("modalities").value("audio", false)) << meta.str();
+    EXPECT_FALSE(m.at("modalities").value("vision", true)) << meta.str();
+    EXPECT_FALSE(marker().empty());
+}
+
+TEST_F(CApiLfm3Audio, AClipCostsItsFramesDownsampledEightTimes) {
+    Owned text_only;
+    ASSERT_EQ(jllama_completions(model(), R"({"prompt":"hear  now","n_predict":1,"temperature":0})", &text_only.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(text_only.str()).at("tokens_evaluated").get<int>();
+    // 0.025 s is one window, 0.5 s 49 frames, 3 s 299 frames: 38 positions, more than the sliding
+    // window of the attention layer, and the conv and window states of the stream are crossed
+    for (const size_t samples : {size_t{400}, size_t{8000}, size_t{16000}, size_t{48000}}) {
+        const json answer = hear(wav_of(samples, 440.0f));
+        EXPECT_EQ(answer.value("tokens_evaluated", -1), text_tokens + embeddings_of(samples))
+            << samples << " samples: " << answer.dump();
+    }
+    EXPECT_EQ(embeddings_of(8000), 7);
+    EXPECT_EQ(embeddings_of(48000), 38);
+}
+
+TEST_F(CApiLfm3Audio, TheSameClipIsHeardTheSameAndAnotherDifferently) {
+    const json a = hear(wav_of(16000, 440.0f));
+    const json again = hear(wav_of(16000, 440.0f));
+    const json other = hear(wav_of(16000, 1500.0f));
+    ASSERT_TRUE(a.contains("completion_probabilities")) << a.dump();
+    const json probs = a.at("completion_probabilities");
+    EXPECT_EQ(again.at("completion_probabilities"), probs);
+    EXPECT_NE(other.at("completion_probabilities"), probs)
+        << "the encoder's output reaches the backbone, so another tone gives other probabilities";
+}
+
+TEST_F(CApiLfm3Audio, AnImageIsRefusedByAProjectorThatOnlyHears) {
+    const json request = {{"prompt",
+                           {{"prompt_string", "see " + marker() + " now"},
+                            {"multimodal_data", json::array({jllama_test::TINY_PNG_BASE64})}}},
+                          {"n_predict", 1}};
+    Owned response;
+    EXPECT_NE(jllama_completions(model(), request.dump().c_str(), &response.s), JLLAMA_STATUS_OK);
+    // and the model hears the next clip
+    EXPECT_GT(hear(wav_of(8000, 440.0f)).value("tokens_evaluated", -1), 0);
+}
+
+TEST_F(CApiLfm3Audio, TheEncoderInTheSameFileLeavesTheSpeechAsItWas) {
+    // the real mmproj holds both halves; the speech pipeline reads the generator's tensors only, and
+    // the generator writes them before the encoder's, from the same random sequence
+    const std::string speak_only = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-speak");
+    const auto speak = [&](const std::string &projector, std::vector<unsigned char> *wav) {
+        jllama_tts_model *tts = nullptr;
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), projector.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 10;
+        options.seed = 7;
+        options.temperature = 0.0f;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        ASSERT_EQ(jllama_tts_synthesize_options(tts, "hello world", &options, &bytes, &length), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        wav->assign(bytes, bytes + length);
+        jllama_bytes_free(bytes);
+        jllama_tts_free(tts);
+    };
+    std::vector<unsigned char> both;
+    std::vector<unsigned char> alone;
+    speak(mmproj(), &both);
+    speak(speak_only, &alone);
+    EXPECT_FALSE(both.empty());
+    EXPECT_EQ(both, alone);
+    std::remove(speak_only.c_str());
+}
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+namespace {
+// the attached server of a model on a free loopback port, up once /health answers
+struct AttachedServer {
+    jllama_server *server = nullptr;
+    int port = 0;
+    explicit AttachedServer(jllama_model *model) {
+        httplib::Server probe;
+        port = probe.bind_to_any_port("127.0.0.1");
+        std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+        probe.wait_until_ready();
+        probe.stop();
+        probe_listener.join();
+        const std::string port_text = std::to_string(port);
+        const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", port_text.c_str()};
+        EXPECT_EQ(jllama_server_start_attached(model, 5, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+        httplib::Client client("127.0.0.1", port);
+        for (int i = 0; i < 100; i++) {
+            const auto health = client.Get("/health");
+            if (health && health->status == 200) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ~AttachedServer() {
+        if (server != nullptr) {
+            EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+    }
+};
+} // namespace
+
+TEST_F(CApiLfm3Audio, TheTranscriptionRouteAsksTheLfm3AsrPromptInTheLanguage) {
+    // /v1/audio/transcriptions builds a chat request from an LFM3 template's ASR preset: the system turn
+    // "Perform ASR in German." and the clip as the user turn (common_chat_get_asr_prompt). The route's
+    // text is therefore the chat answer to exactly those messages.
+    std::vector<float> tone(16000);
+    for (size_t i = 0; i < tone.size(); ++i) {
+        tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+    }
+    const std::vector<uint8_t> wav = jllama_tts::pcm_to_wav16_bytes(tone, 16000);
+    std::string transcript;
+    {
+        AttachedServer attached(model());
+        ASSERT_NE(attached.server, nullptr);
+        httplib::Client client("127.0.0.1", attached.port);
+        client.set_read_timeout(std::chrono::seconds(60));
+        const httplib::UploadFormDataItems items = {
+            {"file", std::string(wav.begin(), wav.end()), "clip.wav", "audio/wav"},
+            {"language", "de", "", ""},
+            {"temperature", "0", "", ""},
+            {"max_tokens", "6", "", ""},
+        };
+        const auto response = client.Post("/v1/audio/transcriptions", items);
+        ASSERT_TRUE(response) << httplib::to_string(response.error());
+        ASSERT_EQ(response->status, 200) << response->body;
+        transcript = json::parse(response->body).at("text").get<std::string>();
+        EXPECT_FALSE(transcript.empty()) << response->body;
+        // the route refuses another format than json, as upstream does
+        const httplib::UploadFormDataItems srt = {
+            {"file", std::string(wav.begin(), wav.end()), "clip.wav", "audio/wav"}, {"response_format", "srt", "", ""}};
+        const auto refused = client.Post("/v1/audio/transcriptions", srt);
+        ASSERT_TRUE(refused) << httplib::to_string(refused.error());
+        EXPECT_EQ(refused->status, 400) << refused->body;
+    }
+    const json chat = {
+        {"messages",
+         json::array({{{"role", "system"}, {"content", "Perform ASR in German."}},
+                      {{"role", "user"},
+                       {"content", json::array({{{"type", "input_audio"},
+                                                 {"input_audio", {{"data", base64_of(wav)}, {"format", "wav"}}}}})}}})},
+        {"temperature", 0},
+        {"max_tokens", 6},
+        {"cache_prompt", false}};
+    Owned answer;
+    ASSERT_EQ(jllama_chat_completions(model(), chat.dump().c_str(), &answer.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(answer.str()).at("choices").at(0).at("message").at("content").get<std::string>(), transcript)
+        << answer.str();
+}
+
+TEST_F(CApiLfm3Audio, LiveTranscriptionHearsTheStreamedAudioAndCompletesTheItem) {
+    // /v1/realtime?intent=transcription with the "asr" template: audio appended as 16-bit PCM, the
+    // buffer committed as final, and the item completed with the text of its deltas
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    httplib::ws::WebSocketClient ws("ws://127.0.0.1:" + std::to_string(attached.port) +
+                                    "/v1/realtime?intent=transcription");
+    ws.set_read_timeout(std::chrono::seconds(60));
+    ASSERT_TRUE(ws.connect());
+    std::string message;
+    ASSERT_EQ(ws.read(message), httplib::ws::ReadResult::Text);
+    const json created = json::parse(message);
+    ASSERT_EQ(created.value("type", std::string()), "session.created") << message;
+    EXPECT_EQ(created.at("session").at("audio").at("input").at("format").at("rate").get<int>(), 16000) << message;
+
+    std::string pcm;
+    for (int i = 0; i < 16000; ++i) {
+        const auto v = static_cast<int16_t>(16000.0f * std::sin(2.0f * 3.14159265f * 440.0f * i / 16000.0f));
+        pcm.append(reinterpret_cast<const char *>(&v), sizeof(v));
+    }
+    ASSERT_TRUE(ws.send(
+        json{{"type", "input_audio_buffer.append"}, {"audio", base64_of(std::vector<uint8_t>(pcm.begin(), pcm.end()))}}
+            .dump()));
+    ASSERT_TRUE(ws.send(json{{"type", "input_audio_buffer.commit"}, {"final", true}}.dump()));
+
+    std::string deltas;
+    json completed;
+    while (completed.is_null()) {
+        message.clear();
+        const auto read = ws.read(message);
+        ASSERT_EQ(read, httplib::ws::ReadResult::Text) << "deltas so far: " << deltas;
+        const json event = json::parse(message);
+        const std::string type = event.value("type", std::string());
+        ASSERT_NE(type, "error") << message;
+        if (type == "conversation.item.input_audio_transcription.delta") {
+            deltas += event.at("delta").get<std::string>();
+        } else if (type == "conversation.item.input_audio_transcription.completed") {
+            completed = event;
+        }
+    }
+    EXPECT_FALSE(deltas.empty()) << "the model answered the audio in text";
+    EXPECT_EQ(completed.at("transcript").get<std::string>(), deltas) << completed.dump();
+    ws.close();
+}
+#endif // JLLAMA_HAS_NATIVE_SERVER
+
 TEST(CApiLfm3TtsEnd, WithoutItsTtsTemplateTheModelCannotSpeak) {
     // the pipeline starts in audio only after a prompt ending in <|audio_start|>, which only the
     // "tts" template writes; the bare text ends in text, and llama.cpp refuses it in set_input

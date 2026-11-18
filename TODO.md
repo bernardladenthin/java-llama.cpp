@@ -351,6 +351,12 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**LFM3-Audio's audio input in the C++ suite (2026-11-18)** -- the generator writes the lfm3a encoder
+and the two chat templates (`CApiLfm3Audio`, 7 cases: token count, determinism, the transcription
+route, live transcription). Not covered there: the realtime *conversation* (`/v1/realtime` without
+`intent=transcription`, the model answering in speech), which needs the backbone to switch between
+text and audio rows in one generation; CI's real pair covers it (`RealtimeNativeServerIntegrationTest`).
+
 **From b12497 to b12499 (2026-11-18)** -- 2 upstream commits (the slot scheduler's LoRA and recurrent
 fix, Vulkan's `rms_norm` on Qualcomm), pinned by commit (the tag exists). `0021` rewritten: since
 #32434 the cache comparison reads `server_prompt::lora`, which a restore left empty, so F240 came back

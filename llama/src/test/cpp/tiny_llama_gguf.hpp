@@ -1882,7 +1882,13 @@ inline std::string write_tiny_qwen3tts_mmproj_gguf(const std::string &prefix = "
 // "tts" template is this project's own, in the shape of the real one: a system turn naming the
 // language and the voice (female or male, the only two llama.cpp knows for this model), the text as
 // the user turn, and the assistant turn opened with <|audio_start|>, which puts the pipeline in audio.
-inline std::string write_tiny_lfm3_gguf(const std::string &prefix = "jllama-lfm3", bool tts_template = true) {
+// chat_templates: the default chat template and the "asr" one as well, as the real file has them. The
+// default is a plain ChatML one marked with <additional_tools> in a comment, the text llama.cpp
+// recognises an LFM3 template by (is_lfm3_template: it then builds the transcription prompt as
+// "Perform ASR[ in <language>]." in the system turn); the "asr" one is the real one's, the prompt of
+// live transcription.
+inline std::string write_tiny_lfm3_gguf(const std::string &prefix = "jllama-lfm3", bool tts_template = true,
+                                        bool chat_templates = false) {
     constexpr int EMBD = 32, N_HEAD = 2, HEAD = 16, FF = 64, L_CACHE = 3;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -1948,8 +1954,28 @@ inline std::string write_tiny_lfm3_gguf(const std::string &prefix = "jllama-lfm3
             "{{- '<|im_start|>system\\nSpeak ' + lang + ' with a ' + v + ' voice.<|im_end|>\\n' -}}"
             "{{- '<|im_start|>user\\n' + messages[0]['content'] + '<|im_end|>\\n' -}}"
             "{{- '<|im_start|>assistant\\n<|audio_start|>' -}}");
-        const char *template_names[] = {"tts"};
-        gguf_set_arr_str(g, "tokenizer.chat_templates", template_names, 1);
+        if (!chat_templates) {
+            const char *template_names[] = {"tts"};
+            gguf_set_arr_str(g, "tokenizer.chat_templates", template_names, 1);
+        }
+    }
+    if (chat_templates) {
+        gguf_set_val_str(g, "tokenizer.chat_template",
+                         "{#- an LFM3 template: <additional_tools> -#}{{- bos_token -}}"
+                         "{%- for m in messages -%}"
+                         "{{- '<|im_start|>' + m['role'] + '\\n' + m['content'] + '<|im_end|>\\n' -}}"
+                         "{%- endfor -%}"
+                         "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}");
+        gguf_set_val_str(g, "tokenizer.chat_template.asr",
+                         "{{- bos_token -}}{{- '<|im_start|>system\\nPerform live ASR.<|im_end|>\\n' -}}"
+                         "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}");
+        if (tts_template) {
+            const char *template_names[] = {"tts", "asr"};
+            gguf_set_arr_str(g, "tokenizer.chat_templates", template_names, 2);
+        } else {
+            const char *template_names[] = {"asr"};
+            gguf_set_arr_str(g, "tokenizer.chat_templates", template_names, 1);
+        }
     }
 
     ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
@@ -1992,8 +2018,15 @@ inline std::string write_tiny_lfm3_gguf(const std::string &prefix = "jllama-lfm3
 // wide: llama.cpp sizes the state of its convolution layers from that constant, not from the tensors.
 // Its layers alternate the short convolution and the gated attention, as both kinds occur in the
 // real one. eos_scale: the end-of-audio row of the tied code head (see below).
-inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jllama-lfm3-mmproj",
-                                               float eos_scale = 0.0f) {
+//
+// audio_encoder: the audio input half as well (lfm3a, the real file holds both): a downsampler of
+// three stride-2 convolutions over time and mel bins (8x each way) with LFM3A_CH channels, a stack of
+// two layers -- a short convolution and an attention layer with q/k norms and a sliding window of
+// LFM3A_WINDOW positions, the two kinds the real 17 layers mix -- and the LayerNorm-GELU projector
+// to the backbone's width. 16 mel bins (the real 128), from 16 kHz audio with a 160-sample hop.
+constexpr int LFM3A_MEL = 16, LFM3A_CH = 4, LFM3A_EMBD = 16, LFM3A_WINDOW = 4;
+inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jllama-lfm3-mmproj", float eos_scale = 0.0f,
+                                               bool audio_encoder = false) {
     constexpr int EMBD = 32, CP = 16, CP_HEAD = 8, N_CB = 12, V = 17, QO = 16, DEC = 512, D_HEAD = 8, DEC_FF = 32;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -2016,6 +2049,19 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
     gguf_set_val_i32(g, "clip.gen.audio.sampling.top_k", 128);
     gguf_set_val_f32(g, "clip.gen.audio.sampling.penalty_repeat", 1.1f);
     gguf_set_val_i32(g, "clip.gen.audio.sampling.penalty_last_n", 4096);
+    if (audio_encoder) {
+        gguf_set_val_bool(g, "clip.has_audio_encoder", true);
+        gguf_set_val_str(g, "clip.audio.projector_type", "lfm3a");
+        gguf_set_val_u32(g, "clip.audio.projection_dim", EMBD);
+        gguf_set_val_u32(g, "clip.audio.embedding_length", LFM3A_EMBD);
+        gguf_set_val_u32(g, "clip.audio.feed_forward_length", 32);
+        gguf_set_val_u32(g, "clip.audio.block_count", 2);
+        gguf_set_val_u32(g, "clip.audio.attention.head_count", 2);
+        gguf_set_val_u32(g, "clip.audio.attention.head_count_kv", 1);
+        gguf_set_val_f32(g, "clip.audio.attention.layer_norm_epsilon", 1e-5f);
+        gguf_set_val_u32(g, "clip.audio.num_mel_bins", LFM3A_MEL);
+        gguf_set_val_u32(g, "clip.audio.window_size", LFM3A_WINDOW);
+    }
 
     ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
     ggml_context *ctx = ggml_init(ip);
@@ -2091,6 +2137,48 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
             add(t + ".attn_k_norm.weight", {D_HEAD}, 1.0f);
             add(t + ".attn_gate.weight", {DEC, 2}, -0.05f);
         }
+    }
+    if (audio_encoder) {
+        constexpr int E = LFM3A_EMBD, D_A = 8, FF_A = 32;
+        // the downsampler: a full 3x3 convolution from the one input channel, then twice a depthwise
+        // 3x3 and a pointwise 1x1 (tensor indices 0, 2+3, 5+6 as the converter writes them)
+        add("a.conv1d.0.weight", {3, 3, 1, LFM3A_CH}, -0.3f);
+        add("a.conv1d.0.bias", {1, 1, LFM3A_CH}, 0.0f);
+        for (int i : {2, 5}) {
+            add("a.conv1d." + std::to_string(i) + ".weight", {3, 3, 1, LFM3A_CH}, -0.3f);
+            add("a.conv1d." + std::to_string(i) + ".bias", {1, 1, LFM3A_CH}, 0.0f);
+            add("a.conv1d." + std::to_string(i + 1) + ".weight", {1, 1, LFM3A_CH, LFM3A_CH}, -0.3f);
+            add("a.conv1d." + std::to_string(i + 1) + ".bias", {1, 1, LFM3A_CH}, 0.0f);
+        }
+        add("a.pre_encode.out.weight", {LFM3A_CH * LFM3A_MEL / 8, E}, -0.3f);
+        add("a.pre_encode.out.bias", {E}, 0.0f);
+        for (int il = 0; il < 2; ++il) {
+            const std::string b = "a.blk." + std::to_string(il);
+            add(b + ".ln1.weight", {E}, 1.0f);
+            add(b + ".ln2.weight", {E}, 1.0f);
+            add(b + ".ffn_gate.weight", {E, FF_A}, -0.2f);
+            add(b + ".ffn_up.weight", {E, FF_A}, -0.2f);
+            add(b + ".ffn_down.weight", {FF_A, E}, -0.2f);
+            if (il == 0) {
+                add(b + ".conv_pw1.weight", {E, 3 * E}, -0.2f);
+                add(b + ".conv_dw.weight", {3, E}, -0.3f);
+                add(b + ".conv_pw2.weight", {E, E}, -0.2f);
+            } else {
+                add(b + ".attn_q.weight", {E, E}, -0.2f);
+                add(b + ".attn_k.weight", {E, D_A}, -0.2f);
+                add(b + ".attn_v.weight", {E, D_A}, -0.2f);
+                add(b + ".attn_out.weight", {E, E}, -0.2f);
+                add(b + ".attn_q_norm.weight", {D_A}, 1.0f);
+                add(b + ".attn_k_norm.weight", {D_A}, 1.0f);
+            }
+        }
+        add("a.post_ln.weight", {E}, 1.0f);
+        add("mm.a.mlp.0.weight", {E}, 1.0f);
+        add("mm.a.mlp.0.bias", {E}, 0.0f);
+        add("mm.a.mlp.1.weight", {E, EMBD}, -0.3f);
+        add("mm.a.mlp.1.bias", {EMBD}, 0.0f);
+        add("mm.a.mlp.3.weight", {EMBD, EMBD}, -0.3f);
+        add("mm.a.mlp.3.bias", {EMBD}, 0.0f);
     }
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
