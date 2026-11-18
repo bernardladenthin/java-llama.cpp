@@ -379,7 +379,10 @@ the HIP change is built by the two ROCm jobs only, and no runner has an AMD GPU 
 **From b12493 to b12494 (2026-11-18)** -- 1 upstream commit (Kokoro TTS, #32413), pinned by commit
 (the tag exists); every patch applies unchanged. Open, none of it blocking:
 - **Kokoro** runs in CI since 2026-11-18 (`models.csv` feature `kokoro`, `KokoroTtsIntegrationTest`);
-  no generator yet (a StyleTTS2/iSTFTNet projector whose graph looks its tensors up by name).
+  no generator, decided against for now: `tools/mtmd/models/kokoro.cpp` fixes the predictor and text width
+  at 512 (`KOKORO_N_HIDDEN`), 9 harmonics, an ISTFT of 20/5 and 300 samples per F0 step, so a random pair
+  could not be small (the 512-wide convolutions and LSTMs alone are tens of MB), and the host reads its
+  LSTMs itself -- about 120 coupled tensors to reproduce. The real pair covers the pipeline in CI.
   `raw_prompt` is held on the LFM3 generator. Both real pairs had answered "no audio was generated":
   the engine required a frame, which these pipelines do not report (fixed, see CHANGELOG).
 
