@@ -197,6 +197,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12496** (from b12494, 2 upstream commits): stream-K matrix multiplication for the
+  HIP module on AMD GCN GPUs (#30022), and the Llama UI library at 0.4.0 (#32480, the version only:
+  the embedded WebUI and its license list are unchanged).
 - **llama.cpp b12494** (from b12493, 1 upstream commit: Kokoro TTS, #32413). `/tts` takes
   `raw_prompt`, which speaks the text as the backbone's prompt without the model's `tts` template; it
   reaches the library as `SpeechParameters.rawPrompt`, `jllama_tts_options.raw_prompt` (the struct

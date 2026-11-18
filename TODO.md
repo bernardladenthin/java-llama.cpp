@@ -351,6 +351,10 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12494 to b12496 (2026-11-18)** -- 2 upstream commits (HIP stream-K tuning, the Llama UI
+library at 0.4.0), pinned by commit (the tag exists); every patch applies unchanged. Nothing open:
+the HIP change is built by the two ROCm jobs only, and no runner has an AMD GPU (unmeasured).
+
 **From b12493 to b12494 (2026-11-18)** -- 1 upstream commit (Kokoro TTS, #32413), pinned by commit
 (the tag exists); every patch applies unchanged. Open, none of it blocking:
 - **Kokoro** is not exercised: no pair in `models.csv` and no generator (its G2P template and the
