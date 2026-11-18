@@ -7269,8 +7269,8 @@ TEST(CApiNonAsciiPaths, AnOptionFromTheEnvironmentIsReadAsUtf8) {
 
 TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {
     // --log-file went through the C runtime's narrow fopen (patches/0027): on Windows the file was
-    // created under the path as the active code page reads it. The log is the process's, so the
-    // file is detached again before it is looked at.
+    // created under the path as the active code page reads it. Freeing the model closes the file
+    // (CApiLogFile).
     const std::string model = write_tiny_llama_gguf("jllama-c-api-utf8-log");
     ASSERT_FALSE(model.empty());
     for (const auto &place : non_ascii_places("jllama-c-api-utf8-log")) {
@@ -7279,8 +7279,7 @@ TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {
         jllama_model *loaded = load_tiny(model, {"--log-file", utf8(log)});
         ASSERT_NE(loaded, nullptr) << jllama_last_error();
         EXPECT_FALSE(greedy_answer(loaded).empty());
-        jllama_model_free(loaded);
-        common_log_set_file(common_log_main(), nullptr);
+        jllama_model_free(loaded); // closes the file the load opened
         std::error_code ec;
         EXPECT_TRUE(std::filesystem::exists(log, ec)) << "no log file under the name that was asked for";
         EXPECT_GT(std::filesystem::file_size(log, ec), 0u) << ec.message();
@@ -7289,6 +7288,98 @@ TEST(CApiNonAsciiPaths, TheLogFileIsWrittenUnderItsNonAsciiName) {
     }
     std::error_code ignored;
     std::filesystem::remove(model, ignored);
+}
+
+namespace {
+// The size of a log file once common_log has written what it queued: swapping the log callback
+// pauses common_log's worker, which prints every queued entry first.
+std::uintmax_t drained_size(const std::filesystem::path &file) {
+    jllama_set_log_callback(nullptr, nullptr);
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(file, ec);
+    return ec ? 0 : size;
+}
+
+std::filesystem::path log_file_path(const std::string &name) {
+    return std::filesystem::temp_directory_path() / (name + ".log");
+}
+} // namespace
+
+TEST(CApiLogFile, AFreedModelClosesTheLogFileItsLoadOpened) {
+    // --log-file sets the file of the process-wide common_log, and nothing closed it again: every
+    // later model of the process wrote into it, and Windows could not delete it while the JVM ran.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file");
+    ASSERT_FALSE(model.empty());
+    const auto log = log_file_path("jllama-c-api-log-file");
+    std::error_code ec;
+    std::filesystem::remove(log, ec);
+    jllama_model *first = load_tiny(model, {"--log-file", log.string()});
+    ASSERT_NE(first, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(first).empty());
+    jllama_model_free(first);
+    const auto written = drained_size(log);
+    EXPECT_GT(written, 0u) << "the model logged nothing into its file";
+
+    jllama_model *second = load_tiny(model, {});
+    ASSERT_NE(second, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(second).empty());
+    jllama_model_free(second);
+    EXPECT_EQ(drained_size(log), written) << "a model without --log-file wrote into the file of a freed one";
+    EXPECT_TRUE(std::filesystem::remove(log, ec)) << ec.message();
+    std::filesystem::remove(model, ec);
+}
+
+TEST(CApiLogFile, AFailedLoadClosesTheLogFileItOpened) {
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-failed");
+    ASSERT_FALSE(model.empty());
+    const auto log = log_file_path("jllama-c-api-log-file-failed");
+    std::error_code ec;
+    std::filesystem::remove(log, ec);
+    const auto missing = std::filesystem::temp_directory_path() / "jllama-c-api-log-file-no-such-model.gguf";
+    EXPECT_EQ(load_tiny(missing.string(), {"--log-file", log.string()}), nullptr);
+    const auto written = drained_size(log);
+
+    jllama_model *other = load_tiny(model, {});
+    ASSERT_NE(other, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(other).empty());
+    jllama_model_free(other);
+    EXPECT_EQ(drained_size(log), written) << "the file of a failed load stayed open";
+    std::filesystem::remove(log, ec);
+    std::filesystem::remove(model, ec);
+}
+
+TEST(CApiLogFile, ALaterLogFileTakesTheFileAndItsOwnershipOver) {
+    // common_log has one file: a second --log-file replaces the first, and the model that opened
+    // the current one closes it. Freeing the first model must not close the second's file.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-two");
+    ASSERT_FALSE(model.empty());
+    const auto log_a = log_file_path("jllama-c-api-log-file-a");
+    const auto log_b = log_file_path("jllama-c-api-log-file-b");
+    std::error_code ec;
+    std::filesystem::remove(log_a, ec);
+    std::filesystem::remove(log_b, ec);
+    jllama_model *a = load_tiny(model, {"--log-file", log_a.string()});
+    ASSERT_NE(a, nullptr) << jllama_last_error();
+    jllama_model *b = load_tiny(model, {"--log-file", log_b.string()});
+    ASSERT_NE(b, nullptr) << jllama_last_error();
+    jllama_model_free(a);
+    const auto a_written = drained_size(log_a);
+    const auto b_before = drained_size(log_b);
+
+    EXPECT_FALSE(greedy_answer(b).empty());
+    EXPECT_GT(drained_size(log_b), b_before) << "freeing the first model closed the second's file";
+    EXPECT_EQ(drained_size(log_a), a_written);
+
+    jllama_model_free(b);
+    const auto b_written = drained_size(log_b);
+    jllama_model *c = load_tiny(model, {});
+    ASSERT_NE(c, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(c).empty());
+    jllama_model_free(c);
+    EXPECT_EQ(drained_size(log_b), b_written) << "the second file stayed open after its model was freed";
+    std::filesystem::remove(log_a, ec);
+    std::filesystem::remove(log_b, ec);
+    std::filesystem::remove(model, ec);
 }
 
 TEST(CApiNonAsciiPaths, TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath) {

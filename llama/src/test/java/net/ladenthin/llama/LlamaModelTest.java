@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class LlamaModelTest {
 
@@ -861,6 +864,34 @@ public class LlamaModelTest {
         assertTrue(
                 messages.stream().allMatch(m -> m.level != null),
                 "every line carries a level, got: " + describe(messages));
+    }
+
+    /**
+     * A model closes the {@code --log-file} its load opened. llama.cpp's log is process-wide and
+     * nothing closed the file before: a later model wrote into it, and Windows could not delete it
+     * while the JVM ran. {@code setLogger(format, null)} drains what the log worker queued, so the
+     * sizes are read after every line has been written.
+     */
+    @Test
+    public void testClosedModelClosesItsLogFile(@TempDir Path dir) throws IOException {
+        Path logFile = dir.resolve("model.log");
+        try (LlamaModel withFile = new LlamaModel(new ModelParameters()
+                .setModel(TestConstants.MODEL_PATH)
+                .setVocabOnly()
+                .setLogFile(logFile.toString()))) {
+            assertTrue(withFile.encode("hello").length > 0);
+        }
+        LlamaModel.setLogger(LogFormat.TEXT, null);
+        long written = Files.size(logFile);
+        assertTrue(written > 0, "the load wrote nothing into its log file");
+
+        try (LlamaModel without = new LlamaModel(
+                new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly())) {
+            assertTrue(without.encode("hello").length > 0);
+        }
+        LlamaModel.setLogger(LogFormat.TEXT, null);
+        assertEquals(written, Files.size(logFile), "a model without a log file wrote into the file of a closed one");
+        Files.delete(logFile);
     }
 
     private static String describe(List<LogMessage> messages) {

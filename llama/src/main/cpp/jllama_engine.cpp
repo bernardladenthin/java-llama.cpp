@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -253,6 +254,43 @@ struct video_decoder_host {
     };
 };
 
+// --log-file (and its variable LLAMA_ARG_LOG_FILE) opens a file of the process-wide common_log
+// while the argv is parsed; common_params keeps no record of it. Without this the file stayed open
+// after the model was freed, later models of the process kept writing into it, and Windows cannot
+// delete it while the JVM runs. The model whose load opened the current file owns it, and freeing
+// that model closes it; a failed load closes the file it opened at once. A later --log-file of
+// another model takes the file and the ownership over, as it takes the file in common_log.
+std::mutex g_log_file_mutex;
+const jllama_context *g_log_file_owner = nullptr;
+
+bool argv_sets_log_file(const std::vector<std::string> &argv) {
+    for (const auto &arg : argv) {
+        if (arg == "--log-file" || arg.rfind("--log-file=", 0) == 0) {
+            return true;
+        }
+    }
+    const char *env = std::getenv("LLAMA_ARG_LOG_FILE");
+    return env != nullptr && *env != '\0';
+}
+
+// Closes the file a load opened unless the load handed it to its model.
+struct log_file_claim {
+    bool opened = false;
+    const jllama_context *owner = nullptr;
+    ~log_file_claim() {
+        if (!opened) {
+            return;
+        }
+        std::lock_guard<std::mutex> lk(g_log_file_mutex);
+        if (owner != nullptr) {
+            g_log_file_owner = owner;
+        } else {
+            common_log_set_file(common_log_main(), nullptr);
+            g_log_file_owner = nullptr;
+        }
+    }
+};
+
 } // namespace
 
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
@@ -287,6 +325,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     for (auto &arg : rpc_argv) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
+    log_file_claim log_file;
+    log_file.opened = argv_sets_log_file(rpc_argv);
     if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
         throw std::runtime_error("Failed to parse model parameters");
     }
@@ -319,6 +359,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
             throw std::runtime_error("could not load tokenizer from given file path");
         }
         jctx->vocab = llama_model_get_vocab(jctx->vocab_only_model);
+        log_file.owner = jctx.get();
         return jctx.release();
     }
 
@@ -401,6 +442,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         std::this_thread::yield();
     }
 
+    log_file.owner = jctx.get();
     return jctx.release();
 }
 
@@ -445,6 +487,14 @@ void free(jllama_context *jctx) {
 
     if (jctx->vocab_only_model) {
         llama_model_free(jctx->vocab_only_model);
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(g_log_file_mutex);
+        if (g_log_file_owner == jctx) {
+            common_log_set_file(common_log_main(), nullptr);
+            g_log_file_owner = nullptr;
+        }
     }
 
     delete jctx;

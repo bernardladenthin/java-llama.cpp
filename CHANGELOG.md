@@ -203,6 +203,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12504** (from b12499, 5 upstream commits): CUDA kernel tuning (conv2d, MMQ for MoE on
+  V100, Pascal DP4A), the OpenVINO backend's larger op set and NPU/GPU passes (#32172), and a
+  Storybook for the WebUI's component library (#32485). No API change.
+- **A model closes the log file its load opened.** `--log-file` (`ModelParameters.setLogFile`, the
+  variable `LLAMA_ARG_LOG_FILE`) sets the file of llama.cpp's process-wide log, and nothing closed it:
+  every later model of the JVM kept writing into it, and Windows could not delete it while the JVM
+  ran. Freeing the model whose load opened the current file (`LlamaModel.close()`,
+  `jllama_model_free`) now closes it, a failed load closes it at once, and a later model with a log
+  file of its own takes it over.
 - **llama.cpp b12499** (from b12497, 2 upstream commits). The host-memory prompt cache records the
   LoRA config of every state (#32434) and loads only the states of the adapters a request runs with:
   it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the

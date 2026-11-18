@@ -1428,6 +1428,11 @@ public final class ModelParameters extends CliParameters {
      * <p>The file is written <em>in addition to</em> the console (or the
      * {@link net.ladenthin.llama.LlamaModel#setLogger} callback), not instead of it.
      *
+     * <p>llama.cpp keeps one log file per process: the model whose load opened it writes every
+     * line of the process into it, those of other models included, until it is closed, and closing
+     * it closes the file. A later model with a log file of its own takes that over; a load that
+     * fails closes the file it opened.
+     *
      * @param logFile the path to the log file
      * @return this builder
      */

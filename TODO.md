@@ -235,10 +235,10 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
     (`LlamaLoader.unencodablePathHint`: the path is checked against `sun.jnu.encoding` when a load
     fails) -- measured on the same machine: the hint appears for `tmp-日` with `Cp1252`, and not for
     a directory with only `ü`, which loads.
-  - **Open, found by that measurement: a model's `--log-file` stays attached after `close()`.**
-    `common_log_main()` is process-wide, so later models of the same JVM keep writing into the file
-    and Windows cannot delete it while the JVM lives. Not a path defect. The C API test detaches it
-    with `common_log_set_file(..., nullptr)`; Java has no call for that.
+  - **Fixed 2026-11-18: a model's `--log-file` stayed attached after `close()`** (`common_log_main()`
+    is process-wide). The engine records the model whose load opened the file and closes it when that
+    model is freed (`CApiLogFile`). Not covered: a classic `NativeServer` with `--log-file`, which
+    parses through `llama_server()` and keeps the file for the life of the process.
   - **A second build directory rewrites the shared natives directory's provenance.** A configure of
     another build tree (the counter-checks' `build-no00NN`) writes `jllama-build.txt` and
     `jllama-sbom.json` into `src/main/natives/...` too, so they then name that tree's patch set;
@@ -357,6 +357,10 @@ route, live transcription). The realtime *conversation* (`/v1/realtime` without 
 followed on 2026-11-18 (four more cases). Not covered by the generator: the mixed mode (text and
 audio interleaved), whose switching the random backbone decides; CI's real pair covers it
 (`RealtimeNativeServerIntegrationTest`).
+
+**From b12499 to b12504 (2026-11-18)** -- 5 upstream commits (CUDA kernels, the OpenVINO backend's
+#32172, the WebUI Storybook), every patch unchanged, no source change. Not measured: the OpenVINO
+changes (no Intel accelerator here; the module stays opt-in, `docs/benchmarks/gpu-module-jars.md`).
 
 **From b12497 to b12499 (2026-11-18)** -- 2 upstream commits (the slot scheduler's LoRA and recurrent
 fix, Vulkan's `rms_norm` on Qualcomm), pinned by commit (the tag exists). `0021` rewritten: since
