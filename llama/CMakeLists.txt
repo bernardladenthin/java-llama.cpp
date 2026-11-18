@@ -1315,6 +1315,34 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
     if(WIN32)
         set_tests_properties(c_abi PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
     endif()
+    # The model-backed half: JLLAMA_C_ABI_MODEL from the configure environment, else the C++ suite's
+    # random llama model, written by a helper linked against the shipped ggml-base only (ctest runs a
+    # fixture's setup with `ctest -R '^c_abi$'` too, which is how build.sh / build.bat run it).
+    if(DEFINED ENV{JLLAMA_C_ABI_MODEL} AND NOT "$ENV{JLLAMA_C_ABI_MODEL}" STREQUAL "")
+        set(JLLAMA_C_ABI_MODEL_FILE "$ENV{JLLAMA_C_ABI_MODEL}")
+    else()
+        set(JLLAMA_C_ABI_MODEL_FILE "${CMAKE_BINARY_DIR}/c-abi/jllama-c-abi-model.gguf")
+        add_executable(jllama_c_abi_model src/test/c/write_c_abi_model.cpp)
+        target_compile_features(jllama_c_abi_model PRIVATE cxx_std_17)
+        target_link_libraries(jllama_c_abi_model PRIVATE ggml-base)
+        target_include_directories(jllama_c_abi_model PRIVATE src/test/cpp)
+        set_target_properties(jllama_c_abi_model PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/c-abi
+            BUILD_RPATH "${JLLAMA_DIR}"
+            BUILD_WITH_INSTALL_RPATH FALSE
+            SKIP_BUILD_RPATH FALSE)
+        add_test(NAME c_abi_model COMMAND jllama_c_abi_model "${JLLAMA_C_ABI_MODEL_FILE}")
+        set_tests_properties(c_abi_model PROPERTIES FIXTURES_SETUP c_abi_model)
+        set_tests_properties(c_abi PROPERTIES FIXTURES_REQUIRED c_abi_model)
+        if(WIN32)
+            set_tests_properties(c_abi_model PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
+        endif()
+    endif()
+    set_tests_properties(c_abi PROPERTIES ENVIRONMENT "JLLAMA_C_ABI_MODEL=${JLLAMA_C_ABI_MODEL_FILE}")
 endif()
 
 # BUILD_TESTING is declared at the top of this file, before any subproject (see there).

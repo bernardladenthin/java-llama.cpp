@@ -138,14 +138,16 @@ class RenderTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             d = os.path.join(root, "llama", "patches")
             os.makedirs(d)
-            with open(os.path.join(d, "0001-first.patch"), "w") as f:
+            # LF on every OS, as git checks the patches out and check-patches.py writes the page: in
+            # text mode Windows wrote CRLF, and the page compared stale with its own render
+            with open(os.path.join(d, "0001-first.patch"), "w", newline="\n") as f:
                 f.write("first\n" + MODIFY)
             self.assertEqual(patches.doc_is_current(root)[0], False, "no page yet")
             os.makedirs(os.path.join(root, "docs"))
-            with open(os.path.join(root, "docs", "patches.md"), "w") as f:
+            with open(os.path.join(root, "docs", "patches.md"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(patches.render(root))
             self.assertTrue(patches.doc_is_current(root)[0])
-            with open(os.path.join(root, "docs", "patches.md"), "a") as f:
+            with open(os.path.join(root, "docs", "patches.md"), "a", newline="\n") as f:
                 f.write("hand edit\n")
             self.assertFalse(patches.doc_is_current(root)[0])
 

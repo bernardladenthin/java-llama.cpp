@@ -410,6 +410,86 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request with the adaptive-p sampler's target probability replaced
+     * ({@code adaptive_target}). The sampler takes part only when the chain names it
+     * ({@link #withSamplers(Sampler...)} with {@link Sampler#ADAPTIVE_P}); it then picks tokens near
+     * this probability instead of a plain random draw. A negative target disables it.
+     *
+     * @param adaptiveTarget the target probability, at most 1; negative disables the sampler
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if the target is NaN or above 1
+     */
+    public InferenceParameters withAdaptiveTarget(float adaptiveTarget) {
+        if (Float.isNaN(adaptiveTarget) || adaptiveTarget > 1.0f) {
+            throw new IllegalArgumentException(
+                    "adaptive_target must be at most 1 (negative disables), got " + adaptiveTarget);
+        }
+        return withScalar(RequestField.ADAPTIVE_TARGET, adaptiveTarget);
+    }
+
+    /**
+     * Returns a new request with the adaptive-p sampler's decay replaced ({@code adaptive_decay}):
+     * the weight of the history its target adapts over, which spans about {@code 1 / (1 - decay)}
+     * tokens.
+     *
+     * @param adaptiveDecay the decay, from 0 to 0.99
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if the decay is outside 0..0.99 (the server refuses it)
+     */
+    public InferenceParameters withAdaptiveDecay(float adaptiveDecay) {
+        if (!(adaptiveDecay >= 0.0f && adaptiveDecay <= 0.99f)) {
+            throw new IllegalArgumentException("adaptive_decay must be between 0 and 0.99, got " + adaptiveDecay);
+        }
+        return withScalar(RequestField.ADAPTIVE_DECAY, adaptiveDecay);
+    }
+
+    /**
+     * Returns a new request that samples on the backend instead of in llama.cpp's sampler chain
+     * ({@code backend_sampling}), or not. Without a call the model's setting applies.
+     *
+     * @param backendSampling {@code true} to sample on the backend
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withBackendSampling(boolean backendSampling) {
+        return withScalar(RequestField.BACKEND_SAMPLING, backendSampling);
+    }
+
+    /**
+     * Returns a new request with the LoRA adapters of this one request ({@code lora}): adapter id
+     * (its index in the model's list, see {@code LlamaModel.getLoraAdapters()}) to scale. An adapter
+     * the map does not name runs at scale 0 for this request; the model's own scales
+     * ({@code LlamaModel.setLoraAdapters}) are untouched. Empty input is a no-op.
+     *
+     * @param scales adapter id to scale
+     * @return a new instance with the adapters set, or {@code this} if {@code scales} is empty
+     * @throws IllegalArgumentException if an id is negative or a scale is not finite
+     */
+    public InferenceParameters withLoraAdapters(Map<Integer, Float> scales) {
+        if (scales.isEmpty()) {
+            return this;
+        }
+        return withRaw(
+                RequestField.LORA, serializer.buildLoraAdapterArray(scales).toString());
+    }
+
+    /**
+     * Returns a new request with tokens that are never split during the tokenization of the
+     * generated text ({@code preserved_tokens}), for example the tags of a tool call. They add to
+     * those the chat template preserves. Empty input is a no-op.
+     *
+     * @param tokens token strings to keep whole
+     * @return a new instance with the tokens set, or {@code this} if {@code tokens} is empty
+     */
+    public InferenceParameters withPreservedTokens(String... tokens) {
+        if (tokens.length == 0) {
+            return this;
+        }
+        return withRaw(
+                RequestField.PRESERVED_TOKENS,
+                serializer.buildStringArray(tokens).toString());
+    }
+
+    /**
      * Returns a new request with a BNF-like grammar constraint replaced.
      *
      * @param grammar BNF-like grammar string; {@code null} clears

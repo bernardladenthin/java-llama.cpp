@@ -26,7 +26,15 @@ public enum Sampler implements CliArg {
     /** Infill-specific sampler for fill-in-the-middle tasks. */
     INFILL("infill"),
     /** Repetition, frequency, and presence penalties sampler. */
-    PENALTIES("penalties");
+    PENALTIES("penalties"),
+    /** Top-n-sigma sampling: keep tokens within n standard deviations of the top logit. */
+    TOP_N_SIGMA("top_n_sigma"),
+    /**
+     * Adaptive-p: selects a token near a target probability that adapts over the recent tokens, in
+     * place of the final random draw. Only in the chain when named; its target and decay are the
+     * request's {@code adaptive_target} / {@code adaptive_decay}.
+     */
+    ADAPTIVE_P("adaptive_p");
 
     private final String argValue;
 

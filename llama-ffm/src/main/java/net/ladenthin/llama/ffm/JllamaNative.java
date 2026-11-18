@@ -104,6 +104,9 @@ final class JllamaNative {
     // -- the model ----------------------------------------------------------------------------------
     static final MethodHandle MODEL_LOAD = downcall(
             "jllama_model_load", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+    static final MethodHandle MODEL_LOAD_VIDEO = downcall(
+            "jllama_model_load_video",
+            FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle MODEL_FREE = downcall("jllama_model_free", FunctionDescriptor.ofVoid(ADDRESS));
     static final MethodHandle MODEL_META = downcall("jllama_model_meta", json(ADDRESS, ADDRESS));
     static final MethodHandle CHAT_COMPLETIONS = downcall("jllama_chat_completions", json(ADDRESS, ADDRESS, ADDRESS));

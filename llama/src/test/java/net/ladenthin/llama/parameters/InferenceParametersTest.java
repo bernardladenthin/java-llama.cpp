@@ -220,6 +220,81 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void testSetAdaptiveTargetAndDecay() {
+        InferenceParameters params = new InferenceParameters("")
+                .withSamplers(Sampler.TOP_K, Sampler.ADAPTIVE_P)
+                .withAdaptiveTarget(0.5f)
+                .withAdaptiveDecay(0.9f);
+        assertThat(params.parameters.get("samplers"), is("[\"top_k\",\"adaptive_p\"]"));
+        assertThat(params.parameters.get("adaptive_target"), is("0.5"));
+        assertThat(params.parameters.get("adaptive_decay"), is("0.9"));
+        // negative disables the sampler, the upper end and both ends of the decay are allowed
+        assertThat(
+                new InferenceParameters("").withAdaptiveTarget(-1.0f).parameters.get("adaptive_target"), is("-1.0"));
+        assertThat(
+                new InferenceParameters("").withAdaptiveTarget(1.0f).parameters.get("adaptive_target"), is("1.0"));
+        assertThat(
+                new InferenceParameters("").withAdaptiveDecay(0.0f).parameters.get("adaptive_decay"), is("0.0"));
+        assertThat(
+                new InferenceParameters("").withAdaptiveDecay(0.99f).parameters.get("adaptive_decay"), is("0.99"));
+    }
+
+    @Test
+    public void testSetAdaptiveTargetAndDecayRefuseWhatTheServerRefuses() {
+        InferenceParameters base = new InferenceParameters("");
+        assertThrows(IllegalArgumentException.class, () -> base.withAdaptiveTarget(1.01f));
+        assertThrows(IllegalArgumentException.class, () -> base.withAdaptiveTarget(Float.NaN));
+        assertThrows(IllegalArgumentException.class, () -> base.withAdaptiveDecay(-0.01f));
+        assertThrows(IllegalArgumentException.class, () -> base.withAdaptiveDecay(0.995f));
+        assertThrows(IllegalArgumentException.class, () -> base.withAdaptiveDecay(Float.NaN));
+    }
+
+    @Test
+    public void testSetBackendSampling() {
+        assertThat(
+                new InferenceParameters("").withBackendSampling(true).parameters.get("backend_sampling"), is("true"));
+        assertThat(
+                new InferenceParameters("")
+                        .withBackendSampling(false)
+                        .parameters
+                        .get("backend_sampling"),
+                is("false"));
+    }
+
+    @Test
+    public void testSetLoraAdaptersInIdOrder() {
+        Map<Integer, Float> scales = new HashMap<>();
+        scales.put(2, 0.25f);
+        scales.put(0, 1.0f);
+        InferenceParameters params = new InferenceParameters("").withLoraAdapters(scales);
+        assertThat(params.parameters.get("lora"), is("[{\"id\":0,\"scale\":1.0},{\"id\":2,\"scale\":0.25}]"));
+    }
+
+    @Test
+    public void testSetLoraAdaptersEmptyIsANoOp() {
+        InferenceParameters params = new InferenceParameters("");
+        assertThat(params.withLoraAdapters(Collections.emptyMap()), sameInstance(params));
+    }
+
+    @Test
+    public void testSetLoraAdaptersRefusesANegativeIdAndAScaleThatIsNotFinite() {
+        InferenceParameters base = new InferenceParameters("");
+        assertThrows(IllegalArgumentException.class, () -> base.withLoraAdapters(Collections.singletonMap(-1, 1.0f)));
+        assertThrows(
+                IllegalArgumentException.class, () -> base.withLoraAdapters(Collections.singletonMap(0, Float.NaN)));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> base.withLoraAdapters(Collections.singletonMap(0, Float.POSITIVE_INFINITY)));
+    }
+
+    @Test
+    public void testSetPreservedTokens() {
+        InferenceParameters params = new InferenceParameters("").withPreservedTokens("<tool_call>", "</tool_call>");
+        assertThat(params.parameters.get("preserved_tokens"), is("[\"<tool_call>\",\"</tool_call>\"]"));
+        assertThat(params.withPreservedTokens(), sameInstance(params));
+    }
+
+    @Test
     public void testSetNKeep() {
         InferenceParameters params = new InferenceParameters("").withNKeep(-1);
         assertThat(params.parameters.get("n_keep"), is("-1"));

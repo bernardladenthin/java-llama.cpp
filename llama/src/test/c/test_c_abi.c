@@ -10,7 +10,9 @@
 // the headers are C), that jllama_api.h compiles as C and its jllama_* symbols are exported from
 // the shipped libjllama, that ggml_backend_load_all_from_path() finds the CPU modules in the
 // natives directory it is given, and -- when JLLAMA_C_ABI_MODEL names a GGUF -- that a model loads
-// through upstream's API. Registered
+// and tokenizes through upstream's API and answers a completion through jllama_model_load /
+// jllama_completions. The ctest sets JLLAMA_C_ABI_MODEL to the C++ suite's random llama model,
+// which write_c_abi_model.cpp writes as a fixture (or to the file it named at configure time). Registered
 // as the ctest `c_abi` of every modular build (llama/CMakeLists.txt), run by build.sh/build.bat
 // right after the build, so the four modular CPU jobs run a test again (BUILD_TESTING is refused
 // there: jllama_test needs the CPU backend statically).
@@ -113,7 +115,47 @@ int main(int argc, char ** argv) {
         llama_model_desc(model, description, sizeof description);
         printf("c_abi: loaded %s: %s, %lld parameters\n", model_path, description,
                (long long) llama_model_n_params(model));
+        /* Layer A: upstream's tokenizer through the C API. */
+        const struct llama_vocab * vocab = llama_model_get_vocab(model);
+        const char * text = "Hello world";
+        llama_token tokens[64];
+        const int32_t n_tokens = llama_tokenize(vocab, text, (int32_t) strlen(text), tokens, 64, false, false);
+        if (n_tokens <= 0) {
+            llama_model_free(model);
+            return fail("llama_tokenize returned no tokens");
+        }
+        for (int32_t i = 0; i < n_tokens; i++) {
+            if (tokens[i] < 0 || tokens[i] >= llama_vocab_n_tokens(vocab)) {
+                llama_model_free(model);
+                return fail("llama_tokenize returned a token outside the vocabulary");
+            }
+        }
+        printf("c_abi: '%s' is %d token(s) of a vocabulary of %d\n", text, (int) n_tokens,
+               (int) llama_vocab_n_tokens(vocab));
         llama_model_free(model);
+
+        /* Layer B: the same file through jllama_model_load and a completion, as a C consumer runs it. */
+        const char * load_argv[] = {"c_abi", "-m", model_path, "-c", "128", "-ngl", "0", "--no-warmup", "-t", "1"};
+        jllama_model * served = NULL;
+        if (jllama_model_load((int) (sizeof load_argv / sizeof load_argv[0]), load_argv, NULL, NULL, &served) !=
+                JLLAMA_STATUS_OK || served == NULL) {
+            fprintf(stderr, "c_abi: %s\n", jllama_last_error());
+            return fail("jllama_model_load");
+        }
+        char * response = NULL;
+        const jllama_status status = jllama_completions(
+            served, "{\"prompt\":\"Hello\",\"n_predict\":4,\"temperature\":0}", &response);
+        if (status != JLLAMA_STATUS_OK || response == NULL || strstr(response, "\"content\"") == NULL ||
+            strstr(response, "\"tokens_predicted\"") == NULL) {
+            fprintf(stderr, "c_abi: status %d, %s, %s\n", (int) status, response != NULL ? response : "(null)",
+                    jllama_last_error());
+            jllama_string_free(response);
+            jllama_model_free(served);
+            return fail("jllama_completions");
+        }
+        printf("c_abi: jllama_completions answered %zu bytes\n", strlen(response));
+        jllama_string_free(response);
+        jllama_model_free(served);
     } else {
         printf("c_abi: JLLAMA_C_ABI_MODEL not set, no model loaded\n");
     }

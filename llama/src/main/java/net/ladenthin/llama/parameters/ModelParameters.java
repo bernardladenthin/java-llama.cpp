@@ -937,6 +937,10 @@ public final class ModelParameters extends CliParameters {
      * A cache needs a GPU backend: without one the model does not load (llama.cpp: "MoE cache
      * requires a GPU backend").</p>
      *
+     * <p>llama.cpp reports the cache's hit rate only in its log, when the model is closed (INFO lines
+     * {@code llama_moe_cache: ... hits = ..., misses = ..., hit rate = ...%}, see
+     * {@code LlamaModel.setLogger}); there is no counter in {@code getMetrics()}.</p>
+     *
      * @param mib the cache size in MiB, {@code 0} to disable
      * @return this builder
      * @throws IllegalArgumentException if {@code mib} is negative (upstream rejects it as well)
@@ -1537,6 +1541,23 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setDraftSampling(DraftSampling mode) {
         return putEnum(ModelOption.SPEC_DRAFT_SAMPLING, mode);
+    }
+
+    /**
+     * Choose where the draft of speculative decoding is sampled ({@code --spec-draft-backend-sampling}
+     * / {@code --no-spec-draft-backend-sampling}).
+     *
+     * <p>{@code true} samples the draft on the backend the draft model runs on, {@code false} on the
+     * CPU. Without a call the server's default applies. It matters only with a draft model
+     * ({@link #setModelDraft(String)}) or a model's own MTP heads.</p>
+     *
+     * @param enabled {@code true} to sample the draft on the backend, {@code false} on the CPU
+     * @return this builder
+     */
+    public ModelParameters setSpecDraftBackendSampling(boolean enabled) {
+        setFlag(enabled ? ModelFlag.SPEC_DRAFT_BACKEND_SAMPLING : ModelFlag.NO_SPEC_DRAFT_BACKEND_SAMPLING);
+        clearFlag(enabled ? ModelFlag.NO_SPEC_DRAFT_BACKEND_SAMPLING : ModelFlag.SPEC_DRAFT_BACKEND_SAMPLING);
+        return this;
     }
 
     /**

@@ -10,6 +10,7 @@
 #include "server-common.h"
 #include "server-chat.h"
 #include "native_server_engine.hpp"
+#include "jllama_engine.hpp"
 #include "native_server_bridge.h"
 #include "rpc_support.hpp"
 
@@ -45,8 +46,12 @@ native_server *start(const std::vector<std::string> &argv) {
 
     // Embedded mode: no process signal handlers, honour the forwarded argv (patches/0006).
     llama_server_set_embedded(true);
+    // llama_server() parses the argv on the worker, where a --log-file opens the process-wide log
+    // file; the server owns it until it returns, then the file is closed (unless a model took it).
+    jllama::engine::claim_log_file_for_server(srv, srv->args);
     srv->worker = std::thread([srv]() {
         srv->exit_code = llama_server(static_cast<int>(srv->argv.size()), srv->argv.data());
+        jllama::engine::release_log_file_of_server(srv);
         srv->finished.store(true);
     });
     return srv;
@@ -79,9 +84,11 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     llama_server_set_embedded(true);
     server_context *ctx_server = &jctx->server;
     server_routes *routes = jctx->routes.get();
+    jllama::engine::claim_log_file_for_server(srv, srv->args);
     srv->worker = std::thread([srv, ctx_server, routes, held]() {
         srv->exit_code =
             llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server, *routes);
+        jllama::engine::release_log_file_of_server(srv);
         srv->finished.store(true);
         release_jllama_context_impl(held);
     });

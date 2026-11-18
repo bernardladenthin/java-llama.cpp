@@ -4,8 +4,10 @@
 
 package net.ladenthin.llama.value;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -44,6 +46,9 @@ public final class GgufMetadata {
 
     /** GGUF key holding the Jinja chat template. */
     public static final String KEY_CHAT_TEMPLATE = "tokenizer.chat_template";
+
+    /** GGUF key holding the token ids the tokenizer never samples. */
+    public static final String KEY_SUPPRESS_TOKENS = "tokenizer.ggml.suppress_tokens";
 
     /**
      * Suffix of the per-architecture context-length key
@@ -163,6 +168,27 @@ public final class GgufMetadata {
      */
     public Optional<String> getChatTemplate() {
         return getString(KEY_CHAT_TEMPLATE);
+    }
+
+    /**
+     * Suppressed-token accessor ({@value #KEY_SUPPRESS_TOKENS}): the token ids llama.cpp biases to
+     * negative infinity in every sampler chain of the model (since b9493), so they are never
+     * generated. A read-only view for diagnostics; the bias needs no setting.
+     *
+     * @return the token ids in file order, empty when the key is absent or holds no array
+     */
+    public List<Integer> getSuppressTokens() {
+        Object value = entries.get(KEY_SUPPRESS_TOKENS);
+        if (!(value instanceof List)) {
+            return Collections.emptyList();
+        }
+        List<Integer> ids = new ArrayList<>();
+        for (Object id : (List<?>) value) {
+            if (id instanceof Number) {
+                ids.add(((Number) id).intValue());
+            }
+        }
+        return Collections.unmodifiableList(ids);
     }
 
     /**

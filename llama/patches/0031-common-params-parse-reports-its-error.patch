@@ -6,7 +6,7 @@ exception). The second covers what is checked after the arguments are read: a --
 that common_chat_verify_template() refuses throws std::runtime_error, so
 ModelParameters.setChatTemplate() with a template that does not parse ended the JVM with status 1
 (measured with a death test, b12521). And the reason of a refusal reached stderr only, so the C API
-and LlamaModel could only say "Failed to parse model parameters" (TODO.md, b12489: --ignore-eos next
+and LlamaModel could only say "Failed to parse model parameters" (b12489: --ignore-eos next
 to --grammar).
 
 The patch answers false for every exception, with the parameters restored as for an invalid

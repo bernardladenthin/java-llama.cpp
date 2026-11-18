@@ -50,7 +50,8 @@ class NativesDirectoryTest(unittest.TestCase):
     def assert_unpacked(self, result, out):
         self.assertEqual(result.returncode, 0, result.stderr)
         lib_dir = os.path.join(out, "library", "net", "ladenthin", "llama", LIBRARY[1])
-        self.assertEqual(result.stdout.strip(), lib_dir)
+        # the script prints the path with '/', os.path.join builds it with the OS separator
+        self.assertEqual(os.path.normpath(result.stdout.strip()), os.path.normpath(lib_dir))
         self.assertTrue(os.path.isfile(os.path.join(lib_dir, LIBRARY[2])))
         self.assertTrue(os.path.isfile(os.path.join(lib_dir, MODULE[2])))
         self.assertFalse(os.path.exists(os.path.join(lib_dir, "jllama-build.txt")))

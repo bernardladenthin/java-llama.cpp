@@ -836,6 +836,22 @@ public class ModelParametersTest {
         assertThat(p.parameters, not(hasKey("--cache-idle-slots")));
     }
 
+    @Test
+    public void testSetSpecDraftBackendSamplingTrue_writesTheFlagAndClearsItsNegation() {
+        ModelParameters p =
+                new ModelParameters().setSpecDraftBackendSampling(false).setSpecDraftBackendSampling(true);
+        assertThat(p.parameters, hasKey("--spec-draft-backend-sampling"));
+        assertThat(p.parameters, not(hasKey("--no-spec-draft-backend-sampling")));
+    }
+
+    @Test
+    public void testSetSpecDraftBackendSamplingFalse_writesTheNegationAndClearsTheFlag() {
+        ModelParameters p =
+                new ModelParameters().setSpecDraftBackendSampling(true).setSpecDraftBackendSampling(false);
+        assertThat(p.parameters, hasKey("--no-spec-draft-backend-sampling"));
+        assertThat(p.parameters, not(hasKey("--spec-draft-backend-sampling")));
+    }
+
     // -------------------------------------------------------------------------
     // setKvUnifiedPerSlot / setLazyMode (llama.cpp b10679)
     // -------------------------------------------------------------------------

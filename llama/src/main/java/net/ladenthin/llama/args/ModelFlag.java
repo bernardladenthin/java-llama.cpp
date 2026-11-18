@@ -176,7 +176,13 @@ public enum ModelFlag {
     SLOTS("--slots"),
 
     /** Hide the slots monitoring endpoint {@code GET /slots}. */
-    NO_SLOTS("--no-slots");
+    NO_SLOTS("--no-slots"),
+
+    /** Sample the speculative draft on the backend (llama.cpp b9261, upstream's default). */
+    SPEC_DRAFT_BACKEND_SAMPLING("--spec-draft-backend-sampling"),
+
+    /** Sample the speculative draft on the CPU instead of the backend. */
+    NO_SPEC_DRAFT_BACKEND_SAMPLING("--no-spec-draft-backend-sampling");
 
     private final String cliFlag;
     private final CliContract contract;

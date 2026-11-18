@@ -24,6 +24,7 @@ import java.lang.invoke.MethodType;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.ladenthin.llama.callback.LoadProgressCallback;
+import net.ladenthin.llama.callback.VideoDecoder;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.ModelParameters;
@@ -41,9 +42,12 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     private final MemorySegment handle;
     private final AtomicBoolean closed = new AtomicBoolean();
+    /** The video decoder's stubs, freed after the model; null for a model loaded without one. */
+    private final FfmVideoDecoder video;
 
-    private FfmLlamaModel(MemorySegment handle) {
+    private FfmLlamaModel(MemorySegment handle, FfmVideoDecoder video) {
         this.handle = handle;
+        this.video = video;
     }
 
     /**
@@ -87,7 +91,49 @@ public final class FfmLlamaModel implements AutoCloseable {
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(JllamaNative.MODEL_LOAD, argv.length, cStrings(arena, argv), stub, MemorySegment.NULL,
                     out);
-            return new FfmLlamaModel(out.get(ADDRESS, 0));
+            return new FfmLlamaModel(out.get(ADDRESS, 0), null);
+        }
+    }
+
+    /**
+     * Loads a model whose requests read their videos through {@code decoder}, as
+     * {@code new LlamaModel(parameters, progress, decoder)} does: a video in a request is handed to the
+     * decoder instead of the {@code ffmpeg} program. The decoder is called on a thread of the library,
+     * not on the caller's.
+     *
+     * @param parameters the model parameters (a vision {@code --mmproj} for the video to be seen)
+     * @param progress the progress callback, or {@code null}
+     * @param decoder the video decoder
+     * @return the loaded model
+     * @throws LlamaException when the model does not load, or the callback aborted it
+     */
+    public static FfmLlamaModel load(ModelParameters parameters, LoadProgressCallback progress, VideoDecoder decoder) {
+        Objects.requireNonNull(parameters, "parameters");
+        return load(parameters.toArray(), progress, decoder);
+    }
+
+    /**
+     * {@link #load(ModelParameters, LoadProgressCallback, VideoDecoder)} from a raw argv.
+     *
+     * @param argv the argv, program name first
+     * @param progress the progress callback, or {@code null}
+     * @param decoder the video decoder
+     * @return the loaded model
+     * @throws LlamaException when the model does not load, or the callback aborted it
+     */
+    public static FfmLlamaModel load(String[] argv, LoadProgressCallback progress, VideoDecoder decoder) {
+        Objects.requireNonNull(argv, "argv");
+        FfmVideoDecoder video = new FfmVideoDecoder(Objects.requireNonNull(decoder, "decoder"));
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment stub = progressStub(arena, progress);
+            MemorySegment out = pointerSlot(arena);
+            JllamaNative.call(JllamaNative.MODEL_LOAD_VIDEO, argv.length, cStrings(arena, argv), stub,
+                    MemorySegment.NULL, video.struct(), out);
+            return new FfmLlamaModel(out.get(ADDRESS, 0), video);
+        } catch (RuntimeException | Error e) {
+            // a failed load has released the decoder already (jllama_model_load_video calls release)
+            video.close();
+            throw e;
         }
     }
 
@@ -134,6 +180,9 @@ public final class FfmLlamaModel implements AutoCloseable {
     public void close() {
         if (closed.compareAndSet(false, true)) {
             invoke(JllamaNative.MODEL_FREE, handle);
+            if (video != null) {
+                video.close();
+            }
         }
     }
 

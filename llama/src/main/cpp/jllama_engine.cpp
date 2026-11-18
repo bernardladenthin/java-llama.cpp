@@ -88,6 +88,21 @@ json parse_json_body(const std::string &body_text) {
     throw std::runtime_error(e.what());
 }
 
+// llama.cpp spells a character its vocabulary has no token for with byte tokens
+// (llama_vocab::byte_to_token, a token_to_id.at): a vocabulary without them throws the map's bare
+// std::out_of_range ("unordered_map::at"), which names neither the cause nor the text. Runs a
+// tokenization and names the cause instead.
+template <typename F> auto naming_vocabulary_gaps(F &&tokenization) -> decltype(tokenization()) {
+    try {
+        return tokenization();
+    } catch (const std::out_of_range &e) {
+        throw std::runtime_error(
+            std::string("the text has a character the model's vocabulary has no token for, and the vocabulary has "
+                        "no byte tokens to spell it with (") +
+            e.what() + ")");
+    }
+}
+
 // The batch completed without a task-level error, or this throws.
 void require_batch_ok(const server_response_reader::batch_response &br) {
     if (br.error) {
@@ -259,9 +274,11 @@ struct video_decoder_host {
 // after the model was freed, later models of the process kept writing into it, and Windows cannot
 // delete it while the JVM runs. The model whose load opened the current file owns it, and freeing
 // that model closes it; a failed load closes the file it opened at once. A later --log-file of
-// another model takes the file and the ownership over, as it takes the file in common_log.
+// another model takes the file and the ownership over, as it takes the file in common_log. An
+// embedded server (native_server_engine.cpp) parses its argv inside llama_server() and owns the
+// file the same way until that returns.
 std::mutex g_log_file_mutex;
-const jllama_context *g_log_file_owner = nullptr;
+const void *g_log_file_owner = nullptr;
 
 bool argv_sets_log_file(const std::vector<std::string> &argv) {
     for (const auto &arg : argv) {
@@ -276,7 +293,7 @@ bool argv_sets_log_file(const std::vector<std::string> &argv) {
 // Closes the file a load opened unless the load handed it to its model.
 struct log_file_claim {
     bool opened = false;
-    const jllama_context *owner = nullptr;
+    const void *owner = nullptr;
     ~log_file_claim() {
         if (!opened) {
             return;
@@ -292,6 +309,22 @@ struct log_file_claim {
 };
 
 } // namespace
+
+void claim_log_file_for_server(const void *server, const std::vector<std::string> &argv) {
+    if (!argv_sets_log_file(argv)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(g_log_file_mutex);
+    g_log_file_owner = server;
+}
+
+void release_log_file_of_server(const void *server) {
+    std::lock_guard<std::mutex> lk(g_log_file_mutex);
+    if (g_log_file_owner == server) {
+        common_log_set_file(common_log_main(), nullptr);
+        g_log_file_owner = nullptr;
+    }
+}
 
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data, const video_decoder *decoder) {
@@ -610,8 +643,10 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
             throw std::logic_error("a multimodal prompt carried no media");
         }
     } else if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
-        auto tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
+        auto tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true,
+                                          mtmd_helper_init_opt_default());
+        });
         // A task carries one prompt. Upstream answers several prompts with one choice each; taking the
         // first here dropped the others without a word, so they are refused instead.
         if (tokenized_prompts.size() > 1) {
@@ -971,8 +1006,9 @@ static void prepare_infill_prompt(jllama_context *jctx, const server_context_met
     data["input_extra"] = json_value(data, "input_extra", json::array());
     const std::string prompt = json_value(data, "prompt", std::string());
     try {
-        std::vector<server_tokens> tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
+        std::vector<server_tokens> tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
+        });
         data["prompt"] =
             format_prompt_infill(jctx->vocab, data.at("input_prefix"), data.at("input_suffix"), data.at("input_extra"),
                                  jctx->params.n_batch, jctx->params.n_predict, meta.slot_n_ctx, jctx->params.spm_infill,
@@ -1179,7 +1215,7 @@ std::vector<float> embed(jllama_context *jctx, const std::string &prompt) {
     SRV_INF("Calling embedding '%s'\n", prompt.c_str());
     llama_tokens tokens;
     try {
-        tokens = tokenize_mixed(jctx->vocab, prompt, true, true);
+        tokens = naming_vocabulary_gaps([&]() { return tokenize_mixed(jctx->vocab, prompt, true, true); });
     } catch (const std::exception &e) {
         rethrow_by_type(e);
     }
@@ -1230,8 +1266,9 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
     }
     std::vector<server_tokens> tokenized_prompts;
     try {
-        tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
+        tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
+        });
     } catch (const std::exception &e) {
         // `"prompt" must not be empty` is a std::invalid_argument, as upstream throws it
         rethrow_by_type(e);
@@ -1297,7 +1334,7 @@ std::string rerank(jllama_context *jctx, const std::string &query, const std::ve
 std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special) {
     // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
     wake_server(jctx);
-    return tokenize_mixed(jctx->vocab, text, add_special, true);
+    return naming_vocabulary_gaps([&]() { return tokenize_mixed(jctx->vocab, text, add_special, true); });
 }
 
 std::string tokenize_json(jllama_context *jctx, const std::string &text, bool add_special, bool with_pieces) {

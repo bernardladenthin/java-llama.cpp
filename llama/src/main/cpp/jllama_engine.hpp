@@ -230,6 +230,14 @@ void set_cpu_moe_batched(bool batched);
 [[nodiscard]] std::string rerank(jllama_context *jctx, const std::string &query,
                                  const std::vector<std::string> &documents);
 
+/**
+ * The embedded server's half of the --log-file ownership: an argv that sets a log file (or
+ * LLAMA_ARG_LOG_FILE) makes `server` the owner of the process-wide log file its parse opens, and the
+ * release closes that file unless a model's load has taken it over since.
+ */
+void claim_log_file_for_server(const void *server, const std::vector<std::string> &argv);
+void release_log_file_of_server(const void *server);
+
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */
 [[nodiscard]] std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special);
 [[nodiscard]] std::string tokenize_json(jllama_context *jctx, const std::string &text, bool add_special,

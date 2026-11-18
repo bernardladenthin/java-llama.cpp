@@ -68,6 +68,36 @@ public class GgufMetadataTest {
     }
 
     @Test
+    public void suppressTokensAreTheIdsOfTheArrayInFileOrder() {
+        Map<String, Object> entries = new LinkedHashMap<>();
+        entries.put(GgufMetadata.KEY_SUPPRESS_TOKENS, java.util.Arrays.<Object>asList(151643L, 7L, "not an id", 42L));
+        GgufMetadata meta = new GgufMetadata(3, 0L, entries);
+        assertEquals(java.util.Arrays.asList(151643, 7, 42), meta.getSuppressTokens());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> meta.getSuppressTokens().add(1));
+    }
+
+    @Test
+    public void suppressTokensAreEmptyWithoutTheKeyOrWithoutAnArray() {
+        assertEquals(
+                Collections.emptyList(),
+                new GgufMetadata(3, 0L, Collections.<String, Object>emptyMap()).getSuppressTokens());
+        assertEquals(
+                Collections.emptyList(),
+                new GgufMetadata(3, 0L, Collections.<String, Object>singletonMap(GgufMetadata.KEY_SUPPRESS_TOKENS, 7L))
+                        .getSuppressTokens());
+        assertEquals(
+                Collections.emptyList(),
+                new GgufMetadata(
+                                3,
+                                0L,
+                                Collections.<String, Object>singletonMap(
+                                        GgufMetadata.KEY_SUPPRESS_TOKENS, Collections.emptyList()))
+                        .getSuppressTokens());
+    }
+
+    @Test
     public void convenienceAccessorsAbsent() {
         GgufMetadata empty = new GgufMetadata(2, 0L, Collections.<String, Object>emptyMap());
         assertThat(empty.getArchitecture().isPresent(), is(false));

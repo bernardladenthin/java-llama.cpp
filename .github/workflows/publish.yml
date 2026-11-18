@@ -375,7 +375,7 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/fetch-models
         with:
-          features: draft tts
+          features: draft tts vision
           hf-token: ${{ secrets.HF_TOKEN }}
       # Build with the shared JDK; llama-ffm retains its Java 22 bytecode target.
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -384,14 +384,14 @@ jobs:
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         uses: ./.github/actions/build-core
-      - name: Build, test and document llama-ffm (the model-backed tests run on the draft model and the Qwen3-TTS pair)
+      - name: Build, test and document llama-ffm (the model-backed tests run on the draft model, the Qwen3-TTS and the vision pair)
         run: >
           mvn -B --no-transfer-progress -f llama-ffm/pom.xml verify -Dgpg.skip=true
           -Dnet.ladenthin.llama.ffm.model=models/${DRAFT_MODEL_NAME}
           -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
       - name: Require the native-backed tests to have run (a self-skip would hide a broken binding)
         run: |
-          for test in FfmLlamaModelIntegrationTest FfmTextToSpeechIntegrationTest JllamaNativeTest; do
+          for test in FfmLlamaModelIntegrationTest FfmTextToSpeechIntegrationTest FfmVideoDecoderIntegrationTest JllamaNativeTest; do
             report="llama-ffm/target/surefire-reports/TEST-net.ladenthin.llama.ffm.$test.xml"
             test -f "$report" || { echo "::error::no report for $test"; exit 1; }
             if grep -q 'skipped="[1-9]' "$report" || grep -q 'tests="0"' "$report"; then

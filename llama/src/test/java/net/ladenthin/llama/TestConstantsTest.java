@@ -113,6 +113,58 @@ public class TestConstantsTest {
         assertEquals(ci, defaults);
     }
 
+    /**
+     * The path constants of a {@code TestConstants} source whose initializer names a model or a test
+     * resource without going through the resolver: a {@code public static final String} whose value
+     * holds a {@code "models/..."} or {@code "src/test/resources/..."} literal or a {@code DEFAULT_...}
+     * constant, and does not start with {@code resolveModelPath(} or {@code resolveModelProperty(}.
+     */
+    static List<String> constantsBypassingTheResolver(String source) {
+        java.util.regex.Matcher declaration = java.util.regex.Pattern.compile(
+                        "public\\s+static\\s+final\\s+String\\s+(\\w+)\\s*=\\s*([^;]*);")
+                .matcher(source);
+        List<String> bypassing = new ArrayList<>();
+        while (declaration.find()) {
+            String value = declaration.group(2).trim();
+            boolean namesAPath = value.contains("\"models/")
+                    || value.contains("\"src/test/resources/")
+                    || value.matches(".*\\bDEFAULT_\\w+.*");
+            if (namesAPath && !value.startsWith("resolveModelPath(") && !value.startsWith("resolveModelProperty(")) {
+                bypassing.add(declaration.group(1));
+            }
+        }
+        return bypassing;
+    }
+
+    @Test
+    public void everyPathConstantGoesThroughTheResolverInTheSource() throws Exception {
+        // The structural half of theShippedModelConstantsGoThroughTheResolver below: that test compares
+        // values, which cannot tell a dropped wrapper from a present one unless the models sit at the
+        // reactor root. Reading the source tells them apart in every layout.
+        Path source = Paths.get("src", "test", "java", "net", "ladenthin", "llama", "TestConstants.java");
+        assertTrue(Files.exists(source), "run from the llama module: " + source.toAbsolutePath());
+        String text = new String(Files.readAllBytes(source), StandardCharsets.UTF_8);
+        assertTrue(
+                text.contains("DEFAULT_MODEL_PATH = resolveModelPath("),
+                "the declarations are not where this check looks for them");
+        assertEquals(new ArrayList<String>(), constantsBypassingTheResolver(text));
+    }
+
+    @Test
+    public void aPathConstantWithoutTheResolverIsFound() {
+        String source = "public static final String DEFAULT_A_PATH = resolveModelPath(\"models/a.gguf\");\n"
+                + "public static final String DEFAULT_B_PATH = \"models/b.gguf\";\n"
+                + "public static final String B_PATH = System.getProperty(PROP_B, DEFAULT_B_PATH);\n"
+                + "public static final String C_PATH =\n        resolveModelProperty(PROP_C, DEFAULT_C_PATH);\n"
+                + "public static final String D_INPUT = \"src/test/resources/d.wav\";\n"
+                + "public static final String PROP_E = LlamaSystemProperties.PREFIX + \".e.model\";\n";
+        List<String> expected = new ArrayList<>();
+        expected.add("DEFAULT_B_PATH");
+        expected.add("B_PATH");
+        expected.add("D_INPUT");
+        assertEquals(expected, constantsBypassingTheResolver(source));
+    }
+
     @Test
     public void theResolverFindsAFixtureAtTheReactorRootAndLeavesTheLiteralOtherwise() throws Exception {
         // The resolver's whole reason to exist is its second branch -- surefire's working directory is

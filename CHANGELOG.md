@@ -10,6 +10,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **More of llama.cpp's request and sampler options.** `Sampler.ADAPTIVE_P` and `Sampler.TOP_N_SIGMA`
+  (upstream's sampler names `adaptive_p` and `top_n_sigma`, which the enum lacked) with
+  `InferenceParameters.withAdaptiveTarget` / `withAdaptiveDecay` for the adaptive-p sampler (the
+  decay refused outside 0..0.99, as the server does); `withBackendSampling`; `withLoraAdapters(Map)`,
+  the adapters of one request (id to scale, the model's own scales untouched); `withPreservedTokens`;
+  and `ModelParameters.setSpecDraftBackendSampling(boolean)` (`--spec-draft-backend-sampling` /
+  `--no-spec-draft-backend-sampling`). The request keys are held to llama.cpp's schema and the
+  sampler names to its parser by the C++ wire contracts; `CApi` and `CApiDraft` run them on the
+  random model.
+- **`llama-ffm` takes a video decoder**: `FfmLlamaModel.load(parameters, progress, VideoDecoder)` over
+  `jllama_model_load_video`, with the core's `VideoDecoder` / `VideoStream`, as
+  `new LlamaModel(parameters, progress, decoder)` does over JNI (`FfmVideoDecoderTest`, model-free, and
+  `FfmVideoDecoderIntegrationTest` on CI's vision pair, which the `llama-ffm` job fetches now).
+- **`GgufMetadata.getSuppressTokens()`**: the token ids of `tokenizer.ggml.suppress_tokens`, which
+  llama.cpp never samples, read without loading the model.
 - **Video input.** `ContentPart.videoFile(Path)`, `videoBytes(byte[], String)` and
   `videoUrl(String)` put a video into a chat message; llama.cpp samples its frames (4 per second,
   `setVideoFps`) and gives them to the vision projector as images, so every model loaded with a
@@ -126,6 +141,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **The plain-C test of every modular build job runs a model.** `c_abi` loads and tokenizes the C++
+  suite's random llama model through upstream's C API and answers a completion through
+  `jllama_model_load` / `jllama_completions`, so each library jar is proven to load and generate from
+  plain C before any Java runs; the model is written by a small helper against the shipped `ggml-base`
+  (ctest fixture `c_abi_model`), no download.
 - **`anthropics/claude-code-action` v1.0.278**, in step with the sibling repositories.
 - **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
   change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
@@ -571,6 +591,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **An embedded server closes the `--log-file` it opened when it stops.** `NativeServer` parses its
+  argv inside llama.cpp, where `--log-file` opens the process-wide log file, and nothing closed it:
+  every later line of the process, from any model, went into the stopped server's file, and Windows
+  could not delete it while the JVM ran. The server now owns the file as a model load does, in the
+  classic and the attached mode (`CApiLogFile`, red without the fix).
+- **A text the vocabulary cannot spell is refused with the cause.** A SentencePiece-style vocabulary
+  without byte tokens has nothing for a character it has no token for, and llama.cpp's lookup threw
+  the bare `unordered_map::at`; tokenization, completions, embeddings and infill now say that the
+  vocabulary has no token and no byte tokens for a character of the text (`CApiTokenizers`).
 - **A chat template llama.cpp cannot parse fails the load instead of ending the process**, and every
   refused load parameter names its reason. `common_params_parse` called `exit(1)` for any error that
   was not an invalid argument -- the chat template check of `setChatTemplate` among them -- so the JVM
