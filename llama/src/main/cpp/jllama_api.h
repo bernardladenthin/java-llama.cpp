@@ -618,6 +618,10 @@ typedef struct jllama_tts_options {
     /** steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
      *  model's own. Only a model that supports it (YuE2, b12459); another refuses any other value */
     int flow_steps;
+    /** nonzero: the text goes to the model as it is (phonemes, a whole prompt), the model's "tts" chat
+     *  template is skipped -- llama.cpp b12494's raw_prompt; 0: a model with such a template speaks
+     *  the prompt rendered from it. Since b12494 */
+    int raw_prompt;
 } jllama_tts_options;
 
 /** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */

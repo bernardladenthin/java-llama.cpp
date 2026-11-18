@@ -192,7 +192,7 @@ public class OpenAiCompatServerSpeechTest {
                     "/tts",
                     "{\"input\":\"Guten Morgen.\",\"voice\":\"male\",\"lang\":\"de\",\"n_predict\":200,"
                             + "\"top_k\":7,\"seed\":42,\"temperature\":0.5,\"top_p\":0.9,\"repeat_penalty\":1.1,"
-                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_text\":\"Guten Tag.\",\"cfg_scale\":1.5,\"flow_steps\":16,"
+                            + "\"speed\":1.25,\"loudness\":\"-20\",\"speaker_ref_text\":\"Guten Tag.\",\"cfg_scale\":1.5,\"flow_steps\":16,\"raw_prompt\":true,"
                             + "\"speaker_ref_b64\":\""
                             + Base64.getEncoder().encodeToString(reference) + "\"}");
             assertThat(answer.text(), answer.code, is(200));
@@ -213,6 +213,7 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getSpeakerReferenceText(), is("Guten Tag."));
             assertThat(set.getCfgScale(), is(1.5f));
             assertThat(set.getFlowSteps(), is(16));
+            assertThat(set.isRawPrompt(), is(true));
         }
     }
 
@@ -233,6 +234,7 @@ public class OpenAiCompatServerSpeechTest {
             assertThat(set.getSpeakerReferenceText(), is((String) null));
             assertThat(set.getCfgScale(), is((Float) null));
             assertThat(set.getFlowSteps(), is((Integer) null));
+            assertThat(set.isRawPrompt(), is(false));
 
             // a null "n_predict" is an absent one: the alias still counts
             answer = send(server.getPort(), "POST", "/tts", "{\"input\":\"Hi\",\"n_predict\":null,\"max_tokens\":32}");
@@ -281,7 +283,8 @@ public class OpenAiCompatServerSpeechTest {
                 "{\"input\":\"Hi\",\"speed\":\"fast\"}",
                 "{\"input\":\"Hi\",\"loudness\":true}",
                 "{\"input\":\"Hi\",\"cfg_scale\":\"strong\"}",
-                "{\"input\":\"Hi\",\"flow_steps\":2.5}"
+                "{\"input\":\"Hi\",\"flow_steps\":2.5}",
+                "{\"input\":\"Hi\",\"raw_prompt\":\"yes\"}"
             };
             for (String body : refused) {
                 Answer answer = send(server.getPort(), "POST", "/tts", body);
@@ -310,17 +313,17 @@ public class OpenAiCompatServerSpeechTest {
                 SpeechOptions.defaults().toString(),
                 is(
                         "SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
+                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null, rawPrompt=false}"));
         assertThat(
                 new SpeechOptions(new byte[3], 1, 2, 3, 0.25f).toString(),
                 is(
                         "SpeechOptions{speakerReference=3 bytes, maxFrames=1, topK=2, seed=3, temperature=0.25,"
-                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
+                                + " topP=null, repeatPenalty=null, speed=null, loudness=null, speakerReferenceText=none, cfgScale=null, flowSteps=null, rawPrompt=false}"));
         assertThat(
                 new SpeechOptions(null, null, null, null, null, 0.5f, 1.2f, 0.8f, -18.0f).toString(),
                 is(
                         "SpeechOptions{speakerReference=none, maxFrames=null, topK=null, seed=null, temperature=null,"
-                                + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0, speakerReferenceText=none, cfgScale=null, flowSteps=null}"));
+                                + " topP=0.5, repeatPenalty=1.2, speed=0.8, loudness=-18.0, speakerReferenceText=none, cfgScale=null, flowSteps=null, rawPrompt=false}"));
         // the transcript is named by its length, like the reference by its size
         assertThat(
                 SpeechOptions.defaults().withSpeakerReferenceText("Hi there.").toString(),

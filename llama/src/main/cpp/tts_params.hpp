@@ -128,6 +128,7 @@ struct synthesis_options {
     std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2, Qwen3-TTS), "" for none
     float cfg_scale = 0.0f;             ///< guidance scale of the audio codes, > 0; 0 = the model's own (YuE2)
     int flow_steps = 0;                 ///< flow-matching solver steps, 1..1024; 0 = the model's own (YuE2)
+    bool raw_prompt = false;            ///< the text as it is, the model's "tts" template skipped (b12494)
 };
 
 // The refusal for values no model can take, or "" when the request may go on. Whether the model

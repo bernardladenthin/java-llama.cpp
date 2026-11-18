@@ -121,6 +121,7 @@ final class TextToSpeechBackend implements SpeechBackend {
                             .speakerReferenceText(options.getSpeakerReferenceText())
                             .cfgScale(cfgScale == null ? 0.0f : cfgScale)
                             .flowSteps(flowSteps == null ? 0 : flowSteps)
+                            .rawPrompt(options.isRawPrompt())
                             .build());
         } finally {
             if (referenceFile != null) {

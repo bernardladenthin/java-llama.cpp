@@ -197,6 +197,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12494** (from b12493, 1 upstream commit: Kokoro TTS, #32413). `/tts` takes
+  `raw_prompt`, which speaks the text as the backbone's prompt without the model's `tts` template; it
+  reaches the library as `SpeechParameters.rawPrompt`, `jllama_tts_options.raw_prompt` (the struct
+  grows from 80 to 88 bytes, a caller of the older header keeps working) and `SpeechOptions` on the
+  Java server's `/tts`. Kokoro itself is a new pipeline the engine runs through the same calls;
+  there is no Kokoro pair in CI.
 - **llama.cpp b12493** (from b12490, 3 upstream commits; pinned by commit, upstream has not tagged
   the number yet). Qwen3-TTS clones a voice more closely from the transcript of the speaker reference
   (#32438, its "ICL" mode): `SpeechParameters.speakerReferenceText` / `jllama_tts_options` /

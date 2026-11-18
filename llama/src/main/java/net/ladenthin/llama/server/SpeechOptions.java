@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 public final class SpeechOptions {
 
     private static final SpeechOptions DEFAULTS =
-            new SpeechOptions(null, null, null, null, null, null, null, null, null, null, null, null);
+            new SpeechOptions(null, null, null, null, null, null, null, null, null, null, null, null, false);
 
     private final byte @Nullable [] speakerReference;
     private final @Nullable Integer maxFrames;
@@ -28,6 +28,7 @@ public final class SpeechOptions {
     private final @Nullable String speakerReferenceText;
     private final @Nullable Float cfgScale;
     private final @Nullable Integer flowSteps;
+    private final boolean rawPrompt;
 
     /**
      * Create the options of one request.
@@ -82,7 +83,8 @@ public final class SpeechOptions {
                 loudness,
                 null,
                 null,
-                null);
+                null,
+                false);
     }
 
     private SpeechOptions(
@@ -97,7 +99,8 @@ public final class SpeechOptions {
             @Nullable Float loudness,
             @Nullable String speakerReferenceText,
             @Nullable Float cfgScale,
-            @Nullable Integer flowSteps) {
+            @Nullable Integer flowSteps,
+            boolean rawPrompt) {
         this.speakerReference = speakerReference == null ? null : speakerReference.clone();
         this.maxFrames = maxFrames;
         this.topK = topK;
@@ -110,6 +113,7 @@ public final class SpeechOptions {
         this.speakerReferenceText = speakerReferenceText;
         this.cfgScale = cfgScale;
         this.flowSteps = flowSteps;
+        this.rawPrompt = rawPrompt;
     }
 
     /**
@@ -133,7 +137,8 @@ public final class SpeechOptions {
                 loudness,
                 text,
                 cfgScale,
-                flowSteps);
+                flowSteps,
+                rawPrompt);
     }
 
     /**
@@ -158,7 +163,33 @@ public final class SpeechOptions {
                 loudness,
                 speakerReferenceText,
                 guidance,
-                steps);
+                steps,
+                rawPrompt);
+    }
+
+    /**
+     * These options with llama.cpp b12494's {@code raw_prompt}: the text goes to the model as it is
+     * (phonemes, or a whole prompt in the model's format), and the {@code "tts"} chat template of a
+     * model that has one is skipped.
+     *
+     * @param raw {@code true} to skip the template
+     * @return a copy of these options with the choice
+     */
+    public SpeechOptions withRawPrompt(boolean raw) {
+        return new SpeechOptions(
+                speakerReference,
+                maxFrames,
+                topK,
+                seed,
+                temperature,
+                topP,
+                repeatPenalty,
+                speed,
+                loudness,
+                speakerReferenceText,
+                cfgScale,
+                flowSteps,
+                raw);
     }
 
     /**
@@ -278,6 +309,15 @@ public final class SpeechOptions {
         return flowSteps;
     }
 
+    /**
+     * Whether the text goes to the model as it is, without its {@code "tts"} chat template (b12494).
+     *
+     * @return {@code true} to skip the template
+     */
+    public boolean isRawPrompt() {
+        return rawPrompt;
+    }
+
     @Override
     public String toString() {
         return "SpeechOptions{speakerReference="
@@ -294,6 +334,7 @@ public final class SpeechOptions {
                 + (speakerReferenceText == null ? "none" : speakerReferenceText.length() + " chars")
                 + ", cfgScale=" + cfgScale
                 + ", flowSteps=" + flowSteps
+                + ", rawPrompt=" + rawPrompt
                 + '}';
     }
 }

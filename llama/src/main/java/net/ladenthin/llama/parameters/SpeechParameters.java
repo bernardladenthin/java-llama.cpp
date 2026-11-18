@@ -25,8 +25,10 @@ import org.jspecify.annotations.Nullable;
  * the speaker embedding alone); the other models ignore it. {@code cfgScale} and
  * {@code flowSteps} (b12459) are the guidance and the solver steps of a flow-matching model (YuE2); 0
  * leaves both to the model, and another model refuses any other value. A {@code maxFrames} of 0 or less
- * leaves the frame cap to the model (512 for most; a model that stops by itself names none). The C
- * counterpart is {@code jllama_tts_options}.
+ * leaves the frame cap to the model (512 for most; a model that stops by itself names none).
+ * {@code rawPrompt} (b12494) gives the text to the model as it is, without the {@code "tts"} chat
+ * template of a model that has one (LFM3-Audio, Kokoro's G2P): phonemes for Kokoro, a whole prompt
+ * for LFM3-Audio. The C counterpart is {@code jllama_tts_options}.
  */
 @Builder(toBuilder = true)
 @Getter
@@ -105,6 +107,10 @@ public final class SpeechParameters {
     // Steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
     // model's own. Only a model that supports it (YuE2, llama.cpp b12459); another refuses any other value.
     private final int flowSteps;
+
+    // The text as it is (phonemes, or a whole prompt in the model's format): the model's "tts" chat
+    // template is skipped, as llama.cpp b12494's /tts does with raw_prompt. False renders it.
+    private final boolean rawPrompt;
 
     /**
      * The options of a synthesis that sets none.

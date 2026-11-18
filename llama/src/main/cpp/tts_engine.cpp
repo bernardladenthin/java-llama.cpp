@@ -229,7 +229,10 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
     // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
     // template error, which the C API reports.
-    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
+    // b12494: raw_prompt skips the template (the text is phonemes or a whole prompt), as /tts does
+    const std::string rendered = options.raw_prompt
+                                     ? std::string()
+                                     : common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
     const std::string &prompt = rendered.empty() ? text : rendered;
     const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
 

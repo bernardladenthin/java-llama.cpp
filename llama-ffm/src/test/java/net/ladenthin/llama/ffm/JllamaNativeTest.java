@@ -230,10 +230,12 @@ class JllamaNativeTest {
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("repeat_penalty")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("speed")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(0.0f));
-            assertThat(JllamaNative.TTS_OPTIONS.byteSize(), is(80L));
+            assertThat(JllamaNative.TTS_OPTIONS.byteSize(), is(88L));
             assertThat(JllamaNative.offset("speaker_reference_text"), is(64L));
             assertThat(JllamaNative.offset("cfg_scale"), is(72L));
             assertThat(JllamaNative.offset("flow_steps"), is(76L));
+            assertThat(JllamaNative.offset("raw_prompt"), is(80L));
+            assertThat(options.get(JAVA_INT, JllamaNative.offset("raw_prompt")), is(0));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("cfg_scale")), is(0.0f));
             assertThat(options.get(JAVA_INT, JllamaNative.offset("flow_steps")), is(0));
             assertThat(options.get(ADDRESS, JllamaNative.offset("speaker_reference_text")), is(MemorySegment.NULL));
@@ -253,9 +255,11 @@ class JllamaNativeTest {
                             .speakerReferenceText("Hello there.")
                             .cfgScale(1.5f)
                             .flowSteps(16)
+                            .rawPrompt(true)
                             .build());
             assertThat(transcribed.get(JAVA_FLOAT, JllamaNative.offset("cfg_scale")), is(1.5f));
             assertThat(transcribed.get(JAVA_INT, JllamaNative.offset("flow_steps")), is(16));
+            assertThat(transcribed.get(JAVA_INT, JllamaNative.offset("raw_prompt")), is(1));
             assertThat(transcribed.get(ADDRESS, JllamaNative.offset("speaker_reference_text"))
                     .reinterpret(16).getString(0), is("Hello there."));
         }

@@ -3274,7 +3274,7 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     jllama_tts_options_init(&options);
     const jllama_tts::synthesis_options engine;
     EXPECT_EQ(options.struct_size, sizeof(jllama_tts_options));
-    EXPECT_EQ(sizeof(jllama_tts_options), 80u) << "llama-ffm's TTS_OPTIONS lays out 80 bytes";
+    EXPECT_EQ(sizeof(jllama_tts_options), 88u) << "llama-ffm's TTS_OPTIONS lays out 88 bytes (b12494's raw_prompt)";
     EXPECT_EQ(offsetof(jllama_tts_options, speaker_reference_text), 64u)
         << "b12453 appended the transcript behind the 64 bytes of 6.1.0's header";
     EXPECT_EQ(offsetof(jllama_tts_options, cfg_scale), 72u) << "b12459 appended guidance and solver steps";
@@ -3948,6 +3948,43 @@ TEST_F(CApiLfm3Tts, TheTemplateNamesTheLanguageAndTheVoice) {
     bool supported = true;
     ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
     EXPECT_FALSE(supported);
+}
+
+TEST_F(CApiLfm3Tts, ARawPromptSkipsTheTemplate) {
+    // b12494's raw_prompt: the text goes to the model as it is. The prompt the template renders, given
+    // raw, is the same synthesis; the bare text ends in text instead of <|audio_start|> and cannot speak
+    const auto speak_raw = [](const char *text, int raw, size_t struct_size, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 10;
+        options.seed = 7;
+        options.temperature = 0.0f;
+        options.raw_prompt = raw;
+        options.struct_size = struct_size;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    std::vector<unsigned char> templated;
+    ASSERT_EQ(speak("hello world", &templated, 10, 7, nullptr, nullptr, 0.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string rendered = "<|startoftext|><|im_start|>system\nSpeak English with a female voice.<|im_end|>\n"
+                                 "<|im_start|>user\nhello world<|im_end|>\n<|im_start|>assistant\n<|audio_start|>";
+    std::vector<unsigned char> raw;
+    ASSERT_EQ(speak_raw(rendered.c_str(), 1, sizeof(jllama_tts_options), &raw), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(raw, templated) << "the rendered prompt given raw is the same synthesis";
+    EXPECT_EQ(speak_raw("hello world", 1, sizeof(jllama_tts_options), nullptr), JLLAMA_STATUS_ERROR)
+        << "the bare text does not end in <|audio_start|>";
+    // a caller of the header before b12494 declares 80 bytes: the field behind them is not read
+    std::vector<unsigned char> older;
+    ASSERT_EQ(speak_raw("hello world", 1, offsetof(jllama_tts_options, raw_prompt), &older), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(older, templated);
 }
 
 TEST(CApiLfm3TtsEnd, TheEndOfAudioAtTheFirstFrameLeavesNoAudio) {

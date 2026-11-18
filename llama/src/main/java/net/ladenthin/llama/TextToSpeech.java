@@ -114,7 +114,8 @@ public final class TextToSpeech implements AutoCloseable {
                     parameters.getLoudness(),
                     parameters.getSpeakerReferenceText(),
                     parameters.getCfgScale(),
-                    parameters.getFlowSteps());
+                    parameters.getFlowSteps(),
+                    parameters.isRawPrompt());
         }
 
         @Override
@@ -422,7 +423,8 @@ public final class TextToSpeech implements AutoCloseable {
             float loudness,
             @Nullable String speakerReferenceText,
             float cfgScale,
-            int flowSteps);
+            int flowSteps,
+            boolean rawPrompt);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
 

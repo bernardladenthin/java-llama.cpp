@@ -961,6 +961,7 @@ void jllama_tts_options_init(jllama_tts_options *options) {
     options->speaker_reference_text = nullptr;
     options->cfg_scale = defaults.cfg_scale;
     options->flow_steps = defaults.flow_steps;
+    options->raw_prompt = defaults.raw_prompt ? 1 : 0;
 }
 
 jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
@@ -1000,6 +1001,7 @@ jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *t
         synthesis.speaker_reference_text = given.speaker_reference_text != nullptr ? given.speaker_reference_text : "";
         synthesis.cfg_scale = given.cfg_scale;
         synthesis.flow_steps = given.flow_steps;
+        synthesis.raw_prompt = given.raw_prompt != 0;
         std::vector<uint8_t> bytes;
         std::string err;
         bool request_fault = false;

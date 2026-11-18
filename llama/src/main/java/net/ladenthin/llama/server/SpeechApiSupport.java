@@ -170,7 +170,8 @@ final class SpeechApiSupport {
      * {@code max_tokens}) the frame cap, {@code top_k}, {@code top_p}, {@code repeat_penalty},
      * {@code seed} and {@code temperature} the sampling, {@code speed} and {@code loudness} the
      * delivery of a model that supports it (b12431), {@code cfg_scale} and {@code flow_steps} the
-     * guidance and solver steps of a flow-matching model (b12459, YuE2); {@code stream} is refused, this server answers
+     * guidance and solver steps of a flow-matching model (b12459, YuE2), {@code raw_prompt} the text as it is,
+     * without the model's {@code "tts"} template (b12494); {@code stream} is refused, this server answers
      * the audio in one piece.
      *
      * @param request the request body
@@ -244,7 +245,19 @@ final class SpeechApiSupport {
                 .withSpeakerReferenceText(textOrNull(request.path("speaker_ref_text")))
                 .withGenerationControl(
                         floatOrNull(request.path("cfg_scale"), "cfg_scale"),
-                        integerOrNull(request.path("flow_steps"), "flow_steps"));
+                        integerOrNull(request.path("flow_steps"), "flow_steps"))
+                .withRawPrompt(booleanOrFalse(request.path("raw_prompt"), "raw_prompt"));
+    }
+
+    /** A boolean field: absent or null is false, any other type the request's fault. */
+    private static boolean booleanOrFalse(JsonNode node, String field) {
+        if (node.isMissingNode() || node.isNull()) {
+            return false;
+        }
+        if (!node.isBoolean()) {
+            throw new IllegalArgumentException("Field '" + field + "': must be a boolean");
+        }
+        return node.asBoolean();
     }
 
     /** A string field as upstream reads it with {@code json_value}: absent or empty is unset. */
