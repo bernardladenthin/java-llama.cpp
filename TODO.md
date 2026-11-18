@@ -358,6 +358,20 @@ followed on 2026-11-18 (four more cases). Not covered by the generator: the mixe
 audio interleaved), whose switching the random backbone decides; CI's real pair covers it
 (`RealtimeNativeServerIntegrationTest`).
 
+**From b12506 to b12515 (2026-11-18)** -- 9 upstream commits (master; pinned by commit, the number is
+not tagged yet, so the README's release link answers 404 until it is): a realtime session of the type
+`transcription` takes its prompt (#32507), CUDA's `NORM` + `MUL` fusion (#32454), benchmark-only random
+MoE routing (#29539), tokenizer refactors (#30962, #31070) and WebUI changes (`npx
+@ggml-org/llama-chat`, Models and MCP behind settings). Every patch unchanged, no source change; the
+WebUI license list's lockfile digest moved (the texts are identical). New:
+`CApiLfm3Audio.ALiveTranscriptionPromptGoesInBeforeTheAudio` (red at b12506). Open, none of it blocking:
+- **`LLAMA_MOE_RANDOM_ROUTING`** is an environment variable of the process and reaches every model the
+  JVM loads; it is for throughput measurements only (the answers are not valid) and has no setter
+  here on purpose.
+- **The realtime transcription prompt for a model whose preset puts the audio first** (VibeVoice-ASR,
+  `media_first`) goes in after the audio; no generated model has that preset, so only the LFM3 order
+  is tested.
+
 **From b12504 to b12506 (2026-11-18)** -- 2 upstream commits (bf16 for more CPU and Vulkan operators,
 #32202; WebUI Storybook follow-ups, #32523), pinned by commit (the tag exists); every patch unchanged,
 no source change. Its own step because #32202 alone is a 100 KiB diff. Not measured: the Vulkan half

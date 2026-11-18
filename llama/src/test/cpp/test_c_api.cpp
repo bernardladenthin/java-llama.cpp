@@ -4283,6 +4283,77 @@ TEST_F(CApiLfm3Audio, LiveTranscriptionHearsTheStreamedAudioAndCompletesTheItem)
     EXPECT_EQ(completed.at("transcript").get<std::string>(), deltas) << completed.dump();
     ws.close();
 }
+TEST_F(CApiLfm3Audio, ALiveTranscriptionPromptGoesInBeforeTheAudio) {
+    // a realtime session switched to the type "transcription" (session.update; ?intent=transcription
+    // with an "asr" template takes the slot's own live transcription instead) builds its instruction
+    // as /v1/audio/transcriptions does (b12511, #32507): the LFM3 preset has no user text, so
+    // session.audio.input.transcription.prompt is the user text, and it goes in before the audio.
+    // The session reports it, and the same clip is answered differently with it than without it;
+    // without a prompt the answer is the same every time, so the difference is the prompt's.
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    std::string pcm;
+    for (int i = 0; i < 16000; ++i) {
+        const auto v = static_cast<int16_t>(16000.0f * std::sin(2.0f * 3.14159265f * 440.0f * i / 16000.0f));
+        pcm.append(reinterpret_cast<const char *>(&v), sizeof(v));
+    }
+    const std::string audio = base64_of(std::vector<uint8_t>(pcm.begin(), pcm.end()));
+    const auto transcribe = [&](const std::string &prompt, std::string *deltas) {
+        httplib::ws::WebSocketClient ws("ws://127.0.0.1:" + std::to_string(attached.port) + "/v1/realtime");
+        ws.set_read_timeout(std::chrono::seconds(60));
+        ASSERT_TRUE(ws.connect());
+        std::string message;
+        ASSERT_EQ(ws.read(message), httplib::ws::ReadResult::Text);
+        json transcription = json::object();
+        if (!prompt.empty()) {
+            transcription["prompt"] = prompt;
+        }
+        ASSERT_TRUE(ws.send(json{{"type", "session.update"},
+                                 {"session",
+                                  {{"type", "transcription"},
+                                   {"max_output_tokens", 8},
+                                   {"audio", {{"input", {{"transcription", transcription}}}}}}}}
+                                .dump()));
+        json updated;
+        while (updated.is_null()) {
+            message.clear();
+            ASSERT_EQ(ws.read(message), httplib::ws::ReadResult::Text);
+            const json event = json::parse(message);
+            ASSERT_NE(event.value("type", std::string()), "error") << message;
+            if (event.value("type", std::string()) == "session.updated") {
+                updated = event;
+            }
+        }
+        EXPECT_EQ(updated.at("session").at("audio").at("input").at("transcription").value("prompt", std::string("?")),
+                  prompt)
+            << updated.dump();
+        ASSERT_TRUE(ws.send(json{{"type", "input_audio_buffer.append"}, {"audio", audio}}.dump()));
+        ASSERT_TRUE(ws.send(json{{"type", "input_audio_buffer.commit"}}.dump()));
+        json completed;
+        while (completed.is_null()) {
+            message.clear();
+            ASSERT_EQ(ws.read(message), httplib::ws::ReadResult::Text) << "deltas so far: " << *deltas;
+            const json event = json::parse(message);
+            const std::string type = event.value("type", std::string());
+            ASSERT_NE(type, "error") << message;
+            if (type == "conversation.item.input_audio_transcription.delta") {
+                *deltas += event.at("delta").get<std::string>();
+            } else if (type == "conversation.item.input_audio_transcription.completed") {
+                completed = event;
+            }
+        }
+        ws.close();
+    };
+    std::string plain;
+    std::string again;
+    std::string prompted;
+    transcribe("", &plain);
+    transcribe("", &again);
+    transcribe("Names that occur in the recording: Ladenthin, Gerganov, Lindqvist, Okonkwo.", &prompted);
+    EXPECT_FALSE(plain.empty());
+    EXPECT_EQ(plain, again) << "without a prompt the answer does not change";
+    EXPECT_NE(prompted, plain) << "the prompt reached the model";
+}
 namespace {
 // a /v1/realtime session over the attached server: events in, events out, errors kept
 struct RealtimeSession {

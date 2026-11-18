@@ -203,6 +203,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
+  tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
+  `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before
+  the audio (after it for a model whose preset puts the audio first), the language is named when the
+  preset does not, and `session.updated` reports the prompt; before, the prompt was not read. (The
+  slot's own live transcription, `?intent=transcription` on a model with an `asr` template, is
+  unchanged.) Also
+  CUDA fuses `NORM` + `MUL` (+ `ADD`) (#32454), `LLAMA_MOE_RANDOM_ROUTING=1` picks random experts
+  for benchmarks (#29539; the answers are not valid), and tokenizer refactors (#30962, #31070). The
+  WebUI's `package.json` became a publishable npm package (`npx @ggml-org/llama-chat`, #32524); the
+  embedded build is unchanged, its license list is regenerated for the lockfile.
 - **llama.cpp b12506** (from b12504, 2 upstream commits): bf16 for more operators (#32202) -- on the
   CPU `scale`, `clamp`, `leaky_relu`, `swiglu_oai`, `swiglu_clamp`, `tri` and `diag`, on Vulkan the
   unary and binary operators and `rms_norm` -- and follow-ups to the WebUI Storybook (#32523). No API
