@@ -255,9 +255,6 @@ fix every site measured, [`docs/handover/local-agent-report-windows-non-ascii-pa
 - VibeVoice-ASR and higgs v3 STT have no model in `models.csv`; Nemotron 3.5 Transcribe (b12087),
   MageVL-Cowork (b12192), Qwen3-VL's video prompt format (b12098), Gemma 4's audio stream (b12237) and
   Inkling 2 (#32217) are reached through the existing multimodal paths and exercised by no test here.
-- **The standalone launcher with `--tts-model` + `--tts-mmproj`** (`--tts-lang` / `--tts-voice`,
-  b12283 #32022) loads a `TextToSpeech` beside the model (`OpenAiServerCliTest`); that it then really
-  speaks was not run with a speech model -- no test starts `main` with one.
 - **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
   (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
   and the generator writes no such model.

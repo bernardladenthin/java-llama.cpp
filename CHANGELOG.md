@@ -459,12 +459,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   name or the call failed. Patches `0027` and `0028` open them as UTF-8, and `0029` a `file://`
   media URL below a `--media-path` outside ASCII. `0030` reads an option's environment variable
   (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) as UTF-8 too: in the ANSI code page a path outside ASCII in it
-  failed the model load, whatever the arguments said.
+  failed the model load, whatever the arguments said. Of the Windows paths only the download target
+  (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
 - **The standalone `OpenAiCompatServer` speaks.** `--tts-model <gguf> --tts-mmproj <gguf>` load a
   speech model next to the model, and `POST /v1/audio/speech` and `POST /tts` are served; without
   them both answer `501` as before. `--tts-lang` / `--tts-voice` are the defaults of a request
-  that names none. Of the Windows paths only
-  the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
+  that names none. `OpenAiCompatServerSpeechLauncherIntegrationTest` starts `main` with CI's draft
+  model and tiny-voca pair in a child JVM and asks it to speak.
 - **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
   `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
   `text.format.json_schema` on the upstream `/v1/responses`; a request with `response_format` and
