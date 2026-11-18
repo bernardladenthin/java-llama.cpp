@@ -228,6 +228,27 @@ fix every site measured, [`docs/handover/local-agent-report-windows-non-ascii-pa
 - **`/tts` on `OpenAiCompatServer`** leaves out `stream` (refused: `TextToSpeech` has no streaming
   entry point, the audio is answered in one piece) and a multipart `speaker_ref` upload.
 
+**Left open by the review of 2026-11-18** (two review agents over the branch; the defects they
+found are fixed, these are what is left)
+- **A command line can still end the process.** `--help`, `--usage`, `--version`, `--list-devices`,
+  `--cache-list` and `--completion-bash` call `exit(0)` inside the parse (`patches/0031` keeps them
+  on purpose). No `ModelParameters` setter writes one, but the raw argv of `jllama_model_load`,
+  `FfmLlamaModel.load(String[])` and a `NativeServer` reaches them; refusing them in the engine (or
+  making them answer without exiting) is undecided.
+- **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
+  log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
+  `common_log`.
+- **An embedded server's own parse runs outside `g_common_log_mutex`.** The server parses inside
+  `llama_server()` on its worker, so a `--log-disable`, `--log-colors` or `LLAMA_ARG_LOG_FILE` there
+  pauses the log worker without the lock a concurrent `setLogger` takes (its `--log-file` is opened
+  by the engine and is covered).
+- **The `--log-file` scan reads by name, not by position**: a value of another option that is
+  literally `--log-file` is taken for the option.
+- **The vocabulary-gap message** does not reach the string fields the request schema tokenizes
+  (stop strings, `preserved_tokens`, a string `logit_bias`): those still answer `unordered_map::at`.
+- **That a freed model's teardown lines reach its log file** has no test: the random models and the
+  draft model log nothing at teardown, even at `-lv 4`.
+
 **Not tested, for want of a model or a case**
 - **ZAYA1 with real weights** (b12521, #32071): the generator's model has the architecture's shapes
   at a hundredth of the width; the 8B checkpoint would be ~16 GB as F16.

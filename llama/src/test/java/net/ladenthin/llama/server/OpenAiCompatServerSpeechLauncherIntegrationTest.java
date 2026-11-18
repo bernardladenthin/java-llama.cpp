@@ -50,10 +50,11 @@ import org.junit.jupiter.api.Timeout;
                 + "OpenAiCompatServer speak over /v1/audio/speech and list the speech model's voices in /props.")
 public class OpenAiCompatServerSpeechLauncherIntegrationTest {
 
-    private static final Pattern READY =
-            Pattern.compile("OpenAI-compatible endpoint ready: http://([^:/]+):(\\d+)/");
+    private static final Pattern READY = Pattern.compile("OpenAI-compatible endpoint ready: http://([^:/]+):(\\d+)/");
 
     private static final int WAV_HEADER_BYTES = 44;
+
+    private static final String LIB_PATH_PROPERTY = "net.ladenthin.llama.lib.path";
 
     @Test
     @Timeout(value = 15, unit = TimeUnit.MINUTES)
@@ -70,12 +71,33 @@ public class OpenAiCompatServerSpeechLauncherIntegrationTest {
 
         List<String> command = new ArrayList<>();
         command.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+        // the natives the test JVM was told about, for a job that has them outside the classpath
+        for (String property : Arrays.asList(LIB_PATH_PROPERTY, "java.library.path")) {
+            String value = System.getProperty(property);
+            if (value != null && !value.isEmpty()) {
+                command.add("-D" + property + "=" + value);
+            }
+        }
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
         command.add(OpenAiCompatServer.class.getName());
         command.addAll(Arrays.asList(
-                "-m", model, "-c", "512", "-ngl", "0", "-t", "2", "--host", "127.0.0.1", "--port", "0",
-                "--tts-model", ttsModel, "--tts-mmproj", ttsMmproj));
+                "-m",
+                model,
+                "-c",
+                "512",
+                "-ngl",
+                "0",
+                "-t",
+                "2",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--tts-model",
+                ttsModel,
+                "--tts-mmproj",
+                ttsMmproj));
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Process child = builder.start();
@@ -84,8 +106,8 @@ public class OpenAiCompatServerSpeechLauncherIntegrationTest {
         String[] endpoint = new String[2];
         Thread reader = new Thread(
                 () -> {
-                    try (BufferedReader lines = new BufferedReader(
-                            new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8))) {
+                    try (BufferedReader lines =
+                            new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8))) {
                         String line;
                         while ((line = lines.readLine()) != null) {
                             synchronized (output) {
@@ -100,14 +122,18 @@ public class OpenAiCompatServerSpeechLauncherIntegrationTest {
                         }
                     } catch (IOException e) {
                         // the child ended; what it printed is in output
+                    } finally {
+                        ready.countDown(); // at the end of the output too: a child that died is a failure now
                     }
                 },
                 "launcher-output");
         reader.setDaemon(true);
         reader.start();
+        Throwable failure = null;
         try {
-            assertTrue(ready.await(10, TimeUnit.MINUTES) && child.isAlive(), () -> "the launcher did not start:\n"
-                    + snapshot(output));
+            assertTrue(
+                    ready.await(10, TimeUnit.MINUTES) && endpoint[1] != null && child.isAlive(),
+                    () -> "the launcher did not start:\n" + snapshot(output));
             String base = "http://" + endpoint[0] + ":" + endpoint[1];
 
             byte[] wav = post(base + "/v1/audio/speech", "{\"input\":\"Hello there.\",\"response_format\":\"wav\"}");
@@ -125,13 +151,22 @@ public class OpenAiCompatServerSpeechLauncherIntegrationTest {
             JsonNode props = new ObjectMapper().readTree(get(base + "/props"));
             JsonNode voices = props.path("voices");
             assertTrue(voices.isArray() && voices.size() > 0, () -> "the speech model's voices in /props: " + props);
+        } catch (Throwable e) {
+            failure = e;
+            throw e;
         } finally {
             child.destroy();
             boolean ended = child.waitFor(2, TimeUnit.MINUTES);
             if (!ended) {
                 child.destroyForcibly();
+                AssertionError notEnded =
+                        new AssertionError("the launcher did not end on SIGTERM:\n" + snapshot(output));
+                if (failure != null) {
+                    failure.addSuppressed(notEnded); // the first failure is the one to read
+                } else {
+                    throw notEnded;
+                }
             }
-            assertTrue(ended, () -> "the launcher did not end on SIGTERM:\n" + snapshot(output));
         }
         assertFalse(child.isAlive());
     }
@@ -156,7 +191,8 @@ public class OpenAiCompatServerSpeechLauncherIntegrationTest {
         InputStream in = status < 400 ? connection.getInputStream() : connection.getErrorStream();
         assertNotNull(in, "no body for status " + status);
         byte[] response = readAll(in);
-        assertEquals(200, status, () -> url + " answered " + status + ": " + new String(response, StandardCharsets.UTF_8));
+        assertEquals(
+                200, status, () -> url + " answered " + status + ": " + new String(response, StandardCharsets.UTF_8));
         return response;
     }
 

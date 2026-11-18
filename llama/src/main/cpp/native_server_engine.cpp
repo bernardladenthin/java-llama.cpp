@@ -14,7 +14,9 @@
 #include "native_server_bridge.h"
 #include "rpc_support.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
@@ -33,6 +35,41 @@ void bind_argv(native_server *srv) {
     }
 }
 
+// The server's load probes the memory with two tokens in one batch (common_context_can_seq_rm);
+// with a smaller logical batch llama.cpp aborts the process there -- the JVM, for a Java caller.
+// jllama::engine::load refuses it after its parse; a server parses inside llama_server(), so its argv
+// is read here, the last -b / --batch-size winning as in the parse, LLAMA_ARG_BATCH when it has
+// none. A value that is no number is left to the parse to refuse.
+void refuse_a_batch_below_two(const std::vector<std::string> &args) {
+    std::string value;
+    if (const char *env = std::getenv("LLAMA_ARG_BATCH"); env != nullptr) {
+        value = env;
+    }
+    for (size_t i = 1; i + 1 < args.size(); i++) {
+        std::string name = args[i];
+        if (name.rfind("--", 0) == 0) {
+            std::replace(name.begin(), name.end(), '_', '-');
+        }
+        if (name == "-b" || name == "--batch-size") {
+            value = args[i + 1];
+        }
+    }
+    if (value.empty()) {
+        return;
+    }
+    try {
+        size_t used = 0;
+        const int n_batch = std::stoi(value, &used);
+        if (used != value.size() || n_batch >= 2) {
+            return;
+        }
+    } catch (const std::exception &) {
+        return; // no number: the parse refuses it
+    }
+    throw std::runtime_error("--batch-size must be at least 2 (got " + value +
+                             "): the server evaluates two tokens in one batch when it loads the model");
+}
+
 } // namespace
 
 native_server *start(const std::vector<std::string> &argv) {
@@ -41,17 +78,18 @@ native_server *start(const std::vector<std::string> &argv) {
     // here with a clear message (std::invalid_argument), and RPC devices another model registered
     // in this process stay out of this server's model.
     owned->args = jllama::rpc::prepare_argv(argv);
+    refuse_a_batch_below_two(owned->args);
+    // A --log-file is opened here, not by llama_server()'s parse on the worker; the server owns the
+    // file until it returns, then the file is closed (unless a model or another server took it).
+    const std::uint64_t log_file = jllama::engine::claim_log_file_for_server(owned->args);
     bind_argv(owned.get());
     native_server *srv = owned.release();
 
     // Embedded mode: no process signal handlers, honour the forwarded argv (patches/0006).
     llama_server_set_embedded(true);
-    // llama_server() parses the argv on the worker, where a --log-file opens the process-wide log
-    // file; the server owns it until it returns, then the file is closed (unless a model took it).
-    jllama::engine::claim_log_file_for_server(srv, srv->args);
-    srv->worker = std::thread([srv]() {
+    srv->worker = std::thread([srv, log_file]() {
         srv->exit_code = llama_server(static_cast<int>(srv->argv.size()), srv->argv.data());
-        jllama::engine::release_log_file_of_server(srv);
+        jllama::engine::release_log_file_of_server(log_file);
         srv->finished.store(true);
     });
     return srv;
@@ -76,6 +114,7 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     jllama_context *held = acquire_jllama_context(jctx);
     std::unique_ptr<native_server> owned(new native_server());
     owned->args = argv;
+    const std::uint64_t log_file = jllama::engine::claim_log_file_for_server(owned->args);
     bind_argv(owned.get());
     native_server *srv = owned.release();
 
@@ -84,11 +123,10 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     llama_server_set_embedded(true);
     server_context *ctx_server = &jctx->server;
     server_routes *routes = jctx->routes.get();
-    jllama::engine::claim_log_file_for_server(srv, srv->args);
-    srv->worker = std::thread([srv, ctx_server, routes, held]() {
+    srv->worker = std::thread([srv, ctx_server, routes, held, log_file]() {
         srv->exit_code =
             llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server, *routes);
-        jllama::engine::release_log_file_of_server(srv);
+        jllama::engine::release_log_file_of_server(log_file);
         srv->finished.store(true);
         release_jllama_context_impl(held);
     });

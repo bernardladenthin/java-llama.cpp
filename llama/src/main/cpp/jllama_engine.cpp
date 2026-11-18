@@ -23,12 +23,15 @@
 #include "rpc_support.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -46,8 +49,12 @@ constexpr int N_PARALLEL_AUTO = -1;
 // caller, so 1 slot is the appropriate default and preserves pre-b7433 behaviour.
 constexpr int N_PARALLEL_DEFAULT = 1;
 
-// Serialises set_log_sink callers; see the header.
-std::mutex g_set_log_sink_mutex;
+// Serialises every change this layer makes to common_log that pauses and resumes its worker thread
+// (the sink, the log file, a parse with a log option that pauses it): two of them interleaved race
+// on that std::thread -- a resume assigns a fresh thread over one another pause still joins, which is
+// std::terminate -- and a pause that finds the worker already stopping returns before it is joined,
+// so a fclose() could run under a flush. See set_log_sink in the header.
+std::mutex g_common_log_mutex;
 
 // Throws the exception a failed task result maps to: an error the server reports with code 400
 // (ERROR_TYPE_INVALID_REQUEST, ERROR_TYPE_EXCEED_CONTEXT_SIZE) is the request's fault.
@@ -270,61 +277,132 @@ struct video_decoder_host {
 };
 
 // --log-file (and its variable LLAMA_ARG_LOG_FILE) opens a file of the process-wide common_log
-// while the argv is parsed; common_params keeps no record of it. Without this the file stayed open
-// after the model was freed, later models of the process kept writing into it, and Windows cannot
-// delete it while the JVM runs. The model whose load opened the current file owns it, and freeing
-// that model closes it; a failed load closes the file it opened at once. A later --log-file of
-// another model takes the file and the ownership over, as it takes the file in common_log. An
-// embedded server (native_server_engine.cpp) parses its argv inside llama_server() and owns the
-// file the same way until that returns.
-std::mutex g_log_file_mutex;
-const void *g_log_file_owner = nullptr;
+// while the argv is parsed; common_params keeps no record of it. Without an owner the file stayed
+// open after the model was freed, later models of the process kept writing into it, and Windows
+// cannot delete it while the JVM runs. So the option is taken out of the argv and the file opened
+// here, after the parse accepted the rest: a refused parse opens nothing and closes nothing. The
+// load (later its model, or an embedded server) that opened the current file owns it, under an id
+// that is never reused; freeing the owner closes the file, a failed load closes it at once, and a
+// later --log-file takes the file and the ownership over, as it takes the file in common_log.
+// LLAMA_ARG_LOG_FILE is applied by the parse itself, before the argv (common_params_parse_ex), so a
+// load in a process with the variable set owns the file its parse opened. Guarded by
+// g_common_log_mutex.
+std::uint64_t g_log_file_owner = 0; // 0: no file of this layer's open
+std::uint64_t g_next_log_file_owner = 1;
 
-bool argv_sets_log_file(const std::vector<std::string> &argv) {
-    for (const auto &arg : argv) {
-        if (arg == "--log-file" || arg.rfind("--log-file=", 0) == 0) {
+// What the parse does to a long option: "--log_file" is "--log-file".
+std::string long_option_name(const std::string &arg) {
+    std::string name = arg;
+    if (name.rfind("--", 0) == 0) {
+        std::replace(name.begin(), name.end(), '_', '-');
+    }
+    return name;
+}
+
+bool env_is_set(const char *name) {
+    const char *value = std::getenv(name);
+    return value != nullptr && *value != '\0';
+}
+
+// Removes every "--log-file <path>" (index 0 is the program name) and returns the last path, as the
+// parse would keep it; empty when there is none. An option without a value stays, for the parse to
+// refuse ("expected value for argument"). A value of another option that is literally "--log-file"
+// would be taken for the option -- the parse reads values by position, which this scan does not.
+std::string take_log_file_option(std::vector<std::string> &argv) {
+    std::string path;
+    std::vector<std::string> kept;
+    kept.reserve(argv.size());
+    for (size_t i = 0; i < argv.size(); i++) {
+        if (i > 0 && i + 1 < argv.size() && long_option_name(argv[i]) == "--log-file") {
+            path = argv[i + 1];
+            i++;
+            continue;
+        }
+        kept.push_back(argv[i]);
+    }
+    argv = std::move(kept);
+    return path;
+}
+
+// Whether a parse of this argv pauses common_log's worker: --log-disable and --log-colors do, and
+// LLAMA_ARG_LOG_FILE / LLAMA_ARG_LOG_COLORS do from the environment. Only such a parse holds
+// g_common_log_mutex -- a parse can download a model (-hf), which must not block every setLogger.
+bool parse_pauses_the_log(const std::vector<std::string> &argv) {
+    for (size_t i = 1; i < argv.size(); i++) {
+        const std::string name = long_option_name(argv[i]);
+        if (name == "--log-disable" || name == "--log-colors") {
             return true;
         }
     }
-    const char *env = std::getenv("LLAMA_ARG_LOG_FILE");
-    return env != nullptr && *env != '\0';
+    return env_is_set("LLAMA_ARG_LOG_FILE") || env_is_set("LLAMA_ARG_LOG_COLORS");
+}
+
+// Opens `path` as the log file (if any) and makes a new owner of the file now open; 0 when none was
+// opened. Caller holds g_common_log_mutex. `env_opened`: the parse just opened LLAMA_ARG_LOG_FILE's.
+std::uint64_t open_log_file_locked(const std::string &path, bool env_opened) {
+    if (!path.empty()) {
+        common_log_set_file(common_log_main(), path.c_str());
+    } else if (!env_opened) {
+        return 0;
+    }
+    g_log_file_owner = g_next_log_file_owner++;
+    return g_log_file_owner;
+}
+
+// Closes the log file if `owner` still owns it.
+void release_log_file(std::uint64_t owner) {
+    if (owner == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(g_common_log_mutex);
+    if (g_log_file_owner == owner) {
+        common_log_set_file(common_log_main(), nullptr);
+        g_log_file_owner = 0;
+    }
 }
 
 // Closes the file a load opened unless the load handed it to its model.
 struct log_file_claim {
-    bool opened = false;
-    const void *owner = nullptr;
+    std::uint64_t owner = 0;
+    bool handed = false;
     ~log_file_claim() {
-        if (!opened) {
-            return;
+        if (!handed) {
+            release_log_file(owner);
         }
-        std::lock_guard<std::mutex> lk(g_log_file_mutex);
-        if (owner != nullptr) {
-            g_log_file_owner = owner;
-        } else {
-            common_log_set_file(common_log_main(), nullptr);
-            g_log_file_owner = nullptr;
-        }
+    }
+};
+
+// The caller's load-progress callback, for the first load only. The server keeps the callback in
+// its params and calls it from every later load_model() as well -- a wake from the idle sleep runs
+// one on the worker thread, long after the caller's user data is gone (patches/0002 keeps a callback
+// that is not the server's own). The relay forwards while the first load runs and answers true
+// without the host afterwards.
+struct load_progress_relay {
+    llama_progress_callback callback = nullptr;
+    void *user_data = nullptr;
+    std::atomic<bool> active{true};
+
+    static bool forward(float progress, void *self) {
+        auto *relay = static_cast<load_progress_relay *>(self);
+        return !relay->active.load() || relay->callback(progress, relay->user_data);
     }
 };
 
 } // namespace
 
-void claim_log_file_for_server(const void *server, const std::vector<std::string> &argv) {
-    if (!argv_sets_log_file(argv)) {
-        return;
+std::uint64_t claim_log_file_for_server(std::vector<std::string> &argv) {
+    const std::string path = take_log_file_option(argv);
+    const bool env = env_is_set("LLAMA_ARG_LOG_FILE");
+    if (path.empty() && !env) {
+        return 0;
     }
-    std::lock_guard<std::mutex> lk(g_log_file_mutex);
-    g_log_file_owner = server;
+    std::lock_guard<std::mutex> lk(g_common_log_mutex);
+    // The server parses inside llama_server(), where LLAMA_ARG_LOG_FILE is opened again; the owner is
+    // the server either way.
+    return open_log_file_locked(path, env);
 }
 
-void release_log_file_of_server(const void *server) {
-    std::lock_guard<std::mutex> lk(g_log_file_mutex);
-    if (g_log_file_owner == server) {
-        common_log_set_file(common_log_main(), nullptr);
-        g_log_file_owner = nullptr;
-    }
-}
+void release_log_file_of_server(std::uint64_t owner) { release_log_file(owner); }
 
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data, const video_decoder *decoder) {
@@ -353,14 +431,33 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // this load -- see rpc_support.hpp.
     std::vector<std::string> rpc_argv =
         jllama::rpc::prepare_argv(std::vector<std::string>(filtered_argv.begin(), filtered_argv.end()));
+    const std::string log_file_path = take_log_file_option(rpc_argv);
     std::vector<char *> parse_argv;
     parse_argv.reserve(rpc_argv.size());
     for (auto &arg : rpc_argv) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
     log_file_claim log_file;
-    log_file.opened = argv_sets_log_file(rpc_argv);
-    if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
+    bool parsed = false;
+    {
+        std::unique_lock<std::mutex> log_lock(g_common_log_mutex, std::defer_lock);
+        if (parse_pauses_the_log(rpc_argv)) {
+            log_lock.lock();
+        }
+        parsed =
+            common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER);
+        // A parse in a process with LLAMA_ARG_LOG_FILE set opened that file before it read the argv;
+        // a refused one too (unless an earlier environment variable was refused first, which this
+        // cannot tell apart). The --log-file of the argv is opened only for an accepted parse.
+        const bool env_opened = env_is_set("LLAMA_ARG_LOG_FILE");
+        if (parsed || env_opened) {
+            if (!log_lock.owns_lock()) {
+                log_lock.lock();
+            }
+            log_file.owner = open_log_file_locked(parsed ? log_file_path : std::string(), env_opened);
+        }
+    }
+    if (!parsed) {
         // the reason without the usage text upstream appends after a blank line (patches/0031)
         std::string reason = common_params_parse_error();
         reason = reason.substr(0, reason.find("\n\n"));
@@ -374,9 +471,10 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // The server's load probes whether the memory can drop part of a sequence by evaluating two tokens
     // in one batch (common_context_can_seq_rm); with a smaller logical batch llama.cpp aborts the
     // process there (GGML_ABORT in common_batch::get_sub_batch) -- the JVM, for a Java caller.
+    // A refused load parameter, like a refused parse: JLLAMA_STATUS_ERROR / LlamaException.
     if (!vocab_only && params.n_batch < 2) {
-        throw std::invalid_argument("--batch-size must be at least 2 (got " + std::to_string(params.n_batch) +
-                                    "): the server evaluates two tokens in one batch when it loads the model");
+        throw std::runtime_error("--batch-size must be at least 2 (got " + std::to_string(params.n_batch) +
+                                 "): the server evaluates two tokens in one batch when it loads the model");
     }
 
     // A draft model nobody asks: upstream's speculative types default to none, and the parse above
@@ -407,7 +505,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
             throw std::runtime_error("could not load tokenizer from given file path");
         }
         jctx->vocab = llama_model_get_vocab(jctx->vocab_only_model);
-        log_file.owner = jctx.get();
+        jctx->log_file_owner = log_file.owner;
+        log_file.handed = true;
         return jctx.release();
     }
 
@@ -438,9 +537,14 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
 
     LOG_INF("%s: loading model\n", __func__);
 
+    std::shared_ptr<load_progress_relay> progress_relay;
     if (progress != nullptr) {
-        params.load_progress_callback = progress;
-        params.load_progress_callback_user_data = progress_user_data;
+        progress_relay = std::make_shared<load_progress_relay>();
+        progress_relay->callback = progress;
+        progress_relay->user_data = progress_user_data;
+        params.load_progress_callback = &load_progress_relay::forward;
+        params.load_progress_callback_user_data = progress_relay.get();
+        jctx->load_progress = progress_relay;
     }
 
     // Before load_model(), as upstream's llama_server() does -- see jllama_context::routes. It keeps
@@ -453,7 +557,11 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         jctx->server.set_video_decoder(&video_host->mtmd);
     }
 
-    if (!jctx->server.load_model(params)) {
+    const bool loaded = jctx->server.load_model(params);
+    if (progress_relay != nullptr) {
+        progress_relay->active.store(false);
+    }
+    if (!loaded) {
         // The failed load may have left a vocab-only model? No: that is the other branch. Nothing
         // to free besides the context (the server owns what it loaded and frees it in its
         // destructor).
@@ -490,7 +598,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         std::this_thread::yield();
     }
 
-    log_file.owner = jctx.get();
+    jctx->log_file_owner = log_file.owner;
+    log_file.handed = true;
     return jctx.release();
 }
 
@@ -537,15 +646,11 @@ void free(jllama_context *jctx) {
         llama_model_free(jctx->vocab_only_model);
     }
 
-    {
-        std::lock_guard<std::mutex> lk(g_log_file_mutex);
-        if (g_log_file_owner == jctx) {
-            common_log_set_file(common_log_main(), nullptr);
-            g_log_file_owner = nullptr;
-        }
-    }
-
+    // After the context and the model are destroyed, so that their teardown lines (the MoE cache's
+    // hit rate among them) still reach the file.
+    const std::uint64_t log_file_owner = jctx->log_file_owner;
     delete jctx;
+    release_log_file(log_file_owner);
 }
 
 void require_server(const jllama_context *jctx, const char *operation) {
@@ -668,7 +773,8 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
         llama_tokens forced = sampling.reasoning_budget_end.front();
         const std::string &message = jctx->params.sampling.reasoning_budget_message;
         if (!message.empty()) {
-            const llama_tokens message_tokens = common_tokenize(jctx->vocab, message, false, true);
+            const llama_tokens message_tokens =
+                naming_vocabulary_gaps([&]() { return common_tokenize(jctx->vocab, message, false, true); });
             forced.insert(forced.begin(), message_tokens.begin(), message_tokens.end());
         }
         sampling.reasoning_budget_forced = std::move(forced);
@@ -843,7 +949,7 @@ std::string chat_completions_stream_receive(jllama_context *jctx, int id_task, b
 }
 
 void set_log_sink(common_log_callback callback, void *user_data) {
-    std::lock_guard<std::mutex> swap_lock(g_set_log_sink_mutex);
+    std::lock_guard<std::mutex> swap_lock(g_common_log_mutex);
     // Detach the current sink first: this pauses common_log's worker, which drains every queued
     // entry through the OLD callback (a synchronous flush for the caller that sets null) and joins.
     common_log_set_callback(common_log_main(), nullptr, nullptr);
@@ -1314,9 +1420,11 @@ std::string rerank(jllama_context *jctx, const std::string &query, const std::ve
     std::vector<server_task> tasks;
     tasks.reserve(documents.size());
     for (size_t i = 0; i < documents.size(); i++) {
-        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
-                                           format_prompt_rerank(model, jctx->vocab, nullptr, query, documents[i], {},
-                                                                {}, mtmd_helper_init_opt_default()),
+        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_RERANK, naming_vocabulary_gaps([&]() {
+                                               return format_prompt_rerank(model, jctx->vocab, nullptr, query,
+                                                                           documents[i], {}, {},
+                                                                           mtmd_helper_init_opt_default());
+                                           }),
                                            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
     wake_and_post(rd, std::move(tasks));

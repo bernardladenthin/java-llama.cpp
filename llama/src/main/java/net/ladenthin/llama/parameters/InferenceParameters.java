@@ -474,8 +474,12 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with tokens that are never split during the tokenization of the
-     * generated text ({@code preserved_tokens}), for example the tags of a tool call. They add to
-     * those the chat template preserves. Empty input is a no-op.
+     * generated text ({@code preserved_tokens}), for example the tags of a tool call. Read by the
+     * raw completion paths ({@code complete}, {@code generate}, {@code handleCompletions}, also
+     * with {@code messages}), where they add to those the chat template preserves. The chat paths
+     * ({@code chatComplete}, the chat streams, {@code handleChatCompletions}) drop the field, as
+     * llama.cpp's server does: there the chat template decides. A string that is not exactly one
+     * token of the model's vocabulary is ignored. Empty input is a no-op.
      *
      * @param tokens token strings to keep whole
      * @return a new instance with the tokens set, or {@code this} if {@code tokens} is empty

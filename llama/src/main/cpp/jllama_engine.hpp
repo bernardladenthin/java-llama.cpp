@@ -166,9 +166,12 @@ void task_release(jllama_context *jctx, int id_task);
 
 /**
  * Installs (or, with null, removes) the log sink of common_log (patches/0014), the sink
- * LlamaModel.setLogger and jllama_set_log_callback share. Swaps are serialised: a swap pauses and
- * resumes common_log's worker thread, and two concurrent swaps raced on that std::thread
- * (std::terminate, measured by LlamaLoggerTest before the lock existed). Removing the sink first
+ * LlamaModel.setLogger and jllama_set_log_callback share. Swaps are serialised with every other
+ * change of common_log this layer makes (the --log-file a load opens or a free closes, a parse with
+ * --log-disable or --log-colors): each pauses and resumes common_log's worker thread, and two of them
+ * interleaved raced on that std::thread (std::terminate, measured by LlamaLoggerTest before the lock
+ * existed). A log callback must therefore not set the sink, load or free a model itself: the
+ * thread doing so waits for the worker the callback runs on. Removing the sink first
  * drains every queued entry to the previous callback, which is what makes "set null" a
  * synchronous flush. With a sink installed, llama/ggml lines are routed into common_log as well,
  * so they reach it before the first model load runs common_init().
@@ -231,12 +234,13 @@ void set_cpu_moe_batched(bool batched);
                                  const std::vector<std::string> &documents);
 
 /**
- * The embedded server's half of the --log-file ownership: an argv that sets a log file (or
- * LLAMA_ARG_LOG_FILE) makes `server` the owner of the process-wide log file its parse opens, and the
- * release closes that file unless a model's load has taken it over since.
+ * The embedded server's half of the --log-file ownership: takes "--log-file <path>" out of `argv`
+ * and opens the file, or with LLAMA_ARG_LOG_FILE set claims the file the server's parse opens, and
+ * returns the owner id (0: no log file). The release closes the file unless a model's load or
+ * another server has taken it over since.
  */
-void claim_log_file_for_server(const void *server, const std::vector<std::string> &argv);
-void release_log_file_of_server(const void *server);
+[[nodiscard]] std::uint64_t claim_log_file_for_server(std::vector<std::string> &argv);
+void release_log_file_of_server(std::uint64_t owner);
 
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */
 [[nodiscard]] std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special);

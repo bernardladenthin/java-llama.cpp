@@ -164,7 +164,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         sparams.top_p = top_p;
         sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_P);
     }
-    common_sampler *smpl = common_sampler_init(engine->model, sparams);
+    // Owned: a template or a pipeline call below can throw, and a raw pointer leaked the sampler then.
+    common_sampler_ptr smpl(common_sampler_init(engine->model, sparams));
     if (smpl == nullptr) {
         err = "failed to init sampler";
         return false;
@@ -178,7 +179,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         auto wrapper = mtmd_helper_bitmap_init_from_file(engine->mctx.get(), speaker_reference_path.c_str(), false,
                                                          mtmd_helper_init_opt_default());
         if (!wrapper.bitmap) {
-            common_sampler_free(smpl);
             return refuse("failed to load speaker reference audio: " + speaker_reference_path);
         }
         speaker_bitmap.reset(wrapper.bitmap);
@@ -193,7 +193,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     case predefined_voice::NOT_USED:
         break;
     case predefined_voice::CONFLICT:
-        common_sampler_free(smpl);
         return refuse("a voice and a speaker reference cannot be used together");
     case predefined_voice::FIRST:
         voice_name = engine->voices.front();
@@ -201,7 +200,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     case predefined_voice::NAMED:
         speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
         if (!speaker_bitmap) {
-            common_sampler_free(smpl);
             std::string message = "unknown voice \"" + voice_name + "\", the model has:";
             for (const std::string &name : engine->voices) {
                 message += " " + name;
@@ -217,7 +215,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     mtmd_helper::gen_audio gen;
     gen.init(engine->ctx, engine->mctx.get());
     if (!gen.valid()) {
-        common_sampler_free(smpl);
         err = "failed to initialise audio generation: the context cannot run the audio generation of this model";
         return false;
     }
@@ -278,13 +275,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     const int32_t input_status = gen.set_input(&inp);
     if (input_status == 2) {
         // the ranges are checked above, so what is left is a model without delivery or generation control
-        common_sampler_free(smpl);
         return refuse(synthesis_uses_generation_control(options) ? "the model does not support cfg_scale or flow_steps"
                       : synthesis_uses_delivery(options)         ? "the model does not support speed or loudness"
                                                                  : "the TTS input is invalid for the model");
     }
     if (input_status != 0) {
-        common_sampler_free(smpl);
         err = "failed to set TTS input (prompt/speaker-reference/lang rejected)";
         return false;
     }
@@ -294,7 +289,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         // the 2048 asked for at load); a larger one fails the prompt ("prompt processing failed")
         int32_t remaining = gen.step_prompt(static_cast<int32_t>(llama_n_batch(engine->ctx)));
         if (remaining < 0) {
-            common_sampler_free(smpl);
             err = "prompt processing failed";
             return false;
         }
@@ -305,8 +299,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
 
     // note: some pipelines ignore this token and drive generation from the hidden state instead
     auto sample_semantic_code = [&]() -> llama_token {
-        llama_token t = common_sampler_sample(smpl, engine->ctx, -1);
-        common_sampler_accept(smpl, t, true);
+        llama_token t = common_sampler_sample(smpl.get(), engine->ctx, -1);
+        common_sampler_accept(smpl.get(), t, true);
         return t;
     };
 
@@ -321,7 +315,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     while (!stop && n_frames < max_new) {
         const float *h_next = nullptr;
         if (gen.step_gen(sampled, h_state, &h_next, &stop) != 0) {
-            common_sampler_free(smpl);
             err = "audio-frame generation failed at frame " + std::to_string(n_frames);
             return false;
         }
@@ -332,7 +325,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         h_state = h_next;
         sampled = sample_semantic_code();
     }
-    common_sampler_free(smpl);
 
     int32_t sample_rate = 0;
     const char *data = nullptr;

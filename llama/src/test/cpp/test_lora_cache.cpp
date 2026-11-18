@@ -251,6 +251,12 @@ class LoraCacheFreshSlot : public ::testing::Test {
         Owned response;
         ASSERT_EQ(jllama_slot_action(model_, op, slot, filename, &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
     }
+    static void set_scale(float scale) {
+        Owned response;
+        const json adapters = json::array({{{"id", 0}, {"scale", scale}}});
+        ASSERT_EQ(jllama_set_lora_adapters(model_, adapters.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
 
     static std::string model_path_;
     static std::string adapter_path_;
@@ -298,6 +304,36 @@ TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     EXPECT_EQ(saved_slot.at("timings").at("prompt_n").get<int>(), prompt_n) << saved_slot.dump() << "\n"
                                                                             << restored.dump();
     EXPECT_EQ(restored.at("content").get<std::string>(), saved_slot.at("content").get<std::string>());
+}
+
+TEST_F(LoraCacheFreshSlot, AStateSavedUnderOtherAdaptersIsNotKeptAfterTheRestore) {
+    // The label of a restored state is the config it was saved with, not the server's at the time of
+    // the restore: a state saved with the adapter at scale 1 and restored after setLoraAdapters() set
+    // scale 0 was reused, and the answer at scale 0 came from KV computed at scale 1. A file this
+    // server did not save (here: a copy under another name) counts as computed under no adapters,
+    // which the first task with adapters clears -- what upstream assumes for a never-used slot.
+    ASSERT_NE(model_, nullptr);
+    complete_on(0); // computed with the adapter at scale 1, the --lora default
+    slot_action(JLLAMA_SLOT_SAVE, 0, "scaled.bin");
+    set_scale(0.0f);
+    slot_action(JLLAMA_SLOT_RESTORE, 1, "scaled.bin");
+    const json other_scale = complete_on(1);
+    EXPECT_EQ(other_scale.at("timings").at("cache_n").get<int>(), 0) << other_scale.dump();
+    set_scale(1.0f);
+
+    std::error_code ec;
+    std::filesystem::copy_file(std::filesystem::path(save_dir_) / "scaled.bin",
+                               std::filesystem::path(save_dir_) / "copied.bin",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    slot_action(JLLAMA_SLOT_RESTORE, 1, "copied.bin");
+    const json unknown = complete_on(1);
+    EXPECT_EQ(unknown.at("timings").at("cache_n").get<int>(), 0) << unknown.dump();
+
+    // and the file it saved under these adapters is still kept, as the first test of the fixture holds
+    slot_action(JLLAMA_SLOT_RESTORE, 1, "scaled.bin");
+    const json same_scale = complete_on(1);
+    EXPECT_LE(same_scale.at("timings").at("prompt_n").get<int>(), 2) << same_scale.dump();
 }
 
 namespace {

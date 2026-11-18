@@ -275,6 +275,61 @@ class FfmLlamaModelIntegrationTest {
         assertFalse(FfmRpcServer.isListening(), "no RPC server runs in this JVM");
     }
 
+    @Test
+    void aCloseWaitsForACallThatPassedTheClosedCheck() throws Exception {
+        // A call checked "closed" and then called into the C API; a close() from another thread in
+        // between freed the handle under it (a use after free that could crash the JVM). The call is
+        // held right after its check: the close must wait for it, the call must answer on the live
+        // handle, and a call after the close is refused. Without the lifecycle lock the close
+        // returned while the call was held, and the call then ran on the freed handle.
+        FfmLlamaModel other = FfmLlamaModel.load(new ModelParameters()
+                .setModel(FfmTestSupport.modelPath().toString())
+                .setCtxSize(64)
+                .setGpuLayers(0)
+                .setThreads(1));
+        java.util.concurrent.CountDownLatch inCall = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        int[][] tokens = new int[1][];
+        Throwable[] failure = new Throwable[1];
+        FfmLlamaModel.afterCheckForTesting = () -> {
+            if (Thread.currentThread().getName().equals("ffm-held-call")) {
+                inCall.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        try {
+            Thread caller = new Thread(() -> {
+                try {
+                    tokens[0] = other.tokenize("Hello there", true);
+                } catch (Throwable e) {
+                    failure[0] = e;
+                }
+            }, "ffm-held-call");
+            caller.start();
+            assertTrue(inCall.await(30, java.util.concurrent.TimeUnit.SECONDS), "the call did not start");
+            Thread closer = new Thread(other::close, "ffm-closer");
+            closer.start();
+            closer.join(500);
+            assertTrue(closer.isAlive(), "the close did not wait for the call in flight");
+            release.countDown();
+            caller.join(60_000);
+            closer.join(60_000);
+            assertFalse(caller.isAlive());
+            assertFalse(closer.isAlive());
+            assertEquals(null, failure[0]);
+            assertTrue(tokens[0] != null && tokens[0].length > 0, "the held call answered on the live handle");
+            assertThrows(IllegalStateException.class, () -> other.tokenize("Hello there", true));
+        } finally {
+            FfmLlamaModel.afterCheckForTesting = null;
+            release.countDown();
+            other.close();
+        }
+    }
+
     private static int awaitHealth(int port) throws Exception {
         URI health = URI.create("http://127.0.0.1:" + port + "/health");
         int last = -1;

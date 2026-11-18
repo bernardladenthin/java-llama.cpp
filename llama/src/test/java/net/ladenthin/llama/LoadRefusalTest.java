@@ -7,6 +7,7 @@ package net.ladenthin.llama;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -17,9 +18,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Parameters llama.cpp refuses before it reads the model file. Each of them used to end the
- * process -- the JVM -- instead of failing the load; the test running on after the refusal is half
- * of what it asserts. No GGUF is needed: the refusals come before the model path is opened.
+ * Parameters llama.cpp refuses before it reads the model file. A batch below 2 and a chat template
+ * that does not parse used to end the process -- the JVM -- instead of failing the load, so the test
+ * running on after the refusal is half of what they assert; an option's refused value failed the
+ * load before too, but without its reason. Every refusal is a plain {@link LlamaException} (the C
+ * API's {@code JLLAMA_STATUS_ERROR}), not the subclass for an invalid request. No GGUF is needed:
+ * the refusals come before the model path is opened.
  */
 @ClaudeGenerated(
         purpose = "Model-free guard that a refused --batch-size and a chat template llama.cpp cannot parse "
@@ -41,6 +45,7 @@ class LoadRefusalTest {
                 () -> new LlamaModel(
                         new ModelParameters().setModel(NO_MODEL).setBatchSize(1).setFit(false)));
         assertThat(refused.getMessage(), containsString("--batch-size must be at least 2"));
+        assertEquals(LlamaException.class, refused.getClass(), "the status of a refused parse");
     }
 
     @Test
@@ -55,6 +60,7 @@ class LoadRefusalTest {
         assertThat(refused.getMessage(), containsString("Failed to parse model parameters"));
         assertThat(refused.getMessage(), containsString("the supplied chat template is not supported"));
         assertThat(refused.getMessage(), not(containsString("usage:")));
+        assertEquals(LlamaException.class, refused.getClass());
     }
 
     @Test

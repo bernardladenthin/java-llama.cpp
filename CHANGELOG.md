@@ -14,7 +14,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (upstream's sampler names `adaptive_p` and `top_n_sigma`, which the enum lacked) with
   `InferenceParameters.withAdaptiveTarget` / `withAdaptiveDecay` for the adaptive-p sampler (the
   decay refused outside 0..0.99, as the server does); `withBackendSampling`; `withLoraAdapters(Map)`,
-  the adapters of one request (id to scale, the model's own scales untouched); `withPreservedTokens`;
+  the adapters of one request (id to scale, the model's own scales untouched); `withPreservedTokens`
+  (read by the raw completion paths; the chat paths drop it, as llama.cpp's server does);
   and `ModelParameters.setSpecDraftBackendSampling(boolean)` (`--spec-draft-backend-sampling` /
   `--no-spec-draft-backend-sampling`). The request keys are held to llama.cpp's schema and the
   sampler names to its parser by the C++ wire contracts; `CApi` and `CApiDraft` run them on the
@@ -240,7 +241,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   two tokens in one batch while it loads (`common_context_can_seq_rm`), and with `--batch-size 1`
   (`ModelParameters.setBatchSize(1)`) llama.cpp aborted there (`GGML_ABORT` in
   `common_batch::get_sub_batch`), taking the JVM with it. The load now fails with a
-  `LlamaException` naming the option (`CApiBatchSize`, red without the check).
+  `LlamaException` naming the option, and a `NativeServer` whose argv asks for it (`-b`,
+  `--batch-size`, `LLAMA_ARG_BATCH`) is refused before its worker starts (`CApiBatchSize`, red without
+  the checks; the server case crashed).
 - **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
   tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
   `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before
@@ -263,15 +266,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   variable `LLAMA_ARG_LOG_FILE`) sets the file of llama.cpp's process-wide log, and nothing closed it:
   every later model of the JVM kept writing into it, and Windows could not delete it while the JVM
   ran. Freeing the model whose load opened the current file (`LlamaModel.close()`,
-  `jllama_model_free`) now closes it, a failed load closes it at once, and a later model with a log
-  file of its own takes it over.
+  `jllama_model_free`) now closes it, after the model's teardown, a failed load closes it at once,
+  and a later model with a log file of its own takes it over. The option is taken out of the argv
+  (both spellings, `--log-file` and `--log_file`) and the file opened after the parse accepted the
+  rest, so a refused load opens nothing and closes nobody else's file; every such change of the log
+  is serialised with `setLogger`, as two of them interleaved could end the process
+  (`CApiLogFile`).
 - **llama.cpp b12499** (from b12497, 2 upstream commits). The host-memory prompt cache records the
   LoRA config of every state (#32434) and loads only the states of the adapters a request runs with:
   it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the
   Javadoc named. A recurrent or hybrid model reuses its context checkpoints by the position of its
-  state, not by a sliding window (#32434). `patches/0021` now sets the adapters of a restored slot
-  (renamed `0021-server-a-restored-slot-keeps-the-server-adapters.patch`); without it a slot file
-  restored on a server started with `--lora` was cleared again at its first request. Also Vulkan
+  state, not by a sliding window (#32434). `patches/0021` now labels a restored slot with the LoRA
+  config its file was saved with, which the server records per file (renamed
+  `0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`); without it a slot
+  file restored on a server started with `--lora` was cleared again at its first request, and a
+  state saved under other scales than the current ones must not be reused (`LoraCacheFreshSlot`). Also Vulkan
   `rms_norm` on Qualcomm (#30824).
 - **llama.cpp b12497** (from b12496, 1 upstream commit: tiny-voca TTS, #32427). The `tts`
   template's new `tts_g2p()` asks the projector's letter-to-sound model for the pronunciation of a
@@ -592,6 +601,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A model woken from its idle sleep no longer calls the load-progress callback of its first load.**
+  The server keeps the caller's callback and runs the model load again when `--sleep-idle-seconds`
+  woke it -- on its own thread, long after the load returned and its user data was gone (the stack
+  object of `LlamaModel`'s constructor, an upcall stub of `llama-ffm` whose arena was closed), which
+  could crash the process. The engine forwards to the host during the first load only
+  (`CApiSleep`, red without the fix).
+- **`FfmLlamaModel.close()` waits for the calls in flight, and a call after it is refused.** A call
+  that had checked the model was open and then called into the C API while another thread closed
+  it used the freed handle. Every call holds a read lock now and `close()` the write lock, as
+  `FfmTextToSpeech` and `FfmNativeServer` do (`FfmLlamaModelIntegrationTest`, red without the lock).
+- **A speech synthesis that failed no longer leaks its sampler** (`TextToSpeech`, `jllama_tts_*`).
 - **An embedded server closes the `--log-file` it opened when it stops.** `NativeServer` parses its
   argv inside llama.cpp, where `--log-file` opens the process-wide log file, and nothing closed it:
   every later line of the process, from any model, went into the stopped server's file, and Windows
@@ -599,8 +619,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   classic and the attached mode (`CApiLogFile`, red without the fix).
 - **A text the vocabulary cannot spell is refused with the cause.** A SentencePiece-style vocabulary
   without byte tokens has nothing for a character it has no token for, and llama.cpp's lookup threw
-  the bare `unordered_map::at`; tokenization, completions, embeddings and infill now say that the
-  vocabulary has no token and no byte tokens for a character of the text (`CApiTokenizers`).
+  the bare `unordered_map::at`; tokenization, completions, embeddings, infill, reranking and the
+  reasoning budget's message now say that the vocabulary has no token and no byte tokens for a
+  character of the text (`CApiTokenizers`).
 - **A chat template llama.cpp cannot parse fails the load instead of ending the process**, and every
   refused load parameter names its reason. `common_params_parse` called `exit(1)` for any error that
   was not an invalid argument -- the chat template check of `setChatTemplate` among them -- so the JVM

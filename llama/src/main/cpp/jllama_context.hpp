@@ -18,6 +18,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <map>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -52,6 +53,14 @@ struct jllama_context {
     // the host's release callback. Declared after `server` on purpose: nothing decodes during the
     // server's destruction.
     std::shared_ptr<void> video_decoder;
+
+    // The relay of the caller's load-progress callback (jllama_engine.cpp): the server keeps a
+    // pointer to it for every later load_model(), so it lives as long as the context.
+    std::shared_ptr<void> load_progress;
+
+    // The owner id of the --log-file this load opened (jllama_engine.cpp); 0 when none. Freeing the
+    // context closes the file if it still owns it.
+    std::uint64_t log_file_owner = 0;
 
     // Saved copy of common_params used to load the model.
     // Required by server_schema::eval_llama_cmpl_schema which takes common_params&.

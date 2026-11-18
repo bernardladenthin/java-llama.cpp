@@ -221,8 +221,9 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the logical maximum batch size (default: 0). The model refuses a size below 2 at load: the
-     * server evaluates two tokens in one batch while it loads, and a smaller batch would abort the process.
+     * Set the logical maximum batch size (default: 2048, llama.cpp's). The model refuses a size below
+     * 2 at load, and so does a {@code NativeServer}: the server evaluates two tokens in one batch
+     * while it loads, and a smaller batch would abort the process.
      *
      * @param batchSize the logical maximum batch size
      * @return this builder

@@ -114,6 +114,19 @@ class FfmVideoDecoderTest {
     void theStructHasTheLayoutOfTheCDeclarationAndOffersNoSoundtrack() {
         assertEquals(20, FfmVideoDecoder.VIDEO_INFO.byteSize(), "jllama_video_info: 5 four-byte fields");
         assertEquals(7 * ADDRESS.byteSize(), FfmVideoDecoder.DECODER.byteSize(), "six functions and user_data");
+        // the order of the C declarations in jllama_api.h, field by field: a layout built in another
+        // order has the same size and would hand llama.cpp the wrong function
+        String[] info = {"width", "height", "fps", "n_frames", "duration"};
+        for (int i = 0; i < info.length; i++) {
+            assertEquals(4L * i, offset(info[i]), info[i]);
+        }
+        String[] decoder = {"open", "start", "read_frame", "read_audio", "close", "release", "user_data"};
+        for (int i = 0; i < decoder.length; i++) {
+            assertEquals(
+                    i * ADDRESS.byteSize(),
+                    FfmVideoDecoder.DECODER.byteOffset(MemoryLayout.PathElement.groupElement(decoder[i])),
+                    decoder[i]);
+        }
         try (FfmVideoDecoder video = new FfmVideoDecoder(data -> null)) {
             MemorySegment struct = video.struct();
             assertEquals(struct, video.struct(), "built once");

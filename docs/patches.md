@@ -32,7 +32,7 @@ match a binary to this page.
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
-| 0021 | [`0021-server-a-restored-slot-keeps-the-server-adapters.patch`](#0021-server-a-restored-slot-keeps-the-server-adapterspatch) | server : a restored slot counts as computed under the server's LoRA adapters | 1 | 1 |
+| 0021 | [`0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`](#0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-withpatch) | server : a restored slot keeps the LoRA config it was saved with | 1 | 3 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
@@ -492,33 +492,39 @@ Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-all
 tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
 ```
 
-## 0021-server-a-restored-slot-keeps-the-server-adapters.patch
+## 0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch
 
 **Files (1):** `tools/server/server-context.cpp`
 
 The patch's own header, verbatim:
 
 ```text
-server : a restored slot counts as computed under the server's LoRA adapters
+server : a restored slot keeps the LoRA config it was saved with
 
 Since upstream #32434 (b12498) a slot's prompt carries the LoRA config its tokens were processed
 with (server_prompt::lora): launch_slot_with_task() compares a task's adapters with it, the
 host-memory prompt cache stores it with every state and skips the states of another config. A slot
 file does not store it (upstream's TODO in server-slot-sched.h), and SLOT_RESTORE leaves
 prompt.lora as it was -- empty in a never-used slot. On a server started with --lora the first
-task then reads the restored state as "computed under no adapters" and clears it (F240: 77 of 79
-prompt tokens evaluated again).
+task then read the restored state as "computed under no adapters" and cleared it (F240: 77 of 79
+prompt tokens evaluated again), and in a slot that had served a task under other adapters the
+restored state kept that slot's label.
 
-The patch sets prompt.lora of a restored slot to the server's adapters, the config a slot file
-saved by this server was written under unless a request named its own. Until b12497 this patch
-started every slot with slot.lora = params_base.lora_adapters in init(), which upstream's
-comparison no longer reads.
+The patch remembers the config of every slot file the server saves, by path, and labels a restored
+state with it. A file the server did not save -- one of an earlier process -- counts as computed
+under no adapters, which is what upstream assumes for a never-used slot: the first task with
+adapters clears it. Until the review of 2026-11-18 the patch labelled a restored state with the
+server's adapters at the time of the restore, which reused a state saved under scale 1 after
+setLoraAdapters() had set scale 0; until b12497 it started every slot with
+slot.lora = params_base.lora_adapters in init(), which upstream's comparison no longer reads.
 
 The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
-saved state into the never-used slot 1, which must reuse it; the other cases hold upstream's half.
+saved state into the never-used slot 1, which must reuse it, and restores a state saved under
+other adapters, which must not be reused; the other cases hold upstream's half.
 
 Drop-check on every bump: read the SLOT_RESTORE case in tools/server/server-context.cpp at the new
-tag -- once the restore sets prompt.lora (or the slot file stores it), drop the patch.
+tag -- once the restore sets prompt.lora from what the save recorded (or the slot file stores it),
+drop the patch.
 ```
 
 ## 0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch
