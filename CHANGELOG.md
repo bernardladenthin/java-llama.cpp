@@ -224,6 +224,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12522** (from b12521, 1 upstream commit): the CUDA module picks the FP16/BF16
+  accumulation precision per GPU model through NVML, which it loads at run time when the driver has
+  it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
+  does. Nothing of the other natives changed.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

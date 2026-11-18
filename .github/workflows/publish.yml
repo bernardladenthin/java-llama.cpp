@@ -1940,6 +1940,8 @@ jobs:
         # which is also how upstream builds its own Windows CUDA release. cuda_crt is listed
         # explicitly: since 13.x the nvcc crt headers (crt/host_config.h) ship in their own
         # archive, and without them CMake's CUDA compiler detection fails at configure.
+        # cuda_nvml_dev since b12522 (#30672): ggml-cuda.cu includes <nvml.h> (it loads NVML at run
+        # time to pick the accumulation precision per GPU SKU, and links nothing of it).
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -1959,7 +1961,8 @@ jobs:
             "cuda_nvtx",
             "cuda_profiler_api",
             "visual_studio_integration",
-            "cccl"
+            "cccl",
+            "cuda_nvml_dev"
           )
           New-Item -ItemType Directory -Force -Path $cuda | Out-Null
           # Every archive is checked against the SHA-256 NVIDIA publishes for it in the redist
