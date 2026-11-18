@@ -197,6 +197,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12497** (from b12496, 1 upstream commit: tiny-voca TTS, #32427). The `tts`
+  template's new `tts_g2p()` asks the projector's letter-to-sound model for the pronunciation of a
+  word; the engine hands it `mtmd_gen_audio_g2p`, as `/tts` and `llama-tts` do, so a tiny-voca pair
+  speaks words its lexicon lacks. A projector without one answers none. No tiny-voca pair in CI.
 - **llama.cpp b12496** (from b12494, 2 upstream commits): stream-K matrix multiplication for the
   HIP module on AMD GCN GPUs (#30022), and the Llama UI library at 0.4.0 (#32480, the version only:
   the embedded WebUI and its license list are unchanged).

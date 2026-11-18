@@ -4345,11 +4345,13 @@ TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
 // by N otherwise: a
 // looked-up word gives exactly the audio of its entry, an unknown one its own. A dictionary with
 // fewer values than keys is ignored, so a template that names it fails the synthesis by its name.
+// tts_g2p() (b12497, #32427) asks the projector's letter-to-sound model, which only tiny-voca has.
 class CApiTtsDict : public ::testing::Test {
   protected:
     static void SetUpTestSuite() {
         const std::string tmpl = "{%- set text = messages[0].content -%}"
                                  "{%- if text == 'broken' -%}{{ tts_dict('broken', text) }}"
+                                 "{%- elif text == 'g2p' -%}{%- set p = tts_g2p('hello') -%}{{ p if p else 'Hello.' }}"
                                  "{%- else -%}{%- set entry = tts_dict('lex', text) -%}"
                                  "{{ entry.say if entry else tts_norm_sub(text, '%d+', 'N') }}{%- endif -%}";
         const std::vector<jllama_test::tiny_tts_dict> dicts = {
@@ -4428,6 +4430,16 @@ TEST_F(CApiTtsDict, TheNormalizerOfTheTemplateRewritesTheText) {
     ASSERT_EQ(speak("M cats", &other), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(digits, replaced) << "tts_norm_sub(text, '%d+', 'N') turned 7 into N";
     EXPECT_NE(replaced, other) << "two texts give two prompts, so the comparison above can fail";
+}
+
+TEST_F(CApiTtsDict, AModelWithoutALetterToSoundModelAnswersNoneToTheTemplatesG2p) {
+    // the engine hands the template mtmd_gen_audio_g2p (b12497), as /tts does; ZONOS3's projector has
+    // no letter-to-sound model, so tts_g2p() answers none and the template speaks its fallback
+    std::vector<unsigned char> asked;
+    std::vector<unsigned char> fallback;
+    ASSERT_EQ(speak("g2p", &asked), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("Hello.", &fallback), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(asked, fallback);
 }
 
 TEST_F(CApiTtsDict, AMalformedDictionaryIsIgnoredAndATemplateNamingItFails) {

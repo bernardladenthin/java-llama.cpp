@@ -351,6 +351,14 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12496 to b12497 (2026-11-18)** -- 1 upstream commit (tiny-voca TTS, #32427), pinned by commit
+(the tag exists); every patch applies unchanged. Open, none of it blocking:
+- **tiny-voca** is not exercised: no pair in `models.csv`, no generator. The engine's `tts_g2p()`
+  pass-through is held only for a projector without a letter-to-sound model
+  (`CApiTtsDict.AModelWithoutALetterToSoundModelAnswersNoneToTheTemplatesG2p`); that it reaches a model
+  with one needs a tiny-voca generator (its G2P is a small bidirectional GRU over letters, plus the
+  voice rows and the vocoder).
+
 **From b12494 to b12496 (2026-11-18)** -- 2 upstream commits (HIP stream-K tuning, the Llama UI
 library at 0.4.0), pinned by commit (the tag exists); every patch applies unchanged. Nothing open:
 the HIP change is built by the two ROCm jobs only, and no runner has an AMD GPU (unmeasured).

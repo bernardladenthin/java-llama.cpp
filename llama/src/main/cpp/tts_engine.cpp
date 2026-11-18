@@ -230,9 +230,16 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
     // template error, which the C API reports.
     // b12494: raw_prompt skips the template (the text is phonemes or a whole prompt), as /tts does
+    // b12497: the template's tts_g2p() asks the projector's letter-to-sound model (tiny-voca), with
+    // the buffer upstream's /tts and llama-tts give it; a model without one answers none
+    mtmd_context *mctx = engine->mctx.get();
+    const auto g2p = [mctx](const std::string &word) {
+        char buf[512];
+        return mtmd_gen_audio_g2p(mctx, word.c_str(), buf, sizeof(buf)) > 0 ? std::string(buf) : std::string();
+    };
     const std::string rendered = options.raw_prompt
                                      ? std::string()
-                                     : common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
+                                     : common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name, g2p);
     const std::string &prompt = rendered.empty() ? text : rendered;
     const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
 
