@@ -2186,6 +2186,287 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
     return ok ? path : std::string();
 }
 
+// tiny-voca's 76 symbols, in the order of the real vocabulary: four specials, <unk>, punctuation, the IPA
+// consonants and vowels of the model.
+inline std::vector<std::string> tiny_voca_tokens() {
+    return {"<pad>",
+            "<bos>",
+            "<eos>",
+            "<sp>",
+            "<unk>",
+            ",",
+            ".",
+            "?",
+            "!",
+            ";",
+            ":",
+            "\"",
+            "'",
+            "(",
+            ")",
+            "\xE2\x80\x94",
+            "\xE2\x80\xA6",
+            "p",
+            "b",
+            "t",
+            "d",
+            "k",
+            "\xC9\xA1",
+            "f",
+            "v",
+            "\xCE\xB8",
+            "\xC3\xB0",
+            "s",
+            "z",
+            "\xCA\x83",
+            "\xCA\x92",
+            "h",
+            "m",
+            "n",
+            "\xC5\x8B",
+            "l",
+            "\xC9\xB9",
+            "j",
+            "w",
+            "t\xCA\x83",
+            "d\xCA\x92",
+            "\xC9\xBE",
+            "\xCA\x94",
+            "\xC9\x99",
+            "\xC9\x90",
+            "\xC9\x9A",
+            "\xE1\xB5\xBB",
+            "\xC9\xAA",
+            "i",
+            "i\xCB\x90",
+            "\xC9\x9B",
+            "\xC3\xA6",
+            "\xCA\x8C",
+            "\xC9\x91\xCB\x90",
+            "\xC9\x94",
+            "\xC9\x94\xCB\x90",
+            "\xCA\x8A",
+            "u\xCB\x90",
+            "\xC9\x9C\xCB\x90",
+            "e\xC9\xAA",
+            "a\xC9\xAA",
+            "\xC9\x94\xC9\xAA",
+            "o\xCA\x8A",
+            "a\xCA\x8A",
+            "i\xC9\x99",
+            "o\xCB\x90",
+            "\xC9\x91\xCB\x90\xC9\xB9",
+            "\xC9\x94\xCB\x90\xC9\xB9",
+            "o\xCB\x90\xC9\xB9",
+            "\xC9\xAA\xC9\xB9",
+            "\xC9\x9B\xC9\xB9",
+            "\xCA\x8A\xC9\xB9",
+            "a\xC9\xAA\xC9\x9A",
+            "a\xC9\xAA\xC9\x99",
+            "\xC9\x99l",
+            "n\xCC\xA9"};
+}
+
+// The class of each symbol, as the real a.gen.token_class: 0 for the specials and punctuation (a pause,
+// whose presence the duration head decides), 1 for <unk> and the consonants, 2 for the vowels (always
+// voiced).
+inline float tiny_voca_token_class(int id) { return id == 4 ? 1.0f : id < 17 ? 0.0f : id < 43 ? 1.0f : 2.0f; }
+
+// One stack of tiny-voca's layer kind under a prefix ("" is the backbone), plus its output norm.
+inline void tiny_voca_stack(gguf_context *g, ggml_context *ctx, std::mt19937 &rng, const std::string &prefix,
+                            int n_layer, int64_t embd, int64_t ff) {
+    auto norm = [&](const std::string &name) {
+        add_random_tensor(g, ctx, rng, name + ".weight", {embd}, 1.0f); // ones
+        ggml_tensor *b = add_random_tensor(g, ctx, rng, name + ".bias", {embd}, 1.0f);
+        std::fill((float *)b->data, (float *)b->data + embd, 0.0f);
+    };
+    auto bias = [&](const std::string &name, int64_t n) {
+        ggml_tensor *b = add_random_tensor(g, ctx, rng, name, {n}, 1.0f);
+        std::fill((float *)b->data, (float *)b->data + n, 0.0f);
+    };
+    for (int il = 0; il < n_layer; ++il) {
+        const std::string p = prefix + "blk." + std::to_string(il) + ".";
+        norm(p + "attn_norm");
+        for (const char *n : {"attn_q", "attn_k", "attn_v", "attn_output"}) {
+            add_random_tensor(g, ctx, rng, p + n + ".weight", {embd, embd}, 0.2f);
+            bias(p + n + ".bias", embd);
+        }
+        norm(p + "ffn_norm");
+        add_random_tensor(g, ctx, rng, p + "ssm_conv1d.weight", {7, embd}, 0.2f);
+        bias(p + "ssm_conv1d.bias", embd);
+        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {embd, ff}, 0.2f);
+        bias(p + "ffn_up.bias", ff);
+        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {ff, embd}, 0.2f);
+        bias(p + "ffn_down.bias", embd);
+    }
+    norm(prefix + "output_norm");
+}
+
+// The pair of a random tiny-voca (llama.cpp b12497, #32427), in the layout of ggml-org's real pair, read
+// from its GGUFs: the backbone is the phoneme encoder (arch tiny-voca: a non-causal stack whose layers
+// carry attention, a depthwise convolution of 7 and a feed-forward, each with biases and LayerNorms),
+// over the real 76-symbol vocabulary -- IPA phonemes and punctuation, which the pipeline looks up by text
+// (<pad>, <bos>, <eos>, <sp>, <unk> and "."). No tts template unless one is given: the prompt is then
+// the phonemes, separated by spaces.
+inline std::string write_tiny_voca_gguf(const std::string &prefix = "jllama-tiny-voca",
+                                        const std::string &tts_template = "") {
+    constexpr int EMBD = 16, N_HEAD = 2, FF = 32, N_LAYER = 2;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(71);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "tiny-voca";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER);
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 512);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 10000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_epsilon").c_str(), 1e-5f);
+    gguf_set_val_bool(g, (a + ".attention.causal").c_str(), false);
+    gguf_set_val_u32(g, (a + ".pooling_type").c_str(), 0);
+
+    const std::vector<std::string> tokens = tiny_voca_tokens();
+    std::vector<const char *> token_ptrs;
+    std::vector<int32_t> types;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        token_ptrs.push_back(tokens[i].c_str());
+        types.push_back(i < 4 ? 3 : 1); // the four specials are control tokens, <unk> a normal one, as in the real file
+    }
+    const std::vector<float> scores(tokens.size(), 0.0f);
+    gguf_set_val_str(g, "tokenizer.ggml.model", "llama");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, scores.data(), scores.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, types.data(), types.size());
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 2);
+    gguf_set_val_u32(g, "tokenizer.ggml.padding_token_id", 0);
+    gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 4);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_bos_token", false);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_eos_token", false);
+    if (!tts_template.empty()) {
+        gguf_set_val_str(g, "tokenizer.chat_template.tts", tts_template.c_str());
+        const char *template_names[] = {"tts"};
+        gguf_set_arr_str(g, "tokenizer.chat_templates", template_names, 1);
+    }
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, static_cast<int64_t>(tokens.size())}, 0.1f);
+    tiny_voca_stack(g, ctx, rng, "", N_LAYER, EMBD, FF);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The mmproj of the backbone above (tiny_voca): the duration predictor (two convolutions of 3 with
+// LayerNorms, then a head of two outputs per token), the prosody (2 layers) and acoustic (5 layers)
+// stacks llama.cpp fixes, run as models of the backbone's architecture, the pitch / voicing / energy
+// head and its projection, and the source-filter heads at the sizes llama.cpp fixes (80 + 16 causal and
+// anti-causal cepstra + 2 harmonic steps, 32 noise cepstra + 4 noise steps, so a frame is 256 samples at
+// 24 kHz). Two voices, F2 and M2 (the default, as the real pack). Every width is small.
+//
+// The duration head's weight is zero, so every token gets the same outputs, its bias: frames is the
+// number of frames of a phone (log1p(frames), which the pipeline rounds back), and presence the logit
+// that decides whether a token of class 0 (punctuation, <bos>, <eos>) lasts as long (> 0) or no frame at
+// all (< 0). g2p_symbol (1 to 69): a letter-to-sound model whose output bias makes every slot of every
+// word that symbol of CMUdict (llama.cpp's list, "AA0" is 1), so tts_g2p() answers it for any word;
+// 0 writes none.
+inline std::string write_tiny_voca_mmproj_gguf(const std::string &prefix = "jllama-tiny-voca-mmproj", int frames = 3,
+                                               float presence = 1.0f, int g2p_symbol = 0) {
+    constexpr int EMBD = 16, N_HEAD = 2, FF = 32, DUR = 8, G2P_W = 4, G2P_H = 4;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(73);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_bool(g, "clip.has_gen_audio_encoder", true);
+    gguf_set_val_str(g, "clip.gen.audio.projector_type", "tiny_voca");
+    gguf_set_val_u32(g, "clip.gen.audio.projection_dim", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.embedding_length", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.feed_forward_length", FF);
+    gguf_set_val_u32(g, "clip.gen.audio.block_count", 5);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", N_HEAD);
+    gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-5f);
+    gguf_set_val_str(g, "clip.gen.audio.default_voice", "M2");
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: noise of that magnitude; otherwise every element is value
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, value < 0 ? -value : 0.0f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+        return t;
+    };
+    const std::vector<std::string> tokens = tiny_voca_tokens();
+    const int64_t n_vocab = static_cast<int64_t>(tokens.size());
+    if (g2p_symbol > 0) {
+        add("a.gen.g2p.slot", {G2P_W, 2}, -0.3f);
+        add("a.gen.g2p.embed.weight", {G2P_W, 28}, -0.3f);
+        for (const char *dir : {"", "_reverse"}) {
+            const std::string sfx = std::string("_l0") + dir;
+            add("a.gen.g2p.gru.weight_ih" + sfx, {G2P_W, 3 * G2P_H}, -0.3f);
+            add("a.gen.g2p.gru.weight_hh" + sfx, {G2P_H, 3 * G2P_H}, -0.3f);
+            add("a.gen.g2p.gru.bias_ih" + sfx, {3 * G2P_H}, 0.0f);
+            add("a.gen.g2p.gru.bias_hh" + sfx, {3 * G2P_H}, 0.0f);
+        }
+        add("a.gen.g2p.out.weight", {2 * G2P_H, 70}, 0.0f);
+        ggml_tensor *bias = add("a.gen.g2p.out.bias", {70}, 0.0f);
+        ((float *)bias->data)[g2p_symbol] = 10.0f; // the blank (0) and every other symbol stay at 0
+    }
+    add("voice.F2", {2 * EMBD}, -0.5f);
+    add("voice.M2", {2 * EMBD}, -0.5f);
+    ggml_tensor *token_class = add("a.gen.token_class", {n_vocab}, 0.0f);
+    for (int64_t i = 0; i < n_vocab; ++i) {
+        ((float *)token_class->data)[i] = tiny_voca_token_class(static_cast<int>(i));
+    }
+    add("a.gen.tok_embd.weight", {EMBD, n_vocab}, -0.3f);
+    add("a.gen.stress_embd.weight", {EMBD, 3}, -0.3f);
+    add("a.gen.dur.conv1.weight", {3, EMBD, DUR}, -0.3f);
+    add("a.gen.dur.conv1.bias", {DUR}, 0.0f);
+    add("a.gen.dur.conv2.weight", {3, DUR, DUR}, -0.3f);
+    add("a.gen.dur.conv2.bias", {DUR}, 0.0f);
+    add("a.gen.dur.norm1.weight", {DUR}, 1.0f);
+    add("a.gen.dur.norm1.bias", {DUR}, 0.0f);
+    add("a.gen.dur.norm2.weight", {DUR}, 1.0f);
+    add("a.gen.dur.norm2.bias", {DUR}, 0.0f);
+    add("a.gen.dur.out.weight", {DUR, 2}, 0.0f);
+    ggml_tensor *dur_bias = add("a.gen.dur.out.bias", {2}, 0.0f);
+    ((float *)dur_bias->data)[0] = std::log1p(static_cast<float>(frames));
+    ((float *)dur_bias->data)[1] = presence;
+    add("a.gen.frame_pos.weight", {3, EMBD}, -0.3f);
+    add("a.gen.frame_pos.bias", {EMBD}, 0.0f);
+    tiny_voca_stack(g, ctx, rng, "a.gen.prosody.", 2, EMBD, FF);
+    add("a.gen.prosody_head.weight", {EMBD, 3}, -0.3f);
+    add("a.gen.prosody_head.bias", {3}, 0.0f);
+    add("a.gen.prosody_proj.weight", {3, EMBD}, -0.3f);
+    add("a.gen.prosody_proj.bias", {EMBD}, 0.0f);
+    tiny_voca_stack(g, ctx, rng, "a.gen.acoustic.", 5, EMBD, FF);
+    add("a.gen.voc.harmonic.weight", {EMBD, 98}, -0.1f);
+    add("a.gen.voc.harmonic.bias", {98}, 0.0f);
+    add("a.gen.voc.noise.weight", {EMBD, 36}, -0.1f);
+    add("a.gen.voc.noise.bias", {36}, 0.0f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // A 2x2 red PNG, base64: an image stb_image decodes, small enough to inline, for the projector above.
 constexpr const char *TINY_PNG_BASE64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";

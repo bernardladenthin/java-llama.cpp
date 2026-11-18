@@ -367,11 +367,9 @@ and the patch now sets it in `SLOT_RESTORE`. Open, none of it blocking:
 
 **From b12496 to b12497 (2026-11-18)** -- 1 upstream commit (tiny-voca TTS, #32427), pinned by commit
 (the tag exists); every patch applies unchanged. Open, none of it blocking:
-- **tiny-voca** is not exercised: no pair in `models.csv`, no generator. The engine's `tts_g2p()`
-  pass-through is held only for a projector without a letter-to-sound model
-  (`CApiTtsDict.AModelWithoutALetterToSoundModelAnswersNoneToTheTemplatesG2p`); that it reaches a model
-  with one needs a tiny-voca generator (its G2P is a small bidirectional GRU over letters, plus the
-  voice rows and the vocoder).
+- **tiny-voca**: done 2026-11-18 -- the real pair in CI (feature `tinyvoca`, `TinyVocaTtsIntegrationTest`)
+  and a generator (`CApiTinyVoca`), whose letter-to-sound model makes the `tts_g2p()` pass-through red
+  without the engine's callback.
 
 **From b12494 to b12496 (2026-11-18)** -- 2 upstream commits (HIP stream-K tuning, the Llama UI
 library at 0.4.0), pinned by commit (the tag exists); every patch applies unchanged. Nothing open:
@@ -379,8 +377,10 @@ the HIP change is built by the two ROCm jobs only, and no runner has an AMD GPU 
 
 **From b12493 to b12494 (2026-11-18)** -- 1 upstream commit (Kokoro TTS, #32413), pinned by commit
 (the tag exists); every patch applies unchanged. Open, none of it blocking:
-- **Kokoro** is not exercised: no pair in `models.csv` and no generator (its G2P template and the
-  phoneme/voice-row input of `GEN_WAV` would need both). `raw_prompt` is held on the LFM3 generator.
+- **Kokoro** runs in CI since 2026-11-18 (`models.csv` feature `kokoro`, `KokoroTtsIntegrationTest`);
+  no generator yet (a StyleTTS2/iSTFTNet projector whose graph looks its tensors up by name).
+  `raw_prompt` is held on the LFM3 generator. Both real pairs had answered "no audio was generated":
+  the engine required a frame, which these pipelines do not report (fixed, see CHANGELOG).
 
 **From b12490 to b12493 (2026-11-17)** -- 3 upstream commits, pinned by commit (not tagged yet);
 every patch applies unchanged. Open, none of it blocking:

@@ -197,6 +197,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **Kokoro and tiny-voca speak** (they answered "no audio was generated" on every synthesis since
+  b12494 / b12497): the engine refused a synthesis that reported no frame, and these two pipelines
+  write the whole utterance in one pass and report none. Only the output decides now, as in upstream's
+  `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
+  26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
+  the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
 - **llama.cpp b12499** (from b12497, 2 upstream commits). The host-memory prompt cache records the
   LoRA config of every state (#32434) and loads only the states of the adapters a request runs with:
   it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the

@@ -34,6 +34,11 @@ mmproj-chatterbox-F16.gguf,chatterbox,e2bc7506753d8f4ad6f66afe8fb27fdea4256c9a88
 # voices and voice cloning; ZonosTtsIntegrationTest. The projector is kept in F32, as upstream advises.
 ZONOS3-Mini-Q8_0.gguf,zonos,60568efc88e2f9231f4f5c061e246421f575986642d72ab9ae68f77d6cf76be4,https://huggingface.co/ggml-org/ZONOS3-Mini-GGUF/resolve/2e7bc4126a2343787298e1a297a3d1c4a13165aa/ZONOS3-Mini-Q8_0.gguf
 mmproj-ZONOS3-Mini-F32.gguf,zonos,aeeb92325b4b6927bef656390b78e1246148065f947d8b59c2663557a809414d,https://huggingface.co/ggml-org/ZONOS3-Mini-GGUF/resolve/2e7bc4126a2343787298e1a297a3d1c4a13165aa/mmproj-ZONOS3-Mini-F32.gguf
+# Kokoro-82M (b12494) and tiny-voca (b12497): the two speech pipelines that are not autoregressive
+Kokoro-82M-F32.gguf,kokoro,be19298184f1a2577eb20e4689f1e2b315cbf474c39e113f192991fef3c85c6e,https://huggingface.co/ggml-org/Kokoro-82M-GGUF/resolve/ed4a98eab16351c7d803ff011e88267a5b036666/Kokoro-82M-F32.gguf
+mmproj-Kokoro-82M-F16.gguf,kokoro,071d20f53b7c5d64b08a24bff5dfb77c2ea0df843a7c6c2356998a735ec6929d,https://huggingface.co/ggml-org/Kokoro-82M-GGUF/resolve/ed4a98eab16351c7d803ff011e88267a5b036666/mmproj-Kokoro-82M-F16.gguf
+tiny-voca-F32.gguf,tinyvoca,6cc38fe1a32ac312d906da6549a142de8cb6a2d0d1f10e63966a8f7c49be72cc,https://huggingface.co/ggml-org/tiny-voca-GGUF/resolve/8a785351a6dac0b9168bc14bc5de635a98a7b809/tiny-voca-F32.gguf
+mmproj-tiny-voca-F32.gguf,tinyvoca,c70b6ba351335bb72bdd1ae42412f64490816c3accaec2a2c2990fbcfc33c48c,https://huggingface.co/ggml-org/tiny-voca-GGUF/resolve/8a785351a6dac0b9168bc14bc5de635a98a7b809/mmproj-tiny-voca-F32.gguf
 LFM3-Audio-2B-Q4_0.gguf,realtime,112e4acb79be79dcd8df5749495614817e51c064cd9ca576aead02b64b2b7584,https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/39670cb5c42e9c4bfe046519ba7ffbe47f9552ad/LFM3-Audio-2B-Q4_0.gguf
 mmproj-LFM3-Audio-2B-Q8_0.gguf,realtime,2b6648b1fd48af16aa0877b0592b144d15070783673e038a379fdbc51d40e365,https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/39670cb5c42e9c4bfe046519ba7ffbe47f9552ad/mmproj-LFM3-Audio-2B-Q8_0.gguf
 tinylaya-for-testing-Q8_0.gguf,decision,a8b2b8f7fe6b7e10a884c55bf72362b0a8701e40dc3f332831d58246e5fa0b70,https://huggingface.co/ggml-org/tinylaya-for-testing-gguf/resolve/db8373bdf1621f95b7db9eb0444539e1facbec96/tinylaya-for-testing-Q8_0.gguf

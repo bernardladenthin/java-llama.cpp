@@ -4281,6 +4281,169 @@ TEST_F(CApiLfm3Audio, LiveTranscriptionHearsTheStreamedAudioAndCompletesTheItem)
 }
 #endif // JLLAMA_HAS_NATIVE_SERVER
 
+// tiny-voca (b12497, #32427), from the schema of ggml-org's real pair: not autoregressive -- the
+// encoder takes one sentence, the duration head gives every token its frames, two stacks and a
+// source-filter synthesizer turn them into 256 samples a frame at 24 kHz. The generator's duration head
+// gives every token the same frames (write_tiny_voca_mmproj_gguf), so a length is exact: the prompt's
+// phonemes plus <bos>, the full stop the pipeline adds when the text has no final mark, and <eos>.
+namespace {
+struct TinyVocaPair {
+    std::string backbone;
+    std::string mmproj;
+    jllama_tts_model *tts = nullptr;
+    TinyVocaPair(const std::string &tts_template, int frames, float presence, int g2p_symbol) {
+        backbone = jllama_test::write_tiny_voca_gguf("jllama-tiny-voca", tts_template);
+        mmproj = jllama_test::write_tiny_voca_mmproj_gguf("jllama-tiny-voca-mmproj", frames, presence, g2p_symbol);
+        EXPECT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    ~TinyVocaPair() {
+        jllama_tts_free(tts);
+        std::remove(backbone.c_str());
+        std::remove(mmproj.c_str());
+    }
+    jllama_status speak(const char *text, std::vector<unsigned char> *wav, float speed = 1.0f,
+                        const char *voice = nullptr, unsigned seed = 7, int raw_prompt = 0) const {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.seed = seed;
+        options.voice = voice;
+        options.speed = speed;
+        options.raw_prompt = raw_prompt;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts, text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+};
+size_t wav_samples(const std::vector<unsigned char> &wav) { return wav.size() < 44 ? 0 : (wav.size() - 44) / 2; }
+uint32_t wav_rate(const std::vector<unsigned char> &wav) {
+    return wav.size() < 28 ? 0 : wav[24] | (wav[25] << 8) | (wav[26] << 16) | (static_cast<uint32_t>(wav[27]) << 24);
+}
+const char *const TINY_VOCA_HELLO = "h \xC9\x99 l o\xCA\x8A"; // h ə l oʊ, four phonemes
+} // namespace
+
+TEST(CApiTinyVoca, ItsVoicesAreListedTheDefaultFirstAndItClonesNone) {
+    TinyVocaPair pair("", 3, 1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    char **voices = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tts_voices(pair.tts, &voices, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::vector<std::string> names(voices, voices + count);
+    jllama_strings_free(voices, count);
+    EXPECT_EQ(names, (std::vector<std::string>{"M2", "F2"})) << "clip.gen.audio.default_voice goes first";
+    bool clones = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(pair.tts, &clones), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(clones);
+}
+
+TEST(CApiTinyVoca, EveryTokenLastsItsFramesOf256SamplesAt24kHz) {
+    TinyVocaPair pair("", 3, 1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> wav;
+    // the synthesis reports no frame: it writes the whole sentence from the prompt (the engine's "no
+    // audio" check reads the output only since then; it refused every tiny-voca synthesis before)
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_rate(wav), 24000u);
+    EXPECT_EQ(wav_samples(wav), 7u * 3 * 256) << "<bos> h ə l oʊ . <eos>";
+    // a final mark of its own: no full stop is added
+    ASSERT_EQ(pair.speak("h \xC9\x99 l o\xCA\x8A ?", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 7u * 3 * 256) << "<bos> h ə l oʊ ? <eos>";
+    // the same seed speaks the same, another seed draws other noise
+    std::vector<unsigned char> again;
+    std::vector<unsigned char> other;
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &wav), JLLAMA_STATUS_OK);
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &again), JLLAMA_STATUS_OK);
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &other, 1.0f, nullptr, 8), JLLAMA_STATUS_OK);
+    EXPECT_EQ(again, wav);
+    EXPECT_NE(other, wav);
+}
+
+TEST(CApiTinyVoca, TheSpeedDividesTheFramesOfEveryToken) {
+    TinyVocaPair pair("", 4, 1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 7u * 4 * 256);
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &wav, 2.0f), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 7u * 2 * 256);
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &wav, 0.5f), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 7u * 8 * 256);
+    // llama.cpp takes 0.25 to 4; above it the synthesis fails, the next one speaks
+    EXPECT_NE(pair.speak(TINY_VOCA_HELLO, &wav, 5.0f), JLLAMA_STATUS_OK);
+    EXPECT_EQ(pair.speak(TINY_VOCA_HELLO, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST(CApiTinyVoca, APauseTokenLastsOnlyWhenTheDurationHeadKeepsIt) {
+    // presence < 0: punctuation, <bos> and <eos> (class 0) get no frame, phonemes keep theirs
+    TinyVocaPair pair("", 3, -1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(pair.speak("h \xC9\x99 , l o\xCA\x8A", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 4u * 3 * 256) << "four phonemes, the comma and the specials silent";
+    // a symbol the model does not know is <unk>, which counts as a phoneme
+    ASSERT_EQ(pair.speak("h \xC9\x99 l o\xCA\x8A xyz", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 5u * 3 * 256);
+    // only punctuation: no frame at all, which the synthesis refuses
+    EXPECT_NE(pair.speak(", .", &wav), JLLAMA_STATUS_OK);
+}
+
+TEST(CApiTinyVoca, EachSentenceEndedByEosIsOneSegment) {
+    TinyVocaPair pair("", 3, 1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> wav;
+    // two sentences the template would have split: <bos> h ə <eos> and <bos> l oʊ <eos>, no full stop added
+    ASSERT_EQ(pair.speak("h \xC9\x99 <eos> l o\xCA\x8A <eos>", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 8u * 3 * 256);
+    // a sentence of more frames than llama.cpp takes in one utterance (3000) is refused
+    TinyVocaPair slow("", 400, 1.0f, 0);
+    ASSERT_NE(slow.tts, nullptr);
+    // 400 is the most frames llama.cpp gives a token: 8 tokens are 3200 frames
+    EXPECT_NE(slow.speak("h \xC9\x99 l o\xCA\x8A l", &wav), JLLAMA_STATUS_OK) << "8 tokens of 400 frames";
+    EXPECT_EQ(slow.speak("h <eos> \xC9\x99 <eos>", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(wav), 6u * 400 * 256) << "two sentences of three tokens, each below the limit";
+}
+
+TEST(CApiTinyVoca, AVoiceChangesTheAudioAndAnUnknownOneIsRefused) {
+    TinyVocaPair pair("", 3, 1.0f, 0);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> m2;
+    std::vector<unsigned char> f2;
+    std::vector<unsigned char> none;
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &none), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &m2, 1.0f, "M2"), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &f2, 1.0f, "F2"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(none, m2) << "no voice is the default voice";
+    EXPECT_NE(f2, m2);
+    EXPECT_EQ(pair.speak(TINY_VOCA_HELLO, &m2, 1.0f, "robot"), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("F2"), std::string::npos) << jllama_last_error();
+}
+
+TEST(CApiTinyVoca, TheTemplateAsksTheProjectorsLetterToSoundModel) {
+    // the G2P of the generated projector answers AE1 for every word; the template speaks "h ə l oʊ" when
+    // tts_g2p() does so and "b æ d" (three phonemes) otherwise -- which is what an engine that does not
+    // hand the template mtmd_gen_audio_g2p (as upstream's /tts does since b12497) would speak
+    const std::string tmpl =
+        "{%- if tts_g2p('hello') == 'AE1' -%}h \xC9\x99 l o\xCA\x8A{%- else -%}b \xC3\xA6 d{%- endif -%}";
+    TinyVocaPair pair(tmpl, 3, 1.0f, 5);
+    ASSERT_NE(pair.tts, nullptr);
+    std::vector<unsigned char> templated;
+    std::vector<unsigned char> raw;
+    ASSERT_EQ(pair.speak("anything", &templated), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(pair.speak(TINY_VOCA_HELLO, &raw, 1.0f, nullptr, 7, 1), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(templated), 7u * 3 * 256) << "four phonemes, not the three of the fallback";
+    EXPECT_EQ(templated, raw);
+    // without its letter-to-sound model the same template takes the fallback
+    TinyVocaPair without(tmpl, 3, 1.0f, 0);
+    ASSERT_NE(without.tts, nullptr);
+    ASSERT_EQ(without.speak("anything", &templated), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav_samples(templated), 6u * 3 * 256) << "<bos> b æ d . <eos>";
+}
+
 TEST(CApiLfm3TtsEnd, WithoutItsTtsTemplateTheModelCannotSpeak) {
     // the pipeline starts in audio only after a prompt ending in <|audio_start|>, which only the
     // "tts" template writes; the bare text ends in text, and llama.cpp refuses it in set_input

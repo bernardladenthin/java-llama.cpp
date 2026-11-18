@@ -341,7 +341,10 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         err = "failed to read generated audio output";
         return false;
     }
-    if (n_frames == 0 || data_len == 0) {
+    // n_frames counts the frames step_gen() reported; a pipeline that is not autoregressive (Kokoro and
+    // tiny-voca, b12494 and b12497) writes the whole utterance from the prompt and reports none, which
+    // is why only the output decides, as in upstream's llama-tts
+    if (data_len == 0) {
         err = "no audio was generated";
         return false;
     }

@@ -343,6 +343,36 @@ public class TestConstants {
     /** The mmproj of {@link #DEFAULT_ZONOS_MODEL_PATH}. */
     public static final String DEFAULT_ZONOS_MMPROJ_PATH = resolveModelPath("models/mmproj-ZONOS3-Mini-F32.gguf");
 
+    /**
+     * System property overriding the Kokoro backbone of {@code KokoroTtsIntegrationTest}
+     * ({@link #DEFAULT_KOKORO_MODEL_PATH} when unset).
+     */
+    public static final String PROP_KOKORO_MODEL = LlamaSystemProperties.PREFIX + ".tts.kokoro.model";
+
+    /** System property overriding the mmproj of {@link #PROP_KOKORO_MODEL}. */
+    public static final String PROP_KOKORO_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.kokoro.mmproj";
+
+    /** CI's Kokoro-82M backbone, the PL-BERT phoneme encoder (.github/models.csv, feature {@code kokoro}). */
+    public static final String DEFAULT_KOKORO_MODEL_PATH = resolveModelPath("models/Kokoro-82M-F32.gguf");
+
+    /** The mmproj of {@link #DEFAULT_KOKORO_MODEL_PATH}. */
+    public static final String DEFAULT_KOKORO_MMPROJ_PATH = resolveModelPath("models/mmproj-Kokoro-82M-F16.gguf");
+
+    /**
+     * System property overriding the tiny-voca backbone of {@code TinyVocaTtsIntegrationTest}
+     * ({@link #DEFAULT_TINY_VOCA_MODEL_PATH} when unset).
+     */
+    public static final String PROP_TINY_VOCA_MODEL = LlamaSystemProperties.PREFIX + ".tts.tinyvoca.model";
+
+    /** System property overriding the mmproj of {@link #PROP_TINY_VOCA_MODEL}. */
+    public static final String PROP_TINY_VOCA_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.tinyvoca.mmproj";
+
+    /** CI's tiny-voca backbone, the phoneme encoder (.github/models.csv, feature {@code tinyvoca}). */
+    public static final String DEFAULT_TINY_VOCA_MODEL_PATH = resolveModelPath("models/tiny-voca-F32.gguf");
+
+    /** The mmproj of {@link #DEFAULT_TINY_VOCA_MODEL_PATH}. */
+    public static final String DEFAULT_TINY_VOCA_MMPROJ_PATH = resolveModelPath("models/mmproj-tiny-voca-F32.gguf");
+
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");
 
