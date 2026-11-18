@@ -203,6 +203,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
   26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
   the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12506** (from b12504, 2 upstream commits): bf16 for more operators (#32202) -- on the
+  CPU `scale`, `clamp`, `leaky_relu`, `swiglu_oai`, `swiglu_clamp`, `tri` and `diag`, on Vulkan the
+  unary and binary operators and `rms_norm` -- and follow-ups to the WebUI Storybook (#32523). No API
+  change.
 - **llama.cpp b12504** (from b12499, 5 upstream commits): CUDA kernel tuning (conv2d, MMQ for MoE on
   V100, Pascal DP4A), the OpenVINO backend's larger op set and NPU/GPU passes (#32172), and a
   Storybook for the WebUI's component library (#32485). No API change.

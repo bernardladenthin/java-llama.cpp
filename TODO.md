@@ -358,6 +358,11 @@ followed on 2026-11-18 (four more cases). Not covered by the generator: the mixe
 audio interleaved), whose switching the random backbone decides; CI's real pair covers it
 (`RealtimeNativeServerIntegrationTest`).
 
+**From b12504 to b12506 (2026-11-18)** -- 2 upstream commits (bf16 for more CPU and Vulkan operators,
+#32202; WebUI Storybook follow-ups, #32523), pinned by commit (the tag exists); every patch unchanged,
+no source change. Its own step because #32202 alone is a 100 KiB diff. Not measured: the Vulkan half
+(no GPU here).
+
 **From b12499 to b12504 (2026-11-18)** -- 5 upstream commits (CUDA kernels, the OpenVINO backend's
 #32172, the WebUI Storybook), every patch unchanged, no source change. Not measured: the OpenVINO
 changes (no Intel accelerator here; the module stays opt-in, `docs/benchmarks/gpu-module-jars.md`).
