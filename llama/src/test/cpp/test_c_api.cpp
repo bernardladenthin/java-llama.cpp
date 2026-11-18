@@ -3054,6 +3054,19 @@ TEST(CApiBatchSize, ABatchSizeBelowTwoIsRefusedInsteadOfEndingTheProcess) {
         EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 2"), std::string::npos)
             << jllama_last_error();
     }
+    // The batch a context gets can be smaller than --batch-size: an embedding context takes the
+    // ubatch (common_init_result clamps n_batch to it), a causal one at most its size (llama_context).
+    // Both reached the same probe and aborted the process.
+    EXPECT_EQ(load_tiny(path, {"--embedding", "-ub", "1"}), nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("--ubatch-size must be at least 2 with --embedding"),
+              std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(load_tiny(path, {"-c", "1"}), nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("--ctx-size must be at least 2"), std::string::npos)
+        << jllama_last_error();
+    jllama_model *embedding = load_tiny(path, {"--embedding", "-ub", "2"});
+    ASSERT_NE(embedding, nullptr) << jllama_last_error();
+    jllama_model_free(embedding);
     jllama_model *model = load_tiny(path, {"-b", "2", "-ub", "1"});
     ASSERT_NE(model, nullptr) << jllama_last_error();
     EXPECT_FALSE(greedy_answer(model, 4).empty());
@@ -3069,9 +3082,11 @@ TEST(CApiBatchSize, AServerWithABatchBelowTwoIsRefusedBeforeItStarts) {
     // read before the worker starts, in every spelling the parse accepts.
     const std::string path = write_tiny_llama_gguf("jllama-c-api-server-batch-size");
     ASSERT_FALSE(path.empty());
+    // upstream reads the number with std::stoi, so "1x" is 1; and an embedding server's batch is its ubatch
     for (const std::vector<std::string> batch :
          {std::vector<std::string>{"-b", "1"}, std::vector<std::string>{"--batch_size", "0"},
-          std::vector<std::string>{"-b", "4", "--batch-size", "1"}}) {
+          std::vector<std::string>{"-b", "4", "--batch-size", "1"}, std::vector<std::string>{"-b", "1x"},
+          std::vector<std::string>{"--embedding", "-ub", "1"}}) {
         std::vector<std::string> args = {"llama-server", "-m",        path,     "-c", "64", "-ngl", "0",
                                          "--host",       "127.0.0.1", "--port", "0"};
         args.insert(args.end(), batch.begin(), batch.end());
@@ -3083,13 +3098,81 @@ TEST(CApiBatchSize, AServerWithABatchBelowTwoIsRefusedBeforeItStarts) {
         EXPECT_EQ(jllama_server_start(static_cast<int>(argv.size()), argv.data(), &server), JLLAMA_STATUS_ERROR)
             << batch.back();
         EXPECT_EQ(server, nullptr);
-        EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 2"), std::string::npos)
+        EXPECT_NE(std::string(jllama_last_error()).find("must be at least 2"), std::string::npos)
+            << jllama_last_error();
+    }
+    {
+        // from the environment, which the parse applies before the argv
+        SCOPED_TRACE("LLAMA_ARG_BATCH");
+#ifdef _WIN32
+        _putenv_s("LLAMA_ARG_BATCH", "1 ");
+#else
+        setenv("LLAMA_ARG_BATCH", "1 ", 1);
+#endif
+        const std::vector<std::string> args = {"llama-server", "-m",        path,     "-c", "64", "-ngl", "0",
+                                               "--host",       "127.0.0.1", "--port", "0"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_server *server = nullptr;
+        const jllama_status status = jllama_server_start(static_cast<int>(argv.size()), argv.data(), &server);
+        const std::string error = jllama_last_error();
+#ifdef _WIN32
+        _putenv_s("LLAMA_ARG_BATCH", "");
+#else
+        unsetenv("LLAMA_ARG_BATCH");
+#endif
+        EXPECT_EQ(status, JLLAMA_STATUS_ERROR);
+        EXPECT_EQ(server, nullptr);
+        EXPECT_NE(error.find("--batch-size must be at least 2"), std::string::npos) << error;
+    }
+    {
+        // an argv the parse refuses fails the start itself, not the worker later
+        SCOPED_TRACE("refused argv");
+        const char *argv[] = {"llama-server", "--no-such-option", "--host", "127.0.0.1", "--port", "0"};
+        jllama_server *server = nullptr;
+        EXPECT_EQ(jllama_server_start(6, argv, &server), JLLAMA_STATUS_ERROR);
+        EXPECT_EQ(server, nullptr);
+        EXPECT_NE(std::string(jllama_last_error()).find("Failed to parse server parameters"), std::string::npos)
             << jllama_last_error();
     }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
 #endif
+
+TEST(CApiInterrupt, InterruptEndsACallInFlightAndTheModelIsStillFreed) {
+    // jllama_model_interrupt is jllama_model_free's first half on its own: a host that waits for the
+    // calls in flight before it frees (llama-ffm's lifecycle lock) interrupts first, or the wait lasts
+    // as long as the generation. With --context-shift and no token limit a completion never ends by
+    // itself, so here only the interrupt can end it.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-interrupt");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--context-shift"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::atomic<int> status{-1};
+    std::thread caller([model, &status]() {
+        Owned completion;
+        status.store(jllama_completions(
+            model, R"({"prompt":"Hello there","n_predict":-1,"ignore_eos":true,"temperature":0})", &completion.s));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    EXPECT_EQ(status.load(), -1) << "the endless completion ended by itself";
+    const auto interrupted = std::chrono::steady_clock::now();
+    jllama_model_interrupt(model);
+    caller.join();
+    EXPECT_LT(std::chrono::steady_clock::now() - interrupted, std::chrono::seconds(10));
+    EXPECT_EQ(status.load(), JLLAMA_STATUS_INTERRUPTED);
+    // a call that does not wait for the inference loop still answers
+    Owned meta;
+    EXPECT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_model_interrupt(model); // idempotent
+    jllama_model_free(model);
+    jllama_model_interrupt(nullptr);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
 
 TEST(CApiParseErrors, AChatTemplateThatDoesNotParseIsRefusedWithItsErrorAndTheProcessGoesOn) {
     // A --chat-template is verified after the arguments are read, and upstream's parse called
@@ -6685,6 +6768,25 @@ TEST(CApiBert, AnEncoderEmbedsWithEveryPoolingTypeAndItsOwnByDefault) {
     std::filesystem::remove(path, ec);
 }
 
+TEST(CApiBert, AnInputLongerThanTheUbatchIsRefusedAndTheEncoderGoesOn) {
+    // An encoder reads its whole input in one ubatch. The server refuses a longer one before it
+    // decodes ("input ... is too large to process"); below it llama.cpp asserted until b12525
+    // (#32553 made that an error too), so this refusal is what stands between a long text and the
+    // end of the process. The model answers the next, shorter input.
+    const std::string path = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */, "jllama-bert-ubatch");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--embedding", "-b", "8", "-ub", "8"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned refused;
+    const std::string long_text = json{{"content", "hello there world hello there world hello there world"}}.dump();
+    EXPECT_NE(jllama_embeddings(model, long_text.c_str(), false, &refused.s), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("too large to process"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(embedding_rows(model, "hello there world", 32).size(), 1u);
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
 TEST(CApiBert, ARerankerScoresEveryDocumentByItselfAndTheQuery) {
     const std::string path = write_tiny_bert_gguf(true, 4 /* LLAMA_POOLING_TYPE_RANK */);
     ASSERT_FALSE(path.empty());
@@ -7946,6 +8048,56 @@ TEST(CApiLogFile, ARefusedParseNeitherOpensNorClosesALogFile) {
     jllama_model_free(a);
     std::filesystem::remove(log_a, ec);
     std::filesystem::remove(log_b, ec);
+    std::filesystem::remove(model, ec);
+}
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiLogFile, ARefusedServerArgvNeitherOpensNorClosesALogFile) {
+    // The embedded server parses its argv inside llama_server(); its --log-file was opened before that
+    // parse, so a refused argv closed a live model's file as the refused load once did. The start
+    // parses the argv first now and opens nothing for a refused one.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-server-refused");
+    ASSERT_FALSE(model.empty());
+    const auto log_a = log_file_path("jllama-c-api-log-file-server-refused-a");
+    const auto log_b = log_file_path("jllama-c-api-log-file-server-refused-b");
+    std::error_code ec;
+    std::filesystem::remove(log_a, ec);
+    std::filesystem::remove(log_b, ec);
+    jllama_model *a = load_tiny(model, {"--log-file", log_a.string()});
+    ASSERT_NE(a, nullptr) << jllama_last_error();
+    const std::string b_name = log_b.string();
+    const char *argv[] = {"llama-server", "--no-such-option", "--log-file", b_name.c_str(), "--port", "0"};
+    jllama_server *server = nullptr;
+    EXPECT_EQ(jllama_server_start(6, argv, &server), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(server, nullptr);
+    const auto before = drained_size(log_a);
+    EXPECT_FALSE(greedy_answer(a).empty());
+    EXPECT_GT(drained_size(log_a), before) << "a refused server argv closed the log file of a live model";
+    EXPECT_FALSE(std::filesystem::exists(log_b, ec)) << "a refused server argv opened its log file";
+    jllama_model_free(a);
+    std::filesystem::remove(log_a, ec);
+    std::filesystem::remove(model, ec);
+}
+#endif
+
+TEST(CApiLogFile, LogDisableAfterTheLogFileStillDisablesTheLog) {
+    // The engine opens --log-file after the parse, which applied --log-disable by pausing the log
+    // worker; opening the file resumed it, so "--log-file f --log-disable" logged into f. It stays
+    // paused, as upstream's order leaves it.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-disabled");
+    ASSERT_FALSE(model.empty());
+    const auto log = log_file_path("jllama-c-api-log-file-disabled");
+    std::error_code ec;
+    std::filesystem::remove(log, ec);
+    jllama_model *loaded = load_tiny(model, {"--log-file", log.string(), "--log-disable"});
+    ASSERT_NE(loaded, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(loaded).empty());
+    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // a running worker would have written by now
+    const auto written = std::filesystem::file_size(log, ec);
+    EXPECT_EQ(written, 0u) << "the disabled log was written into " << log.string();
+    jllama_model_free(loaded);
+    jllama_set_log_callback(nullptr, nullptr); // a swap resumes the worker for whatever runs next
+    std::filesystem::remove(log, ec);
     std::filesystem::remove(model, ec);
 }
 

@@ -1234,7 +1234,9 @@ public class LlamaModel implements AutoCloseable {
      * request, and to the server's since llama.cpp b12416). The host-memory prompt cache
      * ({@code --cache-ram}, on by default) records the adapters of every state and loads only the
      * states of the adapters a request runs with (llama.cpp b12498). A slot file does not record
-     * them: a restored slot counts as computed under the server's adapters ({@code patches/0021}).
+     * them; the server remembers the scales of every file it saves, and a restored slot counts as
+     * computed under those -- a file it did not save (one of an earlier process) under none, which
+     * the first request with adapters clears ({@code patches/0021}).
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter

@@ -25,6 +25,9 @@ Refreshed at b12316: #31467 made the download progress throttle per file and add
 for g_shutdown_handler_mutex is gone. 6 hunks: the flag, the guarded handler, the two resets, and
 opts.install_signal_handlers.
 
+Since the review of 2026-11-18 the embedded server also skips the common_log_flush() at the end of
+llama_server(): it pauses and resumes common_log's worker without the engine's g_common_log_mutex,
+and the host's setLogger / log-file changes take that lock.
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
 index a0640f12b..cba74c59e 100644
 --- a/tools/server/server.cpp
@@ -134,16 +137,22 @@ index a0640f12b..cba74c59e 100644
  
      if (opts.install_signal_handlers) {
          server_install_signal_handlers();
-@@ -811,7 +864,11 @@ int llama_server(int argc, char ** argv) {
+@@ -811,7 +864,16 @@ int llama_server(int argc, char ** argv) {
      llama_backend_init();
      llama_numa_init(params.numa);
  
 -    const int result = server_run(params, argc, argv, role, server_run_opts{});
+-    common_log_flush(common_log_main());
 +    server_run_opts opts;
 +    // [jllama] no process-wide SIGINT/SIGTERM handlers when embedded in the JVM (they would hijack
 +    // the JVM's own); NativeServer stops the embedded server via llama_server_request_shutdown()
 +    opts.install_signal_handlers = !g_llama_server_embedded.load();
 +    const int result = server_run(params, argc, argv, role, opts);
-     common_log_flush(common_log_main());
++    // [jllama] embedded, the host owns common_log and changes it under a lock of its own: this flush
++    // (a pause and a resume of the log worker) raced a setLogger on another thread, and the worker
++    // writes what is queued without it
++    if (!g_llama_server_embedded.load()) {
++        common_log_flush(common_log_main());
++    }
      return result;
  }

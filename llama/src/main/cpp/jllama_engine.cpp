@@ -324,24 +324,27 @@ std::string take_log_file_option(std::vector<std::string> &argv) {
     return path;
 }
 
-// Whether a parse of this argv pauses common_log's worker: --log-disable and --log-colors do, and
-// LLAMA_ARG_LOG_FILE / LLAMA_ARG_LOG_COLORS do from the environment. Only such a parse holds
-// g_common_log_mutex -- a parse can download a model (-hf), which must not block every setLogger.
-bool parse_pauses_the_log(const std::vector<std::string> &argv) {
+// Whether the argv names the long option `name` (index 0 is the program name).
+bool has_long_option(const std::vector<std::string> &argv, const char *name) {
     for (size_t i = 1; i < argv.size(); i++) {
-        const std::string name = long_option_name(argv[i]);
-        if (name == "--log-disable" || name == "--log-colors") {
+        if (long_option_name(argv[i]) == name) {
             return true;
         }
     }
-    return env_is_set("LLAMA_ARG_LOG_FILE") || env_is_set("LLAMA_ARG_LOG_COLORS");
+    return false;
 }
 
 // Opens `path` as the log file (if any) and makes a new owner of the file now open; 0 when none was
 // opened. Caller holds g_common_log_mutex. `env_opened`: the parse just opened LLAMA_ARG_LOG_FILE's.
-std::uint64_t open_log_file_locked(const std::string &path, bool env_opened) {
+// `disabled`: the argv has --log-disable, which the parse applied by pausing the log worker -- and
+// opening a file resumes it, so it is paused again, as upstream's order (the file first, the
+// option after it) leaves it.
+std::uint64_t open_log_file_locked(const std::string &path, bool env_opened, bool disabled) {
     if (!path.empty()) {
         common_log_set_file(common_log_main(), path.c_str());
+        if (disabled) {
+            common_log_pause(common_log_main());
+        }
     } else if (!env_opened) {
         return 0;
     }
@@ -349,16 +352,32 @@ std::uint64_t open_log_file_locked(const std::string &path, bool env_opened) {
     return g_log_file_owner;
 }
 
-// Closes the log file if `owner` still owns it.
-void release_log_file(std::uint64_t owner) {
+// Closes the log file if `owner` still owns it. Called from destructors and from free(): a failure
+// to restart common_log's worker (std::system_error from std::thread) must not end the process.
+void release_log_file(std::uint64_t owner) noexcept {
     if (owner == 0) {
         return;
     }
-    std::lock_guard<std::mutex> lk(g_common_log_mutex);
-    if (g_log_file_owner == owner) {
-        common_log_set_file(common_log_main(), nullptr);
-        g_log_file_owner = 0;
+    try {
+        std::lock_guard<std::mutex> lk(g_common_log_mutex);
+        if (g_log_file_owner == owner) {
+            g_log_file_owner = 0;
+            common_log_set_file(common_log_main(), nullptr);
+        }
+    } catch (...) {
+        // the file stays open; nothing else to do in a teardown
     }
+}
+
+// `what` with the reason the last refused parse on this thread gave (patches/0031), without the
+// usage text upstream appends after a blank line.
+std::string parse_refusal(const char *what) {
+    std::string reason = common_params_parse_error();
+    reason = reason.substr(0, reason.find("\n\n"));
+    while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) {
+        reason.pop_back();
+    }
+    return reason.empty() ? std::string(what) : std::string(what) + ": " + reason;
 }
 
 // Closes the file a load opened unless the load handed it to its model.
@@ -390,16 +409,47 @@ struct load_progress_relay {
 
 } // namespace
 
-std::uint64_t claim_log_file_for_server(std::vector<std::string> &argv) {
-    const std::string path = take_log_file_option(argv);
+std::string batch_refusal(const common_params &params) {
+    // The server's load probes the memory with two tokens in one batch (common_context_can_seq_rm);
+    // with a smaller logical batch llama.cpp aborts the process there (GGML_ABORT in
+    // common_batch::get_sub_batch) -- the JVM, for a Java caller. The batch the context gets is
+    // smaller than --batch-size in two cases: an embedding context takes n_ubatch (common_init_result
+    // and llama_server() both clamp it), and a causal context takes at most n_ctx (llama_context).
+    const std::string why = "): the server evaluates two tokens in one batch when it loads the model";
+    if (params.n_batch < 2) {
+        return "--batch-size must be at least 2 (got " + std::to_string(params.n_batch) + why;
+    }
+    if (params.embedding && params.n_ubatch < 2) {
+        return "--ubatch-size must be at least 2 with --embedding or --reranking (got " +
+               std::to_string(params.n_ubatch) + "; an embedding context's batch is its ubatch" + why;
+    }
+    if (params.n_ctx == 1) {
+        return "--ctx-size must be at least 2 (got 1; a causal context's batch is at most its size" + why;
+    }
+    return std::string();
+}
+
+std::uint64_t prepare_server_argv(std::vector<std::string> &argv) {
+    // With LLAMA_ARG_LOG_FILE set the server's own parse applies the variable before the argv, so a
+    // --log-file of the argv stays there for that parse to apply after it, as upstream orders them;
+    // without it the engine opens the file, under the lock, once the argv was accepted.
     const bool env = env_is_set("LLAMA_ARG_LOG_FILE");
-    if (path.empty() && !env) {
-        return 0;
+    const std::string path = env ? std::string() : take_log_file_option(argv);
+    std::vector<char *> parse_argv;
+    parse_argv.reserve(argv.size());
+    for (auto &arg : argv) {
+        parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
     std::lock_guard<std::mutex> lk(g_common_log_mutex);
-    // The server parses inside llama_server(), where LLAMA_ARG_LOG_FILE is opened again; the owner is
-    // the server either way.
-    return open_log_file_locked(path, env);
+    common_params params;
+    if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
+        throw std::runtime_error(parse_refusal("Failed to parse server parameters"));
+    }
+    const std::string refusal = batch_refusal(params);
+    if (!refusal.empty()) {
+        throw std::runtime_error(refusal);
+    }
+    return open_log_file_locked(path, env, has_long_option(argv, "--log-disable"));
 }
 
 void release_log_file_of_server(std::uint64_t owner) { release_log_file(owner); }
@@ -440,10 +490,10 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     log_file_claim log_file;
     bool parsed = false;
     {
-        std::unique_lock<std::mutex> log_lock(g_common_log_mutex, std::defer_lock);
-        if (parse_pauses_the_log(rpc_argv)) {
-            log_lock.lock();
-        }
+        // Every parse holds the lock: --log-disable, --log-colors and LLAMA_ARG_LOG_FILE pause the log
+        // worker inside it, and the server example's parse downloads nothing (common_params_parse_ex
+        // leaves that to the load), so it is short.
+        std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
         parsed =
             common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER);
         // A parse in a process with LLAMA_ARG_LOG_FILE set opened that file before it read the argv;
@@ -451,30 +501,20 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         // cannot tell apart). The --log-file of the argv is opened only for an accepted parse.
         const bool env_opened = env_is_set("LLAMA_ARG_LOG_FILE");
         if (parsed || env_opened) {
-            if (!log_lock.owns_lock()) {
-                log_lock.lock();
-            }
-            log_file.owner = open_log_file_locked(parsed ? log_file_path : std::string(), env_opened);
+            log_file.owner = open_log_file_locked(parsed ? log_file_path : std::string(), env_opened,
+                                                  has_long_option(rpc_argv, "--log-disable"));
         }
     }
     if (!parsed) {
-        // the reason without the usage text upstream appends after a blank line (patches/0031)
-        std::string reason = common_params_parse_error();
-        reason = reason.substr(0, reason.find("\n\n"));
-        while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) {
-            reason.pop_back();
-        }
-        throw std::runtime_error(reason.empty() ? "Failed to parse model parameters"
-                                                : "Failed to parse model parameters: " + reason);
+        throw std::runtime_error(parse_refusal("Failed to parse model parameters"));
     }
 
-    // The server's load probes whether the memory can drop part of a sequence by evaluating two tokens
-    // in one batch (common_context_can_seq_rm); with a smaller logical batch llama.cpp aborts the
-    // process there (GGML_ABORT in common_batch::get_sub_batch) -- the JVM, for a Java caller.
     // A refused load parameter, like a refused parse: JLLAMA_STATUS_ERROR / LlamaException.
-    if (!vocab_only && params.n_batch < 2) {
-        throw std::runtime_error("--batch-size must be at least 2 (got " + std::to_string(params.n_batch) +
-                                 "): the server evaluates two tokens in one batch when it loads the model");
+    if (!vocab_only) {
+        const std::string refusal = batch_refusal(params);
+        if (!refusal.empty()) {
+            throw std::runtime_error(refusal);
+        }
     }
 
     // A draft model nobody asks: upstream's speculative types default to none, and the parse above
@@ -603,7 +643,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     return jctx.release();
 }
 
-void free(jllama_context *jctx) {
+void interrupt(jllama_context *jctx) noexcept {
     if (jctx == nullptr) {
         return;
     }
@@ -614,9 +654,20 @@ void free(jllama_context *jctx) {
     jctx->closing.store(true, std::memory_order_release);
     if (!jctx->vocab_only) {
         // Cancel any pending streaming readers before stopping the server.
-        std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-        jctx->readers.clear();
+        try {
+            std::lock_guard<std::mutex> lk(jctx->readers_mutex);
+            jctx->readers.clear();
+        } catch (...) {
+            // a reader's destructor that throws: the flag above already ends every wait
+        }
     }
+}
+
+void free(jllama_context *jctx) {
+    if (jctx == nullptr) {
+        return;
+    }
+    interrupt(jctx);
 
     // Wait for every in-flight call (an entry point still inside its jllama_context_guard) to
     // release its user reference BEFORE tearing anything down -- a concurrent call could otherwise

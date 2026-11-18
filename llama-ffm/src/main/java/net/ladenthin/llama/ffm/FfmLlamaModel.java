@@ -32,9 +32,10 @@ import net.ladenthin.llama.parameters.ModelParameters;
 
 /**
  * A model loaded through the C API: the operations of {@code LlamaModel}, one C function each, with
- * JSON text in and out. A handle may be used from several threads; {@link #close()} waits for the calls
- * in flight, and a call that starts after it throws {@link IllegalStateException} -- a call never reaches
- * a freed handle, as with {@code LlamaModel}.
+ * JSON text in and out. A handle may be used from several threads; {@link #close()} interrupts the calls
+ * in flight (a blocking completion throws {@link LlamaException} within about a second) and waits for
+ * them, and a call that starts after it throws {@link IllegalStateException} -- a call never reaches a
+ * freed handle, as with {@code LlamaModel}.
  *
  * <p>Requests are the bodies llama.cpp's own HTTP server reads ({@code InferenceParameters.toJson()},
  * or an OpenAI chat body written by hand) and responses the objects it writes. A request llama.cpp
@@ -197,16 +198,34 @@ public final class FfmLlamaModel implements AutoCloseable {
      */
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        // A new call is refused from here on (handle() checks the flag under the read lock). The calls
+        // in flight hold the read lock for their whole native duration, so they are interrupted first
+        // -- a blocking completion returns within about a second instead of finishing its generation --
+        // and the write lock then waits only for them to unwind. Only this close frees the handle, so
+        // the interrupt needs no lock of its own.
+        invoke(JllamaNative.MODEL_INTERRUPT, handle);
         lifecycle.writeLock().lock();
         try {
-            if (closed.compareAndSet(false, true)) {
-                invoke(JllamaNative.MODEL_FREE, handle);
-                if (video != null) {
-                    video.close();
-                }
+            invoke(JllamaNative.MODEL_FREE, handle);
+            if (video != null) {
+                video.close();
             }
         } finally {
             lifecycle.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Runs {@code body} on the live handle under the read lock, for a native call made outside this
+     * class ({@link FfmNativeServer#startAttached}): a concurrent {@link #close()} waits for it, and
+     * after the close it throws {@link IllegalStateException} instead of reaching the freed handle.
+     */
+    <T> T withHandle(java.util.function.Function<MemorySegment, T> body) {
+        try (InUse _ = new InUse()) {
+            return body.apply(handle());
         }
     }
 

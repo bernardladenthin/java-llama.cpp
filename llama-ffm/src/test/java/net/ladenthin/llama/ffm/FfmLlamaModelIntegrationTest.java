@@ -330,6 +330,37 @@ class FfmLlamaModelIntegrationTest {
         }
     }
 
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 2, unit = java.util.concurrent.TimeUnit.MINUTES)
+    void aCloseInterruptsABlockingCompletionInsteadOfWaitingForItsEnd() throws Exception {
+        // The lifecycle lock makes close() wait for the calls in flight; without an interrupt first it
+        // waited for the whole generation, and for one that never ends (context shift, no token limit,
+        // the end-of-generation token ignored) forever. close() interrupts them now, as LlamaModel's
+        // close does: the completion throws, and the close returns.
+        FfmLlamaModel other = FfmLlamaModel.load(
+                new String[] {"", "-m", FfmTestSupport.modelPath().toString(), "-c", "128", "-ngl", "0", "-t", "1",
+                    "--context-shift"},
+                null);
+        Throwable[] failure = new Throwable[1];
+        Thread caller = new Thread(() -> {
+            try {
+                other.completions("{\"prompt\": \"Hello\", \"n_predict\": -1, \"ignore_eos\": true}");
+            } catch (Throwable e) {
+                failure[0] = e;
+            }
+        }, "ffm-endless-completion");
+        caller.start();
+        Thread.sleep(500);
+        assertTrue(caller.isAlive(), "the endless completion ended by itself");
+        long start = System.nanoTime();
+        other.close();
+        caller.join(30_000);
+        assertFalse(caller.isAlive(), "the completion was not interrupted");
+        assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start) < 30, is(true));
+        assertTrue(failure[0] instanceof LlamaException, String.valueOf(failure[0]));
+        assertThrows(IllegalStateException.class, other::meta);
+    }
+
     private static int awaitHealth(int port) throws Exception {
         URI health = URI.create("http://127.0.0.1:" + port + "/health");
         int last = -1;

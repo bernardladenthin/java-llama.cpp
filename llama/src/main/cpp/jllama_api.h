@@ -189,6 +189,16 @@ JLLAMA_API jllama_status jllama_model_load_video(int argc, const char *const *ar
 JLLAMA_API void jllama_model_free(jllama_model *model);
 
 /**
+ * The first half of jllama_model_free, which it runs itself: cancels the model's streaming tasks and
+ * makes every call that waits for its inference loop -- in flight or later -- return within about a
+ * second with JLLAMA_STATUS_INTERRUPTED, unless its answer arrives first; calls that do not wait
+ * (metadata, tokenization) still answer. Nothing is released, and there is no way back: the model must still be freed. For a host
+ * whose own lock keeps a call from reaching a freed handle and therefore waits for the calls in
+ * flight before it frees (llama-ffm): interrupt first, so that the wait ends. Null is ignored.
+ */
+JLLAMA_API void jllama_model_interrupt(jllama_model *model);
+
+/**
  * An OpenAI chat completion, blocking: `request_json` is the request body
  * (`{"messages":[...], "max_tokens": ..., ...}`), *response_json the chat.completion object
  * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses, including

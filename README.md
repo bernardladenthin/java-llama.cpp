@@ -945,8 +945,9 @@ from the map is set to scale `0` (disabled). A slot whose cache was computed und
 it at its next request, so no answer mixes old and new adapters (upstream does the same since
 llama.cpp b12431, #30367). The host-memory prompt cache (`--cache-ram`, on by default) records the
 adapters of every state since b12498 and loads only the states of the adapters a request runs with. A
-slot file does not record them: a restored slot counts as computed under the server's adapters
-(`patches/0021`).
+slot file does not record them; the server remembers the scales of every file it saves, and a
+restored slot counts as computed under those -- a file it did not save (one of an earlier process)
+under none, which the first request with adapters clears (`patches/0021`).
 
 ### Text-to-Speech
 

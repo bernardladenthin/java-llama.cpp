@@ -81,6 +81,12 @@ struct video_decoder {
 void free(jllama_context *jctx);
 
 /**
+ * free()'s first step on its own (jllama_model_interrupt): marks the handle closing, so every parked
+ * reader unwinds within one poll, and cancels the streaming readers. Idempotent; frees nothing.
+ */
+void interrupt(jllama_context *jctx) noexcept;
+
+/**
  * Refuses an operation on a model loaded with --vocab-only, which has the tokenizer but no server
  * context and no inference loop: throws std::runtime_error naming `operation` ("<operation> is not
  * available in vocab-only mode ..."). Such a model answers the model meta, tokenize and detokenize
@@ -234,12 +240,22 @@ void set_cpu_moe_batched(bool batched);
                                  const std::vector<std::string> &documents);
 
 /**
- * The embedded server's half of the --log-file ownership: takes "--log-file <path>" out of `argv`
- * and opens the file, or with LLAMA_ARG_LOG_FILE set claims the file the server's parse opens, and
- * returns the owner id (0: no log file). The release closes the file unless a model's load or
- * another server has taken it over since.
+ * Why llama.cpp would abort the process loading a model with these parameters, or empty: the
+ * server's load evaluates two tokens in one batch, and the context's batch is --batch-size, or
+ * --ubatch-size for an embedding context, or at most --ctx-size for a causal one.
  */
-[[nodiscard]] std::uint64_t claim_log_file_for_server(std::vector<std::string> &argv);
+[[nodiscard]] std::string batch_refusal(const common_params &params);
+
+/**
+ * Parses an embedded server's argv the way llama_server() will, before its worker starts: a refused
+ * argv or batch (batch_refusal) throws std::runtime_error with the reason, synchronously and before
+ * any log file is opened or closed. Then the server's half of the --log-file ownership: takes
+ * "--log-file <path>" out of `argv` and opens the file, or with LLAMA_ARG_LOG_FILE set claims the
+ * files the server's own parse opens (the argv's --log-file stays for it, applied after the
+ * variable as upstream orders them), and returns the owner id (0: no log file). The release closes
+ * the file unless a model's load or another server has taken it over since.
+ */
+[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv);
 void release_log_file_of_server(std::uint64_t owner);
 
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */

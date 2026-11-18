@@ -238,10 +238,17 @@ found are fixed, these are what is left)
 - **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
   log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
   `common_log`.
-- **An embedded server's own parse runs outside `g_common_log_mutex`.** The server parses inside
-  `llama_server()` on its worker, so a `--log-disable`, `--log-colors` or `LLAMA_ARG_LOG_FILE` there
-  pauses the log worker without the lock a concurrent `setLogger` takes (its `--log-file` is opened
-  by the engine and is covered).
+- **An embedded server's own parse runs outside `g_common_log_mutex`.** The engine parses the argv
+  first under the lock (`prepare_server_argv`), but `llama_server()` parses it again on its worker,
+  so a `--log-disable`, `--log-colors` or `LLAMA_ARG_LOG_FILE` there pauses the log worker without the
+  lock a concurrent `setLogger` takes -- and with `LLAMA_ARG_LOG_FILE` set the argv's `--log-file`
+  is left to that parse too, to keep upstream's order. A hook in `patches/0006`/`0007` after their
+  parse would close it.
+- **Log keys of `/etc/llama.cpp/config.ini`** (applied inside the parse) bypass the log-file owner
+  record and the scan for `--log-disable`.
+- **A vocabulary gap in the server's own `--reasoning-budget-message`** is answered as
+  `JLLAMA_STATUS_INVALID_REQUEST` (the completion wrapper takes every error of the task's setup for
+  the request's).
 - **The `--log-file` scan reads by name, not by position**: a value of another option that is
   literally `--log-file` is taken for the option.
 - **The vocabulary-gap message** does not reach the string fields the request schema tokenizes
@@ -281,8 +288,15 @@ found are fixed, these are what is left)
   and the generator writes no such model.
 - **The `lfm3-d1` decision packing** (b12525, #32553): up to 16 questions of a `/v1/systemone` request
   in one pass, kept apart in the full-attention mask. No model in `models.csv` has the type, and the
-  generator writes only `openjev` decision models; a generated `lfm3-d1` model on the LFM3 backbone
-  (non-causal, labels A..Z) would be the test.
+  generator writes only `openjev` decision models. The test that would mean something: a generated
+  LFM3 with `lfm3.attention.causal = false` (llama.cpp gives it no memory, the only case the
+  decision groups reach the mask) and full-attention layers only (the mask is not applied to the
+  sliding-window and convolution layers), a `systemone` template in the D1 layout
+  (`<|startoftext|><|im_start|>user\n`, then `QUESTION:\n` per packed question), labels A..Z --
+  and the assertion that a question's distribution does not change when another question of the
+  set changes its text at the same token length (the positions stay, only the mask can keep them
+  apart). Checked 2026-11-18 and left for its own session: the generator needs the non-causal,
+  full-attention LFM3 variant and the template first.
 - **Upstream's Windows release builds with LLVM 22.1.8** (b12525, #32548, from Chocolatey); the
   Windows CPU job here takes the image's clang. `patches/0017` keeps either building; following
   upstream's version would be a decision of its own (sccache, the image's VS-bundled clang 22).

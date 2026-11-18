@@ -32,7 +32,7 @@ match a binary to this page.
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
-| 0021 | [`0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`](#0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-withpatch) | server : a restored slot keeps the LoRA config it was saved with | 1 | 3 |
+| 0021 | [`0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`](#0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-withpatch) | server : a restored slot keeps the LoRA config it was saved with | 1 | 4 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
@@ -129,6 +129,10 @@ Refreshed at b12316: #31467 made the download progress throttle per file and add
 `#include <mutex>` (and <unordered_map>) to server.cpp itself, so the hunk that added the include
 for g_shutdown_handler_mutex is gone. 6 hunks: the flag, the guarded handler, the two resets, and
 opts.install_signal_handlers.
+
+Since the review of 2026-11-18 the embedded server also skips the common_log_flush() at the end of
+llama_server(): it pauses and resumes common_log's worker without the engine's g_common_log_mutex,
+and the host's setLogger / log-file changes take that lock.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -518,14 +522,23 @@ restored state kept that slot's label.
 The patch remembers the config of every slot file the server saves, by path, and labels a restored
 state with it. A file the server did not save -- one of an earlier process -- counts as computed
 under no adapters, which is what upstream assumes for a never-used slot: the first task with
-adapters clears it. Until the review of 2026-11-18 the patch labelled a restored state with the
+adapters clears it. It keeps the scales only, one per adapter of params_base, and rebuilds the
+label from the adapters loaded at the time of the restore: a wake from the idle sleep frees the
+adapters and loads them again, and a stored adapter info would carry a pointer into freed memory
+(are_lora_equal compares the pointers, lora_should_clear_cache reads through them). A save forgets
+the file's config before it writes, so a save that fails half way leaves the file without one.
+
+History: in the first round of the review of 2026-11-18 the patch stored the adapter infos
+themselves (pointers that a sleep frees); before it, it labelled a restored state with the
 server's adapters at the time of the restore, which reused a state saved under scale 1 after
 setLoraAdapters() had set scale 0; until b12497 it started every slot with
 slot.lora = params_base.lora_adapters in init(), which upstream's comparison no longer reads.
 
 The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
-saved state into the never-used slot 1, which must reuse it, and restores a state saved under
-other adapters, which must not be reused; the other cases hold upstream's half.
+saved state into the never-used slot 1, which must reuse it; restores a state saved under other
+adapters, and a copy of a file under another name, neither of which may be reused; and restores a
+state after the model slept, which must be reused (LoraCacheSleep). The other cases hold
+upstream's half.
 
 Drop-check on every bump: read the SLOT_RESTORE case in tools/server/server-context.cpp at the new
 tag -- once the restore sets prompt.lora from what the save recorded (or the slot file stores it),

@@ -470,6 +470,11 @@ endif()
 include(cmake/check-aligned-free-pairing.cmake)
 jllama_check_aligned_free_pairing(${llama.cpp_SOURCE_DIR})
 
+# The four _mm_prefetch calls of the x86 Q4_0 dot product take a byte offset (patches/0017): their call
+# sites are checked here, because test_prefetch.cpp holds only the helper they call.
+include(cmake/check-prefetch-byte-offset.cmake)
+jllama_check_prefetch_byte_offset(${llama.cpp_SOURCE_DIR})
+
 # nlohmann/json comes from upstream's vendored copy and from nowhere else (see the json block above).
 # Asserted here rather than left to the compiler: a missing header fails every TU that includes it
 # with a message about the header, while this one says where the file is expected and what to do.

@@ -114,6 +114,10 @@ char *copy_out(const std::string &s) {
 // line queued for the previous callback from reaching the new one.
 jllama_log_fn g_log_fn = nullptr;
 void *g_log_user_data = nullptr;
+// Serialises jllama_set_log_callback callers: LlamaModel.setLogger (JNI, its own mutex) and the FFM
+// Jllama.setLogCallback (synchronized) both call it, and two swaps interleaved could hand one
+// caller's function the other's user data.
+std::mutex g_set_log_callback_mutex;
 
 void log_adapter(enum ggml_log_level level, const char *text, void * /*user_data*/) {
     jllama_log_fn fn = g_log_fn;
@@ -289,6 +293,10 @@ jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_
 }
 
 void jllama_model_free(jllama_model *model) { jllama::engine::free(reinterpret_cast<jllama_context *>(model)); }
+
+void jllama_model_interrupt(jllama_model *model) {
+    jllama::engine::interrupt(reinterpret_cast<jllama_context *>(model));
+}
 
 jllama_status jllama_chat_completions(jllama_model *model, const char *request_json, char **response_json) {
     if (request_json == nullptr || response_json == nullptr) {
@@ -1121,6 +1129,7 @@ jllama_status jllama_get_cpu_moe_batched(bool *batched) {
 
 jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {
     try {
+        std::lock_guard<std::mutex> lk(g_set_log_callback_mutex);
         if (callback == nullptr) {
             // Detach (and drain to the old callback) BEFORE forgetting it.
             jllama::engine::set_log_sink(nullptr, nullptr);
@@ -1137,6 +1146,8 @@ jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
     }
 }
 
