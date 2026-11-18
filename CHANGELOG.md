@@ -197,6 +197,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **llama.cpp b12499** (from b12497, 2 upstream commits). The host-memory prompt cache records the
+  LoRA config of every state (#32434) and loads only the states of the adapters a request runs with:
+  it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the
+  Javadoc named. A recurrent or hybrid model reuses its context checkpoints by the position of its
+  state, not by a sliding window (#32434). `patches/0021` now sets the adapters of a restored slot
+  (renamed `0021-server-a-restored-slot-keeps-the-server-adapters.patch`); without it a slot file
+  restored on a server started with `--lora` was cleared again at its first request. Also Vulkan
+  `rms_norm` on Qualcomm (#30824).
 - **llama.cpp b12497** (from b12496, 1 upstream commit: tiny-voca TTS, #32427). The `tts`
   template's new `tts_g2p()` asks the projector's letter-to-sound model for the pronunciation of a
   word; the engine hands it `mtmd_gen_audio_g2p`, as `/tts` and `llama-tts` do, so a tiny-voca pair

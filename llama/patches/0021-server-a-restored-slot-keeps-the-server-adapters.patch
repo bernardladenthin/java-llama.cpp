@@ -1,0 +1,35 @@
+server : a restored slot counts as computed under the server's LoRA adapters
+
+Since upstream #32434 (b12498) a slot's prompt carries the LoRA config its tokens were processed
+with (server_prompt::lora): launch_slot_with_task() compares a task's adapters with it, the
+host-memory prompt cache stores it with every state and skips the states of another config. A slot
+file does not store it (upstream's TODO in server-slot-sched.h), and SLOT_RESTORE leaves
+prompt.lora as it was -- empty in a never-used slot. On a server started with --lora the first
+task then reads the restored state as "computed under no adapters" and clears it (F240: 77 of 79
+prompt tokens evaluated again).
+
+The patch sets prompt.lora of a restored slot to the server's adapters, the config a slot file
+saved by this server was written under unless a request named its own. Until b12497 this patch
+started every slot with slot.lora = params_base.lora_adapters in init(), which upstream's
+comparison no longer reads.
+
+The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
+saved state into the never-used slot 1, which must reuse it; the other cases hold upstream's half.
+
+Drop-check on every bump: read the SLOT_RESTORE case in tools/server/server-context.cpp at the new
+tag -- once the restore sets prompt.lora (or the slot file stores it), drop the patch.
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 8037bc7ef..8e005dd2e 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3288,6 +3288,9 @@ private:
+ 
+                         slot->prompt.clear();
+                         slot->prompt.tokens = std::move(restored);
++                        // a slot file does not store the LoRA config its state was computed with:
++                        // it counts as the server's, so the first task with those adapters keeps it
++                        slot->prompt.lora = params_base.lora_adapters;
+                     } catch (const std::exception & err) {
+                         slot->prompt_clear();
+                         send_error(task, std::string("Unable to restore slot: ") + err.what(), ERROR_TYPE_INVALID_REQUEST);

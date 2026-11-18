@@ -299,3 +299,81 @@ TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
                                                                             << restored.dump();
     EXPECT_EQ(restored.at("content").get<std::string>(), saved_slot.at("content").get<std::string>());
 }
+
+namespace {
+
+// The host-memory prompt cache (--cache-ram, on by default) keeps the LoRA config of every state
+// since upstream #32434 (b12498): a state computed under other adapters is not loaded into a slot,
+// and one computed under the task's adapters is, after a change and back. Before it the cache
+// stored states without their adapters (and the change back threw the matching state away).
+class LoraCacheHostMemory : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path_ = write_tiny_llama_gguf("jllama-lora-cache-ram-model");
+        adapter_path_ = write_tiny_lora_gguf();
+        ASSERT_FALSE(model_path_.empty());
+        ASSERT_FALSE(adapter_path_.empty());
+        const std::vector<std::string> args = {"jllama", "-m",          model_path_, "--lora",     adapter_path_, "-c",
+                                               "128",    "-np",         "1",         "-ngl",       "0",           "-t",
+                                               "2",      "--cache-ram", "64",        "--no-warmup"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model_),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_model_free(model_);
+        model_ = nullptr;
+        std::error_code ignored;
+        std::filesystem::remove(model_path_, ignored);
+        std::filesystem::remove(adapter_path_, ignored);
+    }
+    static json complete() {
+        const json request = {{"prompt", PROMPT}, {"n_predict", 8},       {"temperature", 0},
+                              {"top_k", 1},       {"cache_prompt", true}, {"id_slot", 0}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return json::parse(response.str());
+    }
+    static void set_scale(float scale) {
+        Owned response;
+        const json adapters = json::array({{{"id", 0}, {"scale", scale}}});
+        ASSERT_EQ(jllama_set_lora_adapters(model_, adapters.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+
+    static std::string model_path_;
+    static std::string adapter_path_;
+    static jllama_model *model_;
+};
+std::string LoraCacheHostMemory::model_path_;
+std::string LoraCacheHostMemory::adapter_path_;
+jllama_model *LoraCacheHostMemory::model_ = nullptr;
+
+int timing(const json &response, const char *key) { return response.at("timings").at(key).get<int>(); }
+
+} // namespace
+
+TEST_F(LoraCacheHostMemory, AStateIsLoadedOnlyUnderTheAdaptersItWasComputedWith) {
+    ASSERT_NE(model_, nullptr);
+    complete(); // the slot holds the prompt computed with the adapter at scale 1
+    set_scale(0.0f);
+    // the state goes to the host-memory cache when the next task takes the slot; it is not taken back
+    const json without = complete();
+    EXPECT_EQ(timing(without, "cache_n"), 0) << without.dump();
+
+    set_scale(1.0f);
+    // the slot's state (scale 0) goes to the cache, the one of scale 1 comes back from it
+    const json back = complete();
+    EXPECT_GT(timing(back, "cache_n"), 0) << back.dump();
+    EXPECT_LE(timing(back, "prompt_n"), 2) << back.dump();
+    // and it answers like a second request over the same cache (two requests over a cached prompt
+    // compute the same thing, F272)
+    const json again = complete();
+    EXPECT_EQ(timing(again, "cache_n"), timing(back, "cache_n")) << again.dump() << "\n" << back.dump();
+    EXPECT_EQ(again.at("content").get<std::string>(), back.at("content").get<std::string>());
+}

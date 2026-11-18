@@ -32,7 +32,7 @@ match a binary to this page.
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
-| 0021 | [`0021-server-start-every-slot-with-the-server-adapters.patch`](#0021-server-start-every-slot-with-the-server-adapterspatch) | server : start every slot with the server's LoRA adapters | 1 | 1 |
+| 0021 | [`0021-server-a-restored-slot-keeps-the-server-adapters.patch`](#0021-server-a-restored-slot-keeps-the-server-adapterspatch) | server : a restored slot counts as computed under the server's LoRA adapters | 1 | 1 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
@@ -491,38 +491,33 @@ Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-all
 tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
 ```
 
-## 0021-server-start-every-slot-with-the-server-adapters.patch
+## 0021-server-a-restored-slot-keeps-the-server-adapters.patch
 
 **Files (1):** `tools/server/server-context.cpp`
 
 The patch's own header, verbatim:
 
 ```text
-server : start every slot with the server's LoRA adapters
+server : a restored slot counts as computed under the server's LoRA adapters
 
-A slot's prompt cache holds KV entries computed under the LoRA adapters the slot ran with, and
-launch_slot_with_task() clears it when the adapters a task runs with differ from the slot's
-(lora_should_clear_cache(), which keeps it only for aLoRA) -- since upstream #30367 (b12416) for a
-task without adapters of its own too, which takes params_base.lora_adapters. Until then that
-branch assigned the server's adapters without the check, which is what this patch carried first
-(measured at b11639: after SET_LORA the warm slot answered like neither adapter set).
+Since upstream #32434 (b12498) a slot's prompt carries the LoRA config its tokens were processed
+with (server_prompt::lora): launch_slot_with_task() compares a task's adapters with it, the
+host-memory prompt cache stores it with every state and skips the states of another config. A slot
+file does not store it (upstream's TODO in server-slot-sched.h), and SLOT_RESTORE leaves
+prompt.lora as it was -- empty in a never-used slot. On a server started with --lora the first
+task then reads the restored state as "computed under no adapters" and clears it (F240: 77 of 79
+prompt tokens evaluated again).
 
-What remains is the slot's starting value. slot.lora starts empty and init() never sets it, so a
-never-used slot of a server started with --lora reads as "computed under no adapters": its first
-task logs "0 loras -> 1 loras" and clears a prompt the slot already holds -- a state restored into
-it (SLOT_RESTORE) or loaded from the host-memory prompt cache by get_available_slot(), both
-computed under the server's adapters. init() therefore starts every slot with the server's
-adapters. A SET_LORA before a slot's first task is still a change and clears, which costs nothing
-on an empty slot.
-
-Not covered: the host-memory prompt cache (--cache-ram) stores slot states without the adapters
-they were computed with, so a state saved under other adapters can still be loaded into a slot.
+The patch sets prompt.lora of a restored slot to the server's adapters, the config a slot file
+saved by this server was written under unless a request named its own. Until b12497 this patch
+started every slot with slot.lora = params_base.lora_adapters in init(), which upstream's
+comparison no longer reads.
 
 The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
 saved state into the never-used slot 1, which must reuse it; the other cases hold upstream's half.
 
-Drop-check on every bump: read the slot loop of init() in tools/server/server-context.cpp at the
-new tag -- once it sets slot.lora from params_base.lora_adapters, drop the patch.
+Drop-check on every bump: read the SLOT_RESTORE case in tools/server/server-context.cpp at the new
+tag -- once the restore sets prompt.lora (or the slot file stores it), drop the patch.
 ```
 
 ## 0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch

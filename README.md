@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12497](https://img.shields.io/badge/llama.cpp-%23b12497-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12497)  
+[![llama.cpp b12499](https://img.shields.io/badge/llama.cpp-%23b12499-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12499)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -939,10 +939,10 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 Per the upstream contract, a scale update lists the adapters to keep active — any adapter missing
 from the map is set to scale `0` (disabled). A slot whose cache was computed under other scales clears
 it at its next request, so no answer mixes old and new adapters (upstream does the same since
-llama.cpp b12431, #30367; `patches/0021` additionally starts every slot with the server's adapters, so a
-state restored into a never-used slot is not thrown away). The
-host-memory prompt cache (`--cache-ram`, on by default) does not record the adapters and can still load a
-state saved under other scales; disable it (`setCacheRamMib(0)`) where that matters.
+llama.cpp b12431, #30367). The host-memory prompt cache (`--cache-ram`, on by default) records the
+adapters of every state since b12498 and loads only the states of the adapters a request runs with. A
+slot file does not record them: a restored slot counts as computed under the server's adapters
+(`patches/0021`).
 
 ### Text-to-Speech
 
@@ -1012,7 +1012,7 @@ lyrics in **stereo**: the WAV file then says two channels, and `/tts`'s `pcm` an
 transcript of a speaker reference, which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) clones
 the voice from more closely (with a clip of 30 s or less and an mmproj converted with the reference encoder). A `maxFrames` of `0` leaves
 the length to the model (512 frames for most; YuE2 stops by itself), which is what `/tts` does when a
-request names none. `rawPrompt` (b12497, `/tts`'s `raw_prompt`) speaks the text as the backbone's prompt as given,
+request names none. `rawPrompt` (b12499, `/tts`'s `raw_prompt`) speaks the text as the backbone's prompt as given,
 without the model's `tts` chat template -- for a caller that renders the prompt itself.
 
 `FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's

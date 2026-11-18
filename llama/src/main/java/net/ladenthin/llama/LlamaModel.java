@@ -1231,11 +1231,10 @@ public class LlamaModel implements AutoCloseable {
      *
      * <p>A slot whose cache was computed under other scales clears it at its next request, so no
      * answer mixes the old and the new adapters (the rule upstream applies to adapters named per
-     * request; upstream's {@code POST /lora-adapters} path itself does not, which
-     * {@code patches/0021} fixes). One cache does not record the adapters: the host-memory prompt
-     * cache ({@code --cache-ram}, on by default) can load a state saved under other scales into a
-     * slot; disable it with {@link ModelParameters#setCacheRamMib(int) setCacheRamMib(0)} where
-     * adapters change while that matters.
+     * request, and to the server's since llama.cpp b12416). The host-memory prompt cache
+     * ({@code --cache-ram}, on by default) records the adapters of every state and loads only the
+     * states of the adapters a request runs with (llama.cpp b12498). A slot file does not record
+     * them: a restored slot counts as computed under the server's adapters ({@code patches/0021}).
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter

@@ -351,6 +351,14 @@ inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, 
   with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
   answers the same request the same way).
 
+**From b12497 to b12499 (2026-11-18)** -- 2 upstream commits (the slot scheduler's LoRA and recurrent
+fix, Vulkan's `rms_norm` on Qualcomm), pinned by commit (the tag exists). `0021` rewritten: since
+#32434 the cache comparison reads `server_prompt::lora`, which a restore left empty, so F240 came back
+and the patch now sets it in `SLOT_RESTORE`. Open, none of it blocking:
+- **A slot file does not record the adapters** (upstream's TODO in `server-slot-sched.h`): `0021`
+  assumes the server's, so a file saved after a request with its own adapters restores as if computed
+  under the server's. Storing the config in the file is upstream's to decide.
+
 **From b12496 to b12497 (2026-11-18)** -- 1 upstream commit (tiny-voca TTS, #32427), pinned by commit
 (the tag exists); every patch applies unchanged. Open, none of it blocking:
 - **tiny-voca** is not exercised: no pair in `models.csv`, no generator. The engine's `tts_g2p()`
@@ -773,8 +781,8 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
   the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
   copies the line `ggml-backend.cpp` already has), `0020` (validate leaf allocations before
-  reusing a graph allocation), `0021` (start every slot with the server's LoRA adapters; its other half,
-  clearing the cache when the server's adapters change, went upstream as #30367 at b12416), `0022` (batch an expert's tokens
+  reusing a graph allocation), `0021` (a restored slot counts as computed under the server's LoRA adapters; its earlier halves
+  went upstream as #30367 at b12416 and #32434 at b12498), `0022` (batch an expert's tokens
   through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
   its switch, which exists for measurements here; the evidence is
   `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`), `0023` (IBM Z: drop the duplicate `<vecintrin.h>`
