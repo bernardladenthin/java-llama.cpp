@@ -4016,10 +4016,13 @@ class CApiLfm3Audio : public ::testing::Test {
   protected:
     static void SetUpTestSuite() {
         backbone() = jllama_test::write_tiny_lfm3_gguf("jllama-lfm3-hear", true, true);
-        mmproj() = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-mmproj", 0.0f, true);
+        // greedy audio codes, and an end of audio that never wins: an audio answer runs to its token limit
+        mmproj() = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-mmproj", -10.0f, true, 0.0f);
         ASSERT_FALSE(backbone().empty());
         ASSERT_FALSE(mmproj().empty());
-        model() = load_tiny(backbone(), {"--mmproj", mmproj(), "-c", "1024", "-b", "1024", "-ub", "1024"});
+        // a realtime session samples with the model's seed, random by default
+        model() =
+            load_tiny(backbone(), {"--mmproj", mmproj(), "-c", "1024", "-b", "1024", "-ub", "1024", "--seed", "5"});
         ASSERT_NE(model(), nullptr) << jllama_last_error();
         Owned meta;
         ASSERT_EQ(jllama_model_meta(model(), &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
@@ -4126,7 +4129,8 @@ TEST_F(CApiLfm3Audio, AnImageIsRefusedByAProjectorThatOnlyHears) {
 TEST_F(CApiLfm3Audio, TheEncoderInTheSameFileLeavesTheSpeechAsItWas) {
     // the real mmproj holds both halves; the speech pipeline reads the generator's tensors only, and
     // the generator writes them before the encoder's, from the same random sequence
-    const std::string speak_only = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-speak");
+    const std::string speak_only =
+        jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-hear-speak", -10.0f, false, 0.0f);
     const auto speak = [&](const std::string &projector, std::vector<unsigned char> *wav) {
         jllama_tts_model *tts = nullptr;
         ASSERT_EQ(jllama_tts_load(backbone().c_str(), projector.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK)
@@ -4279,6 +4283,179 @@ TEST_F(CApiLfm3Audio, LiveTranscriptionHearsTheStreamedAudioAndCompletesTheItem)
     EXPECT_EQ(completed.at("transcript").get<std::string>(), deltas) << completed.dump();
     ws.close();
 }
+namespace {
+// a /v1/realtime session over the attached server: events in, events out, errors kept
+struct RealtimeSession {
+    httplib::ws::WebSocketClient ws;
+    explicit RealtimeSession(int port, const std::string &query = "")
+        : ws("ws://127.0.0.1:" + std::to_string(port) + "/v1/realtime" + query) {
+        ws.set_read_timeout(std::chrono::seconds(60));
+    }
+    bool open() { return static_cast<bool>(ws.connect()); }
+    bool send(const json &event) { return ws.send(event.dump()); }
+    // the next event, or a null json when the socket closed or timed out
+    json next() {
+        std::string message;
+        if (ws.read(message) != httplib::ws::ReadResult::Text) {
+            return json();
+        }
+        return json::parse(message);
+    }
+    // the next event of a type; an error event in between is returned instead
+    json await(const std::string &type) {
+        for (;;) {
+            json event = next();
+            if (event.is_null() || event.value("type", std::string()) == type ||
+                event.value("type", std::string()) == "error") {
+                return event;
+            }
+        }
+    }
+    void user_text(const std::string &text) {
+        send({{"type", "conversation.item.create"},
+              {"item",
+               {{"type", "message"},
+                {"role", "user"},
+                {"content", json::array({{{"type", "input_text"}, {"text", text}}})}}}});
+    }
+    void response_create(const std::string &modality, int max_tokens) {
+        send({{"type", "response.create"},
+              {"response", {{"output_modalities", json::array({modality})}, {"max_output_tokens", max_tokens}}}});
+    }
+    struct response {
+        std::string text;      // the text deltas
+        std::string text_done; // response.output_text.done
+        size_t audio_bytes = 0;
+        json done;
+        std::vector<std::string> types;
+    };
+    response collect() {
+        response r;
+        for (;;) {
+            json event = next();
+            if (event.is_null()) {
+                return r;
+            }
+            const std::string type = event.value("type", std::string());
+            r.types.push_back(type);
+            if (type == "response.output_text.delta") {
+                r.text += event.at("delta").get<std::string>();
+            } else if (type == "response.output_text.done") {
+                r.text_done = event.value("text", std::string());
+            } else if (type == "response.output_audio.delta") {
+                r.audio_bytes += base64_bytes(event.at("delta").get<std::string>()).size();
+            } else if (type == "response.done" || type == "error") {
+                r.done = event;
+                return r;
+            }
+        }
+    }
+};
+} // namespace
+
+TEST_F(CApiLfm3Audio, ARealtimeSessionReportsItsFormatsAndAnswersATextMessageInText) {
+    // /v1/realtime without intent=transcription: the model hears and speaks, so the server holds a
+    // conversation (server_realtime_conversation)
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    RealtimeSession session(attached.port);
+    ASSERT_TRUE(session.open());
+    const json created = session.await("session.created");
+    ASSERT_EQ(created.value("type", std::string()), "session.created") << created.dump();
+    EXPECT_EQ(created.at("session").value("type", std::string()), "realtime") << created.dump();
+    const json audio = created.at("session").at("audio");
+    EXPECT_EQ(audio.at("input").at("format").at("rate").get<int>(), 16000) << created.dump();
+    EXPECT_EQ(audio.at("output").at("format").at("rate").get<int>(), 24000) << created.dump();
+
+    session.user_text("hello there");
+    session.response_create("text", 6);
+    const auto r = session.collect();
+    ASSERT_EQ(r.done.value("type", std::string()), "response.done") << r.done.dump();
+    const json response = r.done.at("response");
+    EXPECT_EQ(response.value("status", std::string()), "completed") << r.done.dump();
+    const int tokens = response.at("usage").at("output_tokens").get<int>();
+    EXPECT_GT(tokens, 0);
+    EXPECT_LE(tokens, 6) << "max_output_tokens";
+    EXPECT_FALSE(r.text.empty());
+    EXPECT_EQ(r.text_done, r.text) << "output_text.done carries the text of its deltas";
+    EXPECT_EQ(r.audio_bytes, 0u) << "a text answer";
+    // a second turn continues the conversation
+    session.user_text("and again");
+    session.response_create("text", 4);
+    const auto second = session.collect();
+    EXPECT_EQ(second.done.value("type", std::string()), "response.done") << second.done.dump();
+    EXPECT_FALSE(second.text.empty());
+}
+
+TEST_F(CApiLfm3Audio, ARealtimeAudioResponseStreamsPcm16) {
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    RealtimeSession session(attached.port);
+    ASSERT_TRUE(session.open());
+    session.await("session.created");
+    session.user_text("hello there");
+    session.response_create("audio", 6);
+    const auto r = session.collect();
+    ASSERT_EQ(r.done.value("type", std::string()), "response.done") << r.done.dump();
+    const json response = r.done.at("response");
+    EXPECT_EQ(response.value("status", std::string()), "completed") << r.done.dump();
+    // the pipeline opens the answer with <|audio_start|>; the generated projector never ends the audio, so
+    // the answer is its six frames of 1920 samples at 24 kHz, as PCM16, and no text
+    EXPECT_EQ(response.at("usage").at("output_tokens").get<int>(), 6) << r.done.dump();
+    EXPECT_EQ(r.audio_bytes, 6u * 1920 * 2);
+    EXPECT_TRUE(r.text.empty()) << r.text;
+    const json content = response.at("output").at(0).at("content");
+    ASSERT_EQ(content.size(), 1u) << content.dump();
+    EXPECT_EQ(content.at(0).value("type", std::string()), "output_audio") << content.dump();
+}
+
+TEST_F(CApiLfm3Audio, ARealtimeSessionAnswersSpokenInput) {
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    RealtimeSession session(attached.port);
+    ASSERT_TRUE(session.open());
+    session.await("session.created");
+    std::string pcm;
+    for (int i = 0; i < 8000; ++i) {
+        const auto v = static_cast<int16_t>(16000.0f * std::sin(2.0f * 3.14159265f * 440.0f * i / 16000.0f));
+        pcm.append(reinterpret_cast<const char *>(&v), sizeof(v));
+    }
+    ASSERT_TRUE(session.send(
+        {{"type", "input_audio_buffer.append"}, {"audio", base64_of(std::vector<uint8_t>(pcm.begin(), pcm.end()))}}));
+    ASSERT_TRUE(session.send({{"type", "input_audio_buffer.commit"}}));
+    const json committed = session.await("input_audio_buffer.committed");
+    ASSERT_EQ(committed.value("type", std::string()), "input_audio_buffer.committed") << committed.dump();
+    session.response_create("text", 4);
+    const auto r = session.collect();
+    ASSERT_EQ(r.done.value("type", std::string()), "response.done") << r.done.dump();
+    EXPECT_EQ(r.done.at("response").value("status", std::string()), "completed") << r.done.dump();
+    EXPECT_FALSE(r.text.empty());
+}
+
+TEST_F(CApiLfm3Audio, ARealtimeSessionRefusesAResponseWithoutATurnAndUnknownEvents) {
+    AttachedServer attached(model());
+    ASSERT_NE(attached.server, nullptr);
+    RealtimeSession session(attached.port);
+    ASSERT_TRUE(session.open());
+    session.await("session.created");
+    session.response_create("text", 4);
+    json error = session.await("error");
+    // upstream's realtime server names the reason in the error's type, its code is null
+    EXPECT_EQ(error.at("error").value("type", std::string()), "conversation_empty") << error.dump();
+    session.send({{"type", "no.such.event"}});
+    error = session.await("error");
+    EXPECT_NE(error.at("error").value("message", std::string()).find("unknown event type"), std::string::npos)
+        << error.dump();
+    session.user_text("hello");
+    session.send({{"type", "response.create"}, {"response", {{"output_modalities", json::array({"video"})}}}});
+    error = session.await("error");
+    EXPECT_NE(error.at("error").value("message", std::string()).find("unknown modality"), std::string::npos)
+        << error.dump();
+    // and the session still answers
+    session.response_create("text", 2);
+    EXPECT_EQ(session.collect().done.value("type", std::string()), "response.done");
+}
+
 #endif // JLLAMA_HAS_NATIVE_SERVER
 
 // tiny-voca (b12497, #32427), from the schema of ggml-org's real pair: not autoregressive -- the

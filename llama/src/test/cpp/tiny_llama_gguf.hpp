@@ -2025,8 +2025,10 @@ inline std::string write_tiny_lfm3_gguf(const std::string &prefix = "jllama-lfm3
 // LFM3A_WINDOW positions, the two kinds the real 17 layers mix -- and the LayerNorm-GELU projector
 // to the backbone's width. 16 mel bins (the real 128), from 16 kHz audio with a 160-sample hop.
 constexpr int LFM3A_MEL = 16, LFM3A_CH = 4, LFM3A_EMBD = 16, LFM3A_WINDOW = 4;
+// audio_temp: the projector's default temperature of the audio codes (clip.gen.audio.sampling.temp, the
+// real one's 1.0), which a caller that names none -- the realtime conversation -- samples with.
 inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jllama-lfm3-mmproj", float eos_scale = 0.0f,
-                                               bool audio_encoder = false) {
+                                               bool audio_encoder = false, float audio_temp = 1.0f) {
     constexpr int EMBD = 32, CP = 16, CP_HEAD = 8, N_CB = 12, V = 17, QO = 16, DEC = 512, D_HEAD = 8, DEC_FF = 32;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -2045,7 +2047,7 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
     gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", 2);
     gguf_set_val_u32(g, "clip.gen.audio.attention.head_count_kv", 1);
     gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-5f);
-    gguf_set_val_f32(g, "clip.gen.audio.sampling.temp", 1.0f);
+    gguf_set_val_f32(g, "clip.gen.audio.sampling.temp", audio_temp);
     gguf_set_val_i32(g, "clip.gen.audio.sampling.top_k", 128);
     gguf_set_val_f32(g, "clip.gen.audio.sampling.penalty_repeat", 1.1f);
     gguf_set_val_i32(g, "clip.gen.audio.sampling.penalty_last_n", 4096);
@@ -2083,7 +2085,11 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
     // whose normed hidden state sums positive, which with 12 codebooks is all but certain
     for (int cb = 0; cb < N_CB; ++cb) {
         for (int i = 0; i < CP; ++i) {
-            ((float *)embd->data)[(static_cast<int64_t>(cb) * V + (V - 1)) * CP + i] = eos_scale;
+            // eos_scale < 0: the row is eos_scale in the first element only, which the input bias below
+            // keeps positive after every norm, so the end of audio never wins (a sign the random weights
+            // cannot flip, unlike a row of one value over a normed random vector)
+            ((float *)embd->data)[(static_cast<int64_t>(cb) * V + (V - 1)) * CP + i] =
+                eos_scale < 0 && i > 0 ? 0.0f : eos_scale;
         }
     }
     add("a.gen.code.head_norm.weight", {CP, N_CB}, 1.0f);
@@ -2091,7 +2097,12 @@ inline std::string write_tiny_lfm3_mmproj_gguf(const std::string &prefix = "jlla
     add("a.gen.code.out_embd.weight", {EMBD, N_CB * V}, -0.1f);
     add("a.gen.code.output_norm.weight", {CP}, 1.0f);
     add("a.gen.code.proj_in.weight", {EMBD, N_CB * CP}, -0.1f);
-    add("a.gen.code.proj_in.bias", {N_CB * CP}, 0.0f);
+    ggml_tensor *proj_in_bias = add("a.gen.code.proj_in.bias", {N_CB * CP}, 0.0f);
+    if (eos_scale < 0) {
+        for (int cb = 0; cb < N_CB; ++cb) {
+            ((float *)proj_in_bias->data)[cb * CP] = 50.0f; // dominates the first element of every codebook input
+        }
+    }
     const std::string c = "a.gen.code.blk.0";
     add(c + ".ln1.weight", {CP}, 1.0f);
     add(c + ".ln2.weight", {CP}, 1.0f);
