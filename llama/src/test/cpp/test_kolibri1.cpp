@@ -478,6 +478,9 @@ bool load(const std::string &path, Loaded &out) {
     llama_log_set(quiet_log, nullptr);
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = 0;
+    // the CPU alone: an RPC server another test of the same process registered stays a device
+    static ggml_backend_dev_t no_devices[] = {nullptr};
+    mp.devices = no_devices;
     out.model = llama_model_load_from_file(path.c_str(), mp);
     llama_log_set(nullptr, nullptr);
     if (out.model == nullptr) {
