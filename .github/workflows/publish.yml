@@ -2948,9 +2948,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
+      # DecimalCommaLocaleIntegrationTest starts a JVM under de_DE.UTF-8, which takes its C numeric
+      # locale from the environment; the runner image has no such locale, and the variable turns the
+      # test's skip into a failure here.
+      - name: Generate a locale with a decimal comma
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -i '^de_DE'
       - name: Run tests
         env:
           JLLAMA_REQUIRE_FFMPEG: "1"
+          JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE: "1"
         run: |
           mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
