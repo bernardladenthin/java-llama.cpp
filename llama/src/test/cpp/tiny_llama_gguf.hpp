@@ -2756,7 +2756,7 @@ inline std::string write_tiny_voca_mmproj_gguf(const std::string &prefix = "jlla
     return ok ? path : std::string();
 }
 
-// The pair of a random VoxCPM2 (openbmb, llama.cpp's minicpm + voxcpm2_gen / voxcpm2_spkenc, b12541,
+// The pair of a random VoxCPM2 (openbmb, llama.cpp's minicpm + voxcpm2_gen / voxcpm2_spkenc, b12531,
 // #32443), in the layout conversion/voxcpm.py writes. The backbone is a plain MiniCPM with every
 // muP scale at 1 (embedding, residual and logit scale, as the converter writes for use_mup = false),
 // no output head (llama.cpp ties it to the token embedding) and the SentencePiece vocabulary of the

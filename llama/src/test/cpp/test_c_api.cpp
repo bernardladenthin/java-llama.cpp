@@ -2666,7 +2666,7 @@ TEST(CApiControlVector, AControlVectorChangesTheAnswerOnlyOnTheLayersOfItsRange)
 TEST(CApiShard, AModelSplitByGgufSplitLoadsFromItsFirstFile) {
     // A model in the files llama-gguf-split writes: <name>-00001-of-00002.gguf carries split.count, and
     // the loader builds the names of the others from the first one's (llama_split_prefix /
-    // llama_split_path; since b12537, #32557, the buffers are sized from that path instead of
+    // llama_split_path; since b12540, #32557, the buffers are sized from that path instead of
     // PATH_MAX). The generator writes the same weights whole and split; the split model must answer
     // what the whole one answers -- also from a non-ASCII directory, whose bytes the names are built
     // from --, refuse to load from its second file or without it, and take its second file from
@@ -2685,7 +2685,7 @@ TEST(CApiShard, AModelSplitByGgufSplitLoadsFromItsFirstFile) {
         const auto u8 = p.u8string();
         return std::string(u8.begin(), u8.end());
     };
-    // Fewer than 260 characters, more than 260 bytes of UTF-8: until b12537 the loader built the split
+    // Fewer than 260 characters, more than 260 bytes of UTF-8: until b12540 the loader built the split
     // names in a buffer of PATH_MAX bytes, which is MAX_PATH (260) on Windows, so this directory failed
     // there while the file system took it (MAX_PATH counts UTF-16 units). Linux's PATH_MAX is 4096.
     std::string cjk_40;
@@ -7347,6 +7347,31 @@ TEST_F(CApiZonos3, GuidanceAndSolverStepsAreRefusedByAModelWithoutThem) {
     EXPECT_EQ(speak_with(0.0f, 0), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 
+TEST_F(CApiZonos3, ADeliveryNextToGuidanceIsRefusedNamingBothCauses) {
+    // ZONOS3 speaks a speed and has no solver steps: with both asked for, llama.cpp's set_input refuses
+    // the request (it checks the delivery first, the guidance after it) and says which in its log only.
+    // The message names both, instead of blaming the guidance alone as it did until 2026-11-19.
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    options.max_frames = 40;
+    options.seed = 7;
+    options.speed = 1.2f;
+    options.flow_steps = 8;
+    unsigned char *bytes = nullptr;
+    size_t length = 0;
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length), JLLAMA_STATUS_INVALID_REQUEST);
+    jllama_bytes_free(bytes);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("speed or loudness"), std::string::npos) << error;
+    EXPECT_NE(error.find("cfg_scale or flow_steps"), std::string::npos) << error;
+    // and the speed alone is spoken
+    options.flow_steps = 0;
+    bytes = nullptr;
+    EXPECT_EQ(jllama_tts_synthesize_options(tts(), "Hello.", &options, &bytes, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_bytes_free(bytes);
+}
+
 // A random MiniMax Music 3 pair (tiny_llama_gguf.hpp, llama.cpp b12480, #32435): the first pipeline
 // in the suite whose backbone runs with classifier-free guidance (a second, unconditioned sequence
 // next to the prompt), whose audio comes out of flow matching (an ODE over the latents, solved in
@@ -7461,7 +7486,7 @@ TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
     EXPECT_EQ(windowed, again) << "the windows start from the tail of the one before, the same each time";
 }
 
-// A random VoxCPM2 pair (tiny_llama_gguf.hpp, llama.cpp b12541, #32443), the first pipeline in the
+// A random VoxCPM2 pair (tiny_llama_gguf.hpp, llama.cpp b12531, #32443), the first pipeline in the
 // suite whose backbone emits no audio token at all: the mmproj turns every hidden state into a patch of
 // four latents -- FSQ, the residual LM (a libllama context of its own), the LocDiT flow matching with
 // classifier-free guidance, LocEnc for the next backbone row -- and the causal AudioVAE turns a patch
@@ -7713,8 +7738,8 @@ TEST_F(CApiVoxCpm2, TheTemperatureScalesTheFlowNoiseAndAtZeroTheSeedDoesNotMatte
 }
 
 TEST_F(CApiVoxCpm2, GuidanceAndSolverStepsAreTakenAndChangeTheAudio) {
-    // VoxCPM2 is the second model that takes both (b12459's fields): 0 is the model's own, 2.0 and 10
-    // Euler steps like the reference, so naming those changes nothing; a scale of 1 is the conditioned
+    // VoxCPM2 is the third model that takes both, after YuE2 and MiniMax Music 3 (b12459's fields): 0 is the model's
+    // own, 2.0 and 10 Euler steps like the reference, so naming those changes nothing; a scale of 1 is the conditioned
     // velocity alone, and 2 and 32 steps solve the same ODE more coarsely and more finely
     const auto with = [](float cfg_scale, int flow_steps) {
         return [cfg_scale, flow_steps](jllama_tts_options &o) {
@@ -7754,9 +7779,8 @@ TEST_F(CApiVoxCpm2, SolverStepsAndAGuidanceOutsideTheirRangeAreRefused) {
         });
     };
     // VoxCPM2's own range, 2 to 32 (its flow graph unrolls the steps, the first is skipped by CFG-Zero*):
-    // set_input answers 2, which the engine reports as the request's fault -- with the message it has for
-    // a model without the option ("the model does not support cfg_scale or flow_steps"), which reads
-    // wrong here; llama.cpp's own log line names the range
+    // set_input answers 2, which the engine reports as the request's fault: the message names the model's
+    // own range as the other cause ("or not these values"), llama.cpp's log line the range itself
     EXPECT_EQ(status_of(0.0f, 1), JLLAMA_STATUS_INVALID_REQUEST);
     EXPECT_NE(std::string(jllama_last_error()).find("flow_steps"), std::string::npos) << jllama_last_error();
     EXPECT_EQ(status_of(0.0f, 33), JLLAMA_STATUS_INVALID_REQUEST);
@@ -7833,7 +7857,7 @@ TEST(CApiVoxCpm2Clone, TheEncoderClonesAVoiceThroughTheCApiAndThePipeline) {
     ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
     bool supported = false;
     ASSERT_EQ(jllama_tts_supports_speaker_reference(tts, &supported), JLLAMA_STATUS_OK);
-    // llama.cpp's audio_gen_spk_ref does not name VoxCPM2 (b12541); the engine's own rule does
+    // llama.cpp's audio_gen_spk_ref does not name VoxCPM2 (unchanged at b12543); the engine's own rule does
     EXPECT_TRUE(supported);
     // the WAV of "Hi" with seed 7, cloned from the clip at `reference` (null: none); empty on a failure
     const auto synthesize = [&](const char *reference) -> std::vector<uint8_t> {
@@ -11100,6 +11124,88 @@ TEST(CApiLogFile, AFreedModelClosesTheLogFileItsLoadOpened) {
     jllama_model_free(second);
     EXPECT_EQ(drained_size(log), written) << "a model without --log-file wrote into the file of a freed one";
     EXPECT_TRUE(std::filesystem::remove(log, ec)) << ec.message();
+    std::filesystem::remove(model, ec);
+}
+
+namespace {
+// Whether a log line starts with common_log's timestamp ("0.01.234.567 ").
+bool starts_with_timestamp(const std::string &line) {
+    static const std::regex stamp(R"(^\d+\.\d{2}\.\d{3}\.\d{3} )");
+    return std::regex_search(line, stamp);
+}
+
+// The lines of a drained log file, and how many of them start with a timestamp.
+std::pair<size_t, size_t> lines_and_stamped(const std::filesystem::path &file) {
+    drained_size(file);
+    std::ifstream in(file);
+    size_t lines = 0;
+    size_t stamped = 0;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty()) {
+            lines++;
+            stamped += starts_with_timestamp(line) ? 1 : 0;
+        }
+    }
+    return {lines, stamped};
+}
+} // namespace
+
+TEST(CApiLogFile, TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect) {
+    // common_init() turns common_log's prefix and timestamps on, and the engine called it after the
+    // argv was parsed -- so --no-log-prefix / --no-log-timestamps (ModelParameters' log options) had no
+    // effect on the console and the --log-file. llama_server() calls it before its parse; so do the load
+    // and the embedded server now.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-format");
+    ASSERT_FALSE(model.empty());
+    const auto plain = log_file_path("jllama-c-api-log-format-plain");
+    const auto stamped = log_file_path("jllama-c-api-log-format-stamped");
+    std::error_code ec;
+    std::filesystem::remove(plain, ec);
+    std::filesystem::remove(stamped, ec);
+    jllama_model *without = load_tiny(model, {"--log-file", plain.string(), "--no-log-timestamps", "--no-log-prefix"});
+    ASSERT_NE(without, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(without).empty());
+    jllama_model_free(without);
+    const auto [plain_lines, plain_stamped] = lines_and_stamped(plain);
+    EXPECT_GT(plain_lines, 0u);
+    EXPECT_EQ(plain_stamped, 0u) << "--no-log-timestamps did not take effect";
+    // without the options the load has upstream's default, timestamps on
+    jllama_model *with = load_tiny(model, {"--log-file", stamped.string()});
+    ASSERT_NE(with, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(with).empty());
+    jllama_model_free(with);
+    const auto [stamped_lines, stamped_count] = lines_and_stamped(stamped);
+    EXPECT_GT(stamped_count, 0u) << stamped_lines << " lines, none with a timestamp";
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+    // the embedded server: router mode over an empty directory needs no model
+    const auto server_log = log_file_path("jllama-c-api-log-format-server");
+    std::filesystem::remove(server_log, ec);
+    const std::filesystem::path models_dir =
+        std::filesystem::temp_directory_path() /
+        ("jllama-c-api-log-format-models-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(models_dir);
+    const std::vector<std::string> args = {
+        "llama-server", "--models-dir",      models_dir.string(),  "--host", "127.0.0.1", "--port", "0",
+        "--log-file",   server_log.string(), "--no-log-timestamps"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(static_cast<int>(argv.size()), argv.data(), &server), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    for (int i = 0; i < 100 && drained_size(server_log) == 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    const auto [server_lines, server_stamped] = lines_and_stamped(server_log);
+    EXPECT_GT(server_lines, 0u);
+    EXPECT_EQ(server_stamped, 0u) << "--no-log-timestamps did not take effect on the embedded server";
+    std::filesystem::remove(server_log, ec);
+    std::filesystem::remove_all(models_dir, ec);
+#endif
+    std::filesystem::remove(plain, ec);
+    std::filesystem::remove(stamped, ec);
     std::filesystem::remove(model, ec);
 }
 

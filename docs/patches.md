@@ -150,7 +150,10 @@ Since round three of that review the patch also adds llama_server_parsed(params,
 same server over an argv the embedding host has parsed already. NativeServer's engine parses the
 argv once, under its log lock, to refuse a bad argv at the start and to own the log file; a second
 parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
-/dev/stdin) the second time empty -- the server then ran without its API key.
+/dev/stdin) the second time empty -- the server then ran without its API key. llama_server_parsed()
+does not call common_init(): the host calls it before its parse, as llama_server() does, since
+2026-11-19 -- called after the parse it turned common_log's prefix and timestamps on again, so
+--no-log-prefix / --no-log-timestamps had no effect (CApiLogFile.TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect).
 
 Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
 embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
@@ -1187,7 +1190,10 @@ of the process (ggml's registry has no unregister), so once that server was gone
 a JVM that had used RpcServer or --rpc before, with CI's tiny-voca pair among them.
 
 The CPU branch now passes an empty device list, as --device none does: the model and its context use
-the CPU alone. Nothing changes on a GPU, or for a process without other devices.
+the CPU alone. Nothing changes for a projector on a GPU, or for a process without other devices. On a
+host with a GPU and the projector kept on the CPU (TextToSpeech with no GPU layers, --no-mmproj-offload)
+these models used to offload their large products to the GPU (op offload, on by default), and now run
+on the CPU like the rest of the projector.
 
 The guard is CApiTinyVoca.APipelineWithAModelOfItsOwnSpeaksAfterAnRpcServerWentAway in
 src/test/cpp/test_c_api.cpp: a model loaded with --rpc against a loopback server, the server stopped,

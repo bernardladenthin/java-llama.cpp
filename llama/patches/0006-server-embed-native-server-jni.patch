@@ -33,7 +33,10 @@ Since round three of that review the patch also adds llama_server_parsed(params,
 same server over an argv the embedding host has parsed already. NativeServer's engine parses the
 argv once, under its log lock, to refuse a bad argv at the start and to own the log file; a second
 parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
-/dev/stdin) the second time empty -- the server then ran without its API key.
+/dev/stdin) the second time empty -- the server then ran without its API key. llama_server_parsed()
+does not call common_init(): the host calls it before its parse, as llama_server() does, since
+2026-11-19 -- called after the parse it turned common_log's prefix and timestamps on again, so
+--no-log-prefix / --no-log-timestamps had no effect (CApiLogFile.TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect).
 
 Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
 embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
@@ -191,8 +194,8 @@ index d14978286..97ad17901 100644
 +    signal(SIGPIPE, SIG_IGN);
 +#endif
 +
-+    common_init();
-+
++    // the host called common_init() before its parse (prepare_server_argv), as llama_server() does: here
++    // it would turn on again the log prefix and timestamps the argv turned off
 +    server_stream_session_manager_start();
 +
 +    SRV_INF("%s", "initializing ...\n");

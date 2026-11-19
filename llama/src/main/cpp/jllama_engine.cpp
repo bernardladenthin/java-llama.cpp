@@ -528,6 +528,10 @@ std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params 
     for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
+    // before the parse, as llama_server() calls it: it turns common_log's prefix and timestamps on,
+    // which --no-log-prefix / --no-log-timestamps in the argv turn off again (llama_server_parsed()
+    // does not call it, patches/0006)
+    common_init();
     log_file_claim log_file;
     bool parsed = false;
     std::string refusal;
@@ -592,6 +596,9 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
+    // before the parse, as llama_server() calls it: it turns common_log's prefix and timestamps on, and
+    // after the parse it turned off what --no-log-prefix / --no-log-timestamps had just set
+    common_init();
     log_file_claim log_file;
     bool parsed = false;
     std::string refusal;
@@ -673,8 +680,6 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
                                            : COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
         SRV_INF("a draft model without --spec-type: using it as %s\n", eagle3 ? "draft-eagle3" : "draft-simple");
     }
-
-    common_init();
 
     std::unique_ptr<jllama_context> jctx(new jllama_context());
     jctx->vocab_only = vocab_only;

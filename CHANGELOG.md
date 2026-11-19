@@ -667,6 +667,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   - `--lora-init-without-apply` (`ModelParameters.setLoraInitWithoutApply`) did nothing: upstream's
     server applies the loaded adapters at their scales to every batch. Such adapters start at scale 0
     now, until `setLoraAdapters` / `jllama_set_lora_adapters` sets one.
+  - `--no-log-prefix` / `--no-log-timestamps` had no effect in a load or the embedded server:
+    `common_init()`, which turns both on, ran after the parse (`patches/0006`'s `llama_server_parsed`
+    no longer calls it; the host calls it before its parse, as `llama_server()` does).
+  - A synthesis asking for a delivery and for guidance from a model that refuses either was refused
+    as if the guidance alone were the cause; the message names both.
   - A negative slot id named some slot (upstream takes the id modulo the slot count in `size_t`); a
     slot action refuses it (`JLLAMA_STATUS_INVALID_REQUEST`). An id at or above the slot count still
     wraps around, as upstream's server does.
