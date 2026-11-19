@@ -66,9 +66,12 @@ public class DecimalCommaLocaleIntegrationTest {
         command.add(new File(System.getProperty("java.home"), "bin/java").getPath());
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
-        String libPath = System.getProperty(LlamaSystemProperties.PREFIX + ".lib.path");
-        if (libPath != null) {
-            command.add("-D" + LlamaSystemProperties.PREFIX + ".lib.path=" + libPath);
+        // the library's own properties (a lib.path, the test's GPU layers) reach the child as they are
+        java.util.Properties properties = System.getProperties();
+        for (String name : properties.stringPropertyNames()) {
+            if (name.startsWith(LlamaSystemProperties.PREFIX + ".")) {
+                command.add("-D" + name + "=" + properties.getProperty(name));
+            }
         }
         command.add(Child.class.getName());
         command.add(new File(TestConstants.DRAFT_MODEL_PATH).getAbsolutePath());
