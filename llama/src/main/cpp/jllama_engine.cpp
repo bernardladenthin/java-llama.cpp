@@ -1551,12 +1551,16 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
             "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
     }
     task_response_type res_type = oai_compat ? TASK_RESPONSE_TYPE_OAI_EMBD : TASK_RESPONSE_TYPE_NONE;
+    // The name an OpenAI answer carries when the request names none: the server's (the alias, else
+    // the model's name), as upstream's handle_embeddings_impl passes it. It was "gpt-3.5-turbo".
+    std::string model_name;
     {
         auto meta = wake_and_get_meta(jctx);
         if (res_type != TASK_RESPONSE_TYPE_NONE && meta.pooling_type == LLAMA_POOLING_TYPE_NONE) {
             throw jllama_invalid_request(
                 "Pooling type 'none' is not OAI compatible. Please use a different pooling type");
         }
+        model_name = meta.model_name;
     }
     const json body = parse_json_body(body_text);
     bool force_no_oaicompat = false;
@@ -1602,8 +1606,7 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
     }
     const json out =
         (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
-            ? format_embeddings_response_oaicompat(
-                  body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64)
+            ? format_embeddings_response_oaicompat(body, model_name, responses, use_base64)
             : responses;
     return safe_json_to_str(out);
 }

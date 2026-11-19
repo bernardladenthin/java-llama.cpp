@@ -287,6 +287,95 @@ TEST_F(CApi, AReleasedStreamingTaskIsGone) {
     EXPECT_STREQ(jllama_last_error(), "Task not found");
 }
 
+namespace {
+
+// A request the server refuses only once a slot takes it (a prompt longer than the context, a
+// grammar that does not parse): every path reports it as the request's fault with the server's
+// reason, a stream on its first receive, after which the task is gone; and the model answers the
+// next request. raw_extra makes the bad completion request, chat_extra the bad chat request.
+void expect_refused_on_every_path(jllama_model *model, const json &raw_extra, const json &chat_extra,
+                                  const std::string &reason) {
+    const auto refused = [&reason](jllama_status status, const char *path) {
+        EXPECT_EQ(status, JLLAMA_STATUS_INVALID_REQUEST) << path << ": " << jllama_last_error();
+        EXPECT_NE(std::string(jllama_last_error()).find(reason), std::string::npos)
+            << path << ": " << jllama_last_error();
+    };
+    json raw = {{"n_predict", 2}, {"temperature", 0}};
+    raw.update(raw_extra);
+    json chat = {{"max_tokens", 2}, {"temperature", 0}};
+    chat.update(chat_extra);
+
+    Owned response;
+    refused(jllama_completions(model, raw.dump().c_str(), &response.s), "blocking raw completion");
+    EXPECT_EQ(response.s, nullptr);
+    json oai = raw;
+    oai.erase("n_predict");
+    oai["max_tokens"] = 2;
+    refused(jllama_completions_oai(model, oai.dump().c_str(), &response.s), "blocking OAI completion");
+    refused(jllama_chat_completions(model, chat.dump().c_str(), &response.s), "blocking chat completion");
+
+    // the streams: the request is accepted, the slot refuses it, and the first receive says so
+    const auto stream_refused = [&](int task, bool raw_receive, const char *path) {
+        ASSERT_GE(task, 0) << path;
+        Owned envelope;
+        bool stop = false;
+        refused(raw_receive ? jllama_completions_stream_receive(model, task, &envelope.s, &stop)
+                            : jllama_chat_completions_stream_receive(model, task, &envelope.s, &stop),
+                path);
+        EXPECT_EQ(envelope.s, nullptr) << path;
+        Owned again;
+        EXPECT_EQ(raw_receive ? jllama_completions_stream_receive(model, task, &again.s, &stop)
+                              : jllama_chat_completions_stream_receive(model, task, &again.s, &stop),
+                  JLLAMA_STATUS_ERROR)
+            << path;
+        EXPECT_STREQ(jllama_last_error(), "Task not found") << path;
+    };
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, raw.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    stream_refused(task, true, "raw stream");
+    task = -1;
+    ASSERT_EQ(jllama_completions_oai_stream_request(model, oai.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    stream_refused(task, false, "OAI stream");
+    task = -1;
+    ASSERT_EQ(jllama_chat_completions_stream_request(model, chat.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    stream_refused(task, false, "chat stream");
+    task = -1;
+    ASSERT_EQ(jllama_chat_completions_request(model, chat.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    stream_refused(task, true, "chat request with raw results");
+
+    Owned next;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &next.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_TRUE(json::parse(next.str()).at("stop").get<bool>()) << next.str();
+}
+
+} // namespace
+
+TEST_F(CApi, APromptLongerThanTheContextIsTheCallersFaultOnEveryRequestPath) {
+    // 200 byte tokens against a context of 64: the server refuses the task when a slot takes it
+    // (ERROR_TYPE_EXCEED_CONTEXT_SIZE, upstream's HTTP 400), on the blocking paths and on the
+    // streams alike, and the slot is free for the next request.
+    const std::string long_text(200, 'a');
+    expect_refused_on_every_path(model_, {{"prompt", long_text}},
+                                 {{"messages", json::array({json{{"role", "user"}, {"content", long_text}}})}},
+                                 "exceeds the available context size");
+}
+
+TEST_F(CApi, AGrammarThatDoesNotParseIsTheCallersFaultOnEveryRequestPath) {
+    // The grammar is parsed when the slot builds its sampler (common_sampler_init); a grammar that
+    // does not parse is an invalid request there ("Failed to initialize samplers"), not a crash.
+    const json grammar = {{"grammar", "root ::= ("}};
+    json raw = grammar;
+    raw["prompt"] = "Hi";
+    json chat = grammar;
+    chat["messages"] = json::array({json{{"role", "user"}, {"content", "Hi"}}});
+    expect_refused_on_every_path(model_, raw, chat, "failed to parse grammar");
+}
+
 // ---------------------------------------------------------------------------
 // The rest of LlamaModel through the C API (B.3). The model is random, so what is asserted is the
 // shape and the contract of every answer, never its content.
@@ -1360,6 +1449,60 @@ TEST_F(CApiVision, AMultimodalPromptWhoseMarkersDoNotMatchItsImagesIsRefused) {
           multimodal_prompt_request("look " + marker, 1, "n_predict")}) {
         EXPECT_EQ(jllama_completions(model_, request.c_str(), &response.s), JLLAMA_STATUS_INVALID_REQUEST) << request;
     }
+}
+
+TEST_F(CApiVision, ARawCompletionWhoseMessagesCarryAnImageEvaluatesItsPatches) {
+    // A raw completion with "messages" renders them through the chat template, and the media of
+    // array-form content come back from the chat parser as files: the image reaches the projector,
+    // as on the chat path, blocking and streamed. The reference is the prompt the template renders
+    // for the same messages (jllama_apply_template, with the media marker where the image goes)
+    // completed without the marker: every byte is one token here, so the image adds exactly its
+    // embeddings. The chat path over the same messages, which has always handled images, agrees.
+    const std::string marker = media_marker();
+    ASSERT_FALSE(marker.empty());
+    const json image_part = {{"type", "image_url"},
+                             {"image_url", {{"url", std::string("data:image/png;base64,") + TINY_PNG_BASE64}}}};
+    const json messages = json::array(
+        {json{{"role", "user"}, {"content", json::array({json{{"type", "text"}, {"text", "look"}}, image_part})}}});
+    Owned rendered;
+    ASSERT_EQ(jllama_apply_template(model_, json{{"messages", messages}}.dump().c_str(), &rendered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::string text_only = rendered.str();
+    const size_t at = text_only.find(marker);
+    ASSERT_NE(at, std::string::npos) << text_only;
+    text_only.erase(at, marker.size());
+    ASSERT_EQ(text_only.find(marker), std::string::npos) << "one image, one marker: " << rendered.str();
+    Owned reference;
+    ASSERT_EQ(jllama_completions(
+                  model_,
+                  json{{"prompt", text_only}, {"n_predict", 1}, {"temperature", 0}, {"cache_prompt", false}}.dump().c_str(),
+                  &reference.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int text_tokens = json::parse(reference.str()).at("tokens_evaluated").get<int>();
+
+    const json with_image = {{"messages", messages}, {"n_predict", 1}, {"temperature", 0}, {"cache_prompt", false}};
+    Owned blocking;
+    ASSERT_EQ(jllama_completions(model_, with_image.dump().c_str(), &blocking.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const int with_image_tokens = json::parse(blocking.str()).at("tokens_evaluated").get<int>();
+    // four 16x16 patches of the 32x32 image, one embedding each, where the template put the marker
+    EXPECT_EQ(with_image_tokens, text_tokens + 4) << blocking.str();
+
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model_, with_image.dump().c_str(), &task), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(receive_to_stop(model_, task).at("tokens_evaluated").get<int>(), with_image_tokens);
+
+    json chat = with_image;
+    chat.erase("n_predict");
+    chat["max_tokens"] = 1;
+    Owned chat_answer;
+    ASSERT_EQ(jllama_chat_completions(model_, chat.dump().c_str(), &chat_answer.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(chat_answer.str()).at("usage").at("prompt_tokens").get<int>(), with_image_tokens)
+        << chat_answer.str();
 }
 
 TEST_F(CApi, AMultimodalPromptObjectOnAModelWithoutAProjectorIsTheCallersFault) {
@@ -4092,6 +4235,132 @@ TEST(CApiServer, AnApiKeyFileThatCanBeReadOnlyOnceProtectsTheServer) {
 }
 #endif
 
+namespace {
+// the attached server of a model on a free loopback port with the HTTP options of `extra`, up once
+// /health (a public route, no key needed) answers
+struct AttachedServer {
+    jllama_server *server = nullptr;
+    int port = 0;
+    explicit AttachedServer(jllama_model *model, const std::vector<std::string> &extra = {}) {
+        httplib::Server probe;
+        port = probe.bind_to_any_port("127.0.0.1");
+        std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+        probe.wait_until_ready();
+        probe.stop();
+        probe_listener.join();
+        std::vector<std::string> args = {"llama-server", "--host", "127.0.0.1", "--port", std::to_string(port)};
+        args.insert(args.end(), extra.begin(), extra.end());
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        EXPECT_EQ(jllama_server_start_attached(model, static_cast<int>(argv.size()), argv.data(), &server),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        httplib::Client client("127.0.0.1", port);
+        for (int i = 0; i < 100; i++) {
+            const auto health = client.Get("/health");
+            if (health && health->status == 200) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ~AttachedServer() {
+        if (server != nullptr) {
+            EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+    }
+    // A client of the server; a slow model never makes a request of these tests fail by timeout.
+    httplib::Client client() const {
+        httplib::Client c("127.0.0.1", port);
+        c.set_read_timeout(std::chrono::seconds(30));
+        return c;
+    }
+};
+
+int status_of(const httplib::Result &res) { return res ? res->status : -1; }
+
+const httplib::Headers BEARER_SECRET = {{"Authorization", "Bearer jllama-attach-secret"}};
+} // namespace
+
+TEST_F(CApi, TheAttachedServerKeepsItsApiKeyAndItsCorsOriginsAndAnswersTheDisabledFeaturesWith403) {
+    // The attach argv configures the HTTP side (patches/0007): --api-key and --cors-origins reach
+    // the attached frontend as they reach a full llama-server, so a model served this way is not
+    // left open by the attach mode. /cors-proxy and /tools are the features attach mode does not
+    // wire; they answer 403 "disabled", like a stock server built without them, and not 404.
+    AttachedServer attached(model_, {"--api-key", "jllama-attach-secret", "--cors-origins", "http://app.example"});
+    ASSERT_NE(attached.server, nullptr);
+    httplib::Client client = attached.client();
+
+    // the health route is public; every other route needs the key
+    EXPECT_EQ(status_of(client.Get("/health")), 200);
+    EXPECT_EQ(status_of(client.Get("/v1/models")), 401);
+    EXPECT_EQ(status_of(client.Get("/v1/models", httplib::Headers{{"Authorization", "Bearer wrong"}})), 401);
+    EXPECT_EQ(status_of(client.Get("/v1/models", BEARER_SECRET)), 200);
+    const char *completion = R"({"prompt":"Hi","n_predict":2,"temperature":0})";
+    EXPECT_EQ(status_of(client.Post("/completion", completion, "application/json")), 401);
+    const auto answered = client.Post("/completion", BEARER_SECRET, completion, "application/json");
+    ASSERT_TRUE(answered) << httplib::to_string(answered.error());
+    EXPECT_EQ(answered->status, 200) << answered->body;
+
+    // --cors-origins (upstream #32098): the allowed origin is served, a foreign one refused with 403
+    httplib::Headers allowed = BEARER_SECRET;
+    allowed.emplace("Origin", "http://app.example");
+    EXPECT_EQ(status_of(client.Get("/v1/models", allowed)), 200);
+    httplib::Headers foreign = BEARER_SECRET;
+    foreign.emplace("Origin", "http://evil.example");
+    const auto refused = client.Get("/v1/models", foreign);
+    ASSERT_TRUE(refused) << httplib::to_string(refused.error());
+    EXPECT_EQ(refused->status, 403) << refused->body;
+    EXPECT_NE(refused->body.find("permission_error"), std::string::npos) << refused->body;
+
+    // the two stubs, behind the key like every other route
+    EXPECT_EQ(status_of(client.Get("/tools")), 401);
+    for (const char *path : {"/cors-proxy", "/tools"}) {
+        SCOPED_TRACE(path);
+        const auto get = client.Get(path, BEARER_SECRET);
+        ASSERT_TRUE(get) << httplib::to_string(get.error());
+        EXPECT_EQ(get->status, 403) << get->body;
+        EXPECT_NE(get->body.find("feature_disabled"), std::string::npos) << get->body;
+        const auto post = client.Post(path, BEARER_SECRET, "{}", "application/json");
+        ASSERT_TRUE(post) << httplib::to_string(post.error());
+        EXPECT_EQ(post->status, 403) << post->body;
+    }
+}
+
+TEST(CApiServer, TheEndpointTogglesOfTheAttachedServerAreTheModelsParameters) {
+    // The attached frontend serves the model's own server_routes (patches/0007), so --metrics,
+    // --props and --slots are what the model was loaded with; the same options in the attach argv
+    // configure nothing. A model loaded with the opposite of the defaults shows both halves.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-attach-toggles");
+    ASSERT_FALSE(path.empty());
+    const auto statuses = [](jllama_model *model, const std::vector<std::string> &attach_args) {
+        AttachedServer attached(model, attach_args);
+        EXPECT_NE(attached.server, nullptr);
+        httplib::Client client = attached.client();
+        return std::vector<int>{status_of(client.Get("/metrics")), status_of(client.Get("/slots")),
+                                status_of(client.Post("/props", "{}", "application/json"))};
+    };
+    const std::vector<int> defaults = {501, 200, 501};
+    const std::vector<int> opposite = {200, 501, 200};
+
+    jllama_model *plain = load_tiny(path, {});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    EXPECT_EQ(statuses(plain, {}), defaults);
+    EXPECT_EQ(statuses(plain, {"--metrics", "--props", "--no-slots"}), defaults)
+        << "the attach argv switched an endpoint of the model";
+    jllama_model_free(plain);
+
+    jllama_model *toggled = load_tiny(path, {"--metrics", "--props", "--no-slots"});
+    ASSERT_NE(toggled, nullptr) << jllama_last_error();
+    EXPECT_EQ(statuses(toggled, {}), opposite);
+    EXPECT_EQ(statuses(toggled, {"--slots"}), opposite);
+    jllama_model_free(toggled);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_F(CApi, TheAttachedServerServesTheModelAndLeavesItUsable) {
     const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0"};
     jllama_server *server = nullptr;
@@ -5223,6 +5492,68 @@ TEST_F(CApiQwen3Tts, WithTopKOneTheSeedDoesNotMatter) {
     EXPECT_NE(a, sampled);
 }
 
+TEST_F(CApiQwen3Tts, TopPAndTheRepetitionPenaltyReachTheSampler) {
+    // /tts's top_p and repeat_penalty (b12431) configure the backbone's sampler: with a seed, each
+    // changes the codes against the defaults, and the same options give the same audio twice. A
+    // value that reached nothing would leave the audio of the defaults.
+    const auto speak_with = [](float top_p, float repeat_penalty, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = 16;
+        options.seed = 7;
+        options.top_p = top_p;
+        options.repeat_penalty = repeat_penalty;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), "hello world", &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    };
+    jllama_tts_options defaults;
+    jllama_tts_options_init(&defaults);
+    std::vector<unsigned char> plain;
+    ASSERT_EQ(speak_with(defaults.top_p, defaults.repeat_penalty, &plain), JLLAMA_STATUS_OK) << jllama_last_error();
+    for (const auto &option : {std::make_pair(0.5f, defaults.repeat_penalty), std::make_pair(defaults.top_p, 1.3f)}) {
+        SCOPED_TRACE("top_p " + std::to_string(option.first) + ", repeat_penalty " + std::to_string(option.second));
+        std::vector<unsigned char> once;
+        std::vector<unsigned char> twice;
+        ASSERT_EQ(speak_with(option.first, option.second, &once), JLLAMA_STATUS_OK) << jllama_last_error();
+        ASSERT_EQ(speak_with(option.first, option.second, &twice), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_EQ(once, twice) << "the same options and seed give the same audio";
+        EXPECT_EQ(frames_of(once), 16);
+        EXPECT_NE(once, plain) << "the option did not change the codes";
+    }
+}
+
+TEST_F(CApiQwen3Tts, TwoSynthesesOnOneHandleAtOnceEqualTheSameOneAfterTheOther) {
+    // One jllama_tts_model is shared by two threads: the engine serialises the syntheses
+    // (synthesize_mutex), each of which clears the KV cache and resets its sampler, so neither sees
+    // the other's state and each answers what it answers alone.
+    std::vector<unsigned char> first;
+    std::vector<unsigned char> second;
+    ASSERT_EQ(speak("hello world", &first, 12, 7), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak("good morning", &second, 12, 8), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(first, second);
+    for (int round = 0; round < 3; ++round) {
+        SCOPED_TRACE("round " + std::to_string(round));
+        std::vector<unsigned char> a;
+        std::vector<unsigned char> b;
+        jllama_status status_a = JLLAMA_STATUS_ERROR;
+        jllama_status status_b = JLLAMA_STATUS_ERROR;
+        std::thread ta([&]() { status_a = speak("hello world", &a, 12, 7); });
+        std::thread tb([&]() { status_b = speak("good morning", &b, 12, 8); });
+        ta.join();
+        tb.join();
+        ASSERT_EQ(status_a, JLLAMA_STATUS_OK);
+        ASSERT_EQ(status_b, JLLAMA_STATUS_OK);
+        EXPECT_EQ(a, first);
+        EXPECT_EQ(b, second);
+    }
+}
+
 TEST_F(CApiQwen3Tts, ItClonesNoVoiceAndATranscriptAloneChangesNothing) {
     bool supported = true;
     ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
@@ -5655,38 +5986,6 @@ TEST_F(CApiLfm3Audio, TheEncoderInTheSameFileLeavesTheSpeechAsItWas) {
 }
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
-namespace {
-// the attached server of a model on a free loopback port, up once /health answers
-struct AttachedServer {
-    jllama_server *server = nullptr;
-    int port = 0;
-    explicit AttachedServer(jllama_model *model) {
-        httplib::Server probe;
-        port = probe.bind_to_any_port("127.0.0.1");
-        std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
-        probe.wait_until_ready();
-        probe.stop();
-        probe_listener.join();
-        const std::string port_text = std::to_string(port);
-        const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", port_text.c_str()};
-        EXPECT_EQ(jllama_server_start_attached(model, 5, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
-        httplib::Client client("127.0.0.1", port);
-        for (int i = 0; i < 100; i++) {
-            const auto health = client.Get("/health");
-            if (health && health->status == 200) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-    }
-    ~AttachedServer() {
-        if (server != nullptr) {
-            EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
-        }
-    }
-};
-} // namespace
-
 TEST_F(CApiLfm3Audio, TheTranscriptionRouteAsksTheLfm3AsrPromptInTheLanguage) {
     // /v1/audio/transcriptions builds a chat request from an LFM3 template's ASR preset: the system turn
     // "Perform ASR in German." and the clip as the user turn (common_chat_get_asr_prompt). The route's
@@ -8354,6 +8653,159 @@ TEST(CApiSleep, AWakeDoesNotCallTheLoadProgressCallbackAgain) {
     std::filesystem::remove(path, ignored);
 }
 
+namespace {
+
+// Counts the server's "entering sleeping state" lines through the log callback, which it holds
+// for its own lifetime.
+class SleepWatch {
+  public:
+    SleepWatch() {
+        EXPECT_EQ(jllama_set_log_callback(
+                      [](int, const char *text, void *user) {
+                          auto *self = static_cast<SleepWatch *>(user);
+                          if (std::string(text).find("server is entering sleeping state") != std::string::npos) {
+                              std::lock_guard<std::mutex> lock(self->mutex_);
+                              ++self->sleeps_;
+                          }
+                      },
+                      this),
+                  JLLAMA_STATUS_OK);
+    }
+    ~SleepWatch() { jllama_set_log_callback(nullptr, nullptr); }
+    SleepWatch(const SleepWatch &) = delete;
+    SleepWatch &operator=(const SleepWatch &) = delete;
+
+    // Waits for one more sleep than the last call saw; false after 20 s without one.
+    bool next_sleep() {
+        const int wanted = ++expected_;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (sleeps_ >= wanted) {
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return false;
+    }
+
+  private:
+    std::mutex mutex_;
+    int sleeps_ = 0;
+    int expected_ = 0;
+};
+
+} // namespace
+
+TEST(CApiSleep, EveryOperationAsTheFirstCallAfterASleepLetsTheModelSleepAgain) {
+    // The other operations of the C API, each as the first call after a sleep: it wakes the model,
+    // answers, and gives its wake back (jllama_hold_server_awake), so the idle timer puts the model
+    // to sleep again. A call that kept its count kept the weights in memory for good, silently. The
+    // model has FIM tokens, for the infill.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-sleep-every", true);
+    ASSERT_FALSE(path.empty());
+    SleepWatch watch;
+    jllama_model *model = load_tiny(path, {"-c", "128", "--sleep-idle-seconds", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const std::vector<std::pair<const char *, std::function<void()>>> calls = {
+        {"jllama_metrics",
+         [model]() {
+             Owned metrics;
+             EXPECT_EQ(jllama_metrics(model, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+         }},
+        {"jllama_lora_adapters",
+         [model]() {
+             Owned adapters;
+             EXPECT_EQ(jllama_lora_adapters(model, &adapters.s), JLLAMA_STATUS_OK) << jllama_last_error();
+         }},
+        {"slot erase",
+         [model]() {
+             Owned erased;
+             EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+                 << jllama_last_error();
+         }},
+        {"a stream received to its end",
+         [model]() {
+             int task = -1;
+             ASSERT_EQ(jllama_completions_stream_request(model, R"({"prompt":"Hi","n_predict":3,"temperature":0})",
+                                                         &task),
+                       JLLAMA_STATUS_OK)
+                 << jllama_last_error();
+             EXPECT_TRUE(receive_to_stop(model, task).at("stop").get<bool>());
+         }},
+        {"jllama_detokenize",
+         [model]() {
+             const int ids[] = {'H', 'i'};
+             Owned text;
+             size_t length = 0;
+             EXPECT_EQ(jllama_detokenize(model, ids, 2, &text.s, &length), JLLAMA_STATUS_OK) << jllama_last_error();
+         }},
+        {"jllama_apply_template",
+         [model]() {
+             Owned prompt;
+             EXPECT_EQ(jllama_apply_template(model, R"({"messages":[{"role":"user","content":"Hi"}]})", &prompt.s),
+                       JLLAMA_STATUS_OK)
+                 << jllama_last_error();
+         }},
+        {"jllama_infill",
+         [model]() {
+             Owned infill;
+             EXPECT_EQ(jllama_infill(model, INFILL_REQUEST, &infill.s), JLLAMA_STATUS_OK) << jllama_last_error();
+         }},
+    };
+    // the load itself is followed by a sleep
+    ASSERT_TRUE(watch.next_sleep()) << "the model did not sleep after its load";
+    for (const auto &call : calls) {
+        SCOPED_TRACE(call.first);
+        call.second();
+        EXPECT_TRUE(watch.next_sleep()) << "the model did not sleep after " << call.first;
+    }
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiSleep, AnEncoderSleepsAgainAfterItsEmbeddingsAndAfterARerank) {
+    // The same for the operations of an encoder: embeddings (both entry points) and a rerank, each
+    // the first call after a sleep.
+    const std::string encoder = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */, "jllama-bert-sleep");
+    const std::string reranker = write_tiny_bert_gguf(true, 4 /* LLAMA_POOLING_TYPE_RANK */, "jllama-bert-sleep-rank");
+    ASSERT_FALSE(encoder.empty());
+    ASSERT_FALSE(reranker.empty());
+    SleepWatch watch;
+    {
+        jllama_model *model = load_tiny(encoder, {"--embedding", "--sleep-idle-seconds", "1"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        ASSERT_TRUE(watch.next_sleep()) << "the encoder did not sleep after its load";
+        Owned embeddings;
+        EXPECT_EQ(jllama_embeddings(model, R"({"content":"hello there"})", false, &embeddings.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_TRUE(watch.next_sleep()) << "the encoder did not sleep after jllama_embeddings";
+        float *values = nullptr;
+        size_t count = 0;
+        EXPECT_EQ(jllama_embed(model, "hello there", &values, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+        jllama_floats_free(values);
+        EXPECT_TRUE(watch.next_sleep()) << "the encoder did not sleep after jllama_embed";
+        jllama_model_free(model);
+    }
+    {
+        jllama_model *model = load_tiny(reranker, {"--reranking", "--sleep-idle-seconds", "1"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        ASSERT_TRUE(watch.next_sleep()) << "the reranker did not sleep after its load";
+        const char *documents[] = {"berlin", "the cat sat on the mat"};
+        Owned ranked;
+        EXPECT_EQ(jllama_rerank(model, "the capital", 2, documents, &ranked.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_TRUE(watch.next_sleep()) << "the reranker did not sleep after jllama_rerank";
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(encoder, ignored);
+    std::filesystem::remove(reranker, ignored);
+}
+
 TEST(CApiPooling, AModelThatDeclaresItsPoolingTypeNeedsNoOption) {
     // Why there is no PoolingType constant for "unspecified": without --pooling the model's own
     // <arch>.pooling_type applies. Two models with the same weights, one declaring mean pooling:
@@ -8473,6 +8925,106 @@ TEST(CApiBert, AnInputLongerThanTheUbatchIsRefusedAndTheEncoderGoesOn) {
     EXPECT_NE(jllama_embeddings(model, long_text.c_str(), false, &refused.s), JLLAMA_STATUS_OK);
     EXPECT_NE(std::string(jllama_last_error()).find("too large to process"), std::string::npos) << jllama_last_error();
     EXPECT_EQ(embedding_rows(model, "hello there world", 32).size(), 1u);
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiBert, TheOpenAiEmbeddingsAnswerKeepsTheOrderOfItsInputsAndDecodesFromBase64) {
+    // jllama_embeddings(..., oai_compat = true) is /v1/embeddings: an OpenAI "list" of one
+    // "embedding" object per input, in the order of the inputs -- with two slots the inputs are
+    // computed side by side, and the answers are placed back by their index -- the model's name
+    // unless the request names one, and with "encoding_format": "base64" each vector as the
+    // little-endian float32 bytes of the same numbers.
+    const std::string path = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */, "jllama-bert-oai");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--embedding", "-np", "2"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto oai = [model](const json &request) {
+        Owned response;
+        EXPECT_EQ(jllama_embeddings(model, request.dump().c_str(), true, &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()) : json();
+    };
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string name = json::parse(meta.str()).at("name").get<std::string>();
+
+    const std::vector<std::string> inputs = {"hello there", "the cat sat on the mat", "world"};
+    std::vector<std::vector<float>> alone;
+    for (const std::string &input : inputs) {
+        const json single = oai({{"input", input}});
+        ASSERT_EQ(single.at("data").size(), 1u) << single.dump();
+        alone.push_back(single.at("data").at(0).at("embedding").get<std::vector<float>>());
+        ASSERT_EQ(alone.back().size(), 32u);
+    }
+    const json all = oai({{"input", inputs}});
+    EXPECT_EQ(all.at("object").get<std::string>(), "list") << all.dump();
+    EXPECT_EQ(all.at("model").get<std::string>(), name) << all.dump();
+    EXPECT_GT(all.at("usage").at("prompt_tokens").get<int>(), 0) << all.dump();
+    EXPECT_EQ(all.at("usage").at("total_tokens"), all.at("usage").at("prompt_tokens"));
+    ASSERT_EQ(all.at("data").size(), inputs.size()) << all.dump();
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        SCOPED_TRACE(inputs[i]);
+        const json &item = all.at("data").at(i);
+        EXPECT_EQ(item.at("object").get<std::string>(), "embedding");
+        EXPECT_EQ(item.at("index").get<size_t>(), i);
+        const std::vector<float> vector = item.at("embedding").get<std::vector<float>>();
+        ASSERT_EQ(vector.size(), alone[i].size());
+        // computed in another batch than alone: equal up to the rounding of the batch, and nearer
+        // to its own input's vector than to any other
+        for (size_t j = 0; j < vector.size(); ++j) {
+            EXPECT_NEAR(vector[j], alone[i][j], 1e-4f) << "column " << j;
+        }
+    }
+    EXPECT_NE(alone[0], alone[1]);
+    EXPECT_NE(alone[1], alone[2]);
+    EXPECT_EQ(oai({{"input", "world"}, {"model", "my-name"}}).at("model").get<std::string>(), "my-name");
+
+    const json encoded = oai({{"input", inputs}, {"encoding_format", "base64"}});
+    ASSERT_EQ(encoded.at("data").size(), inputs.size()) << encoded.dump();
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        const json &item = encoded.at("data").at(i);
+        EXPECT_EQ(item.at("encoding_format").get<std::string>(), "base64");
+        const std::vector<uint8_t> bytes = base64_bytes(item.at("embedding").get<std::string>());
+        ASSERT_EQ(bytes.size(), 32u * sizeof(float));
+        std::vector<float> decoded(32);
+        std::memcpy(decoded.data(), bytes.data(), bytes.size());
+        EXPECT_EQ(decoded, all.at("data").at(i).at("embedding").get<std::vector<float>>()) << inputs[i];
+    }
+    Owned refused;
+    EXPECT_EQ(jllama_embeddings(model, R"({"input":"x","encoding_format":"hex"})", true, &refused.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    jllama_model_free(model);
+
+    // one row per token has no OpenAI shape
+    jllama_model *unpooled = load_tiny(path, {"--embedding", "--pooling", "none"});
+    ASSERT_NE(unpooled, nullptr) << jllama_last_error();
+    EXPECT_EQ(jllama_embeddings(unpooled, R"({"input":"hello there"})", true, &refused.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("Pooling type 'none' is not OAI compatible"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(embedding_rows(unpooled, "hello there", 32).size(), 4u) << "the native shape still answers";
+    jllama_model_free(unpooled);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiBert, ARerankOfNoDocumentsAnswersAnEmptyList) {
+    const std::string path = write_tiny_bert_gguf(true, 4 /* LLAMA_POOLING_TYPE_RANK */, "jllama-bert-rerank-none");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--reranking"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned none;
+    ASSERT_EQ(jllama_rerank(model, "the query", 0, nullptr, &none.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(none.str()), json::array()) << none.str();
+    Owned refused;
+    EXPECT_EQ(jllama_rerank(model, "the query", -1, nullptr, &refused.s), JLLAMA_STATUS_INVALID_ARGUMENT);
+    // and the model ranks afterwards
+    const char *documents[] = {"berlin"};
+    Owned one;
+    ASSERT_EQ(jllama_rerank(model, "the query", 1, documents, &one.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(one.str()).size(), 1u) << one.str();
     jllama_model_free(model);
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -9010,6 +9562,61 @@ TEST(CApiImatrix, WhatCannotBeComputedIsRefusedByName) {
     std::error_code ec;
     std::filesystem::remove(model, ec);
     std::filesystem::remove(text, ec);
+}
+
+TEST(CApiRpc, TheImportanceMatrixAndTheTrainerRunAfterAnRpcServerWentAway) {
+    // jllama_imatrix and jllama_finetune load a model of their own, without an argv for prepare_argv
+    // to read, so they keep a stale RPC device out by exclude_stale_devices: an RPC server a load
+    // registered stays a device for the life of the process, and llama.cpp's default device list
+    // puts it first. Once the server is gone, a model placed on it fails or ends the process.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-rpc-then-imatrix");
+    ASSERT_FALSE(path.empty());
+    int port = 0;
+    {
+        std::unique_ptr<rpc_serve_run> server;
+        for (int attempt = 0; attempt < 50 && port == 0; ++attempt) {
+            const int candidate = rpc_test_port(attempt);
+            server.reset(new rpc_serve_run(candidate));
+            for (int i = 0;
+                 i < 500 && !jllama_rpc_server_listening() && !server->returned_within(std::chrono::milliseconds(0));
+                 ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (jllama_rpc_server_listening()) {
+                port = candidate;
+            } else {
+                server.reset();
+            }
+        }
+        ASSERT_NE(port, 0) << "no RPC server could bind";
+        jllama_model *model = load_tiny(path, {"--rpc", "127.0.0.1:" + std::to_string(port)});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        jllama_model_free(model);
+    } // the server stops here; its device stays registered
+
+    const std::string text = write_calibration_text("jllama-rpc-then-imatrix", 100);
+    const std::string imatrix = path + ".imatrix.gguf";
+    int chunks = -1;
+    EXPECT_EQ(jllama_imatrix(path.c_str(), text.c_str(), imatrix.c_str(), 32, 0, 2, 0, nullptr, nullptr, &chunks),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_GT(chunks, 0);
+
+    std::string corpus;
+    for (int i = 0; i < 16; ++i) {
+        corpus += "the quick brown fox jumps over the lazy dog. ";
+    }
+    const std::string out = path + ".finetuned.gguf";
+    const json config = {{"model_path", path}, {"training_text", corpus}, {"output_path", out},
+                         {"epochs", 1},        {"learning_rate", 1e-4},   {"n_ctx", 64},
+                         {"n_gpu_layers", 0},  {"val_split", 0.0}};
+    EXPECT_EQ(jllama_finetune(config.dump().c_str()), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    EXPECT_GT(std::filesystem::file_size(out, ec), 0u);
+    std::filesystem::remove(out, ec);
+    std::filesystem::remove(imatrix, ec);
+    std::filesystem::remove(text, ec);
+    std::filesystem::remove(path, ec);
 }
 
 // ---------------------------------------------------------------------------------------------------
