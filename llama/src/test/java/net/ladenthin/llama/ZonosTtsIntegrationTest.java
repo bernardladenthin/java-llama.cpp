@@ -69,4 +69,10 @@ public class ZonosTtsIntegrationTest extends AbstractTtsPipelineContract {
         assertFalse(Arrays.equals(modelsOwn, quiet), "a loudness of -30 LUFS must change the audio");
         assertTrue(Arrays.equals(quiet, speak(SpeechParameters.MODEL_DEFAULT_SPEED, -30.0f)), "reproducible");
     }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // its projector carries the speaker encoder (clip.has_audio_encoder, zonos3_spkenc)
+        return true;
+    }
 }

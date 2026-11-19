@@ -147,6 +147,12 @@ struct tiny_model_spec {
     // false writes <arch>.attention.causal = false: a decoder whose tokens see the whole batch (as
     // the diffusion models' do), which llama.cpp must evaluate one ubatch per call
     bool causal = true;
+    // Non-empty: the model is written as a gguf-split pair into this directory, as llama-gguf-split
+    // writes one -- <prefix>-00001-of-00002.gguf with the metadata and every layer but the last,
+    // -00002-of-00002.gguf with the last layer, both numbered by split.no / split.count /
+    // split.tensors.count -- and the path returned is the first file's. The weights are the unsplit
+    // model's (same seed, same order), so both answer alike.
+    std::string split_dir = {};
     // > 0: a Mamba state that grows by exp(dt * ssm_a_growth) with every token instead of decaying,
     // so a long enough prompt overflows it to inf
     float ssm_a_growth = 0.0f;
@@ -517,7 +523,8 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         add_random_tensor(g, ctx, rng, "res_scale_in.weight", {spec.n_embd}, 1.0f);
         add_random_tensor(g, ctx, rng, "res_scale_in.bias", {spec.n_embd}, 0.1f);
     }
-    gguf_context *shard = shard_path != nullptr ? gguf_init_empty() : nullptr;
+    const bool split = !spec.split_dir.empty();
+    gguf_context *shard = shard_path != nullptr || split ? gguf_init_empty() : nullptr;
     for (int il = 0; il < n_layer_all; ++il) {
         const std::string p = "blk." + std::to_string(il) + ".";
         gguf_context *to = shard != nullptr && il == spec.n_layer - 1 ? shard : g;
@@ -650,6 +657,31 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         matrix(to, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff});
         matrix(to, p + "ffn_up.weight", {spec.n_embd, spec.n_ff});
         matrix(to, p + "ffn_down.weight", {spec.n_ff, spec.n_embd});
+    }
+    if (split) {
+        const int32_t n_tensors = static_cast<int32_t>(gguf_get_n_tensors(g) + gguf_get_n_tensors(shard));
+        gguf_context *parts[] = {g, shard};
+        for (uint16_t no = 0; no < 2; ++no) {
+            gguf_set_val_u16(parts[no], "split.no", no);
+            gguf_set_val_u16(parts[no], "split.count", 2);
+            gguf_set_val_i32(parts[no], "split.tensors.count", n_tensors);
+        }
+        const std::filesystem::path dir = std::filesystem::u8path(spec.split_dir);
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const auto utf8 = [](const std::filesystem::path &p) {
+            const auto u8 = p.u8string(); // std::u8string from C++20 on
+            return std::string(u8.begin(), u8.end());
+        };
+        const std::string first = utf8(dir / std::filesystem::u8path(spec.prefix + "-00001-of-00002.gguf"));
+        const std::string second = utf8(dir / std::filesystem::u8path(spec.prefix + "-00002-of-00002.gguf"));
+        // gguf_write_to_file opens through ggml_fopen, which reads the path as UTF-8 on Windows
+        const bool written =
+            !ec && gguf_write_to_file(g, first.c_str(), false) && gguf_write_to_file(shard, second.c_str(), false);
+        gguf_free(shard);
+        gguf_free(g);
+        ggml_free(ctx);
+        return written ? first : std::string();
     }
     bool ok = gguf_write_to_file(g, path.c_str(), false);
     if (shard != nullptr) {
@@ -2558,6 +2590,293 @@ inline std::string write_tiny_voca_mmproj_gguf(const std::string &prefix = "jlla
     add("a.gen.voc.harmonic.bias", {98}, 0.0f);
     add("a.gen.voc.noise.weight", {EMBD, 36}, -0.1f);
     add("a.gen.voc.noise.bias", {36}, 0.0f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The pair of a random VoxCPM2 (openbmb, llama.cpp's minicpm + voxcpm2_gen / voxcpm2_spkenc, b12541,
+// #32443), in the layout conversion/voxcpm.py writes. The backbone is a plain MiniCPM with every
+// muP scale at 1 (embedding, residual and logit scale, as the converter writes for use_mup = false),
+// no output head (llama.cpp ties it to the token embedding) and the SentencePiece vocabulary of the
+// checkpoint's kind: <unk>, <s>, </s>, the 256 byte pieces of its byte fallback, the space piece, one
+// piece per printable ASCII character, the CJK pieces 你, 好 and the merged 你好 (which the pipeline
+// splits back into its two characters, VoxCPM's mask_multichar_chinese_tokens), and the three control
+// tokens the pipeline looks up by text (<|audio_start|>, <|audio_prompt_start|>,
+// <|audio_prompt_end|>). It emits no audio token: the mmproj turns each hidden state into a patch of
+// latents, and the sampled token is never read. Without multi-character pieces besides 你好, a text
+// of n characters without spaces is n + 1 tokens (the space prefix, then one piece per character).
+inline std::string write_tiny_voxcpm2_gguf(const std::string &prefix = "jllama-voxcpm2") {
+    constexpr int EMBD = 32, N_HEAD = 2, FF = 64, N_LAYER = 2;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(79);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "minicpm";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER);
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 8192);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 10000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
+    gguf_set_val_f32(g, (a + ".embedding_scale").c_str(), 1.0f);
+    gguf_set_val_f32(g, (a + ".residual_scale").c_str(), 1.0f);
+    gguf_set_val_f32(g, (a + ".logit_scale").c_str(), 1.0f);
+
+    std::vector<std::string> tokens;
+    std::vector<int32_t> types; // 1 normal, 2 unknown, 3 control, 6 byte
+    std::vector<float> scores;
+    const auto piece = [&](const std::string &text, float score, int32_t type) {
+        tokens.push_back(text);
+        scores.push_back(score);
+        types.push_back(type);
+    };
+    piece("<unk>", 0.0f, 2);
+    piece("<s>", 0.0f, 3);
+    piece("</s>", 0.0f, 3);
+    for (int byte = 0; byte < 256; ++byte) {
+        char name[8];
+        std::snprintf(name, sizeof(name), "<0x%02X>", byte);
+        piece(name, 0.0f, 6);
+    }
+    piece("\xE2\x96\x81", -2.0f, 1); // U+2581, the space
+    for (char c = '!'; c <= '~'; ++c) {
+        piece(std::string(1, c), -10.0f, 1);
+    }
+    piece("\xE4\xBD\xA0", -10.0f, 1);            // 你
+    piece("\xE5\xA5\xBD", -10.0f, 1);            // 好
+    piece("\xE4\xBD\xA0\xE5\xA5\xBD", -1.0f, 1); // 你好, one piece of the vocabulary
+    piece("<|audio_start|>", 0.0f, 3);
+    piece("<|audio_prompt_start|>", 0.0f, 3);
+    piece("<|audio_prompt_end|>", 0.0f, 3);
+    const int n_vocab = static_cast<int>(tokens.size());
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    gguf_set_val_str(g, "tokenizer.ggml.model", "llama");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.scores", GGUF_TYPE_FLOAT32, scores.data(), scores.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, types.data(), types.size());
+    gguf_set_val_u32(g, "tokenizer.ggml.unknown_token_id", 0);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", 2);
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {EMBD}, 1.0f);
+    for (int il = 0; il < N_LAYER; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {EMBD}, 1.0f);
+        for (const char *m : {"attn_q", "attn_k", "attn_v", "attn_output"}) {
+            add_random_tensor(g, ctx, rng, p + m + ".weight", {EMBD, EMBD}, 0.1f);
+        }
+        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {EMBD, FF}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {EMBD, FF}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {FF, EMBD}, 0.1f);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The mmproj of the backbone above (voxcpm2_gen), what llama.cpp fixes kept and every free width
+// made small. Fixed by tools/mtmd (mtmd_graph_voxcpm2_gen, checked at load): heads of 128 in LocEnc,
+// LocDiT and the residual LM, the 64 LongRoPE factors of a 128-wide head (here all 1), 64 latent
+// channels, 4 latents per frame and 1920 decoder samples per latent, so a frame is 7680 samples at
+// 48 kHz. Shrunk: LocEnc and LocDiT one layer of one head and one key/value head at width 32 (their
+// head count and width are free, only the head size is fixed), the residual LM (a.gen.res.*, which
+// llama.cpp loads as a granite text model with RoPE off, its sizes read from the tensor shapes; the
+// real one has 8 layers) one layer of one head, FSQ 8 wide, the stop head
+// 8 wide. The causal AudioVAE decoder keeps the real layout -- a depthwise k = 7 conv, a k = 1 conv,
+// upsampling blocks (sample-rate scale and bias, Snake, a transposed conv of kernel 2 * stride, three
+// residual units of dilation 1, 3, 9), Snake, conv -- with strides 8, 8, 6, 5 (llama.cpp only checks
+// their product, 1920) and 32 channels halved per block, its weights scaled to the fan-in of each conv
+// and its residual units small, so the samples stay inside the final tanh (unscaled, the 16-bit output
+// was a square wave at the clamp, on which other latents can give the same samples).
+// eos_bias: the stop score (logit(stop) - logit(continue)) of every frame. The stop head reads one
+// channel of the stop projection that its weight row leaves at a constant silu(10), so the score is
+// exactly eos_bias whatever the hidden state is: llama.cpp stops on a score > 0 once 4 frames are
+// out, so a positive bias gives exactly 4 frames and a negative one runs to the frame cap of the text.
+// speaker_encoder: also the AudioVAE encoder (voxcpm2_spkenc: a k = 7 conv, four downsampling blocks of
+// the strides llama.cpp hard-codes, 2, 5, 8, 8 at 16 kHz, each three residual units, Snake and a conv of
+// kernel 2 * stride, then fc_mu to the 64 latent channels), which turns a reference clip into one
+// backbone row per 2560 samples (160 ms) through LocEnc.
+inline std::string write_tiny_voxcpm2_mmproj_gguf(const std::string &prefix = "jllama-voxcpm2-mmproj",
+                                                  float eos_bias = -100.0f, bool speaker_encoder = false) {
+    constexpr int TEXT = 32, E = 32, FF = 64, HEAD = 128, LATENT = 64, FSQ = 8, STOP = 8, RES_FF = 64, D0 = 32;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(83);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_bool(g, "clip.has_gen_audio_encoder", true);
+    gguf_set_val_str(g, "clip.gen.audio.projector_type", "voxcpm2_gen");
+    gguf_set_val_u32(g, "clip.gen.audio.projection_dim", TEXT);
+    gguf_set_val_u32(g, "clip.gen.audio.embedding_length", E);
+    gguf_set_val_u32(g, "clip.gen.audio.feed_forward_length", FF);
+    gguf_set_val_u32(g, "clip.gen.audio.block_count", 1);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", 1);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count_kv", 1);
+    gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-5f);
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: noise of that magnitude (weights); otherwise every element is value (norms, biases)
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, value < 0 ? -value : 0.0f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+        return t;
+    };
+    // LocDiT (the generic a.gen.code.* layers) and LocEnc: bidirectional MiniCPM layers, RMS norms
+    const auto layer = [&](const std::string &q) {
+        add(q + ".ln1.weight", {E}, 1.0f);
+        add(q + ".attn_q.weight", {E, HEAD}, -0.1f);
+        add(q + ".attn_k.weight", {E, HEAD}, -0.1f);
+        add(q + ".attn_v.weight", {E, HEAD}, -0.1f);
+        add(q + ".attn_out.weight", {HEAD, E}, -0.1f);
+        add(q + ".ln2.weight", {E}, 1.0f);
+        add(q + ".ffn_gate.weight", {E, FF}, -0.1f);
+        add(q + ".ffn_up.weight", {E, FF}, -0.1f);
+        add(q + ".ffn_down.weight", {FF, E}, -0.1f);
+    };
+    add("a.gen.rope_factors", {HEAD / 2}, 1.0f);
+    layer("a.gen.code.blk.0");
+    add("a.gen.code.post_ln.weight", {E}, 1.0f);
+    layer("a.gen.enc.blk.0");
+    add("a.gen.enc.special_token", {E}, -0.5f);
+    add("a.gen.enc.in_proj.weight", {LATENT, E}, -0.1f);
+    add("a.gen.enc.in_proj.bias", {E}, 0.0f);
+    add("a.gen.enc.post_ln.weight", {E}, 1.0f);
+    add("a.gen.enc_to_lm.weight", {E, TEXT}, -0.2f);
+    add("a.gen.enc_to_lm.bias", {TEXT}, 0.0f);
+    add("a.gen.dit.in_proj.weight", {LATENT, E}, -0.1f);
+    add("a.gen.dit.in_proj.bias", {E}, 0.0f);
+    add("a.gen.dit.cond_proj.weight", {LATENT, E}, -0.1f);
+    add("a.gen.dit.cond_proj.bias", {E}, 0.0f);
+    add("a.gen.dit.out_proj.weight", {E, LATENT}, -0.2f);
+    add("a.gen.dit.out_proj.bias", {LATENT}, 0.0f);
+    add("a.gen.dit.time_mlp.0.weight", {E, E}, -0.1f);
+    add("a.gen.dit.time_mlp.0.bias", {E}, 0.0f);
+    add("a.gen.dit.time_mlp.1.weight", {E, E}, -0.1f);
+    add("a.gen.dit.time_mlp.1.bias", {E}, 0.0f);
+    add("a.gen.lm_to_dit.weight", {TEXT, E}, -0.2f);
+    add("a.gen.lm_to_dit.bias", {E}, 0.0f);
+    add("a.gen.res_to_dit.weight", {TEXT, E}, -0.2f);
+    add("a.gen.res_to_dit.bias", {E}, 0.0f);
+    // FSQ rounds tanh(in(h)) to steps of 1/9: weights large enough that several steps are reached
+    add("a.gen.fsq.in.weight", {TEXT, FSQ}, -0.3f);
+    add("a.gen.fsq.in.bias", {FSQ}, 0.0f);
+    add("a.gen.fsq.out.weight", {FSQ, TEXT}, -0.3f);
+    add("a.gen.fsq.out.bias", {TEXT}, 0.0f);
+    add("a.gen.fusion.weight", {2 * TEXT, TEXT}, -0.2f);
+    add("a.gen.fusion.bias", {TEXT}, 0.0f);
+    ggml_tensor *stop_proj = add("a.gen.stop_proj.weight", {TEXT, STOP}, -0.1f);
+    ggml_tensor *stop_proj_b = add("a.gen.stop_proj.bias", {STOP}, 0.0f);
+    ggml_tensor *stop_head = add("a.gen.stop_head.weight", {STOP, 2}, 0.0f);
+    for (int i = 0; i < TEXT; ++i) {
+        ((float *)stop_proj->data)[i] = 0.0f; // output channel 0 ignores the hidden state ...
+    }
+    ((float *)stop_proj_b->data)[0] = 10.0f; // ... and sits at silu(10)
+    const float silu10 = 10.0f / (1.0f + std::exp(-10.0f));
+    ((float *)stop_head->data)[STOP] = eos_bias / silu10; // logit(stop) from channel 0, logit(continue) 0
+
+    // the residual LM, under libllama's names
+    const std::string r = "a.gen.res.blk.0";
+    add(r + ".attn_norm.weight", {TEXT}, 1.0f);
+    add(r + ".attn_q.weight", {TEXT, HEAD}, -0.1f);
+    add(r + ".attn_k.weight", {TEXT, HEAD}, -0.1f);
+    add(r + ".attn_v.weight", {TEXT, HEAD}, -0.1f);
+    add(r + ".attn_output.weight", {HEAD, TEXT}, -0.1f);
+    add(r + ".ffn_norm.weight", {TEXT}, 1.0f);
+    add(r + ".ffn_gate.weight", {TEXT, RES_FF}, -0.1f);
+    add(r + ".ffn_up.weight", {TEXT, RES_FF}, -0.1f);
+    add(r + ".ffn_down.weight", {RES_FF, TEXT}, -0.1f);
+    add("a.gen.res.output_norm.weight", {TEXT}, 1.0f);
+
+    const auto snake = [&](const std::string &q, int c) {
+        add(q + ".alpha", {c}, 1.0f);
+        add(q + ".beta", {c}, 0.5f);
+    };
+    const auto res_units = [&](const std::string &q, int c) {
+        for (int u = 0; u < 3; ++u) { // dilation 1, 3, 9: Snake, depthwise conv k = 7, Snake, conv k = 1
+            const std::string ru = q + ".res." + std::to_string(u);
+            snake(ru + ".snake1", c);
+            add(ru + ".conv1.weight", {7, 1, c}, -0.1f);
+            add(ru + ".conv1.bias", {c}, 0.0f);
+            snake(ru + ".snake2", c);
+            add(ru + ".conv2.weight", {1, c, c}, -0.1f);
+            add(ru + ".conv2.bias", {c}, 0.0f);
+        }
+    };
+    const std::string v = "a.gen.vae";
+    add(v + ".conv_in_dw.weight", {7, 1, LATENT}, -0.3f);
+    add(v + ".conv_in_dw.bias", {LATENT}, 0.0f);
+    add(v + ".conv_in.weight", {1, LATENT, D0}, -0.125f);
+    add(v + ".conv_in.bias", {D0}, 0.0f);
+    const int up[] = {8, 8, 6, 5};
+    int c = D0;
+    for (int b = 0; b < 4; ++b) {
+        const std::string q = v + ".blk." + std::to_string(b);
+        add(q + ".sr_scale", {c}, 1.0f);
+        add(q + ".sr_bias", {c}, 0.0f);
+        snake(q + ".snake", c);
+        // a transposed conv of kernel 2 * stride: each output sample sums two input frames of c channels
+        add(q + ".up.weight", {2 * up[b], c / 2, c}, -1.0f / std::sqrt(2.0f * static_cast<float>(c)));
+        add(q + ".up.bias", {c / 2}, 0.0f);
+        c /= 2;
+        res_units(q, c);
+    }
+    snake(v + ".post_snake", c);
+    add(v + ".conv_out.weight", {7, c, 1}, -0.04f);
+    add(v + ".conv_out.bias", {1}, 0.0f);
+
+    if (speaker_encoder) {
+        constexpr int C0 = 2;
+        gguf_set_val_bool(g, "clip.has_audio_encoder", true);
+        gguf_set_val_str(g, "clip.audio.projector_type", "voxcpm2_spkenc");
+        gguf_set_val_u32(g, "clip.audio.projection_dim", TEXT);
+        gguf_set_val_u32(g, "clip.audio.num_mel_bins", 1);
+        gguf_set_val_u32(g, "clip.audio.block_count", 0);
+        gguf_set_val_u32(g, "clip.audio.embedding_length", 16 * C0);
+        gguf_set_val_u32(g, "clip.audio.feed_forward_length", 16 * C0);
+        gguf_set_val_u32(g, "clip.audio.attention.head_count", 1);
+        gguf_set_val_f32(g, "clip.audio.attention.layer_norm_epsilon", 1e-5f);
+        const std::string e = "a.vae.enc";
+        add(e + ".conv_in.weight", {7, 1, C0}, -0.5f);
+        add(e + ".conv_in.bias", {C0}, 0.0f);
+        const int down[] = {2, 5, 8, 8};
+        int ce = C0;
+        for (int b = 0; b < 4; ++b) {
+            const std::string q = e + ".blk." + std::to_string(b);
+            res_units(q, ce);
+            snake(q + ".snake", ce);
+            add(q + ".down.weight", {2 * down[b], ce, 2 * ce}, -0.3f);
+            add(q + ".down.bias", {2 * ce}, 0.0f);
+            ce *= 2;
+        }
+        add(e + ".fc_mu.weight", {3, ce, LATENT}, -0.3f);
+        add(e + ".fc_mu.bias", {LATENT}, 0.0f);
+    }
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
     ggml_free(ctx);

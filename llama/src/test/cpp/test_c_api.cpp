@@ -28,6 +28,8 @@
 #include "ggml.h"
 #include "gguf.h"
 #include "llama.h"
+#include "mtmd-helper.h"
+#include "mtmd.h"
 
 #include <gtest/gtest.h>
 
@@ -49,6 +51,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <ostream>
 #include <random>
 #include <regex>
@@ -2248,6 +2251,82 @@ TEST(CApiWeightScales, QwenNextScalesEveryProjectionOfItsDeltaNet) {
     // loaded without a word. The generator's qwen3next has a delta net and an attention layer, both
     // with experts and a shared expert, and every matrix of them carries a scale.
     expect_weight_scales_applied(tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next"));
+}
+
+TEST(CApiShard, AModelSplitByGgufSplitLoadsFromItsFirstFile) {
+    // A model in the files llama-gguf-split writes: <name>-00001-of-00002.gguf carries split.count, and
+    // the loader builds the names of the others from the first one's (llama_split_prefix /
+    // llama_split_path; since b12537, #32557, the buffers are sized from that path instead of
+    // PATH_MAX). The generator writes the same weights whole and split; the split model must answer
+    // what the whole one answers -- also from a non-ASCII directory, whose bytes the names are built
+    // from --, refuse to load from its second file or without it, and take its second file from
+    // another directory when that path is given (the loader matches it by file name).
+    const std::string whole = write_tiny_llama_gguf("jllama-c-api-gguf-split");
+    ASSERT_FALSE(whole.empty());
+    jllama_model *reference = load_tiny(whole, {});
+    ASSERT_NE(reference, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(reference);
+    jllama_model_free(reference);
+    ASSERT_FALSE(expected.empty());
+
+    const std::filesystem::path base =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-gguf-split-" + std::to_string(std::random_device{}()));
+    const auto utf8 = [](const std::filesystem::path &p) {
+        const auto u8 = p.u8string();
+        return std::string(u8.begin(), u8.end());
+    };
+    // Fewer than 260 characters, more than 260 bytes of UTF-8: until b12537 the loader built the split
+    // names in a buffer of PATH_MAX bytes, which is MAX_PATH (260) on Windows, so this directory failed
+    // there while the file system took it (MAX_PATH counts UTF-16 units). Linux's PATH_MAX is 4096.
+    std::string cjk_40;
+    for (int i = 0; i < 40; ++i) {
+        cjk_40 += "\xE6\x97\xA5"; // 日, three bytes
+    }
+    const std::filesystem::path deep = base / std::filesystem::u8path("d-\xC3\xA4-\xE6\x97\xA5") /
+                                       std::filesystem::u8path(cjk_40) / std::filesystem::u8path(cjk_40);
+    ASSERT_GT(utf8(deep / "jllama-c-api-gguf-split-00001-of-00002.gguf").size(), 260u);
+    for (const std::filesystem::path &dir : {base / "plain", deep}) {
+        SCOPED_TRACE(utf8(dir));
+        tiny_model_spec spec;
+        spec.prefix = "jllama-c-api-gguf-split";
+        spec.split_dir = utf8(dir);
+        const std::string first = write_tiny_llama_gguf(spec);
+        ASSERT_FALSE(first.empty());
+        const std::filesystem::path second = dir / "jllama-c-api-gguf-split-00002-of-00002.gguf";
+        ASSERT_TRUE(std::filesystem::exists(second));
+
+        jllama_model *split = load_tiny(first, {});
+        ASSERT_NE(split, nullptr) << jllama_last_error();
+        EXPECT_EQ(greedy_answer(split), expected);
+        jllama_model_free(split);
+
+        // llama.cpp's reason ("model must be loaded with the first split") reaches the log only
+        EXPECT_EQ(load_tiny(utf8(second), {}), nullptr) << "a model is loaded from its first split";
+
+        // the second file elsewhere: missing where the first file's name says, found where --shard says
+        const std::filesystem::path elsewhere = base / "elsewhere";
+        std::filesystem::create_directories(elsewhere);
+        const std::filesystem::path moved = elsewhere / second.filename();
+        std::filesystem::rename(second, moved);
+        EXPECT_EQ(load_tiny(first, {}), nullptr) << "the model without its second split must not load";
+        jllama_model *relocated = load_tiny(first, {"--shard", utf8(moved)});
+        ASSERT_NE(relocated, nullptr) << jllama_last_error();
+        EXPECT_EQ(greedy_answer(relocated), expected);
+        jllama_model_free(relocated);
+        std::filesystem::rename(moved, second);
+    }
+    // the quantizer reads every split and writes one file
+    const std::string first = utf8(base / "plain" / "jllama-c-api-gguf-split-00001-of-00002.gguf");
+    const std::string quantized = utf8(base / "quantized-q8_0.gguf");
+    ASSERT_EQ(jllama_quantize(first.c_str(), quantized.c_str(), 7, 2, false), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_model *q8 = load_tiny(quantized, {});
+    ASSERT_NE(q8, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(q8).empty());
+    jllama_model_free(q8);
+
+    std::error_code ignored;
+    std::filesystem::remove(whole, ignored);
+    std::filesystem::remove_all(base, ignored);
 }
 
 TEST(CApiShard, AnExtraShardInAnotherDirectoryCompletesTheModel) {
@@ -6458,6 +6537,500 @@ TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
     std::vector<unsigned char> again;
     ASSERT_EQ(sing("la la la", 1.0f, 1, &again, 260), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_EQ(windowed, again) << "the windows start from the tail of the one before, the same each time";
+}
+
+// A random VoxCPM2 pair (tiny_llama_gguf.hpp, llama.cpp b12541, #32443), the first pipeline in the
+// suite whose backbone emits no audio token at all: the mmproj turns every hidden state into a patch of
+// four latents -- FSQ, the residual LM (a libllama context of its own), the LocDiT flow matching with
+// classifier-free guidance, LocEnc for the next backbone row -- and the causal AudioVAE turns a patch
+// into 7680 samples at 48 kHz. The stop head of the mmproj carries a fixed score, which makes every
+// length exact: llama.cpp's driver (voxcpm2_gen_audio_pipeline, mtmd-helper-gen.cpp) stops on a score
+// > 0 once more than min_len + 1 = 3 frames are out, so +100 gives exactly 4 frames, and with -100 it
+// runs to max_len = 6 * text tokens + 10 (the limit of the reference). The text goes to the tokenizer
+// without BOS, a text of n characters without spaces is n + 1 tokens here (the space prefix), and the
+// two mmprojs differ in the stop head only, so their latents are the same frame for frame. On noise
+// weights, so what is asserted is the contract, not the voice.
+class CApiVoxCpm2 : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        backbone() = jllama_test::write_tiny_voxcpm2_gguf();
+        never() = jllama_test::write_tiny_voxcpm2_mmproj_gguf("jllama-voxcpm2-never", -100.0f);
+        at_once() = jllama_test::write_tiny_voxcpm2_mmproj_gguf("jllama-voxcpm2-at-once", 100.0f);
+        ASSERT_FALSE(backbone().empty());
+        ASSERT_FALSE(never().empty());
+        ASSERT_FALSE(at_once().empty());
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), never().c_str(), 0, 2, &budget_tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        ASSERT_EQ(jllama_tts_load(backbone().c_str(), at_once().c_str(), 0, 2, &eos_tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        llama_model_params params = llama_model_default_params();
+        params.vocab_only = true;
+        vocab_model() = llama_model_load_from_file(backbone().c_str(), params);
+        ASSERT_NE(vocab_model(), nullptr);
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(budget_tts());
+        jllama_tts_free(eos_tts());
+        llama_model_free(vocab_model());
+        budget_tts() = nullptr;
+        eos_tts() = nullptr;
+        vocab_model() = nullptr;
+        for (const std::string &p : {backbone(), never(), at_once()}) {
+            std::remove(p.c_str());
+        }
+    }
+    static std::string &backbone() {
+        static std::string p;
+        return p;
+    }
+    static std::string &never() {
+        static std::string p;
+        return p;
+    }
+    static std::string &at_once() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&budget_tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static jllama_tts_model *&eos_tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    static llama_model *&vocab_model() {
+        static llama_model *m = nullptr;
+        return m;
+    }
+    // the tokens of `text` the way the driver tokenizes it: no BOS, special tokens as plain text
+    static int tokens_of(const std::string &text) {
+        std::vector<llama_token> ids(text.size() + 16);
+        return llama_tokenize(llama_model_get_vocab(vocab_model()), text.c_str(), static_cast<int32_t>(text.size()),
+                              ids.data(), static_cast<int32_t>(ids.size()), false, false);
+    }
+    // A synthesis with seed 7 and the defaults, what `set` changes on top; the WAV in *wav.
+    static jllama_status speak(jllama_tts_model *tts, const char *text, std::vector<unsigned char> *wav,
+                               const std::function<void(jllama_tts_options &)> &set = nullptr) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.seed = 7;
+        if (set) {
+            set(options);
+        }
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts, text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    static uint32_t le32(const std::vector<unsigned char> &b, size_t at) {
+        return uint32_t(b[at]) | uint32_t(b[at + 1]) << 8 | uint32_t(b[at + 2]) << 16 | uint32_t(b[at + 3]) << 24;
+    }
+    // the frames of a 16-bit mono WAV, -1 when its samples are no whole number of 7680-sample frames
+    static long frames_of(const std::vector<unsigned char> &wav) {
+        const size_t samples = (wav.size() - 44) / 2;
+        return samples % 7680 == 0 ? static_cast<long>(samples / 7680) : -1;
+    }
+    // the samples of the first `frames` frames, as the bytes of the WAV
+    static std::vector<unsigned char> head(const std::vector<unsigned char> &wav, size_t frames) {
+        const size_t end = std::min(wav.size(), 44 + frames * 7680 * 2);
+        return std::vector<unsigned char>(wav.begin() + 44, wav.begin() + static_cast<std::ptrdiff_t>(end));
+    }
+};
+
+TEST_F(CApiVoxCpm2, ItHasNoPredefinedVoicesAndWithoutItsEncoderClonesNone) {
+    char **names = nullptr;
+    size_t count = 7;
+    ASSERT_EQ(jllama_tts_voices(eos_tts(), &names, &count), JLLAMA_STATUS_OK);
+    EXPECT_EQ(count, 0u) << "a voice is designed in the text or cloned, the mmproj ships none";
+    jllama_strings_free(names, count);
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(eos_tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "the mmproj has no AudioVAE encoder";
+    // the reference is refused by name before the model is touched, and the model answers the next request
+    EXPECT_EQ(speak(eos_tts(), "Hi", nullptr,
+                    [](jllama_tts_options &o) { o.speaker_reference_path = "/nonexistent/voxcpm2-reference.wav"; }),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("does not accept a speaker reference"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_NE(std::string(jllama_last_error()).find("voxcpm2-reference.wav"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(eos_tts(), "Hi", nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApiVoxCpm2, ASynthesisIsAMonoWavOfWholeFramesAt48kHz) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
+    EXPECT_EQ(le32(wav, 24), 48000u) << "the AudioVAE decoder's rate";
+    EXPECT_EQ(wav[22] | wav[23] << 8, 1) << "mono";
+    EXPECT_EQ(le32(wav, 40), wav.size() - 44) << "the data chunk holds every sample";
+    // a stop at the first frame is held back to 4 frames (n_frames > min_len + 1), 0.64 s
+    EXPECT_EQ(frames_of(wav), 4) << wav.size();
+    const auto *pcm = reinterpret_cast<const int16_t *>(wav.data() + 44);
+    // the generator keeps the decoder inside tanh's range (measured: RMS 5114, peak 30080 of 32767), so the
+    // comparisons below are made on samples, not on silence or on the clamp of the 16-bit conversion
+    const int peak = std::accumulate(pcm, pcm + (wav.size() - 44) / 2, 0,
+                                     [](int m, int16_t s) { return std::max(m, std::abs(static_cast<int>(s))); });
+    EXPECT_GT(peak, 1000);
+    EXPECT_LT(peak, 32767);
+    std::vector<unsigned char> again;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same audio";
+    std::vector<unsigned char> other;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &other, [](jllama_tts_options &o) { o.seed = 8; }), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(wav, other) << "the flow matching starts from noise of the seed";
+    EXPECT_EQ(other.size(), wav.size());
+}
+
+TEST_F(CApiVoxCpm2, WithoutTheStopTheFramesRunToSixPerTextTokenPlusTen) {
+    std::vector<unsigned char> hi;
+    std::vector<unsigned char> hi_dot;
+    ASSERT_EQ(speak(budget_tts(), "Hi", &hi), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi.", &hi_dot), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(tokens_of("Hi"), 3) << "the space piece, H, i";
+    ASSERT_EQ(tokens_of("Hi."), 4);
+    EXPECT_EQ(frames_of(hi), 6 * 3 + 10);
+    EXPECT_EQ(frames_of(hi_dot), 6 * 4 + 10) << "one token more, six frames more";
+    // a cap of the caller wins on both sides: below the reference's limit, and below its minimum of 4
+    std::vector<unsigned char> capped;
+    ASSERT_EQ(speak(budget_tts(), "Hi", &capped, [](jllama_tts_options &o) { o.max_frames = 5; }), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(frames_of(capped), 5);
+    ASSERT_EQ(speak(eos_tts(), "Hi", &capped, [](jllama_tts_options &o) { o.max_frames = 2; }), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(frames_of(capped), 2);
+}
+
+TEST_F(CApiVoxCpm2, TheStopHeadDecidesTheLengthAndNothingElse) {
+    // the two mmprojs differ in the stop head only, and the decoder is causal: the 4 frames of the
+    // stopping one are the first 4 frames of the one that runs to its limit, and a cap of 20 frames is
+    // the first 20 of 28 -- although the decoder takes 16 frames per call, so its last call there is 4
+    // frames and here 12
+    std::vector<unsigned char> full;
+    std::vector<unsigned char> stopped;
+    std::vector<unsigned char> capped;
+    ASSERT_EQ(speak(budget_tts(), "Hi", &full), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &stopped), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(budget_tts(), "Hi", &capped, [](jllama_tts_options &o) { o.max_frames = 20; }), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    ASSERT_EQ(frames_of(full), 28);
+    ASSERT_EQ(frames_of(stopped), 4);
+    ASSERT_EQ(frames_of(capped), 20);
+    EXPECT_EQ(head(stopped, 4), head(full, 4));
+    EXPECT_EQ(head(capped, 20), head(full, 20));
+}
+
+TEST_F(CApiVoxCpm2, AVoiceDescriptionInParenthesesIsSpokenAsPartOfThePrompt) {
+    // llama.cpp parses nothing out of "(...)": the description is text of the prompt the model was
+    // trained to read as a voice design. So it is not refused, it is not stripped -- its 7 tokens raise
+    // the frame limit by 42 -- and it changes the audio of a seed.
+    std::vector<unsigned char> plain;
+    std::vector<unsigned char> designed;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &plain), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "(warm)Hi", &designed), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(frames_of(designed), 4);
+    EXPECT_NE(designed, plain);
+    std::vector<unsigned char> budget;
+    ASSERT_EQ(speak(budget_tts(), "(warm)Hi", &budget), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(tokens_of("(warm)Hi"), 9) << "the space piece, (, w, a, r, m, ), H, i";
+    EXPECT_EQ(frames_of(budget), 6 * 9 + 10);
+}
+
+TEST_F(CApiVoxCpm2, AChineseWordOfTheVocabularyCountsItsCharacters) {
+    // 你好 is one piece of the vocabulary, which the driver splits back into its two characters (VoxCPM's
+    // mask_multichar_chinese_tokens): the tokenizer gives the space piece and 你好, the driver three tokens
+    // and 28 frames, where the unsplit piece would give 22
+    const std::string nihao = "\xE4\xBD\xA0\xE5\xA5\xBD";
+    ASSERT_EQ(tokens_of(nihao), 2);
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(speak(budget_tts(), nihao.c_str(), &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(frames_of(wav), 6 * 3 + 10);
+}
+
+TEST_F(CApiVoxCpm2, TheWhitespaceOfTheTextIsCollapsed) {
+    // re.sub(r"\s+", " ", text) as the reference: a run of spaces, tabs and line breaks is one space piece
+    std::vector<unsigned char> one;
+    std::vector<unsigned char> many;
+    ASSERT_EQ(speak(eos_tts(), "Hi there", &one), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi \t\n  there", &many), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(many, one);
+}
+
+TEST_F(CApiVoxCpm2, TheTemperatureScalesTheFlowNoiseAndAtZeroTheSeedDoesNotMatter) {
+    // the temperature is the standard deviation of the noise the flow matching starts from (mtmd-subcontext.cpp,
+    // VOXCPM2_GEN), 1 by default; at 0 the noise is zero, and nothing else of this pipeline draws from the
+    // seed (the backbone's sampled token is not read), so the seed no longer matters
+    const auto at = [](float temperature, unsigned seed) {
+        return [temperature, seed](jllama_tts_options &o) {
+            o.temperature = temperature;
+            o.seed = seed;
+        };
+    };
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> one;
+    std::vector<unsigned char> half;
+    std::vector<unsigned char> cold;
+    std::vector<unsigned char> cold_other_seed;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &one, at(1.0f, 7)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &half, at(0.5f, 7)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &cold, at(0.0f, 7)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &cold_other_seed, at(0.0f, 8)), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(own, one) << "the model's default is 1";
+    EXPECT_NE(half, own);
+    EXPECT_NE(cold, own);
+    EXPECT_NE(cold, half);
+    EXPECT_EQ(cold, cold_other_seed);
+}
+
+TEST_F(CApiVoxCpm2, GuidanceAndSolverStepsAreTakenAndChangeTheAudio) {
+    // VoxCPM2 is the second model that takes both (b12459's fields): 0 is the model's own, 2.0 and 10
+    // Euler steps like the reference, so naming those changes nothing; a scale of 1 is the conditioned
+    // velocity alone, and 2 and 32 steps solve the same ODE more coarsely and more finely
+    const auto with = [](float cfg_scale, int flow_steps) {
+        return [cfg_scale, flow_steps](jllama_tts_options &o) {
+            o.cfg_scale = cfg_scale;
+            o.flow_steps = flow_steps;
+        };
+    };
+    std::vector<unsigned char> own;
+    std::vector<unsigned char> named;
+    std::vector<unsigned char> unguided;
+    std::vector<unsigned char> stronger;
+    std::vector<unsigned char> coarse;
+    std::vector<unsigned char> fine;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &named, with(2.0f, 10)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &unguided, with(1.0f, 0)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &stronger, with(3.0f, 0)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &coarse, with(0.0f, 2)), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(speak(eos_tts(), "Hi", &fine, with(0.0f, 32)), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(named, own);
+    EXPECT_NE(unguided, own);
+    EXPECT_NE(stronger, own);
+    EXPECT_NE(stronger, unguided);
+    EXPECT_NE(coarse, own);
+    EXPECT_NE(fine, own);
+    EXPECT_NE(fine, coarse);
+    for (const auto *wav : {&unguided, &stronger, &coarse, &fine}) {
+        EXPECT_EQ(frames_of(*wav), 4) << "they change the latents, not their number";
+    }
+}
+
+TEST_F(CApiVoxCpm2, SolverStepsAndAGuidanceOutsideTheirRangeAreRefused) {
+    const auto status_of = [](float cfg_scale, int flow_steps) {
+        return speak(eos_tts(), "Hi", nullptr, [cfg_scale, flow_steps](jllama_tts_options &o) {
+            o.cfg_scale = cfg_scale;
+            o.flow_steps = flow_steps;
+        });
+    };
+    // VoxCPM2's own range, 2 to 32 (its flow graph unrolls the steps, the first is skipped by CFG-Zero*):
+    // set_input answers 2, which the engine reports as the request's fault -- with the message it has for
+    // a model without the option ("the model does not support cfg_scale or flow_steps"), which reads
+    // wrong here; llama.cpp's own log line names the range
+    EXPECT_EQ(status_of(0.0f, 1), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("flow_steps"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(status_of(0.0f, 33), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("flow_steps"), std::string::npos) << jllama_last_error();
+    // the engine's own range, before the model is touched
+    EXPECT_EQ(status_of(0.0f, -1), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("flow_steps must be between"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(status_of(0.0f, 1025), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(status_of(-1.0f, 0), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("cfg_scale must be"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(status_of(std::nanf(""), 0), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(status_of(0.0f, 0), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+TEST_F(CApiVoxCpm2, TheOptionsItDoesNotReadLeaveTheAudioAsIs) {
+    // the language is the text's (the driver never reads it), the sampler settings reach only the
+    // backbone token the driver ignores, the transcript of a reference is not needed (llama.cpp warns),
+    // a voice name has neither a predefined voice nor a "tts" template to go to, and raw_prompt has no
+    // template to skip; speed and loudness belong to ZONOS3 and are refused
+    std::vector<unsigned char> own;
+    ASSERT_EQ(speak(eos_tts(), "Hi", &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::vector<std::pair<const char *, std::function<void(jllama_tts_options &)>>> unread = {
+        {"lang", [](jllama_tts_options &o) { o.lang = "de"; }},
+        {"top_k", [](jllama_tts_options &o) { o.top_k = 1; }},
+        {"top_p", [](jllama_tts_options &o) { o.top_p = 0.5f; }},
+        {"repeat_penalty", [](jllama_tts_options &o) { o.repeat_penalty = 1.3f; }},
+        {"speaker_reference_text", [](jllama_tts_options &o) { o.speaker_reference_text = "what a clip says"; }},
+        {"voice", [](jllama_tts_options &o) { o.voice = "alba"; }},
+        {"raw_prompt", [](jllama_tts_options &o) { o.raw_prompt = 1; }},
+    };
+    for (const auto &option : unread) {
+        std::vector<unsigned char> wav;
+        ASSERT_EQ(speak(eos_tts(), "Hi", &wav, option.second), JLLAMA_STATUS_OK)
+            << option.first << ": " << jllama_last_error();
+        EXPECT_EQ(wav, own) << option.first;
+    }
+    EXPECT_EQ(speak(eos_tts(), "Hi", nullptr, [](jllama_tts_options &o) { o.speed = 2.0f; }),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("speed or loudness"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(speak(eos_tts(), "Hi", nullptr, [](jllama_tts_options &o) { o.loudness = -20.0f; }),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(speak(eos_tts(), "Hi", nullptr), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+// The same backbone with the AudioVAE encoder in its mmproj (voxcpm2_spkenc), which turns a reference
+// clip into one backbone row per 160 ms. llama.cpp's mtmd_helper_get_capabilities().audio_gen_spk_ref
+// names Qwen3-TTS and Pocket TTS only (mtmd-helper.cpp, unchanged at b12542), so the engine's first
+// rule refused the reference by name; the engine now decides by the pipeline and the projector
+// (tts_params.hpp, pair_takes_speaker_reference), as upstream's /tts route asks the projector only.
+// Red with the old rule. The pipeline itself is driven below the way tts_engine.cpp drives it, to
+// show the clip's rows reach the prompt whatever the C API says.
+TEST(CApiVoxCpm2Clone, TheEncoderClonesAVoiceThroughTheCApiAndThePipeline) {
+    const std::string backbone = jllama_test::write_tiny_voxcpm2_gguf("jllama-voxcpm2-clone");
+    const std::string mmproj = jllama_test::write_tiny_voxcpm2_mmproj_gguf("jllama-voxcpm2-clone-mmproj", 100.0f, true);
+    ASSERT_FALSE(backbone.empty());
+    ASSERT_FALSE(mmproj.empty());
+    const auto clip = [](float hz) {
+        std::vector<float> tone(16000); // one second at the encoder's 16 kHz: 7 rows of 2560 samples
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.4f * std::sin(2.0f * 3.14159265f * hz * static_cast<float>(i) / 16000.0f);
+        }
+        const std::string path = (std::filesystem::temp_directory_path() /
+                                  ("jllama-voxcpm2-ref-" + std::to_string(static_cast<int>(hz)) + ".wav"))
+                                     .string();
+        const std::vector<uint8_t> wav = jllama_tts::pcm_to_wav16_bytes(tone, 16000);
+        std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(wav.data()), wav.size());
+        return path;
+    };
+    const std::string low = clip(220.0f);
+    const std::string high = clip(880.0f);
+
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
+    bool supported = false;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts, &supported), JLLAMA_STATUS_OK);
+    // llama.cpp's audio_gen_spk_ref does not name VoxCPM2 (b12541); the engine's own rule does
+    EXPECT_TRUE(supported);
+    // the WAV of "Hi" with seed 7, cloned from the clip at `reference` (null: none); empty on a failure
+    const auto synthesize = [&](const char *reference) -> std::vector<uint8_t> {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.speaker_reference_path = reference;
+        options.seed = 7;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        if (jllama_tts_synthesize_options(tts, "Hi", &options, &bytes, &length) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << jllama_last_error();
+            return {};
+        }
+        std::vector<uint8_t> wav(bytes, bytes + length);
+        jllama_bytes_free(bytes);
+        return wav;
+    };
+    const std::vector<uint8_t> api_own = synthesize(nullptr);
+    const std::vector<uint8_t> api_low = synthesize(low.c_str());
+    const std::vector<uint8_t> api_high = synthesize(high.c_str());
+    ASSERT_FALSE(api_own.empty());
+    EXPECT_EQ(api_low.size(), api_own.size());
+    EXPECT_NE(api_low, api_own) << "the clip's rows are part of the prompt";
+    EXPECT_NE(api_low, api_high) << "another clip, other rows";
+    jllama_tts_free(tts);
+
+    llama_backend_init();
+    llama_model_params model_params = llama_model_default_params();
+    model_params.n_gpu_layers = 0;
+    llama_model *model = llama_model_load_from_file(backbone.c_str(), model_params);
+    ASSERT_NE(model, nullptr);
+    llama_context_params context_params = llama_context_default_params();
+    context_params.n_ctx = 1024;
+    context_params.n_batch = 512;
+    context_params.n_ubatch = 512;
+    context_params.n_threads = 2;
+    context_params.n_threads_batch = 2;
+    context_params.embeddings = true;
+    context_params.pooling_type = LLAMA_POOLING_TYPE_NONE;
+    llama_context *lctx = llama_init_from_model(model, context_params);
+    ASSERT_NE(lctx, nullptr);
+    mtmd_context_params mtmd_params = mtmd_context_params_default();
+    mtmd_params.use_gpu = false;
+    mtmd_params.n_threads = 2;
+    mtmd_params.print_timings = false;
+    mtmd::context_ptr mctx(mtmd_init_from_file(mmproj.c_str(), model, mtmd_params));
+    ASSERT_NE(mctx, nullptr);
+    EXPECT_TRUE(mtmd_support_audio(mctx.get()));
+    EXPECT_EQ(mtmd_get_audio_sample_rate(mctx.get()), 16000);
+    // the PCM of "Hi" with seed 7, cloned from the clip at `reference` (null: none); empty on a failure
+    const auto speak = [&](const std::string *reference) -> std::vector<float> {
+        mtmd::bitmap_ptr ref;
+        if (reference != nullptr) {
+            ref.reset(
+                mtmd_helper_bitmap_init_from_file(mctx.get(), reference->c_str(), false, mtmd_helper_init_opt_default())
+                    .bitmap);
+            if (!ref) {
+                return {};
+            }
+        }
+        mtmd_helper::gen_audio gen;
+        gen.init(lctx, mctx.get());
+        if (!gen.valid()) {
+            return {};
+        }
+        mtmd_helper_gen_audio_inp inp = mtmd_helper_gen_audio_inp_default();
+        inp.prompt = "Hi";
+        inp.prompt_len = 2;
+        inp.speaker_ref = ref.get();
+        inp.seed = 7;
+        inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;
+        llama_memory_seq_rm(llama_get_memory(lctx), 0, -1, -1);
+        if (gen.set_input(&inp) != 0) {
+            return {};
+        }
+        int32_t remaining = 0;
+        while ((remaining = gen.step_prompt(static_cast<int32_t>(llama_n_batch(lctx)))) > 0) {
+        }
+        if (remaining < 0) {
+            return {};
+        }
+        const float *h = llama_get_embeddings_ith(lctx, -1);
+        bool stop = false;
+        while (!stop) {
+            const float *next = nullptr;
+            if (gen.step_gen(LLAMA_TOKEN_NULL, h, &next, &stop) != 0) {
+                return {};
+            }
+            if (next == nullptr) {
+                break;
+            }
+            h = next;
+        }
+        int32_t rate = 0;
+        const char *data = nullptr;
+        size_t n_bytes = 0;
+        if (gen.get_output(&rate, &data, &n_bytes) != 0 || rate != 48000) {
+            return {};
+        }
+        const auto *pcm = reinterpret_cast<const float *>(data);
+        return std::vector<float>(pcm, pcm + n_bytes / sizeof(float));
+    };
+    const std::vector<float> own = speak(nullptr);
+    const std::vector<float> cloned_low = speak(&low);
+    const std::vector<float> cloned_low_again = speak(&low);
+    const std::vector<float> cloned_high = speak(&high);
+    // 4 frames each: the stop head of this mmproj fires at once, and the voice rows are prompt rows
+    EXPECT_EQ(own.size(), 4u * 7680u);
+    ASSERT_EQ(cloned_low.size(), own.size());
+    ASSERT_EQ(cloned_high.size(), own.size());
+    EXPECT_NE(cloned_low, own) << "the clip's rows are part of the prompt";
+    EXPECT_EQ(cloned_low, cloned_low_again);
+    EXPECT_NE(cloned_low, cloned_high) << "another clip, other rows";
+    mctx.reset();
+    llama_free(lctx);
+    llama_model_free(model);
+    for (const std::string &p : {backbone, mmproj, low, high}) {
+        std::remove(p.c_str());
+    }
 }
 
 // The tts template of a speech model may look words up in dictionaries the model carries (llama.cpp

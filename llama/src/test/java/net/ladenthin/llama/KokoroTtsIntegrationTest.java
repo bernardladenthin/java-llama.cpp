@@ -23,4 +23,10 @@ public class KokoroTtsIntegrationTest extends AbstractTtsPipelineContract {
         return TestConstants.resolveModelProperty(
                 TestConstants.PROP_KOKORO_MMPROJ, TestConstants.DEFAULT_KOKORO_MMPROJ_PATH);
     }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // Kokoro speaks only with its predefined voices
+        return false;
+    }
 }

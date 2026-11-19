@@ -23,4 +23,10 @@ public class TinyVocaTtsIntegrationTest extends AbstractTtsPipelineContract {
         return TestConstants.resolveModelProperty(
                 TestConstants.PROP_TINY_VOCA_MMPROJ, TestConstants.DEFAULT_TINY_VOCA_MMPROJ_PATH);
     }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // tiny-voca speaks only with its predefined voices
+        return false;
+    }
 }

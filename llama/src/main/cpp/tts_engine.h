@@ -37,8 +37,8 @@ struct tts_engine;
 tts_engine *engine_init(const std::string &model_path, const std::string &mmproj_path, int n_gpu_layers, int n_threads,
                         std::string &err);
 
-// Whether the loaded pair clones a voice from a speaker reference (llama.cpp's
-// mtmd_helper_cap::audio_gen_spk_ref, read once at load). False on nullptr.
+// Whether the loaded pair clones a voice from a speaker reference (tts_params.hpp's
+// pair_takes_speaker_reference, read once at load). False on nullptr.
 bool engine_supports_speaker_reference(const tts_engine *engine);
 
 // The names of the predefined voices the loaded pair ships in its projector (llama.cpp b12061,

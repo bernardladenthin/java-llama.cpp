@@ -21,4 +21,10 @@ public class ChatterboxIntegrationTest extends AbstractTtsPipelineContract {
         return TestConstants.resolveModelProperty(
                 TestConstants.PROP_CHATTERBOX_MMPROJ, TestConstants.DEFAULT_CHATTERBOX_MMPROJ_PATH);
     }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // its projector carries the speaker encoder (clip.has_audio_encoder, chatterbox_spkenc)
+        return true;
+    }
 }

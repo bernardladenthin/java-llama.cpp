@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.parameters.SpeechParameters;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -59,6 +60,16 @@ public abstract class AbstractTtsPipelineContract {
      * @return its path, or {@code null} when none is configured
      */
     protected abstract String mmprojPath();
+
+    /**
+     * Whether the pair under test clones a voice from a reference clip, as far as the test knows it:
+     * CI's pairs say so, a pair named by properties does not.
+     *
+     * @return the expected {@link TextToSpeech#supportsSpeakerReference()}, or {@code null} when unknown
+     */
+    protected @Nullable Boolean clonesVoice() {
+        return null;
+    }
 
     @BeforeAll
     public void setup() {
@@ -115,6 +126,15 @@ public abstract class AbstractTtsPipelineContract {
         InvalidRequestException unknown = assertThrows(
                 InvalidRequestException.class, () -> tts.synthesize("Hello.", null, null, "nobody", MAX_FRAMES, 4, 1));
         assertTrue(unknown.getMessage().contains(voices.get(0)), unknown.getMessage());
+    }
+
+    @Test
+    @DisplayName("the pair clones a voice exactly when its pipeline and projector can")
+    public void theVoiceCloningCapabilityIsThePairs() {
+        // the cloning case below takes whatever the pair reports, so a wrong report passes it
+        Boolean expected = clonesVoice();
+        Assumptions.assumeTrue(expected != null, "the pair under test is not one of CI's");
+        assertEquals(expected, tts.supportsSpeakerReference());
     }
 
     @Test

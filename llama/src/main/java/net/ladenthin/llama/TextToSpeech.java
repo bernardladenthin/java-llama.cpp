@@ -209,9 +209,9 @@ public final class TextToSpeech implements AutoCloseable {
     /**
      * Whether this model pair clones a voice from a speaker reference clip, i.e. whether
      * {@link #synthesize(String, String, String, int, int, int)} accepts a
-     * {@code speakerReferenceAudioPath}. llama.cpp decides it per pipeline
-     * ({@code mtmd_helper_cap::audio_gen_spk_ref}, b11901): Qwen3-TTS and Pocket TTS do, a pipeline
-     * without a voice encoder such as Soprano does not. A projector of such a pipeline that was
+     * {@code speakerReferenceAudioPath}. It depends on the pipeline: Qwen3-TTS, Pocket TTS,
+     * Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a reference clip, the others (Soprano,
+     * Kokoro, tiny-voca, LFM3-Audio, Drama-3) do not. A projector of such a pipeline that was
      * converted without the encoder (Pocket TTS "without voice cloning", which ships predefined
      * voices instead) takes no audio in and reports {@code false} as well.
      *

@@ -30,7 +30,7 @@ struct tts_engine {
     mtmd::context_ptr mctx;
     int n_threads = 4;
     int n_batch = 2048;
-    // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
+    // Whether the loaded pair clones a voice from a clip (pair_takes_speaker_reference), read once at load.
     bool speaker_reference = false;
     // The predefined voices of the projector (b12061, #31429), read once at load; empty for most models.
     std::vector<std::string> voices;
@@ -85,11 +85,10 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
     engine->channels = info.n_channels > 0 ? info.n_channels : 1;
-    // The capability names the pipeline (Qwen3-TTS, Pocket TTS), not the file: a Pocket TTS projector
-    // converted without its voice encoder takes no audio in (no input sample rate), and a reference
-    // clip then fails to decode -- found by CI's pair, which ships predefined voices instead.
-    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref &&
-                                mtmd_get_audio_sample_rate(engine->mctx.get()) >= 0;
+    // The pipeline clones a voice and the projector has the encoder for the clip (tts_params.hpp).
+    engine->speaker_reference = jllama_tts::pair_takes_speaker_reference(
+        mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref, info.type,
+        mtmd_support_audio(engine->mctx.get()));
     for (int32_t i = 0; const char *name = mtmd_gen_audio_voice_name(engine->mctx.get(), i); i++) {
         engine->voices.emplace_back(name);
     }
