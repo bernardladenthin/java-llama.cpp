@@ -47,9 +47,25 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         err = "optimizer must be 0 (AdamW) or 1 (SGD), was " + std::to_string(cfg.optimizer);
         return false;
     }
+    common_params params = build_train_params(cfg);
+
+    // The corpus is either read from a file or supplied inline.
+    if (!cfg.training_file.empty()) {
+        // u8path: the path is UTF-8, and a narrow string is read in the ANSI code page on Windows
+        std::ifstream in(std::filesystem::u8path(cfg.training_file), std::ios::binary);
+        if (!in) {
+            err = "cannot open training file: " + cfg.training_file;
+            return false;
+        }
+        params.prompt.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    } else {
+        params.prompt = cfg.training_text;
+    }
+
     // llama_model_save_to_file() returns nothing and ignores a failed write (upstream's saver drops
     // gguf_write_to_file's bool): a run into a directory that does not exist reported success and left
-    // no file. The output is tried before the training, which takes long, and checked after the save.
+    // no file. The output is tried after the inputs and before the training, which takes long, and
+    // checked after the save.
     if (cfg.output_path.empty()) {
         err = "output_path is required";
         return false;
@@ -67,20 +83,6 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         if (!existed) {
             std::filesystem::remove(output, ec);
         }
-    }
-    common_params params = build_train_params(cfg);
-
-    // The corpus is either read from a file or supplied inline.
-    if (!cfg.training_file.empty()) {
-        // u8path: the path is UTF-8, and a narrow string is read in the ANSI code page on Windows
-        std::ifstream in(std::filesystem::u8path(cfg.training_file), std::ios::binary);
-        if (!in) {
-            err = "cannot open training file: " + cfg.training_file;
-            return false;
-        }
-        params.prompt.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    } else {
-        params.prompt = cfg.training_text;
     }
 
     llama_backend_init();
