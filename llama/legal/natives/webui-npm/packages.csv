@@ -1,7 +1,4 @@
 package,version,license,files,tarball
-@antfu/install-pkg,2.1.0,MIT,LICENSE,https://registry.npmjs.org/@antfu/install-pkg/-/install-pkg-2.1.0.tgz
-@braintree/sanitize-url,7.1.2,MIT,LICENSE,https://registry.npmjs.org/@braintree/sanitize-url/-/sanitize-url-7.1.2.tgz
-@chevrotain/types,11.1.2,Apache-2.0,LICENSE.txt,https://registry.npmjs.org/@chevrotain/types/-/types-11.1.2.tgz
 @codemirror/autocomplete,6.20.4,MIT,LICENSE,https://registry.npmjs.org/@codemirror/autocomplete/-/autocomplete-6.20.4.tgz
 @codemirror/commands,6.11.1,MIT,LICENSE,https://registry.npmjs.org/@codemirror/commands/-/commands-6.11.1.tgz
 @codemirror/lang-css,6.3.1,MIT,LICENSE,https://registry.npmjs.org/@codemirror/lang-css/-/lang-css-6.3.1.tgz
@@ -18,8 +15,6 @@ package,version,license,files,tarball
 @floating-ui/utils,0.2.12,MIT,LICENSE,https://registry.npmjs.org/@floating-ui/utils/-/utils-0.2.12.tgz
 @ggml-org/llama-brand,0.1.0,CC-BY-NC-4.0 AND MIT AND OFL-1.1,BRAND-USAGE.md;LICENSE;css/LICENSE;fonts/OFL.txt,https://registry.npmjs.org/@ggml-org/llama-brand/-/llama-brand-0.1.0.tgz
 @hono/node-server,2.1.6,MIT,LICENSE,https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.6.tgz
-@iconify/types,2.0.0,MIT,license.txt,https://registry.npmjs.org/@iconify/types/-/types-2.0.0.tgz
-@iconify/utils,3.1.7,MIT,license.txt,https://registry.npmjs.org/@iconify/utils/-/utils-3.1.7.tgz
 @jridgewell/gen-mapping,0.3.13,MIT,LICENSE,https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz
 @jridgewell/remapping,2.3.5,MIT,LICENSE,https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz
 @jridgewell/resolve-uri,3.1.2,MIT,LICENSE,https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz
@@ -34,7 +29,6 @@ package,version,license,files,tarball
 @lezer/markdown,1.8.1,MIT,LICENSE,https://registry.npmjs.org/@lezer/markdown/-/markdown-1.8.1.tgz
 @lucide/svelte,1.46.0,ISC,LICENSE,https://registry.npmjs.org/@lucide/svelte/-/svelte-1.46.0.tgz
 @marijn/find-cluster-break,1.0.4,MIT,LICENSE,https://registry.npmjs.org/@marijn/find-cluster-break/-/find-cluster-break-1.0.4.tgz
-@mermaid-js/parser,1.2.1,MIT,LICENSE,https://registry.npmjs.org/@mermaid-js/parser/-/parser-1.2.1.tgz
 @modelcontextprotocol/sdk,1.32.1,MIT,LICENSE,https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.1.tgz
 @napi-rs/canvas,0.1.100,MIT,LICENSE,https://registry.npmjs.org/@napi-rs/canvas/-/canvas-0.1.100.tgz
 @napi-rs/canvas-android-arm64,0.1.100,MIT,(declared in package.json),https://registry.npmjs.org/@napi-rs/canvas-android-arm64/-/canvas-android-arm64-0.1.100.tgz
@@ -55,7 +49,6 @@ package,version,license,files,tarball
 @sveltejs/kit,3.2.0,MIT,LICENSE,https://registry.npmjs.org/@sveltejs/kit/-/kit-3.2.0.tgz
 magic-string,1.4.5,MIT,LICENSE,https://registry.npmjs.org/magic-string/-/magic-string-1.4.5.tgz
 @ungap/structured-clone,1.4.0,ISC,LICENSE,https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.4.0.tgz
-@upsetjs/venn.js,2.0.0,MIT,LICENSE,https://registry.npmjs.org/@upsetjs/venn.js/-/venn.js-2.0.0.tgz
 accepts,2.0.0,MIT,LICENSE,https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz
 acorn,8.19.0,MIT,LICENSE,https://registry.npmjs.org/acorn/-/acorn-8.19.0.tgz
 ajv,8.20.0,MIT,LICENSE,https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz
@@ -75,62 +68,15 @@ character-entities-html4,2.1.0,MIT,license,https://registry.npmjs.org/character-
 character-entities-legacy,3.0.0,MIT,license,https://registry.npmjs.org/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz
 clsx,2.1.1,MIT,license,https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz
 comma-separated-tokens,2.0.3,MIT,license,https://registry.npmjs.org/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz
-commander,7.2.0,MIT,LICENSE,https://registry.npmjs.org/commander/-/commander-7.2.0.tgz
 content-disposition,2.0.1,MIT,LICENSE,https://registry.npmjs.org/content-disposition/-/content-disposition-2.0.1.tgz
 content-type,1.0.5,MIT,LICENSE,https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz
 cookie,1.1.1,MIT,LICENSE,https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz
 cookie-signature,1.2.2,MIT,LICENSE,https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz
 cors,2.8.6,MIT,LICENSE,https://registry.npmjs.org/cors/-/cors-2.8.6.tgz
-cose-base,1.0.3,MIT,LICENSE,https://registry.npmjs.org/cose-base/-/cose-base-1.0.3.tgz
 crelt,1.0.7,MIT,LICENSE,https://registry.npmjs.org/crelt/-/crelt-1.0.7.tgz
 cross-spawn,7.0.6,MIT,LICENSE,https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz
-cytoscape,3.34.4,MIT,LICENSE;license-update.mjs,https://registry.npmjs.org/cytoscape/-/cytoscape-3.34.4.tgz
-cytoscape-cose-bilkent,4.1.0,MIT,LICENSE,https://registry.npmjs.org/cytoscape-cose-bilkent/-/cytoscape-cose-bilkent-4.1.0.tgz
-cytoscape-fcose,2.2.0,MIT,LICENSE,https://registry.npmjs.org/cytoscape-fcose/-/cytoscape-fcose-2.2.0.tgz
-cose-base,2.2.0,MIT,LICENSE,https://registry.npmjs.org/cose-base/-/cose-base-2.2.0.tgz
-layout-base,2.0.1,MIT,LICENSE,https://registry.npmjs.org/layout-base/-/layout-base-2.0.1.tgz
-d3,7.9.2,ISC,LICENSE,https://registry.npmjs.org/d3/-/d3-7.9.2.tgz
-d3-array,3.2.5,ISC,LICENSE,https://registry.npmjs.org/d3-array/-/d3-array-3.2.5.tgz
-d3-axis,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-axis/-/d3-axis-3.0.1.tgz
-d3-brush,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-brush/-/d3-brush-3.0.1.tgz
-d3-chord,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-chord/-/d3-chord-3.0.2.tgz
-d3-color,3.1.1,ISC,LICENSE,https://registry.npmjs.org/d3-color/-/d3-color-3.1.1.tgz
-d3-contour,4.0.3,ISC,LICENSE,https://registry.npmjs.org/d3-contour/-/d3-contour-4.0.3.tgz
-d3-delaunay,6.0.6,ISC,LICENSE,https://registry.npmjs.org/d3-delaunay/-/d3-delaunay-6.0.6.tgz
-d3-dispatch,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-dispatch/-/d3-dispatch-3.0.2.tgz
-d3-drag,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-drag/-/d3-drag-3.0.1.tgz
-d3-dsv,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-dsv/-/d3-dsv-3.0.2.tgz
-iconv-lite,0.6.3,MIT,LICENSE,https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz
-d3-ease,3.0.2,BSD-3-Clause,LICENSE,https://registry.npmjs.org/d3-ease/-/d3-ease-3.0.2.tgz
-d3-fetch,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-fetch/-/d3-fetch-3.0.2.tgz
-d3-force,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-force/-/d3-force-3.0.1.tgz
-d3-format,3.1.3,ISC,LICENSE,https://registry.npmjs.org/d3-format/-/d3-format-3.1.3.tgz
-d3-geo,3.1.2,ISC,LICENSE,https://registry.npmjs.org/d3-geo/-/d3-geo-3.1.2.tgz
-d3-hierarchy,3.1.3,ISC,LICENSE,https://registry.npmjs.org/d3-hierarchy/-/d3-hierarchy-3.1.3.tgz
-d3-interpolate,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-interpolate/-/d3-interpolate-3.0.2.tgz
-d3-path,3.1.1,ISC,LICENSE,https://registry.npmjs.org/d3-path/-/d3-path-3.1.1.tgz
-d3-polygon,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-polygon/-/d3-polygon-3.0.2.tgz
-d3-quadtree,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-quadtree/-/d3-quadtree-3.0.2.tgz
-d3-random,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-random/-/d3-random-3.0.2.tgz
-d3-sankey,0.12.3,BSD-3-Clause,LICENSE,https://registry.npmjs.org/d3-sankey/-/d3-sankey-0.12.3.tgz
-d3-array,2.12.1,BSD-3-Clause,LICENSE,https://registry.npmjs.org/d3-array/-/d3-array-2.12.1.tgz
-d3-path,1.0.9,BSD-3-Clause,LICENSE,https://registry.npmjs.org/d3-path/-/d3-path-1.0.9.tgz
-d3-shape,1.3.7,BSD-3-Clause,LICENSE,https://registry.npmjs.org/d3-shape/-/d3-shape-1.3.7.tgz
-internmap,1.0.1,ISC,LICENSE,https://registry.npmjs.org/internmap/-/internmap-1.0.1.tgz
-d3-scale,4.0.3,ISC,LICENSE,https://registry.npmjs.org/d3-scale/-/d3-scale-4.0.3.tgz
-d3-scale-chromatic,3.1.1,ISC,LICENSE,https://registry.npmjs.org/d3-scale-chromatic/-/d3-scale-chromatic-3.1.1.tgz
-d3-selection,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-selection/-/d3-selection-3.0.1.tgz
-d3-shape,3.2.1,ISC,LICENSE,https://registry.npmjs.org/d3-shape/-/d3-shape-3.2.1.tgz
-d3-time,3.1.1,ISC,LICENSE,https://registry.npmjs.org/d3-time/-/d3-time-3.1.1.tgz
-d3-time-format,4.1.1,ISC,LICENSE,https://registry.npmjs.org/d3-time-format/-/d3-time-format-4.1.1.tgz
-d3-timer,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-timer/-/d3-timer-3.0.2.tgz
-d3-transition,3.0.2,ISC,LICENSE,https://registry.npmjs.org/d3-transition/-/d3-transition-3.0.2.tgz
-d3-zoom,3.0.1,ISC,LICENSE,https://registry.npmjs.org/d3-zoom/-/d3-zoom-3.0.1.tgz
-dagre-d3-es,7.0.14,MIT,LICENSE.md,https://registry.npmjs.org/dagre-d3-es/-/dagre-d3-es-7.0.14.tgz
-dayjs,1.11.23,MIT,LICENSE,https://registry.npmjs.org/dayjs/-/dayjs-1.11.23.tgz
 debug,4.4.3,MIT,LICENSE,https://registry.npmjs.org/debug/-/debug-4.4.3.tgz
 decode-named-character-reference,1.3.0,MIT,license,https://registry.npmjs.org/decode-named-character-reference/-/decode-named-character-reference-1.3.0.tgz
-delaunator,5.1.0,ISC,LICENSE,https://registry.npmjs.org/delaunator/-/delaunator-5.1.0.tgz
 depd,2.0.0,MIT,LICENSE,https://registry.npmjs.org/depd/-/depd-2.0.0.tgz
 dequal,2.0.3,MIT,license,https://registry.npmjs.org/dequal/-/dequal-2.0.3.tgz
 devalue,5.9.4,MIT,LICENSE,https://registry.npmjs.org/devalue/-/devalue-5.9.4.tgz
@@ -144,7 +90,6 @@ entities,9.0.0,BSD-2-Clause,LICENSE,https://registry.npmjs.org/entities/-/entiti
 es-define-property,1.0.1,MIT,LICENSE,https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz
 es-errors,1.3.0,MIT,LICENSE,https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz
 es-object-atoms,1.1.2,MIT,LICENSE,https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz
-es-toolkit,1.53.2,MIT,LICENSE;NOTICE,https://registry.npmjs.org/es-toolkit/-/es-toolkit-1.53.2.tgz
 escape-html,1.0.3,MIT,LICENSE,https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz
 esm-env,1.2.2,MIT,LICENSE,https://registry.npmjs.org/esm-env/-/esm-env-1.2.2.tgz
 etag,1.8.1,MIT,LICENSE,https://registry.npmjs.org/etag/-/etag-1.8.1.tgz
@@ -155,7 +100,6 @@ express-rate-limit,8.7.3,MIT,license,https://registry.npmjs.org/express-rate-lim
 extend,3.0.2,MIT,LICENSE,https://registry.npmjs.org/extend/-/extend-3.0.2.tgz
 fast-deep-equal,3.1.3,MIT,LICENSE,https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz
 fast-uri,3.1.9,BSD-3-Clause,LICENSE,https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz
-fastdom,1.0.12,MIT,(declared in package.json),https://registry.npmjs.org/fastdom/-/fastdom-1.0.12.tgz
 fflate,0.8.3,MIT,LICENSE,https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz
 finalhandler,2.1.1,MIT,LICENSE,https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.1.tgz
 forwarded,0.2.0,MIT,LICENSE,https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz
@@ -164,7 +108,6 @@ function-bind,1.1.2,MIT,LICENSE,https://registry.npmjs.org/function-bind/-/funct
 get-intrinsic,1.3.0,MIT,LICENSE,https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz
 get-proto,1.0.1,MIT,LICENSE,https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz
 gopd,1.2.0,MIT,LICENSE,https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz
-hachure-fill,0.5.2,MIT,LICENSE,https://registry.npmjs.org/hachure-fill/-/hachure-fill-0.5.2.tgz
 has-symbols,1.1.0,MIT,LICENSE,https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz
 hasown,2.0.4,MIT,LICENSE,https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz
 hast-util-from-dom,5.0.1,ISC,license,https://registry.npmjs.org/hast-util-from-dom/-/hast-util-from-dom-5.0.1.tgz
@@ -182,10 +125,8 @@ hono,4.13.17,MIT,LICENSE,https://registry.npmjs.org/hono/-/hono-4.13.17.tgz
 html-void-elements,3.0.0,MIT,license,https://registry.npmjs.org/html-void-elements/-/html-void-elements-3.0.0.tgz
 http-errors,2.0.1,MIT,LICENSE,https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz
 iconv-lite,0.7.3,MIT,LICENSE,https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz
-import-meta-resolve,4.2.0,MIT,license,https://registry.npmjs.org/import-meta-resolve/-/import-meta-resolve-4.2.0.tgz
 inherits,2.0.4,ISC,LICENSE,https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz
 inline-style-parser,0.2.7,MIT,LICENSE,https://registry.npmjs.org/inline-style-parser/-/inline-style-parser-0.2.7.tgz
-internmap,2.0.3,ISC,LICENSE,https://registry.npmjs.org/internmap/-/internmap-2.0.3.tgz
 ip-address,10.7.6,MIT,LICENSE,https://registry.npmjs.org/ip-address/-/ip-address-10.7.6.tgz
 ipaddr.js,1.9.1,MIT,LICENSE,https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz
 is-plain-obj,4.1.0,MIT,license,https://registry.npmjs.org/is-plain-obj/-/is-plain-obj-4.1.0.tgz
@@ -197,16 +138,12 @@ json-schema-traverse,1.0.0,MIT,LICENSE,https://registry.npmjs.org/json-schema-tr
 json-schema-typed,8.0.2,BSD-2-Clause,LICENSE.md,https://registry.npmjs.org/json-schema-typed/-/json-schema-typed-8.0.2.tgz
 katex,0.19.0,MIT,LICENSE,https://registry.npmjs.org/katex/-/katex-0.19.0.tgz
 commander,15.1.0,MIT,LICENSE,https://registry.npmjs.org/commander/-/commander-15.1.0.tgz
-khroma,2.1.0,,license,https://registry.npmjs.org/khroma/-/khroma-2.1.0.tgz
-layout-base,1.0.2,MIT,LICENSE,https://registry.npmjs.org/layout-base/-/layout-base-1.0.2.tgz
 locate-character,3.0.0,MIT,(declared in package.json),https://registry.npmjs.org/locate-character/-/locate-character-3.0.0.tgz
-lodash-es,4.18.1,MIT,LICENSE,https://registry.npmjs.org/lodash-es/-/lodash-es-4.18.1.tgz
 longest-streak,3.1.0,MIT,license,https://registry.npmjs.org/longest-streak/-/longest-streak-3.1.0.tgz
 lowlight,3.3.0,MIT,license,https://registry.npmjs.org/lowlight/-/lowlight-3.3.0.tgz
 lz-string,1.5.0,MIT,LICENSE,https://registry.npmjs.org/lz-string/-/lz-string-1.5.0.tgz
 magic-string,0.30.21,MIT,LICENSE,https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz
 markdown-table,3.1.0,MIT,license,https://registry.npmjs.org/markdown-table/-/markdown-table-3.1.0.tgz
-marked,16.4.2,MIT,LICENSE.md,https://registry.npmjs.org/marked/-/marked-16.4.2.tgz
 math-intrinsics,1.1.0,MIT,LICENSE,https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz
 mdast-util-find-and-replace,3.0.4,MIT,license,https://registry.npmjs.org/mdast-util-find-and-replace/-/mdast-util-find-and-replace-3.0.4.tgz
 escape-string-regexp,5.0.0,MIT,license,https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz
@@ -225,7 +162,6 @@ mdast-util-to-markdown,2.2.3,MIT,license,https://registry.npmjs.org/mdast-util-t
 mdast-util-to-string,4.0.0,MIT,license,https://registry.npmjs.org/mdast-util-to-string/-/mdast-util-to-string-4.0.0.tgz
 media-typer,1.1.1,MIT,LICENSE,https://registry.npmjs.org/media-typer/-/media-typer-1.1.1.tgz
 merge-descriptors,2.0.0,MIT,license,https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-2.0.0.tgz
-mermaid,11.17.2,MIT,LICENSE,https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz
 micromark,4.0.3,MIT,license,https://registry.npmjs.org/micromark/-/micromark-4.0.3.tgz
 micromark-core-commonmark,2.0.4,MIT,license,https://registry.npmjs.org/micromark-core-commonmark/-/micromark-core-commonmark-2.0.4.tgz
 micromark-extension-gfm,3.0.0,MIT,license,https://registry.npmjs.org/micromark-extension-gfm/-/micromark-extension-gfm-3.0.0.tgz
@@ -268,16 +204,13 @@ object-assign,4.1.1,MIT,license,https://registry.npmjs.org/object-assign/-/objec
 object-inspect,1.13.4,MIT,LICENSE,https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz
 on-finished,2.4.2,MIT,LICENSE,https://registry.npmjs.org/on-finished/-/on-finished-2.4.2.tgz
 once,1.4.0,ISC,LICENSE,https://registry.npmjs.org/once/-/once-1.4.0.tgz
-package-manager-detector,1.9.0,MIT,LICENSE,https://registry.npmjs.org/package-manager-detector/-/package-manager-detector-1.9.0.tgz
 parse5,8.1.1,MIT,LICENSE,https://registry.npmjs.org/parse5/-/parse5-8.1.1.tgz
 parseurl,1.3.3,MIT,LICENSE,https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz
-path-data-parser,0.1.0,MIT,LICENSE,https://registry.npmjs.org/path-data-parser/-/path-data-parser-0.1.0.tgz
 path-key,3.1.1,MIT,license,https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz
 path-to-regexp,8.4.2,MIT,LICENSE,https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.2.tgz
 pdfjs-dist,5.4.54,Apache-2.0,LICENSE,https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.4.54.tgz
+pele,1.13.0,MIT,LICENSE,https://registry.npmjs.org/pele/-/pele-1.13.0.tgz
 pkce-challenge,5.0.1,MIT,LICENSE,https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz
-points-on-curve,0.2.0,MIT,LICENSE,https://registry.npmjs.org/points-on-curve/-/points-on-curve-0.2.0.tgz
-points-on-path,0.2.1,MIT,LICENSE,https://registry.npmjs.org/points-on-path/-/points-on-path-0.2.1.tgz
 property-information,7.2.0,MIT,license,https://registry.npmjs.org/property-information/-/property-information-7.2.0.tgz
 proxy-addr,2.0.8,MIT,LICENSE,https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz
 qs,6.17.1,BSD-3-Clause,LICENSE.md,https://registry.npmjs.org/qs/-/qs-6.17.1.tgz
@@ -294,11 +227,8 @@ remark-parse,11.0.0,MIT,license,https://registry.npmjs.org/remark-parse/-/remark
 remark-rehype,11.1.2,MIT,license,https://registry.npmjs.org/remark-rehype/-/remark-rehype-11.1.2.tgz
 remark-stringify,11.0.0,MIT,license,https://registry.npmjs.org/remark-stringify/-/remark-stringify-11.0.0.tgz
 require-from-string,2.0.2,MIT,license,https://registry.npmjs.org/require-from-string/-/require-from-string-2.0.2.tgz
-robust-predicates,3.0.3,Unlicense,LICENSE,https://registry.npmjs.org/robust-predicates/-/robust-predicates-3.0.3.tgz
-roughjs,4.6.6,MIT,LICENSE,https://registry.npmjs.org/roughjs/-/roughjs-4.6.6.tgz
 router,2.2.0,MIT,LICENSE,https://registry.npmjs.org/router/-/router-2.2.0.tgz
 runed,0.25.0,,LICENSE,https://registry.npmjs.org/runed/-/runed-0.25.0.tgz
-rw,1.3.3,BSD-3-Clause,LICENSE,https://registry.npmjs.org/rw/-/rw-1.3.3.tgz
 safer-buffer,2.1.2,MIT,LICENSE,https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz
 send,1.2.1,MIT,LICENSE,https://registry.npmjs.org/send/-/send-1.2.1.tgz
 serve-static,2.2.1,MIT,LICENSE,https://registry.npmjs.org/serve-static/-/serve-static-2.2.1.tgz
@@ -312,11 +242,9 @@ side-channel-weakmap,1.0.2,MIT,LICENSE,https://registry.npmjs.org/side-channel-w
 sirv,3.0.2,MIT,(declared in package.json),https://registry.npmjs.org/sirv/-/sirv-3.0.2.tgz
 space-separated-tokens,2.0.2,MIT,license,https://registry.npmjs.org/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz
 statuses,2.0.2,MIT,LICENSE,https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz
-strictdom,1.0.1,MIT,(declared in package.json),https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz
 stringify-entities,4.0.4,MIT,license,https://registry.npmjs.org/stringify-entities/-/stringify-entities-4.0.4.tgz
 style-mod,4.1.4,MIT,LICENSE,https://registry.npmjs.org/style-mod/-/style-mod-4.1.4.tgz
 style-to-object,1.0.14,MIT,LICENSE,https://registry.npmjs.org/style-to-object/-/style-to-object-1.0.14.tgz
-stylis,4.4.0,MIT,LICENSE,https://registry.npmjs.org/stylis/-/stylis-4.4.0.tgz
 svelte,5.57.3,MIT,LICENSE.md,https://registry.npmjs.org/svelte/-/svelte-5.57.3.tgz
 svelte-sonner,1.1.1,MIT,LICENSE,https://registry.npmjs.org/svelte-sonner/-/svelte-sonner-1.1.1.tgz
 runed,0.28.0,MIT,LICENSE,https://registry.npmjs.org/runed/-/runed-0.28.0.tgz
@@ -327,12 +255,10 @@ tabbable,6.5.1,MIT,LICENSE,https://registry.npmjs.org/tabbable/-/tabbable-6.5.1.
 tailwind-merge,3.6.0,MIT,LICENSE.md,https://registry.npmjs.org/tailwind-merge/-/tailwind-merge-3.6.0.tgz
 tailwind-variants,3.3.1,MIT,LICENSE,https://registry.npmjs.org/tailwind-variants/-/tailwind-variants-3.3.1.tgz
 tailwindcss,4.3.5,MIT,LICENSE,https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.5.tgz
-tinyexec,1.3.1,MIT,LICENSE,https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz
 toidentifier,1.0.1,MIT,LICENSE,https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz
 totalist,3.0.1,MIT,license,https://registry.npmjs.org/totalist/-/totalist-3.0.1.tgz
 trim-lines,3.0.1,MIT,license,https://registry.npmjs.org/trim-lines/-/trim-lines-3.0.1.tgz
 trough,2.2.0,MIT,license,https://registry.npmjs.org/trough/-/trough-2.2.0.tgz
-ts-dedent,2.3.0,MIT,LICENSE,https://registry.npmjs.org/ts-dedent/-/ts-dedent-2.3.0.tgz
 tw-animate-css,1.4.0,MIT,LICENSE,https://registry.npmjs.org/tw-animate-css/-/tw-animate-css-1.4.0.tgz
 type-is,2.1.0,MIT,LICENSE,https://registry.npmjs.org/type-is/-/type-is-2.1.0.tgz
 unified,11.0.5,MIT,license,https://registry.npmjs.org/unified/-/unified-11.0.5.tgz
@@ -343,7 +269,6 @@ unist-util-stringify-position,4.0.0,MIT,license,https://registry.npmjs.org/unist
 unist-util-visit,5.1.0,MIT,license,https://registry.npmjs.org/unist-util-visit/-/unist-util-visit-5.1.0.tgz
 unist-util-visit-parents,6.1.0,MIT,license,https://registry.npmjs.org/unist-util-visit-parents/-/unist-util-visit-parents-6.1.0.tgz
 unpipe,1.0.0,MIT,LICENSE,https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz
-uuid,13.0.2,MIT,LICENSE.md,https://registry.npmjs.org/uuid/-/uuid-13.0.2.tgz
 vary,1.1.2,MIT,LICENSE,https://registry.npmjs.org/vary/-/vary-1.1.2.tgz
 vaul-svelte,1.0.0-next.7,MIT,LICENSE,https://registry.npmjs.org/vaul-svelte/-/vaul-svelte-1.0.0-next.7.tgz
 vfile,6.0.3,MIT,license,https://registry.npmjs.org/vfile/-/vfile-6.0.3.tgz
