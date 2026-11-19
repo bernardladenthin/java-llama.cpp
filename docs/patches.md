@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**26 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**27 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -48,6 +48,7 @@ match a binary to this page.
 | 0034 | [`0034-llama-a-context-holds-an-output-row-for-every-sequence.patch`](#0034-llama-a-context-holds-an-output-row-for-every-sequencepatch) | llama : a context holds an output row for every sequence | 1 | 1 |
 | 0035 | [`0035-llama-a-truncated-sequence-state-file-fails-the-load.patch`](#0035-llama-a-truncated-sequence-state-file-fails-the-loadpatch) | llama : a truncated sequence state file fails the load | 1 | 1 |
 | 0036 | [`0036-llama-a-non-causal-contexts-batch-is-its-ubatch.patch`](#0036-llama-a-non-causal-contexts-batch-is-its-ubatchpatch) | llama : a non-causal context's batch is its ubatch | 1 | 1 |
+| 0037 | [`0037-mtmd-a-model-the-projector-keeps-on-the-cpu-uses-no-other-device.patch`](#0037-mtmd-a-model-the-projector-keeps-on-the-cpu-uses-no-other-devicepatch) | mtmd : a model the projector keeps on the CPU uses no other device | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1165,4 +1166,33 @@ request).
 Drop-check on every bump: read the n_batch lines of llama_context's constructor in
 src/llama-context.cpp -- once a non-causal context's n_batch is no larger than its n_ubatch, or
 decode() splits a non-causal call itself, drop the patch.
+```
+
+## 0037-mtmd-a-model-the-projector-keeps-on-the-cpu-uses-no-other-device.patch
+
+**Files (1):** `tools/mtmd/mtmd.cpp`
+
+The patch's own header, verbatim:
+
+```text
+mtmd : a model the projector keeps on the CPU uses no other device
+
+Several speech pipelines build llama models of their own from tensors of the mmproj
+(mtmd_owned_llama_load: tiny-voca's prosody and acoustic stacks, VoxCPM2's residual LM, YuE2's NAR
+layers). On a GPU the model gets that one device; kept on the CPU it got no device list, so
+llama.cpp gave it every registered device, and its context initialised a backend for each of them
+although no layer was on one. An RPC server a load registered stays a registered device for the life
+of the process (ggml's registry has no unregister), so once that server was gone the context failed
+("failed to initialize RPC0 backend") and every synthesis with such a pipeline failed with it -- in
+a JVM that had used RpcServer or --rpc before, with CI's tiny-voca pair among them.
+
+The CPU branch now passes an empty device list, as --device none does: the model and its context use
+the CPU alone. Nothing changes on a GPU, or for a process without other devices.
+
+The guard is CApiTinyVoca.APipelineWithAModelOfItsOwnSpeaksAfterAnRpcServerWentAway in
+src/test/cpp/test_c_api.cpp: a model loaded with --rpc against a loopback server, the server stopped,
+then the generator's tiny-voca and VoxCPM2 pairs synthesize (both failed before).
+
+Drop-check on every bump: read the else branch of mtmd_owned_llama_load() in tools/mtmd/mtmd.cpp --
+once it sets mparams.devices itself (to an empty list or the CPU), drop the patch.
 ```

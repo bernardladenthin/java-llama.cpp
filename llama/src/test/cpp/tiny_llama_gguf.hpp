@@ -193,6 +193,17 @@ struct tiny_model_spec {
     enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE, SENTENCEPIECE_BYTES, UNIGRAM, RWKV };
     tokenizer_kind tokenizer = tokenizer_kind::BYTES;
 
+    // Qwen3-VL's text decoder (arch "qwen3vl"): the llama decoder with a norm on the query and key
+    // heads, as hy_v3 has, and interleaved M-RoPE over rope.dimension_sections, where a token of a
+    // text-only prompt has the position [p, p, p, 0]. Without the vision tower and without deepstack
+    // layers, as a GGUF of the text model is.
+    static tiny_model_spec qwen3vl(const std::string &prefix = "jllama-qwen3vl") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "qwen3vl";
+        return spec;
+    }
+
     // A decoder with one MTP block, which --spec-type draft-mtp drafts with.
     static tiny_model_spec mtp(const std::string &prefix = "jllama-mtp") {
         tiny_model_spec spec;
@@ -286,6 +297,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_context *g = gguf_init_empty();
     const std::string a = spec.arch;
     const bool hy_v3 = spec.arch == "hy_v3";
+    const bool qwen3vl = spec.arch == "qwen3vl";
     const bool cohere2 = spec.arch == "cohere2";
     const bool mamba = spec.arch == "mamba";
     const bool qwen3next = spec.arch == "qwen3next";
@@ -311,6 +323,11 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
+    if (qwen3vl) {
+        // half the head in four sections, as the real 24/20/20/0 of a head of 128
+        const int32_t sections[4] = {spec.head_dim / 4, spec.head_dim / 8, spec.head_dim / 8, 0};
+        gguf_set_arr_data(g, (a + ".rope.dimension_sections").c_str(), GGUF_TYPE_INT32, sections, 4);
+    }
     if (mamba) {
         gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), SSM_CONV);
         gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), static_cast<uint32_t>(ssm_inner));
@@ -619,7 +636,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             matrix(to, p + "ffn_down_shexp.weight", {spec.n_ff, spec.n_embd});
             continue;
         }
-        if (hy_v3) {
+        if (hy_v3 || qwen3vl) {
             add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {spec.head_dim}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
         }
@@ -707,6 +724,108 @@ inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-a
     spec.eos = eos;
     spec.special = special;
     return write_tiny_llama_gguf(spec, shard_path);
+}
+
+// The printable ASCII bytes but '<' and '>' (the BOS and the default EOS of the byte vocabulary):
+// the vocabulary of an EAGLE-3 draft head that is smaller than its target's, mapped by d2t.
+inline std::vector<int64_t> tiny_eagle3_draft_vocabulary() {
+    std::vector<int64_t> ids;
+    for (int64_t tok = ' '; tok < 0x7F; ++tok) {
+        if (tok != '<' && tok != '>') {
+            ids.push_back(tok);
+        }
+    }
+    return ids;
+}
+
+// An EAGLE-3 draft (llama.cpp's eagle3) for the model write_tiny_llama_gguf(target) writes, in the
+// layout upstream's converter writes one (conversion/llama.py): one decoder layer whose attention
+// reads the draft token's embedding next to g, the projection (fc) of the inputs of three target
+// layers, through two norms (attn_norm, attn_norm_2), and eagle3.target_layers naming those layers --
+// [2, n/2, n-3], the converter's default, which for a target of three layers is [2, 1, 0] and needs at
+// least three. The draft has the target's hidden size, as the converter's target_hidden_size says, and
+// carries the target's vocabulary (the converter copies the target's tokenizer). It has no token
+// embedding of its own: the decoder takes the target's (cparams.ctx_other). With own_head it has the
+// head of the Llama 3.1 EAGLE-3 checkpoints, over a draft vocabulary smaller than the target's whose
+// ids d2t maps to the target's (tiny_eagle3_draft_vocabulary, absolute ids as the converter writes
+// them); without it the decoder takes the target's head too. Only the byte vocabulary is written.
+inline std::string write_tiny_eagle3_gguf(const tiny_model_spec &target, bool own_head,
+                                          const std::string &prefix = "jllama-eagle3") {
+    if (target.tokenizer != tiny_model_spec::tokenizer_kind::BYTES || target.n_layer < 3) {
+        return std::string();
+    }
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(43);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "eagle3";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), target.n_ctx_train);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), target.n_embd);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), 1);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), target.n_ff);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), target.n_head);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), target.n_head_kv);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
+    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), target.head_dim);
+    const int32_t target_layers[3] = {2, target.n_layer / 2, target.n_layer - 3};
+    gguf_set_arr_data(g, (a + ".target_layers").c_str(), GGUF_TYPE_INT32, target_layers, 3);
+    gguf_set_val_u32(g, (a + ".target_hidden_size").c_str(), static_cast<uint32_t>(target.n_embd));
+    gguf_set_val_bool(g, (a + ".norm_before_residual").c_str(), false);
+    gguf_set_val_bool(g, (a + ".norm_before_fc").c_str(), false);
+
+    std::vector<std::string> tokens = byte_tokens();
+    tokens.insert(tokens.end(), target.special.begin(), target.special.end());
+    std::vector<int32_t> token_types(256, 1);
+    token_types.resize(tokens.size(), 3);
+    if (target.eos_is_control) {
+        token_types[target.eos] = 3;
+    }
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merge = "Ġ Ġ"; // never applies, as in the target
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", &merge, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", target.eos);
+
+    const int n = target.n_embd;
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    add_random_tensor(g, ctx, rng, "fc.weight", {3 * n, n}, 0.1f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {n}, 1.0f);
+    if (own_head) {
+        const std::vector<int64_t> d2t = tiny_eagle3_draft_vocabulary();
+        add_random_tensor(g, ctx, rng, "output.weight", {n, static_cast<int64_t>(d2t.size())}, 0.1f);
+        ggml_tensor *map = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, static_cast<int64_t>(d2t.size()));
+        std::copy(d2t.begin(), d2t.end(), static_cast<int64_t *>(map->data));
+        ggml_set_name(map, "d2t");
+        gguf_add_tensor(g, map);
+    }
+    const std::string p = "blk.0.";
+    add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {n}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "attn_norm_2.weight", {n}, 1.0f);
+    // the attention reads the token embedding and g side by side
+    add_random_tensor(g, ctx, rng, p + "attn_q.weight", {2 * n, target.n_head * target.head_dim}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_k.weight", {2 * n, target.n_head_kv * target.head_dim}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_v.weight", {2 * n, target.n_head_kv * target.head_dim}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_output.weight", {target.n_head * target.head_dim, n}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {n}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {n, target.n_ff}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {n, target.n_ff}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {target.n_ff, n}, 0.1f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
 }
 
 // A random BERT: an encoder with learned positions, a WordPiece vocabulary of a few words and,

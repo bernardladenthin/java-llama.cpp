@@ -220,6 +220,23 @@ bool gguf_lacks_classification_head(const std::string &path) {
     return lacks;
 }
 
+// The architecture the GGUF at path names (general.architecture), or "" when it cannot be read.
+std::string gguf_architecture(const std::string &path) {
+    if (path.empty()) {
+        return std::string();
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), no_data);
+    if (g == nullptr) {
+        return std::string();
+    }
+    const int64_t key = gguf_find_key(g, "general.architecture");
+    std::string arch =
+        key >= 0 && gguf_get_kv_type(g, key) == GGUF_TYPE_STRING ? gguf_get_val_str(g, key) : std::string();
+    gguf_free(g);
+    return arch;
+}
+
 } // namespace
 
 namespace {
@@ -626,12 +643,17 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // A draft model nobody asks: upstream's speculative types default to none, and the parse above
     // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
     // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the
-    // type), so it is used as what it is. An explicit --spec-type, "none" included, is not the
-    // default list (the option appends to it) and stays as given.
+    // type), so it is used as what it is. An EAGLE-3 draft is no plain draft: its decoder reads the
+    // target's layer inputs, which only draft-eagle3 hands it -- as draft-simple it read a compute
+    // buffer nobody had written and proposed noise (found with the generator's EAGLE-3 draft). An
+    // explicit --spec-type, "none" included, is not the default list (the option appends to it) and
+    // stays as given.
     if (params.speculative.has_dft() &&
         params.speculative.types == std::vector<enum common_speculative_type>{COMMON_SPECULATIVE_TYPE_NONE}) {
-        params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
-        SRV_INF("%s", "a draft model without --spec-type: using it as draft-simple\n");
+        const bool eagle3 = gguf_architecture(params.speculative.draft.mparams.path) == "eagle3";
+        params.speculative.types = {eagle3 ? COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3
+                                           : COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+        SRV_INF("a draft model without --spec-type: using it as %s\n", eagle3 ? "draft-eagle3" : "draft-simple");
     }
 
     common_init();

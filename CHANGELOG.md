@@ -650,6 +650,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **An EAGLE-3 draft without a speculative type drafts as EAGLE-3.** A draft model without
+  `--spec-type` (`ModelParameters.setModelDraft` alone) is used as `draft-simple`, which ran an
+  EAGLE-3 draft's decoder without the target's layer inputs it reads: it proposed tokens from a
+  compute buffer nobody had written, which the target then refused. A draft whose GGUF names the
+  architecture `eagle3` is used as `draft-eagle3` now (`CApiEagle3`, over an EAGLE-3 draft the
+  generator writes for a llama and a Qwen3-VL target).
+- **A speech pipeline with a model of its own speaks after an RPC server went away**
+  (`patches/0037`). tiny-voca's stacks, VoxCPM2's residual LM and YuE2's NAR layers are llama models
+  the projector builds itself; kept on the CPU they took every registered device, and an RPC server
+  a load had registered stays registered, so once it was gone every synthesis with such a pipeline
+  failed ("failed to initialize RPC0 backend"). They take the CPU alone now.
 - **Voice cloning for Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2.** `TextToSpeech`,
   `FfmTextToSpeech` and `jllama_tts_supports_speaker_reference` took llama.cpp's
   `mtmd_helper_cap::audio_gen_spk_ref`, which names only Qwen3-TTS and Pocket TTS, so a reference

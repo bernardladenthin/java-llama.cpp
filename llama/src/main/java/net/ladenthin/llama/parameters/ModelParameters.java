@@ -1589,8 +1589,9 @@ public final class ModelParameters extends CliParameters {
      * itself: it would be loaded and never asked. So when no type is set
      * ({@link #setSpecTypes(SpecType, SpecType...)}) and llama.cpp infers none from the draft file (it does
      * for an MTP, DFlash or DSpark draft), this library uses the draft model as a plain one,
-     * {@link SpecType#DRAFT_SIMPLE}. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded
-     * and unused.</p>
+     * {@link SpecType#DRAFT_SIMPLE}, or, when its GGUF names the architecture {@code eagle3}, as
+     * {@link SpecType#DRAFT_EAGLE3}: an EAGLE-3 draft reads the target's layer inputs, which only
+     * that type hands it. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded and unused.</p>
      *
      * @param modelDraft the file path of the draft model
      * @return this builder

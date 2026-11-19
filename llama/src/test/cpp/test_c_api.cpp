@@ -6209,6 +6209,62 @@ TEST(CApiTinyVoca, TheTemplateAsksTheProjectorsLetterToSoundModel) {
     EXPECT_EQ(wav_samples(templated), 6u * 3 * 256) << "<bos> b æ d . <eos>";
 }
 
+TEST(CApiTinyVoca, APipelineWithAModelOfItsOwnSpeaksAfterAnRpcServerWentAway) {
+    // tiny-voca's two stacks and VoxCPM2's residual LM are llama models the projector builds itself
+    // (mtmd_owned_llama_load). Kept on the CPU, they had no device list, so llama.cpp gave them every
+    // registered device -- and an RPC server a load registered stays registered for the life of the
+    // process: once it was gone, their context failed ("failed to initialize RPC0 backend") although no
+    // layer was on it, and so did every synthesis. patches/0037 gives them the empty list.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-rpc-then-tts");
+    ASSERT_FALSE(path.empty());
+    int port = 0;
+    {
+        std::unique_ptr<rpc_serve_run> server;
+        for (int attempt = 0; attempt < 50 && port == 0; ++attempt) {
+            const int candidate = rpc_test_port(attempt);
+            server.reset(new rpc_serve_run(candidate));
+            for (int i = 0;
+                 i < 500 && !jllama_rpc_server_listening() && !server->returned_within(std::chrono::milliseconds(0));
+                 ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (jllama_rpc_server_listening()) {
+                port = candidate;
+            } else {
+                server.reset();
+            }
+        }
+        ASSERT_NE(port, 0) << "no RPC server could bind";
+        jllama_model *model = load_tiny(path, {"--rpc", "127.0.0.1:" + std::to_string(port)});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        jllama_model_free(model);
+    } // the server stops here; its device stays registered
+    std::remove(path.c_str());
+
+    TinyVocaPair voca("", 3, 1.0f, 0);
+    ASSERT_NE(voca.tts, nullptr);
+    std::vector<unsigned char> wav;
+    EXPECT_EQ(voca.speak(TINY_VOCA_HELLO, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(wav_samples(wav), 0u);
+
+    const std::string backbone = jllama_test::write_tiny_voxcpm2_gguf("jllama-voxcpm2-after-rpc");
+    const std::string mmproj = jllama_test::write_tiny_voxcpm2_mmproj_gguf("jllama-voxcpm2-after-rpc-mmproj", 100.0f);
+    jllama_tts_model *voxcpm2 = nullptr;
+    ASSERT_EQ(jllama_tts_load(backbone.c_str(), mmproj.c_str(), 0, 2, &voxcpm2), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_tts_options options;
+    jllama_tts_options_init(&options);
+    unsigned char *bytes = nullptr;
+    size_t length = 0;
+    EXPECT_EQ(jllama_tts_synthesize_options(voxcpm2, "Hi", &options, &bytes, &length), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_GT(length, 44u);
+    jllama_bytes_free(bytes);
+    jllama_tts_free(voxcpm2);
+    std::remove(backbone.c_str());
+    std::remove(mmproj.c_str());
+}
+
 TEST(CApiLfm3TtsEnd, WithoutItsTtsTemplateTheModelCannotSpeak) {
     // the pipeline starts in audio only after a prompt ending in <|audio_start|>, which only the
     // "tts" template writes; the bare text ends in text, and llama.cpp refuses it in set_input
@@ -6941,6 +6997,9 @@ TEST(CApiVoxCpm2Clone, TheEncoderClonesAVoiceThroughTheCApiAndThePipeline) {
     llama_backend_init();
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
+    // the CPU alone: an RPC server an earlier test of the same process registered stays a device
+    ggml_backend_dev_t no_devices[] = {nullptr};
+    model_params.devices = no_devices;
     llama_model *model = llama_model_load_from_file(backbone.c_str(), model_params);
     ASSERT_NE(model, nullptr);
     llama_context_params context_params = llama_context_default_params();
@@ -8941,6 +9000,94 @@ TEST(CApiMtp, ASlotOfAModelDraftingWithItsMtpBlockIsSavedAndRestoredWhole) {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     std::filesystem::remove_all(dir, ignored);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// EAGLE-3 (--spec-type draft-eagle3): a draft of one decoder layer that drafts from the inputs of three
+// layers of the target, which the target's context extracts for it (llama_set_embeddings_layer_inp) --
+// so the target's graph has to name those inputs (t_layer_inp). write_tiny_eagle3_gguf writes the draft.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The target written from `target` answers the same greedily alone, with the EAGLE-3 draft loaded and
+// unused (--spec-type none) and drafting with it (--spec-type draft-eagle3, or no --spec-type, which
+// the engine reads from the draft's architecture), and only those two draft.
+// The draft reads the inputs of layers [2, 1, 0] of a target of three layers; with own_head it has a
+// head over a smaller vocabulary mapped by d2t, without one it takes the target's.
+void expect_eagle3_drafts_and_answers_the_same(tiny_model_spec target, bool own_head) {
+    target.n_layer = 3;
+    const std::string path = write_tiny_llama_gguf(target);
+    const std::string draft = write_tiny_eagle3_gguf(target, own_head, target.prefix + "-eagle3");
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(draft.empty());
+    std::map<std::string, std::string> answers;
+    std::map<std::string, int> drafted;
+    // "auto": the draft without --spec-type, which the engine reads as draft-eagle3 from its file
+    for (const char *type : {"", "none", "draft-eagle3", "auto"}) {
+        SCOPED_TRACE(*type != 0 ? std::string("--spec-type ") + type : std::string("without the draft"));
+        std::vector<std::string> extra;
+        if (*type != 0) {
+            extra = {"--spec-draft-model", draft, "--spec-draft-ngl", "0"};
+        }
+        if (*type != 0 && std::string(type) != "auto") {
+            extra.insert(extra.end(), {"--spec-type", type});
+        }
+        struct Sink {
+            std::mutex m;
+            std::string text;
+        } sink;
+        ASSERT_EQ(jllama_set_log_callback(
+                      [](int, const char *text, void *ud) {
+                          auto *s = static_cast<Sink *>(ud);
+                          std::lock_guard<std::mutex> lk(s->m);
+                          s->text += text;
+                      },
+                      &sink),
+                  JLLAMA_STATUS_OK);
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK); // flushes
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        if (std::string(type) == "auto") {
+            EXPECT_NE(sink.text.find("without --spec-type: using it as draft-eagle3"), std::string::npos)
+                << "an EAGLE-3 draft run as draft-simple reads layer inputs nobody wrote";
+        }
+        // a fresh model evaluates the whole prompt: nothing is compared across a prompt-cache hit
+        answers[type] = greedy_answer(model, 48);
+        drafted[type] = drafted_tokens(model);
+        jllama_model_free(model);
+    }
+    EXPECT_FALSE(answers[""].empty());
+    // the target checks every draft, so a draft changes the speed and never the answer
+    EXPECT_EQ(answers["draft-eagle3"], answers[""]);
+    EXPECT_EQ(answers["auto"], answers[""]);
+    EXPECT_EQ(answers["none"], answers[""]);
+    EXPECT_GT(drafted["draft-eagle3"], 0) << "the EAGLE-3 draft drafted nothing";
+    EXPECT_GT(drafted["auto"], 0) << "the EAGLE-3 draft drafted nothing without --spec-type";
+    EXPECT_EQ(drafted["none"], 0);
+    EXPECT_EQ(drafted[""], 0);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(draft, ec);
+}
+
+} // namespace
+
+TEST(CApiEagle3, ADraftOverTheLlamaDecoderDraftsAndAnswersTheSameWithout) {
+    // The layout of upstream's Llama 3.1 EAGLE-3 conversions: the draft's own head over a draft
+    // vocabulary smaller than the target's, which d2t maps to the target's ids, and the target's token
+    // embedding.
+    tiny_model_spec target;
+    target.prefix = "jllama-eagle3-llama";
+    expect_eagle3_drafts_and_answers_the_same(target, true);
+}
+
+TEST(CApiEagle3, ADraftOverAQwen3VlTargetGetsItsLayerInputs) {
+    // llama.cpp #32589 (b12542): qwen3vl's graph did not name its layer inputs (res->t_layer_inp), so
+    // the first target batch with the layers an EAGLE-3 draft reads turned on ended the process in
+    // llm_graph_result::set_outputs ("layer input tensor is null"). The draft here borrows the
+    // target's head and token embedding as well, the other path of the EAGLE-3 decoder.
+    expect_eagle3_drafts_and_answers_the_same(tiny_model_spec::qwen3vl("jllama-eagle3-qwen3vl"), false);
 }
 
 // ---------------------------------------------------------------------------------------------------
