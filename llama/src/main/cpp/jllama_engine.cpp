@@ -473,7 +473,7 @@ std::string control_vector_refusal(const common_params &params) {
     const auto u32 = [g](const std::string &key) -> int64_t {
         const int64_t id = gguf_find_key(g, key.c_str());
         return id >= 0 && gguf_get_kv_type(g, id) == GGUF_TYPE_UINT32 ? static_cast<int64_t>(gguf_get_val_u32(g, id))
-                                                                       : int64_t{-1};
+                                                                      : int64_t{-1};
     };
     const int64_t arch_id = gguf_find_key(g, "general.architecture");
     const std::string arch =

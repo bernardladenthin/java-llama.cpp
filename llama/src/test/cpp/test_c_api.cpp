@@ -7568,6 +7568,262 @@ TEST_F(CApiMusic3, MoreFramesAreALongerSongAndALongSongIsDecodedInWindows) {
     EXPECT_EQ(windowed, again) << "the windows start from the tail of the one before, the same each time";
 }
 
+// A random YuE2 pair (tiny_llama_gguf.hpp, llama.cpp b12459, #32369): songs in stereo at 48 kHz. The
+// backbone writes an ABC score, then semantic codes; the NAR of the mmproj -- a qwen3 layer that mtmd
+// builds into a llama model of its own and runs over the backbone's keys and values -- turns the codes
+// into latents by flow matching, and the VAE a latent frame into 1920 samples per channel. llama.cpp's
+// driver (yue2_gen_audio_pipeline, mtmd-helper-gen.cpp) cuts the last 64 samples of a song (vae_trim),
+// so n codes are 1920 * n - 64 samples, and a song cannot end by itself before 200 codes (the code
+// minimum of protocol.py): the frame cap decides its length. An engine step is one backbone token -- a
+// score token, the step that closes the score with </abc><|music_start|>, or a code -- and the
+// generator's score is exactly 32 tokens long. On noise weights, so what is asserted is the contract.
+class CApiYuE2 : public ::testing::Test {
+  protected:
+    static void SetUpTestSuite() {
+        model_path() = jllama_test::write_tiny_yue2_gguf();
+        mmproj_path() = jllama_test::write_tiny_yue2_mmproj_gguf();
+        ASSERT_FALSE(model_path().empty());
+        ASSERT_FALSE(mmproj_path().empty());
+        ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &tts()), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+    }
+    static void TearDownTestSuite() {
+        jllama_tts_free(tts());
+        tts() = nullptr;
+        std::remove(model_path().c_str());
+        std::remove(mmproj_path().c_str());
+    }
+    static std::string &model_path() {
+        static std::string p;
+        return p;
+    }
+    static std::string &mmproj_path() {
+        static std::string p;
+        return p;
+    }
+    static jllama_tts_model *&tts() {
+        static jllama_tts_model *t = nullptr;
+        return t;
+    }
+    struct song {
+        const char *voice = "off"; // the template's mode: off, melody or full (the default)
+        int max_frames = 12;
+        unsigned int seed = 11;
+        float cfg_scale = 0.0f;
+        int flow_steps = 2;
+        int raw_prompt = 0;
+        const char *speaker_reference = nullptr;
+    };
+    static jllama_status sing(const char *text, const song &s, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.voice = s.voice;
+        options.max_frames = s.max_frames;
+        options.seed = s.seed;
+        options.cfg_scale = s.cfg_scale;
+        options.flow_steps = s.flow_steps;
+        options.raw_prompt = s.raw_prompt;
+        options.speaker_reference_path = s.speaker_reference;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize_options(tts(), text, &options, &bytes, &length);
+        if (status == JLLAMA_STATUS_OK && wav != nullptr) {
+            wav->assign(bytes, bytes + length);
+        }
+        jllama_bytes_free(bytes);
+        return status;
+    }
+    // 16-bit stereo behind the 44-byte header
+    static size_t samples_per_channel(const std::vector<unsigned char> &wav) { return (wav.size() - 44) / 4; }
+    static size_t song_of(size_t codes) { return 1920 * codes - 64; }
+    static constexpr const char *LYRICS = "[Tags]\npop\n[Lyrics]\nla la la";
+};
+
+TEST_F(CApiYuE2, TheProjectorLoadsWithoutTheRerankingHead) {
+    // The NAR layers are a qwen3 model that mtmd builds from the mmproj's metadata, and llama.cpp's
+    // qwen3 asks for cls.output.weight, a reranking head no converted YuE2 carries. b12553 (#32606) lets
+    // it be absent; before it every YuE2 pair failed to load ("tensor cls.output.weight is missing from
+    // the mmproj").
+    gguf_init_params params = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(mmproj_path().c_str(), params);
+    ASSERT_NE(g, nullptr);
+    for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+        EXPECT_EQ(std::string(gguf_get_tensor_name(g, i)).find("cls"), std::string::npos) << gguf_get_tensor_name(g, i);
+    }
+    gguf_free(g);
+    jllama_tts_model *again = nullptr;
+    ASSERT_EQ(jllama_tts_load(model_path().c_str(), mmproj_path().c_str(), 0, 2, &again), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_tts_free(again);
+}
+
+TEST_F(CApiYuE2, ASongIsAStereoWavAt48kHzOfWholeLatentFrames) {
+    std::vector<unsigned char> wav;
+    ASSERT_EQ(sing(LYRICS, song{}, &wav), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_GT(wav.size(), 44u);
+    EXPECT_EQ(std::string(wav.begin(), wav.begin() + 4), "RIFF");
+    EXPECT_EQ(std::string(wav.begin() + 8, wav.begin() + 12), "WAVE");
+    const uint32_t rate =
+        uint32_t(wav[24]) | uint32_t(wav[25]) << 8 | uint32_t(wav[26]) << 16 | uint32_t(wav[27]) << 24;
+    EXPECT_EQ(rate, 48000u) << "the VAE's rate";
+    EXPECT_EQ(wav[22] | wav[23] << 8, 2) << "YuE2 is stereo (mtmd_gen_audio_info::n_channels)";
+    // the "off" mode renders <abc></abc><|music_start|>: every one of the 12 steps is a code
+    EXPECT_EQ(samples_per_channel(wav), song_of(12));
+    std::vector<unsigned char> again;
+    ASSERT_EQ(sing(LYRICS, song{}, &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(wav, again) << "the same seed gives the same song";
+    song reseeded;
+    reseeded.seed = 12;
+    std::vector<unsigned char> other_seed;
+    ASSERT_EQ(sing(LYRICS, reseeded, &other_seed), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(wav, other_seed) << "the seed draws the codes and the noise the flow starts from";
+    EXPECT_EQ(other_seed.size(), wav.size());
+    std::vector<unsigned char> other_text;
+    ASSERT_EQ(sing("[Tags]\njazz\n[Lyrics]\nna na na", song{}, &other_text), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(wav, other_text) << "another text is another prompt";
+    song one;
+    one.max_frames = 1;
+    std::vector<unsigned char> shortest;
+    ASSERT_EQ(sing(LYRICS, one, &shortest), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(shortest), song_of(1));
+}
+
+TEST_F(CApiYuE2, WithoutTheOffModeTheBackboneWritesAScoreOf32TokensBeforeTheCodes) {
+    // The default mode ends the prompt with <abc>: the backbone writes a score, at least 32 tokens
+    // (protocol.py), and the generator's ends there; the 33rd step writes </abc><|music_start|>, and only
+    // the steps after it are codes.
+    song full;
+    full.voice = nullptr;
+    full.max_frames = 33;
+    EXPECT_EQ(sing(LYRICS, full, nullptr), JLLAMA_STATUS_ERROR) << "a score without a code is no song";
+    full.max_frames = 34;
+    std::vector<unsigned char> one_code;
+    ASSERT_EQ(sing(LYRICS, full, &one_code), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(one_code), song_of(1));
+    full.max_frames = 33 + 12;
+    std::vector<unsigned char> twelve_codes;
+    ASSERT_EQ(sing(LYRICS, full, &twelve_codes), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(twelve_codes), song_of(12));
+    std::vector<unsigned char> off;
+    ASSERT_EQ(sing(LYRICS, song{}, &off), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(twelve_codes, off) << "the score and the instruction are part of what the codes follow";
+    // "melody" asks for a score without chords: another instruction, the same rule
+    song melody = full;
+    melody.voice = "melody";
+    std::vector<unsigned char> melody_codes;
+    ASSERT_EQ(sing(LYRICS, melody, &melody_codes), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(melody_codes), song_of(12));
+    EXPECT_NE(melody_codes, twelve_codes);
+    // the error above left the model as it was
+    std::vector<unsigned char> off_again;
+    ASSERT_EQ(sing(LYRICS, song{}, &off_again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(off_again, off);
+}
+
+TEST_F(CApiYuE2, ACoverBringsItsScoreAndTheOffModeDropsIt) {
+    // A text with "\n[ABC]\n" puts its score into the prompt (cover mode): the codes come at once.
+    const std::string cover = std::string(LYRICS) + "\n[ABC]\nX:1\nK:C\nCDEF GABc";
+    song mode;
+    mode.voice = nullptr;
+    std::vector<unsigned char> covered;
+    ASSERT_EQ(sing(cover.c_str(), mode, &covered), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(covered), song_of(12));
+    std::vector<unsigned char> off;
+    ASSERT_EQ(sing(LYRICS, song{}, &off), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(covered, off);
+    // the off mode keeps the text before the score and renders an empty one
+    std::vector<unsigned char> cover_off;
+    ASSERT_EQ(sing(cover.c_str(), song{}, &cover_off), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(cover_off, off);
+}
+
+TEST_F(CApiYuE2, GuidanceAndSolverStepsAreTakenAndChangeTheSong) {
+    // b12459 passes cfg_scale and flow_steps through. The off mode guides its codes by 1.01 by itself
+    // (protocol.py), with the bare instruction as the unconditioned prompt in a second sequence.
+    std::vector<unsigned char> own;
+    ASSERT_EQ(sing(LYRICS, song{}, &own), JLLAMA_STATUS_OK) << jllama_last_error();
+    song guided;
+    guided.cfg_scale = 3.0f;
+    std::vector<unsigned char> stronger;
+    ASSERT_EQ(sing(LYRICS, guided, &stronger), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, stronger);
+    guided.cfg_scale = 1.0f; // no unconditioned sequence at all
+    std::vector<unsigned char> unguided;
+    ASSERT_EQ(sing(LYRICS, guided, &unguided), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, unguided);
+    song steps;
+    steps.flow_steps = 5;
+    std::vector<unsigned char> more_steps;
+    ASSERT_EQ(sing(LYRICS, steps, &more_steps), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NE(own, more_steps) << "the ODE solved in 5 steps ends elsewhere than in 2";
+    EXPECT_EQ(own.size(), more_steps.size()) << "the steps change the latents, not their number";
+    // 0 is the model's own: the 32 midpoint steps of the reference
+    steps.flow_steps = 0;
+    std::vector<unsigned char> model_steps;
+    ASSERT_EQ(sing(LYRICS, steps, &model_steps), JLLAMA_STATUS_OK) << jllama_last_error();
+    steps.flow_steps = 32;
+    std::vector<unsigned char> thirty_two;
+    ASSERT_EQ(sing(LYRICS, steps, &thirty_two), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(model_steps, thirty_two);
+    EXPECT_NE(model_steps, own);
+}
+
+TEST_F(CApiYuE2, ALongSongIsDecodedInVaeTilesOfWholeFrames) {
+    // The VAE decodes tiles of 128 latent frames with 16 frames of context on each side and keeps only
+    // their cores, as decode_tiled() of the reference: 128 frames are one tile, 140 two, and the song
+    // keeps every frame of both.
+    song tile;
+    tile.flow_steps = 1;
+    tile.max_frames = 128;
+    std::vector<unsigned char> one_tile;
+    ASSERT_EQ(sing(LYRICS, tile, &one_tile), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(one_tile), song_of(128));
+    tile.max_frames = 140;
+    std::vector<unsigned char> two_tiles;
+    ASSERT_EQ(sing(LYRICS, tile, &two_tiles), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(samples_per_channel(two_tiles), song_of(140));
+    std::vector<unsigned char> again;
+    ASSERT_EQ(sing(LYRICS, tile, &again), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(two_tiles, again);
+}
+
+TEST_F(CApiYuE2, ItClonesNoVoiceAndHasNoPredefinedOnes) {
+    bool supported = true;
+    ASSERT_EQ(jllama_tts_supports_speaker_reference(tts(), &supported), JLLAMA_STATUS_OK);
+    EXPECT_FALSE(supported) << "YuE2 reads no reference clip";
+    char **names = nullptr;
+    size_t count = 7;
+    ASSERT_EQ(jllama_tts_voices(tts(), &names, &count), JLLAMA_STATUS_OK);
+    EXPECT_EQ(count, 0u) << "its voice is the template's mode";
+    jllama_strings_free(names, count);
+    song cloned;
+    cloned.speaker_reference = "/nonexistent/yue2-reference.wav";
+    EXPECT_EQ(sing(LYRICS, cloned, nullptr), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("no voice cloning"), std::string::npos) << jllama_last_error();
+}
+
+TEST_F(CApiYuE2, ARawPromptMustBeThePromptOfItsTemplate) {
+    // b12494's raw_prompt hands the text over as the prompt: the rendered prompt sings as the template
+    // does, and llama.cpp refuses one that does not start with <|endoftext|> or does not end with <abc>
+    // or <|music_start|>
+    const std::string rendered =
+        std::string("<|endoftext|>Generate music with codec tokens from the given conditions.\n") + LYRICS +
+        "\n<abc></abc><|music_start|>";
+    std::vector<unsigned char> templated;
+    ASSERT_EQ(sing(LYRICS, song{}, &templated), JLLAMA_STATUS_OK) << jllama_last_error();
+    song raw;
+    raw.raw_prompt = 1;
+    std::vector<unsigned char> given;
+    ASSERT_EQ(sing(rendered.c_str(), raw, &given), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(given, templated);
+    EXPECT_EQ(sing(LYRICS, raw, nullptr), JLLAMA_STATUS_ERROR) << "no <|endoftext|> in front";
+    EXPECT_EQ(sing("<|endoftext|>Generate music.\nla la la", raw, nullptr), JLLAMA_STATUS_ERROR)
+        << "neither <abc> nor <|music_start|> at the end";
+    std::vector<unsigned char> after;
+    ASSERT_EQ(sing(LYRICS, song{}, &after), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(after, templated);
+}
+
 // A random VoxCPM2 pair (tiny_llama_gguf.hpp, llama.cpp b12531, #32443), the first pipeline in the
 // suite whose backbone emits no audio token at all: the mmproj turns every hidden state into a patch of
 // four latents -- FSQ, the residual LM (a libllama context of its own), the LocDiT flow matching with

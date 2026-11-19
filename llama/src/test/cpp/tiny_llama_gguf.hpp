@@ -1650,6 +1650,232 @@ inline std::string write_tiny_music3_mmproj_gguf(const std::string &prefix = "jl
     return ok ? path : std::string();
 }
 
+// The pair of a random YuE2 (m-a-p's YuE2-3B, llama.cpp b12459, #32369): songs from tags and lyrics,
+// stereo at 48 kHz. In the layout upstream's converter writes (conversion/yue2.py), with every free
+// width made small; what llama.cpp fixes stays (the token ids of the yue2_infer protocol, 64 latent
+// channels, 1920 samples per latent frame, two output channels).
+//
+// The backbone is a qwen3 with classifier-free guidance (the uncond prompt runs as a second sequence)
+// and the checkpoint's vocabulary layout: the GPT-2 byte tokens at ids 0-255 and placeholders up to
+// <|endoftext|> (151643), then the control tokens the converter names -- <abc> 151847, </abc> 151848,
+// <|music_start|> 151851, <|music_end|> 151852, the 32768 codec tokens from 151853, the three latent
+// tokens -- and upstream's "tts" template, which picks the mode from the voice: "off" renders
+// <abc></abc><|music_start|> and the codes come at once, a text with "\n[ABC]\n" brings its own score
+// (cover mode), and otherwise the prompt ends with <abc> and the backbone writes the score first. The
+// output is tied, and every token embedding carries a constant 5 in its first element, </abc> one of
+// 50: the final norm keeps that element positive, so </abc> outscores every other token by far as soon
+// as the pipeline lets the score end -- after its minimum of 32 tokens (protocol.py) -- and a score is
+// exactly 32 tokens long, which makes the frames of a song countable.
+inline std::string write_tiny_yue2_gguf(const std::string &prefix = "jllama-yue2") {
+    constexpr int EMBD = 32, N_HEAD = 2, HEAD = 16, FF = 64;
+    constexpr int EOD = 151643, ABC_START = 151847, ABC_END = 151848, MUSIC_START = 151851, MUSIC_END = 151852,
+                  CODEC0 = 151853, N_CODEC = 32768, LATENT0 = CODEC0 + N_CODEC, N_VOCAB = LATENT0 + 3;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(41);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "qwen3";
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 8192);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), 1);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD);
+    gguf_set_val_u32(g, (a + ".attention.key_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".attention.value_length").c_str(), HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 1000000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-6f);
+    gguf_set_val_bool(g, (a + ".classifier_free_guidance").c_str(), true);
+
+    // the specials the converter numbers from <|endoftext|> on, <abc> and </abc> among the extras
+    std::vector<std::string> specials = {"<|endoftext|>", "<|im_start|>", "<|im_end|>", "<R>",
+                                         "<S>",           "<X>",          "<mask>",     "<sep>"};
+    for (int i = 0; i < 200; ++i) {
+        specials.push_back("<extra_" + std::to_string(i) + ">");
+    }
+    specials[ABC_START - EOD] = "<abc>";
+    specials[ABC_END - EOD] = "</abc>";
+    std::vector<std::string> tokens = byte_tokens();
+    std::vector<int32_t> token_types(tokens.size(), 1);
+    tokens.reserve(N_VOCAB);
+    for (int id = static_cast<int>(tokens.size()); id < N_VOCAB; ++id) {
+        std::string name;
+        int32_t type = 3;
+        if (id < EOD) {
+            name = "<|unused_" + std::to_string(id) + "|>";
+            type = 1;
+        } else if (id - EOD < static_cast<int>(specials.size())) {
+            name = specials[id - EOD];
+        } else if (id == MUSIC_START) {
+            name = "<|music_start|>";
+        } else if (id == MUSIC_END) {
+            name = "<|music_end|>";
+        } else if (id >= CODEC0 && id < LATENT0) {
+            name = "<|codec_" + std::to_string(id - CODEC0) + "|>";
+        } else if (id >= LATENT0) {
+            const char *latent[] = {"<|latent_start|>", "<|latent_end|>", "<|latent_pad|>"};
+            name = latent[id - LATENT0];
+        } else {
+            name = "[PAD" + std::to_string(id) + "]";
+            type = 5;
+        }
+        tokens.push_back(name);
+        token_types.push_back(type);
+    }
+    std::vector<const char *> token_ptrs;
+    token_ptrs.reserve(tokens.size());
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merges[] = {"Ġ Ġ"}; // never applies
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "qwen2");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", EOD);
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", MUSIC_END);
+    gguf_set_val_u32(g, "tokenizer.ggml.padding_token_id", EOD);
+    gguf_set_val_bool(g, "tokenizer.ggml.add_bos_token", false);
+    // upstream's TTS_TEMPLATE (conversion/yue2.py), verbatim
+    gguf_set_val_str(
+        g, "tokenizer.chat_template.tts",
+        R"({%- set text = messages[0]['content'] -%})"
+        R"({%- set mode = (voice | lower) if voice is defined and voice and (voice | lower) in ['full', 'melody', 'off'] else 'full' -%})"
+        R"({%- set parts = text.split('\n[ABC]\n') -%})"
+        R"({%- set instructions = {'off': 'Generate music with codec tokens from the given conditions.', )"
+        R"('melody': 'Generate a melody-only ABC transcription without chord symbols, then generate music with codec tokens from the given conditions.', )"
+        R"('full': 'Generate a chord-annotated ABC transcription, then generate music with codec tokens from the given conditions.'} -%})"
+        R"({{- '<|endoftext|>' + instructions[mode] + '\n' + parts[0].rstrip() + '\n' -}})"
+        R"({%- if mode == 'off' -%}{{- '<abc></abc><|music_start|>' -}})"
+        R"({%- elif parts | length > 1 -%}{{- '<abc>' + parts[1] + '</abc><|music_start|>' -}})"
+        R"({%- else -%}{{- '<abc>' -}}{%- endif -%})");
+
+    ggml_init_params ip = {32u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    ggml_tensor *embd = add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, N_VOCAB}, 0.1f);
+    auto *e = static_cast<float *>(embd->data);
+    for (int64_t t = 0; t < N_VOCAB; ++t) {
+        e[t * EMBD] = t == ABC_END ? 50.0f : 5.0f;
+    }
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {EMBD}, 1.0f);
+    const std::string p = "blk.0.";
+    add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "attn_q.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_k.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_v.weight", {EMBD, N_HEAD * HEAD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD, EMBD}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "attn_q_norm.weight", {HEAD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "attn_k_norm.weight", {HEAD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {EMBD, FF}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {EMBD, FF}, 0.1f);
+    add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {FF, EMBD}, 0.1f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// The mmproj of the backbone above, in the converter's layout: the projections of the flow-matching
+// NAR (a.gen.nar.inp / out: 64 latent channels to the backbone width and back; the timestep MLP over
+// 256 frequencies, which mtmd reads on the host), the NAR layer itself -- a qwen3 layer of the
+// backbone's shape under a.gen.nar.blk.0 and its final norm, which mtmd loads as a llama model of its
+// own and runs on the backbone's keys and values, so the shapes must be the backbone's -- and the
+// Oobleck VAE (a.gen.vae.*: a k = 7 conv from the 64 latent channels, three blocks of strides 8, 12 and
+// 20, 1920 samples per latent frame as llama.cpp requires, four channels, a k = 7 conv to two).
+// No cls.output.weight, as the converter writes none: the Qwen3 reranking head that the NAR model,
+// built from metadata, asks for. Before b12553 (#32606) its absence failed the load.
+inline std::string write_tiny_yue2_mmproj_gguf(const std::string &prefix = "jllama-yue2-mmproj") {
+    constexpr int EMBD = 32, N_HEAD = 2, HEAD = 16, FF = 64, N_LATENT = 64, N_FREQ = 256, VAE = 4;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(43);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_bool(g, "clip.has_gen_audio_encoder", true);
+    gguf_set_val_str(g, "clip.gen.audio.projector_type", "yue2_gen");
+    gguf_set_val_u32(g, "clip.gen.audio.projection_dim", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.embedding_length", EMBD);
+    gguf_set_val_u32(g, "clip.gen.audio.feed_forward_length", FF);
+    gguf_set_val_u32(g, "clip.gen.audio.block_count", 1);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count", N_HEAD);
+    gguf_set_val_u32(g, "clip.gen.audio.attention.head_count_kv", N_HEAD);
+    gguf_set_val_f32(g, "clip.gen.audio.attention.layer_norm_epsilon", 1e-6f);
+
+    ggml_init_params ip = {8u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: noise of that magnitude (weights); otherwise every element is value (norms, biases)
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, value < 0 ? -value : 0.0f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            ((float *)t->data)[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    const std::string n = "a.gen.nar";
+    add(n + ".inp.weight", {N_LATENT, EMBD}, -0.1f);
+    add(n + ".inp.bias", {EMBD}, 0.0f);
+    add(n + ".out.weight", {EMBD, N_LATENT}, -0.1f);
+    add(n + ".out.bias", {N_LATENT}, 0.0f);
+    add(n + ".time.0.weight", {N_FREQ, EMBD}, -0.05f);
+    add(n + ".time.0.bias", {EMBD}, 0.0f);
+    add(n + ".time.2.weight", {EMBD, EMBD}, -0.1f);
+    add(n + ".time.2.bias", {EMBD}, 0.0f);
+    const std::string b = n + ".blk.0.";
+    add(b + "attn_norm.weight", {EMBD}, 1.0f);
+    add(b + "attn_q.weight", {EMBD, N_HEAD * HEAD}, -0.1f);
+    add(b + "attn_k.weight", {EMBD, N_HEAD * HEAD}, -0.1f);
+    add(b + "attn_v.weight", {EMBD, N_HEAD * HEAD}, -0.1f);
+    add(b + "attn_output.weight", {N_HEAD * HEAD, EMBD}, -0.1f);
+    add(b + "attn_q_norm.weight", {HEAD}, 1.0f);
+    add(b + "attn_k_norm.weight", {HEAD}, 1.0f);
+    add(b + "ffn_norm.weight", {EMBD}, 1.0f);
+    add(b + "ffn_gate.weight", {EMBD, FF}, -0.1f);
+    add(b + "ffn_up.weight", {EMBD, FF}, -0.1f);
+    add(b + "ffn_down.weight", {FF, EMBD}, -0.1f);
+    add(n + ".output_norm.weight", {EMBD}, 1.0f);
+
+    const std::string v = "a.gen.vae";
+    const auto snake = [&](const std::string &q) {
+        add(q + ".alpha", {VAE}, 1.0f);
+        add(q + ".beta", {VAE}, 0.5f);
+    };
+    add(v + ".conv_in.weight", {7, N_LATENT, VAE}, -0.1f);
+    add(v + ".conv_in.bias", {VAE}, 0.0f);
+    const int strides[] = {8, 12, 20}; // 1920 samples per latent frame
+    for (int i = 0; i < 3; ++i) {
+        const std::string q = v + ".blk." + std::to_string(i);
+        snake(q + ".snake");
+        add(q + ".up.weight", {2 * strides[i], VAE, VAE}, -0.3f);
+        add(q + ".up.bias", {VAE}, 0.0f);
+        for (int r = 0; r < 3; ++r) {
+            const std::string rq = q + ".res." + std::to_string(r);
+            snake(rq + ".snake1");
+            add(rq + ".conv1.weight", {7, VAE, VAE}, -0.1f);
+            add(rq + ".conv1.bias", {VAE}, 0.0f);
+            snake(rq + ".snake2");
+            add(rq + ".conv2.weight", {1, VAE, VAE}, -0.1f);
+            add(rq + ".conv2.bias", {VAE}, 0.0f);
+        }
+    }
+    snake(v + ".post_snake");
+    add(v + ".conv_out.weight", {7, VAE, 2}, -0.1f);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // The pair of a random Pocket TTS (kyutai, llama.cpp's pockettts / pockettts_gen), in the layout of
 // CI's real english_2026-04 pair, read from its GGUFs: the backbone is a pre-norm transformer with
 // LayerNorm and a GELU feed-forward, no output head (llama.cpp reuses the token embedding), and the

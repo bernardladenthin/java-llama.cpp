@@ -268,7 +268,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   runs on an RPC server's device, `RpcLoopback.TheSleepOperationRunsOnTheServerAndKeepsItsInput`),
   b12551 a scatter kernel for CUDA's batched tensor writes (#32489), b12552 OpenVINO fixes and
   fewer prefill recompiles (#32590), b12553 loads a YuE2 projector without the unused reranking head
-  `cls.output.weight` (#32606; its load failed before) and b12554 gives ROPE and SET_ROWS BF16 inputs
+  `cls.output.weight` (#32606; its load failed before, `CApiYuE2` over a generated pair holds it) and b12554 gives ROPE and SET_ROWS BF16 inputs
   on the CPU and CUDA, where a BF16 rope is fused into a BF16 cache (#32387), and b12555 gives the
   OpenCL module int8 KQ products in the decomposed flash attention for Adreno GPUs (#32577). All 26
   patches applied unchanged at every step, the 31 of today at the last three; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
