@@ -630,10 +630,12 @@ typedef struct jllama_tts_options {
      *  closely; the others ignore it */
     const char *speaker_reference_text;
     /** classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.
-     *  Only a model that supports it (YuE2, b12459); another refuses any other value */
+     *  Only a model that supports it (YuE2, b12459; MiniMax Music 3, b12480; VoxCPM2, b12531); another
+     *  refuses any other value */
     float cfg_scale;
     /** steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
-     *  model's own. Only a model that supports it (YuE2, b12459); another refuses any other value */
+     *  model's own. Only a model that supports it (YuE2, b12459; MiniMax Music 3, b12480; VoxCPM2,
+     *  b12531, which takes 2 to 32 only); another refuses any other value */
     int flow_steps;
     /** nonzero: the text goes to the model as it is (phonemes, a whole prompt), the model's "tts" chat
      *  template is skipped -- llama.cpp b12494's raw_prompt; 0: a model with such a template speaks

@@ -64,6 +64,8 @@ DECLARED = "(declared in package.json)"
 SPDX_TEXTS = Path(__file__).resolve().parents[2] / "LICENSES"
 # Where the text file's own licenses are declared: its annotation names every license in it.
 REUSE_TOML = Path(__file__).resolve().parents[2] / "REUSE.toml"
+
+NOTICE_MD = Path(__file__).resolve().parents[2] / "llama/legal/natives/NOTICE.md"
 SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
@@ -271,7 +273,7 @@ def check_texts(out):
 
 
 def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
-    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names every license packages.csv lists.
+    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names exactly the licenses packages.csv lists.
 
     `reuse lint` cannot see this: it holds the annotation to the LICENSES folder, not to what the
     file contains. A lockfile that brings a license the repository has not carried before
@@ -292,7 +294,40 @@ def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
                 f"{target.name} does not name it" for spdx_id in used if spdx_id not in declared]
     problems += [f"{spdx_id} is a license in packages.csv without a text in {Path(licenses).name}/"
                  for spdx_id in used if not (Path(licenses) / f"{spdx_id}.txt").is_file()]
+    # and the other way: a license no package has any more leaves the file declared as more than it is
+    # (Unlicense after the WebUI's lockfile of b12541 dropped its one package)
+    problems += [f"{spdx_id} is named by {reuse_toml.name}'s annotation of {target.name}, and no package "
+                 "of packages.csv has it" for spdx_id in sorted(declared) if spdx_id not in used]
     return problems
+
+
+def check_notice(out, notice=NOTICE_MD):
+    """NOTICE.md's row of the WebUI npm bundle counts what packages.csv lists.
+
+    The row is written by hand, and a lockfile that changed under it kept the old numbers (357
+    packages for a list of 282 after b12541): its total, each license's count, the packages without a
+    license field and those that ship no license file.
+    """
+    rows = [line for line in Path(notice).read_text(encoding="utf-8").splitlines()
+            if line.startswith("| WebUI npm bundle")]
+    if len(rows) != 1:
+        return [f"{Path(notice).name} has {len(rows)} rows for the WebUI npm bundle, not one"]
+    row = rows[0]
+    listed = _listed(out)
+    counts = {}
+    for entry in listed:
+        counts[entry["license"]] = counts.get(entry["license"], 0) + 1
+    expected = [f"{len(listed)} pkgs:"]
+    for license_expression, count in sorted(counts.items()):
+        if license_expression:
+            expected.append(f"{license_expression.strip('()')} {count}")
+        else:
+            expected.append(f"{count} without field")
+    without_file = sum(1 for entry in listed if DECLARED in entry["files"].split(";"))
+    if without_file:
+        expected.append(f"{without_file} packages ship no license file")
+    return [f"{Path(notice).name}'s WebUI npm row does not say \"{text}\" (packages.csv)"
+            for text in expected if text not in row]
 
 
 def check(ui, out):

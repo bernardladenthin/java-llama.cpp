@@ -143,7 +143,7 @@ public final class SpeechOptions {
 
     /**
      * These options with the guidance scale and the solver steps of a flow-matching model (llama.cpp
-     * b12459's {@code cfg_scale} and {@code flow_steps}, YuE2); another model refuses any value but
+     * b12459's {@code cfg_scale} and {@code flow_steps}: YuE2, MiniMax Music 3, VoxCPM2); another model refuses any value but
      * {@code null}.
      *
      * @param guidance the classifier-free guidance scale, or {@code null} for the model's own
@@ -292,7 +292,8 @@ public final class SpeechOptions {
     }
 
     /**
-     * The classifier-free guidance scale of the audio codes (a flow-matching model, YuE2).
+     * The classifier-free guidance scale of the audio codes (a flow-matching model: YuE2, MiniMax Music 3,
+     * VoxCPM2).
      *
      * @return the scale, or {@code null} for the model's own
      */
@@ -301,7 +302,7 @@ public final class SpeechOptions {
     }
 
     /**
-     * The steps of the flow-matching ODE solver (YuE2).
+     * The steps of the flow-matching ODE solver (YuE2, MiniMax Music 3, VoxCPM2).
      *
      * @return the steps, or {@code null} for the model's own
      */

@@ -258,7 +258,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   over a gguf-split pair the generator writes), Vulkan,
   CUDA and OpenCL kernel work, CONV_2D through Metal's tensor API on M5 and split-K on every Apple
   chip (#32542, b12543), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
-  license texts are regenerated, 282 packages). All 26 patches apply unchanged at every step.
+  license texts are regenerated, 282 packages). All 26 patches applied unchanged at every step; `0037`
+  came with the tests of the bump (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

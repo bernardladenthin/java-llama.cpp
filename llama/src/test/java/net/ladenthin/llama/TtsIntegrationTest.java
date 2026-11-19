@@ -97,8 +97,8 @@ public class TtsIntegrationTest {
     @Test
     @DisplayName("Qwen3-TTS reports that it clones a voice from a speaker reference")
     public void supportsSpeakerReference() {
-        // llama.cpp's mtmd_helper_cap::audio_gen_spk_ref (b11901) is true for the Qwen3-TTS pipeline,
-        // which encodes the reference clip with the speaker encoder bundled in its mmproj.
+        // the Qwen3-TTS pipeline encodes the reference clip with the speaker encoder bundled in its mmproj
+        // (the engine's pair_takes_speaker_reference, tts_params.hpp)
         assertTrue(tts().supportsSpeakerReference(), "Qwen3-TTS must accept a speaker reference");
     }
 

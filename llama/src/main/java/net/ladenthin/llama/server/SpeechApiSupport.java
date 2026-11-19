@@ -170,7 +170,8 @@ final class SpeechApiSupport {
      * {@code max_tokens}) the frame cap, {@code top_k}, {@code top_p}, {@code repeat_penalty},
      * {@code seed} and {@code temperature} the sampling, {@code speed} and {@code loudness} the
      * delivery of a model that supports it (b12431), {@code cfg_scale} and {@code flow_steps} the
-     * guidance and solver steps of a flow-matching model (b12459, YuE2), {@code raw_prompt} the text as it is,
+     * guidance and solver steps of a flow-matching model (b12459: YuE2, MiniMax Music 3, VoxCPM2),
+     * {@code raw_prompt} the text as it is,
      * without the model's {@code "tts"} template (b12494); {@code stream} is refused, this server answers
      * the audio in one piece.
      *

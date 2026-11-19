@@ -29,8 +29,9 @@ import org.junit.jupiter.api.Timeout;
 /**
  * What every speech pipeline of llama.cpp has to do through {@link TextToSpeech}, whichever it is:
  * Pocket TTS, Chatterbox (b12097), Drama-3 (b12116), Soprano. {@link TextToSpeech} drives
- * {@code mtmd_helper::gen_audio} without knowing the pipeline, so the assertions are the ones that
- * hold for all of them and read the rest from the model: its sample rate from the WAV header, its
+ * {@code mtmd_helper::gen_audio} the same way for every pipeline (only whether one clones a voice from a
+ * clip is decided by its type), so the assertions are the ones that hold for all of them and read the
+ * rest from the model: its sample rate from the WAV header, its
  * voices from {@link TextToSpeech#getVoices()}, voice cloning from
  * {@link TextToSpeech#supportsSpeakerReference()}.
  *

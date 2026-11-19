@@ -230,6 +230,14 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("CC-BY-NC-4.0 is a license in packages.csv", problems[0])
 
+    def test_the_reuse_annotation_names_no_license_the_list_does_not_have(self):
+        tarballs, _ = self.with_a_github_dependency()
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        problems = webuilicenses.check_reuse(
+            self.out, self.reuse_toml("MIT AND ISC AND CC-BY-NC-4.0 AND Unlicense"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Unlicense is named by REUSE.toml's annotation", problems[0])
+
     def test_a_license_of_the_list_needs_its_text_in_the_licenses_folder(self):
         self.generated()
         licenses = Path(self.temp.name) / "LICENSES"
@@ -249,6 +257,24 @@ class WebuiLicensesTest(unittest.TestCase):
         committed = webuilicenses.REUSE_TOML.parent / "llama/legal/natives/webui-npm"
         self.assertEqual(webuilicenses.check_texts(committed), [])
         self.assertEqual(webuilicenses.check_reuse(committed), [])
+        self.assertEqual(webuilicenses.check_notice(committed), [])
+
+    def test_the_notice_row_counts_the_listed_packages(self):
+        self.generated()
+        listed = webuilicenses._listed(self.out)
+        counts = {}
+        for entry in listed:
+            counts[entry["license"]] = counts.get(entry["license"], 0) + 1
+        parts = ", ".join(f"{license.strip('()')} {count}" for license, count in sorted(counts.items()) if license)
+        notice = Path(self.temp.name) / "NOTICE.md"
+        notice.write_text(f"| WebUI npm bundle | x | y | {len(listed)} pkgs: {parts} | `webui-npm` | z |\n")
+        self.assertEqual(webuilicenses.check_notice(self.out, notice), [])
+        notice.write_text(f"| WebUI npm bundle | x | y | {len(listed) + 75} pkgs: {parts} | `webui-npm` | z |\n")
+        problems = webuilicenses.check_notice(self.out, notice)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{len(listed)} pkgs:", problems[0])
+        notice.write_text("| something else |\n")
+        self.assertIn("not one", webuilicenses.check_notice(self.out, notice)[0])
 
     def test_a_dependency_that_is_no_fixed_archive_is_refused(self):
         for resolved in ("git+ssh://git@github.com/ggml-org/llama-brand.git#master",

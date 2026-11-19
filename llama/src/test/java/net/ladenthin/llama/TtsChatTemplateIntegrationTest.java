@@ -115,7 +115,9 @@ public class TtsChatTemplateIntegrationTest {
     @Test
     @DisplayName("no voice cloning: the pair reports it and refuses a speaker reference")
     public void refusesASpeakerReference() {
-        assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio has no voice encoder");
+        // its projector has an audio encoder (for speech in), but its pipeline ignores a clip: the voice is
+        // named in the prompt
+        assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio clones no voice");
         // the request's fault, so that a server answers 400
         assertThrows(
                 InvalidRequestException.class,

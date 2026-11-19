@@ -179,6 +179,14 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### Open from the llama.cpp bumps (b11968 onward) -- to implement, to decide, to measure
 
+- **Smaller findings of the patch review of 2026-11-19, not fixed:** the engine sets the slot-prompt
+  similarity (`patches/0003`'s accessor) from the caller's thread, which the accessor's comment rules
+  out -- a formal data race with the worker's slot selection over one float, benign in practice;
+  `patches/0008` replaces only `args[0]`, so an `LLAMA_APP_CMD` in the JVM's environment (a JVM
+  started below `llama serve`) leaves the subcommand in a worker's argv, which `NativeServer` then
+  refuses; `--log-prompts-dir` (not exposed in Java) opens its files through a narrow path, the class
+  of `0024`-`0030`.
+
 What the bumps brought that this library does not use yet, or that changed under it and is not
 verified. Done items are not listed (CHANGELOG, `docs/history/llama-cpp-breaking-changes.md`).
 
@@ -296,7 +304,7 @@ the log lock)
   Music 3 (#32435, `MiniMax-Music3-GGUF` 9.1 GB + 6.6 GB, licence "other") and Kokoro's `tts_dict`
   (#32397), YuE2-3B (#32369, 5.4 GB, CC-BY-NC-4.0) and Fish Audio S2 (#32330, `s2-pro-GGUF` 6.3 GB,
   licence "other") -- each covered by the generator (`CApiMusic3`, `CApiTtsDict`, `CApiZonos3`) on
-  random weights only; **VoxCPM2** (b12541, #32443; `CApiVoxCpm2` on a random pair): upstream's
+  random weights only; **VoxCPM2** (b12531, #32443; `CApiVoxCpm2` on a random pair): upstream's
   `docs/multimodal/tts.md` converts `openbmb/VoxCPM2` (2B) itself, ggml-org published no pair, and the
   third-party `*VoxCPM2-GGUF` repositories on Hugging Face were not checked against llama.cpp's
   format on 2026-11-19 -- a pair in CI's set would also exercise the real cloning path; and **Drama-3** (b12116 #31613): the smallest pair is 14.6 GB
@@ -425,6 +433,11 @@ aarch64 (CI builds and runs it).
   and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
 
 ### RPC backend — follow-ups
+
+- **Old Windows and COMM_INIT's retries** (`patches/0015`): the stoppable non-blocking connect waits
+  through `WSAPoll`, which does not report a refused connect before Windows 10 2004 / Server 2022 (its
+  documentation; not reproduced). A rank > 0 would wait for the stop there instead of retrying.
+  Multi-node COMM_INIT on such a host only.
 
 - **A server lost mid-inference still aborts the JVM.** Patch `0015` makes *registration* fail
   softly; every call after it (`get_dispatcher()`, `RPC_STATUS_ASSERT` in the dispatcher's `work()`)
@@ -694,6 +707,13 @@ CLAUDE.md, "Linux s390x".
   GPU/NPU and Linux SME measurements are in "What still has to be measured".
 - **Interactive agent:** real console/terminal behaviour needs a person at a terminal; model-backed
   headless integration coverage does not replace that check.
+- **Test gaps the review of 2026-11-19 named and that no hermetic test reaches yet** (the others got
+  tests in the same round): lfm3-d1 decision packing (b12525, #32553; the generator would need the
+  LFM3 backbone non-causal with `lfm3.decision.type = lfm3-d1`), video beyond the llava projector
+  (LFM3-Omni's soundtrack through `jllama_video_decoder.read_audio`, the LFM3 and Qwen3-VL video
+  templates; needs their vision towers), Qwen3-TTS's ICL mode, Fish Audio S2 and YuE2 in the generator,
+  and the RPC server's `cache_dir` hash path (only weights above 10 MB are hashed). The PIT gate leaves
+  the `server` package and the `json` stream parsers out (`llama/pom.xml`).
 
 ## Open — cross-cutting (slice for this repo)
 

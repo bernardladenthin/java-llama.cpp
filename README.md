@@ -1018,7 +1018,7 @@ Two more come from a model that sings rather than speaks, **YuE2** (llama.cpp b1
 lyrics in **stereo**: the WAV file then says two channels, and `/tts`'s `pcm` answers name
 `channels=2`): `cfgScale` (classifier-free guidance of the audio codes, above 0, `1` = none) and
 `flowSteps` (steps of its flow-matching solver, 1 to 1024; fewer is faster and less accurate), both
-`0` for the model's own. MiniMax Music 3 (b12480) and **VoxCPM2** (b12541) read them too, and every
+`0` for the model's own. MiniMax Music 3 (b12480) and **VoxCPM2** (b12531) read them too, and every
 other model refuses them. VoxCPM2 speaks at 48 kHz and ships no predefined voices: a voice is designed
 by a description in parentheses at the start of the text, or cloned from a speaker reference when its
 mmproj carries the AudioVAE encoder (it clones without the transcript and ignores
