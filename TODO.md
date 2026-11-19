@@ -403,8 +403,8 @@ the SYCL XMX (DPAS) code paths (b11980, #31125). Not benchmarked: the NEON 4x4 `
 aarch64 (CI builds and runs it).
 
 **Compatibility notes to carry into the release notes**
-- **RPC protocol 10** (b12387; 9 since b12217): `RpcServer` and a `--rpc` client must run the same
-  version of this library.
+- **RPC protocol 10** (b12387; 9 since b12217; 10.0.1 since b12550, `GGML_OP_SLEEP`): `RpcServer` and
+  a `--rpc` client must run the same version of this library.
 - **`TextToSpeech` voice handling** changed for models with predefined voices (first voice by
   default, voice + speaker reference refused).
 - **`HF_TOKEN` is sent to `huggingface.co` hosts only** (b12166 #31730): a mirror on another host

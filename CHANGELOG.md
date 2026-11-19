@@ -240,7 +240,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12549** (from b12525, 24 upstream commits in eight steps; master, pinned by commit
+- **llama.cpp b12552** (from b12525, 27 upstream commits in nine steps; master, pinned by commit
   before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
   relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
   the way the plain one builds them, so these models reuse their compute graph with flash attention --
@@ -263,8 +263,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   CUDA and OpenCL kernel work, CONV_2D through Metal's tensor API on M5 and split-K on every Apple
   chip (#32542, b12543) and a fix of one of Metal's ranges (#32602), the graph parameters without the
   fields the graph reads from the model (#32596), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
-  license texts are regenerated, 282 packages). All 26 patches applied unchanged at every step; `0037`
-  came with the tests of the bump, `0038`-`0041` with the fourth review round (see "Fixed").
+  license texts are regenerated, 282 packages). b12550 adds ggml's busy-wait operator `GGML_OP_SLEEP`
+  for scheduler tests (#27258, RPC protocol 10.0.1: the handshake accepts the patch step, and the op
+  runs on an RPC server's device, `RpcLoopback.TheSleepOperationRunsOnTheServerAndKeepsItsInput`),
+  b12551 a scatter kernel for CUDA's batched tensor writes (#32489) and b12552 OpenVINO fixes and
+  fewer prefill recompiles (#32590). All 26 patches applied unchanged at every step, the 31 of today
+  at the last; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
+  (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

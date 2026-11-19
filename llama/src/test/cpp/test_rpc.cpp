@@ -321,6 +321,40 @@ TEST(RpcLoopback, ServerComputesTheSameResultAsTheLocalCpu) {
     }
 }
 
+// GGML_OP_SLEEP (b12550, protocol 10.0.1) busy-waits on the device that runs it and returns its input
+// as a view. Over RPC that device is the server's: the client's compute takes at least the wait, and
+// the data comes back as it went in. A server whose op table lacks the new op would not wait.
+TEST(RpcLoopback, TheSleepOperationRunsOnTheServerAndKeepsItsInput) {
+    loopback_server server;
+    ASSERT_TRUE(server.listening()) << "no free port found for the loopback RPC server";
+    ggml_backend_t rpc = ggml_backend_rpc_init(server.endpoint().c_str(), 0);
+    ASSERT_NE(rpc, nullptr);
+
+    ggml_init_params params = {ggml_tensor_overhead() * 4 + ggml_graph_overhead(), nullptr, true};
+    ggml_context *ctx = ggml_init(params);
+    ggml_tensor *x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4);
+    const int32_t wait_us = 300000;
+    ggml_tensor *y = ggml_sleep(ctx, x, wait_us);
+    ggml_cgraph *graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, y);
+    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, rpc);
+    ASSERT_NE(buffer, nullptr);
+    const std::vector<float> in = {1.5f, -2.0f, 3.25f, 0.0f};
+    ggml_backend_tensor_set(x, in.data(), 0, ggml_nbytes(x));
+
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_EQ(ggml_backend_graph_compute(rpc, graph), GGML_STATUS_SUCCESS);
+    std::vector<float> out(in.size());
+    ggml_backend_tensor_get(y, out.data(), 0, ggml_nbytes(y));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    EXPECT_GE(elapsed, std::chrono::microseconds(wait_us)) << "the server did not wait";
+    EXPECT_EQ(out, in);
+    ggml_backend_buffer_free(buffer);
+    ggml_free(ctx);
+    ggml_backend_free(rpc);
+}
+
 TEST(RpcLoopback, StopEndsTheServerAndFreesThePort) {
     loopback_server server;
     ASSERT_TRUE(server.listening());
