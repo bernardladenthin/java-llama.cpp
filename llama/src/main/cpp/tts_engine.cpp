@@ -273,10 +273,14 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
 
     const int32_t input_status = gen.set_input(&inp);
     if (input_status == 2) {
-        // the ranges are checked above, so what is left is a model without delivery or generation control
-        return refuse(synthesis_uses_generation_control(options) ? "the model does not support cfg_scale or flow_steps"
-                      : synthesis_uses_delivery(options)         ? "the model does not support speed or loudness"
-                                                                 : "the TTS input is invalid for the model");
+        // the engine's ranges are checked above, so what is left is a model without delivery or generation
+        // control, or a value outside the model's own range (VoxCPM2 takes flow_steps 2 to 32 only), which
+        // llama.cpp names in its log only
+        return refuse(synthesis_uses_generation_control(options)
+                          ? "the model does not support cfg_scale or flow_steps, or not these values (its own range "
+                            "is in llama.cpp's log)"
+                      : synthesis_uses_delivery(options) ? "the model does not support speed or loudness"
+                                                         : "the TTS input is invalid for the model");
     }
     if (input_status != 0) {
         err = "failed to set TTS input (prompt/speaker-reference/lang rejected)";

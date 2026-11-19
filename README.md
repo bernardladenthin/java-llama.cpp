@@ -1018,7 +1018,12 @@ Two more come from a model that sings rather than speaks, **YuE2** (llama.cpp b1
 lyrics in **stereo**: the WAV file then says two channels, and `/tts`'s `pcm` answers name
 `channels=2`): `cfgScale` (classifier-free guidance of the audio codes, above 0, `1` = none) and
 `flowSteps` (steps of its flow-matching solver, 1 to 1024; fewer is faster and less accurate), both
-`0` for the model's own, and refused by every other model. `speakerReferenceText` (b12453) is the
+`0` for the model's own. MiniMax Music 3 (b12480) and **VoxCPM2** (b12541) read them too, and every
+other model refuses them. VoxCPM2 speaks at 48 kHz and ships no predefined voices: a voice is designed
+by a description in parentheses at the start of the text, or cloned from a speaker reference when its
+mmproj carries the AudioVAE encoder (it clones without the transcript and ignores
+`speakerReferenceText`). No VoxCPM2 conversion is in CI's model set; the C++ suite drives the pipeline
+over a random pair. `speakerReferenceText` (b12453) is the
 transcript of a speaker reference, which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) clones
 the voice from more closely (with a clip of 30 s or less and an mmproj converted with the reference encoder). A `maxFrames` of `0` leaves
 the length to the model (512 frames for most; YuE2 stops by itself), which is what `/tts` does when a

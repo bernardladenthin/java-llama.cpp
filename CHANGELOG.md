@@ -240,18 +240,22 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12541** (from b12525, 16 upstream commits in four steps; master, pinned by commit
+- **llama.cpp b12542** (from b12525, 17 upstream commits in five steps; master, pinned by commit
   before upstream tags it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
   hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
   matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
-  a reference clip clones it, and `flow_steps` / `cfg_scale` (`SpeechParameters`, `/tts`) reach it
-  without a change here. A `/v1/realtime` session on a model that fell asleep wakes it before it
+  a reference clip clones it (see "Fixed": `TextToSpeech` refused it until the same day), and
+  `flow_steps` / `cfg_scale` (`SpeechParameters`, `/tts`) reach it without a change here
+  (`CApiVoxCpm2`, a random pair the generator writes). An EAGLE-3 draft over a Qwen3-VL target
+  reads the target's layer inputs (#32589, b12542); before, the process ended at an assertion. A `/v1/realtime` session on a model that fell asleep wakes it before it
   touches the model (#32567; a segmentation fault before, `CApiLfm3AudioSleep`), a recurrent cell
   is cleared with zeros instead of scaled by 0, so a NaN left in it no longer reaches the next
   sequence (#31913, `CApiRecurrent.AStateThatOverflowedDoesNotReachTheNextSequence`, a Mamba whose
   state grows until it overflows: `tiny_model_spec::ssm_a_growth`), `limite` refuses mudd metadata
   past its index array (#32562), a direct-I/O read that fails with `EIO` falls back to buffered I/O
-  (#32545), the IQ2 quantizer caches its grid search (#31910), `PATH_MAX` is gone (#32557), Vulkan,
+  (#32545), the IQ2 quantizer caches its grid search (#31910), `PATH_MAX` is gone (#32557: on Windows a split model under a path of
+  more than 260 bytes of UTF-8 did not load, `CApiShard.AModelSplitByGgufSplitLoadsFromItsFirstFile`,
+  over a gguf-split pair the generator writes), Vulkan,
   CUDA and OpenCL kernel work, and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
   license texts are regenerated, 282 packages). All 26 patches apply unchanged at every step.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
@@ -646,6 +650,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Voice cloning for Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2.** `TextToSpeech`,
+  `FfmTextToSpeech` and `jllama_tts_supports_speaker_reference` took llama.cpp's
+  `mtmd_helper_cap::audio_gen_spk_ref`, which names only Qwen3-TTS and Pocket TTS, so a reference
+  clip was refused (`InvalidRequestException`) for four pipelines that clone from one -- among them
+  CI's Chatterbox and ZONOS3 pairs, whose projectors carry the speaker encoder. The engine now
+  decides by the pipeline and by whether the projector takes audio in, as upstream's `/tts` route
+  does (`tts_params.hpp`, `pair_takes_speaker_reference`); the speech contract pins the answer of
+  every pair in CI's set, since its cloning case took whatever the pair reported.
 - **A slot file carries the LoRA config its state was computed with** (`patches/0021`, renamed
   `0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-with.patch`). The server
   kept the scales of the files it had saved in a map by path, so a model loaded again -- the next

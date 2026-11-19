@@ -296,7 +296,10 @@ the log lock)
   Music 3 (#32435, `MiniMax-Music3-GGUF` 9.1 GB + 6.6 GB, licence "other") and Kokoro's `tts_dict`
   (#32397), YuE2-3B (#32369, 5.4 GB, CC-BY-NC-4.0) and Fish Audio S2 (#32330, `s2-pro-GGUF` 6.3 GB,
   licence "other") -- each covered by the generator (`CApiMusic3`, `CApiTtsDict`, `CApiZonos3`) on
-  random weights only; and **Drama-3** (b12116 #31613): the smallest pair is 14.6 GB
+  random weights only; **VoxCPM2** (b12541, #32443; `CApiVoxCpm2` on a random pair): upstream's
+  `docs/multimodal/tts.md` converts `openbmb/VoxCPM2` (2B) itself, ggml-org published no pair, and the
+  third-party `*VoxCPM2-GGUF` repositories on Hugging Face were not checked against llama.cpp's
+  format on 2026-11-19 -- a pair in CI's set would also exercise the real cloning path; and **Drama-3** (b12116 #31613): the smallest pair is 14.6 GB
   (`mradermacher/drama-3-GGUF`, research licence), so `TtsPipelineIntegrationTest` runs the contract
   on it by property only. Its rows, should a runner for it exist: `drama-3.Q2_K.gguf` sha256
   `10c87623811b8948806801c8263b3d896f3cd751067d14eeddf5ba6c6732fc75`, `drama-3.mmproj-Q8_0.gguf`
