@@ -326,6 +326,39 @@ class FfmLlamaModelIntegrationTest {
         assertFalse(FfmRpcServer.isListening(), "no RPC server runs in this JVM");
     }
 
+    /**
+     * The attach checks the model under its read lock, as every other call does: a closed model is
+     * refused before the C API sees its freed handle, nothing is bound, and an attach to an open
+     * model starts on the same port afterwards.
+     */
+    @Test
+    void aClosedModelRefusesAnAttachedServer() throws Exception {
+        FfmLlamaModel other = FfmLlamaModel.load(new ModelParameters()
+                .setModel(FfmTestSupport.modelPath().toString())
+                .setCtxSize(64)
+                .setGpuLayers(0)
+                .setThreads(1));
+        other.close();
+        int port;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            port = socket.getLocalPort();
+        }
+
+        IllegalStateException refused = assertThrows(
+                IllegalStateException.class,
+                () -> FfmNativeServer.startAttached(other, "--host", "127.0.0.1", "--port", String.valueOf(port)));
+
+        assertEquals("the model is closed", refused.getMessage());
+        try (ServerSocket free = new ServerSocket(port)) {
+            assertTrue(free.isBound(), "the refused attach bound the port");
+        }
+        try (FfmNativeServer server = FfmNativeServer.startAttached(model, "--host", "127.0.0.1", "--port",
+                String.valueOf(port))) {
+            assertTrue(server.isRunning());
+            assertEquals(200, awaitHealth(port));
+        }
+    }
+
     @Test
     void aCloseWaitsForACallThatPassedTheClosedCheck() throws Exception {
         // A call checked "closed" and then called into the C API; a close() from another thread in

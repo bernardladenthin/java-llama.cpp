@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.util.Arrays;
 import java.util.List;
 import net.ladenthin.llama.args.CacheType;
+import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -640,5 +641,124 @@ public class OpenAiServerCliTest {
         assertThat(options.toServerConfig().isSupportsVideo(), is(false));
         assertThat(OpenAiServerConfig.builder().build().isSupportsVideo(), is(false));
         assertThat(OpenAiServerConfig.builder().supportsVideo(true).build().isSupportsVideo(), is(true));
+    }
+
+    /** The arguments after {@code option} in {@code argv}, {@code count} of them. */
+    private static List<String> valuesOf(List<String> argv, String option, int count) {
+        int at = argv.indexOf(option);
+        assertThat(option + " in " + argv, at >= 0, is(true));
+        return argv.subList(at + 1, at + 1 + count);
+    }
+
+    /**
+     * Every model option of the command line lands in the {@link ModelParameters} the server loads
+     * with, with its value: the projector, the RPC servers (as one comma-separated list), both thread
+     * counts, both cache types, and {@code --embedding} next to {@code --reranking}, which are two
+     * flags and both reach the argv.
+     */
+    @Test
+    public void toModelParametersCarriesEveryModelOptionWithItsValue() {
+        // arrange
+        OpenAiServerCli.Options options = OpenAiServerCli.parse(
+                "-m",
+                "m.gguf",
+                "--mmproj",
+                "proj.gguf",
+                "--rpc",
+                "10.0.0.2:50052,host:2",
+                "--rpc",
+                "10.0.0.3:1",
+                "--threads",
+                "8",
+                "--threads-batch",
+                "6",
+                "--cache-type-k",
+                "f16",
+                "--cache-type-v",
+                "q4_0",
+                "--embedding",
+                "--reranking");
+
+        // act
+        ModelParameters params = options.toModelParameters();
+        List<String> argv = Arrays.asList(params.toArray());
+
+        // assert
+        assertThat(valuesOf(argv, "--mmproj", 1), is(Arrays.asList("proj.gguf")));
+        assertThat(valuesOf(argv, "--rpc", 1), is(Arrays.asList("10.0.0.2:50052,host:2,10.0.0.3:1")));
+        assertThat(valuesOf(argv, "--threads", 1), is(Arrays.asList("8")));
+        assertThat(valuesOf(argv, "--threads-batch", 1), is(Arrays.asList("6")));
+        assertThat(valuesOf(argv, "--cache-type-k", 1), is(Arrays.asList("f16")));
+        assertThat(valuesOf(argv, "--cache-type-v", 1), is(Arrays.asList("q4_0")));
+        assertThat(argv.contains("--embedding"), is(true));
+        assertThat(argv.contains("--reranking"), is(true));
+        assertThat(
+                params,
+                is(new ModelParameters()
+                        .setModel("m.gguf")
+                        .setGpuLayers(0)
+                        .setAlias("m.gguf")
+                        .setRpcServers(
+                                RpcEndpoint.of("10.0.0.2", 50052),
+                                RpcEndpoint.of("host", 2),
+                                RpcEndpoint.of("10.0.0.3", 1))
+                        .setMmproj("proj.gguf")
+                        .setThreads(8)
+                        .setThreadsBatch(6)
+                        .setCacheTypeK(CacheType.F16)
+                        .setCacheTypeV(CacheType.Q4_0)
+                        .enableEmbedding()
+                        .enableReranking()));
+    }
+
+    /** {@code --embedding} and {@code --reranking} are independent: each alone sets only its own flag. */
+    @Test
+    public void embeddingAndRerankingEachSetOnlyTheirOwnFlag() {
+        // act
+        List<String> embedding = Arrays.asList(OpenAiServerCli.parse("-m", "m.gguf", "--embedding")
+                .toModelParameters()
+                .toArray());
+        List<String> reranking = Arrays.asList(OpenAiServerCli.parse("-m", "m.gguf", "--reranking")
+                .toModelParameters()
+                .toArray());
+        OpenAiServerCli.Options both = OpenAiServerCli.parse("-m", "m.gguf", "--reranking", "--embedding");
+
+        // assert
+        assertThat(embedding.contains("--embedding"), is(true));
+        assertThat(embedding.contains("--reranking"), is(false));
+        assertThat(reranking.contains("--reranking"), is(true));
+        assertThat(reranking.contains("--embedding"), is(false));
+        assertThat(both.isEmbedding(), is(true));
+        assertThat(both.isReranking(), is(true));
+    }
+
+    /** A thread count of 0 is the CLI's "unset": the model's own default, no {@code --threads} in the argv. */
+    @Test
+    public void threadCountsOfZeroLeaveTheModelsDefault() {
+        // act
+        List<String> argv = Arrays.asList(OpenAiServerCli.parse("-m", "m.gguf", "-t", "0", "-tb", "0")
+                .toModelParameters()
+                .toArray());
+
+        // assert
+        assertThat(argv.contains("--threads"), is(false));
+        assertThat(argv.contains("--threads-batch"), is(false));
+    }
+
+    /** The projector also makes the server config advertise vision, the embedding modes leave it alone. */
+    @Test
+    public void theModelOptionsReachTheServerConfigOnlyThroughTheProjector() {
+        // arrange
+        OpenAiServerCli.Options options =
+                OpenAiServerCli.parse("-m", "m.gguf", "--mmproj", "proj.gguf", "--embedding", "--reranking");
+        OpenAiServerCli.Options plain = OpenAiServerCli.parse("-m", "m.gguf", "--embedding", "--reranking");
+
+        // act
+        OpenAiServerConfig config = options.toServerConfig();
+
+        // assert
+        assertThat(config.isSupportsVision(), is(true));
+        assertThat(plain.toServerConfig().isSupportsVision(), is(false));
+        assertThat(config.getModelId(), is("m.gguf"));
     }
 }

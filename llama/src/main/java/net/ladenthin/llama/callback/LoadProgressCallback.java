@@ -18,6 +18,12 @@ import net.ladenthin.llama.parameters.ModelParameters;
  * Return {@code false} to abort the load. When {@code false} is returned, the constructor
  * throws {@link net.ladenthin.llama.exception.LlamaException} because the native loader aborts and reports failure.
  * </p>
+ * <p>
+ * A {@link RuntimeException} (or {@link Error}) thrown by the callback aborts the load as well, and
+ * the constructor rethrows it unchanged; the callback is not called again. ({@code llama-ffm}'s
+ * {@code FfmLlamaModel.load} reports it as a {@code LlamaException} instead: an exception cannot cross
+ * an FFM upcall.)
+ * </p>
  */
 @FunctionalInterface
 public interface LoadProgressCallback {

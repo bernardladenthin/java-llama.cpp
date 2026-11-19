@@ -198,6 +198,31 @@ public abstract class AbstractTtsPipelineContract {
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("a guidance scale and solver steps are spoken by a model that has them, else the request's fault")
+    public void aGuidanceIsSpokenOrRefusedAsTheRequestsFault() {
+        // b12459 (#32369): YuE2, MiniMax Music 3 and VoxCPM2 read them; llama.cpp offers no capability to ask
+        for (SpeechParameters guidance : new SpeechParameters[] {
+            SpeechParameters.builder()
+                    .maxFrames(MAX_FRAMES)
+                    .seed(1)
+                    .cfgScale(2.0f)
+                    .build(),
+            SpeechParameters.builder()
+                    .maxFrames(MAX_FRAMES)
+                    .seed(1)
+                    .flowSteps(4)
+                    .build()
+        }) {
+            try {
+                assertWellFormedAudibleWav(tts.synthesize("Hello, this is a longer sentence to speak.", guidance));
+            } catch (InvalidRequestException e) {
+                assertTrue(e.getMessage().contains("does not support cfg_scale or flow_steps"), e.getMessage());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
     @DisplayName("options no model can take are the request's fault, and the model answers the next one")
     public void optionsOutOfRangeAreRefusedAsTheRequestsFault() {
         SpeechParameters[] refused = {

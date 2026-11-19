@@ -706,8 +706,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     copies the base on macOS and is a no-op on Android (`CApiLocale.TheNumericLocaleGuardLeaksNothing`,
     red on a macOS job).
   - `ModelParameters` split every value at U+001F into several arguments, so a chat template, an
-    alias or a path holding that character injected options into the argv; only the values of an
-    option of several values (`--control-vector-layer-range`) are several arguments now.
+    alias or a path holding that character injected options into the argv of JNI and FFM; only the
+    values of an option of several values (`--control-vector-layer-range`) are several arguments
+    now (`CliParametersTest`). The split came with the layer-range fix of the same snapshot and was in
+    no release.
+  - New tests besides: a chunked request body over the limit is `413`; two natives directories that
+    ship one file name fail the load by name (`BackendLoadTest`, which now also runs with
+    `net.ladenthin.llama.lib.path` set); the Responses and Anthropic translators' remaining branches;
+    `OpenAiServerCli`'s model options; a load-progress or imatrix callback that throws reaches the
+    caller unchanged and the next load works; the speech pipelines refuse or speak `cfgScale` /
+    `flowSteps` as the request's fault, and an LFM3-Audio raw prompt speaks as the template does; an
+    attach to a closed model is refused over JNI and FFM; and the natives load from an extraction
+    directory named with `ä` (in a child JVM).
   - Windows: `--grammar-file`, `--chat-template-file`, `-jf`, `--api-key-file` and the lookup caches
     under a path outside ASCII were opened in the active code page (`patches/0039`).
 - **Found by the test-gap round of 2026-11-19, each red before its fix:**
