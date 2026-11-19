@@ -4,7 +4,7 @@ update_slots() puts the sampled token and the draft of every generating slot int
 holds max(n_batch, n_parallel) tokens (server_context_impl::batch). The length of a draft is limited
 by the context, the request and the speculative type's own n_max, never by that batch: with a batch
 smaller than one token plus a draft -- -b 3 next to a draft model, whose default draft is three
-tokens, or a causal context of three tokens, -c 3, since llama_context caps n_batch at n_ctx -- the
+tokens, or -c 3, since llama_context caps a causal context's n_batch at the n_ctx it was given -- the
 first generation step ended the process in handle_last_sampled_token() ("batch must be large enough
 to hold the sampled and draft tokens"). Several slots drafting at once need their drafts together.
 

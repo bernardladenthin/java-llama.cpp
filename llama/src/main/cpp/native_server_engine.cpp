@@ -82,7 +82,9 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
         throw std::runtime_error("a vocab-only model has no server context to attach to");
     }
     std::unique_ptr<native_server> owned(new native_server());
-    owned->args = argv;
+    // The parse below sees the argv without its --rpc pairs, so their servers are registered (and an
+    // unreachable one refused) here, before it takes the log lock -- as for start().
+    owned->args = jllama::rpc::prepare_argv(argv);
     owned->params = std::make_shared<common_params>();
     const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params);
     bind_argv(owned.get());

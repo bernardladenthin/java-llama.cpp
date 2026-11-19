@@ -35,6 +35,10 @@ argv once, under its log lock, to refuse a bad argv at the start and to own the 
 parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
 /dev/stdin) the second time empty -- the server then ran without its API key.
 
+Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
+embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
+does) -- once it has one, port native_server.cpp to it and drop the patch.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
 index d14978286..97ad17901 100644
 --- a/tools/server/server.cpp

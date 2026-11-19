@@ -11,8 +11,9 @@ elsewhere -- the function the model files already go through.
 
 Read from the source and from the measurement of the same class in
 docs/handover/local-agent-report-windows-non-ascii-paths.md (which lists this site as open);
-not measured on Windows with the fix before it was written: CI's Windows C++ jobs are its first
-run there.
+then measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when set_file() no longer calls the narrow fopen() --
 CApiNonAsciiPaths.TheLogFileIsWrittenUnderItsNonAsciiName then stays green without it on a

@@ -500,6 +500,12 @@ std::string batch_refusal(const common_params &params) {
         return "--batch-size must be at least 1 (got " + std::to_string(params.n_batch) +
                "): a batch of no tokens cannot evaluate anything";
     }
+    // A negative ubatch reaches llama_context as a huge unsigned one, and an embedding context takes
+    // its batch from the ubatch (common_init_result) -- a batch of four billion tokens to allocate.
+    // 0 is upstream's "the batch size".
+    if (params.n_ubatch < 0) {
+        return "--ubatch-size must not be negative (got " + std::to_string(params.n_ubatch) + ")";
+    }
     return std::string();
 }
 
@@ -521,6 +527,8 @@ std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params 
     bool parsed = false;
     std::string refusal;
     {
+        // the registry before the log lock (see load())
+        std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
         std::lock_guard<std::mutex> lk(g_common_log_mutex);
         {
             const c_numeric_locale numbers;
@@ -583,7 +591,11 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     {
         // Every parse holds the lock: --log-disable, --log-colors and LLAMA_ARG_LOG_FILE pause the log
         // worker inside it, and the server example's parse downloads nothing (common_params_parse_ex
-        // leaves that to the load) and connects to no RPC server (see above), so it is short.
+        // leaves that to the load) and connects to no RPC server (see above), so it is short. It
+        // registers LLAMA_ARG_RPC's servers again (answered from ggml-rpc's cache), so it holds the RPC
+        // registry's mutex too -- taken first, so that a parse waiting for another load's connect
+        // (rpc::prepare_argv holds the mutex while it connects) does not hold the log lock meanwhile.
+        std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
         std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
         {
             const c_numeric_locale numbers;

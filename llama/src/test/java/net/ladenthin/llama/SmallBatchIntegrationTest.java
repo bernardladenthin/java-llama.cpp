@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.Assumptions;
@@ -82,7 +83,7 @@ public class SmallBatchIntegrationTest {
             }
             List<String> answers = new ArrayList<>();
             for (Future<String> future : futures) {
-                answers.add(future.get());
+                answers.add(future.get(5, TimeUnit.MINUTES)); // a hang fails the test instead of the job
             }
             return answers;
         } finally {

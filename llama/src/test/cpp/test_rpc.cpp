@@ -87,10 +87,24 @@ TEST(RpcSupport, RpcAsLastArgumentWithoutValueRequestsNothing) {
 
 TEST(RpcSupport, TheEnvironmentsEndpointsComeBeforeTheArgvs) {
     // a parse applies LLAMA_ARG_RPC before the argv, and every value registers its servers
-    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "c:3"}, "a:1,,b:2"),
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "c:3"}, "a:1,b:2"),
               (std::vector<std::string>{"a:1", "b:2", "c:3"}));
     EXPECT_EQ(jllama::rpc::requested_endpoints({"llama"}, "a:1"), (std::vector<std::string>{"a:1"}));
-    EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama"}, "").empty());
+    EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama"}, "").empty()) << "an empty variable is not set";
+}
+
+TEST(RpcSupport, AnEmptyEntryIsKeptAsUpstreamKeepsIt) {
+    // upstream's add_rpc_devices splits with string_split, which keeps an empty entry, and fails to
+    // register it: "a:1," was refused by the parse, and is refused by prepare_argv now that the parse
+    // no longer sees --rpc
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "a:1,"}), (std::vector<std::string>{"a:1", ""}));
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", ""}), (std::vector<std::string>{""}));
+    try {
+        (void)jllama::rpc::prepare_argv({"llama", "--rpc", ","});
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find("empty RPC server"), std::string::npos) << e.what();
+    }
 }
 
 TEST(RpcSupport, TheParsedArgvHasNoRpcOptionLeft) {
@@ -100,7 +114,7 @@ TEST(RpcSupport, TheParsedArgvHasNoRpcOptionLeft) {
     // a --rpc without a value stays, for the parse to refuse
     EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "-m", "x.gguf", "--rpc"}),
               (std::vector<std::string>{"llama", "-m", "x.gguf", "--rpc"}));
-    // another option's value that happens to read --rpc is not an option
+    // read by name, not by position: a "--rpc" at the end stays even when it is another option's value
     EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "--alias", "--rpc"}),
               (std::vector<std::string>{"llama", "--alias", "--rpc"}));
 }

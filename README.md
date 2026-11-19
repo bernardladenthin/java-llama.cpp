@@ -950,7 +950,8 @@ scale), so a restored slot counts as computed under the scales it was saved with
 process as well, matched by the adapter's path. A file without the section (saved by a model
 without adapters, or by llama.cpp itself) counts as computed under none, which the first request
 with adapters clears; a file saved under an adapter the model has not loaded is refused by the
-adapter's path.
+adapter's path (unless its scale was 0, which is no adapter at all), and so is a file whose sections
+cannot be read up to the LoRA config.
 
 ### Text-to-Speech
 

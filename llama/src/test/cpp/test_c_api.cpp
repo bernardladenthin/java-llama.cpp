@@ -1019,10 +1019,12 @@ TEST(CApiSlotFiles, ASlotFileIsNamedInsideTheSlotSaveDirectory) {
 }
 
 TEST(CApiSlotFiles, ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn) {
-    // llama_file fills a read past the end of a file with zeros, so llama_state_seq_load_file read a
-    // cut slot file as a state larger than the file and asserted -- the process ended on the restore
-    // of a file the caller names (patches/0035). Every cut is now an invalid slot file, the slot is
-    // left empty, and the whole file still restores.
+    // llama_file's reads past the end of a file are no error on POSIX (they stop short and count the
+    // whole length), so llama_state_seq_load_file read a cut slot file as a state larger than the file
+    // and asserted -- the process ended on the restore of a file the caller names (patches/0035; on
+    // Windows the read throws and the restore failed already). Every cut is now an invalid slot
+    // file, the slot is left empty, and the whole file still restores. The cut inside the header was
+    // refused by upstream already (the token count exceeds the file).
     const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-cut");
     ASSERT_FALSE(path.empty());
     const std::filesystem::path dir =
@@ -3231,6 +3233,17 @@ TEST(CApiBatchSize, ABatchOfOneTokenLoadsAndAnswersAsUbatchesOfOneTokenDo) {
         EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 1"), std::string::npos)
             << jllama_last_error();
     }
+    // and a negative ubatch, which an embedding context would take for its batch
+    for (const std::vector<std::string> &extra :
+         {std::vector<std::string>{"-ub", "-1"}, std::vector<std::string>{"--embedding", "-ub", "-1"}}) {
+        SCOPED_TRACE(joined(extra));
+        EXPECT_EQ(load_tiny(path, extra), nullptr);
+        EXPECT_NE(std::string(jllama_last_error()).find("--ubatch-size must not be negative"), std::string::npos)
+            << jllama_last_error();
+    }
+    // a ubatch of 0 is upstream's "the batch size"
+    const BatchAnswer whole = batch_answer(path, {"-b", "8", "-ub", "0"});
+    EXPECT_TRUE(whole.error.empty()) << whole.error;
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
@@ -3240,7 +3253,8 @@ TEST(CApiBatchSize, SlotsShareABatchSmallerThanTheirTokens) {
     // batch holds: the server decodes them a batch at a time, and each request answers what it
     // answers alone. A context of more sequences than batch tokens ended the process while it was
     // being created (patches/0034); two slots that draft get half of a batch of four each
-    // (patches/0033).
+    // (patches/0033; no guard of it: the abort needs both slots to draft long at the same step, which
+    // the random model does not do on demand).
     const std::string path = write_tiny_llama_gguf("jllama-c-api-batch-size-slots");
     ASSERT_FALSE(path.empty());
     struct row {
@@ -3258,6 +3272,7 @@ TEST(CApiBatchSize, SlotsShareABatchSmallerThanTheirTokens) {
         ASSERT_TRUE(reference.error.empty()) << reference.error;
         jllama_model *model = load_tiny(path, extra);
         ASSERT_NE(model, nullptr) << jllama_last_error();
+        const bool drafts = std::find(extra.begin(), extra.end(), "--spec-draft-model") != extra.end();
         for (int round = 0; round < 3; ++round) {
             std::vector<BatchAnswer> answers(static_cast<size_t>(r.slots));
             std::vector<std::thread> callers;
@@ -3271,6 +3286,9 @@ TEST(CApiBatchSize, SlotsShareABatchSmallerThanTheirTokens) {
                 EXPECT_TRUE(a.error.empty()) << a.error;
                 EXPECT_EQ(a.content, reference.content);
             }
+        }
+        if (drafts) {
+            EXPECT_GT(drafted_tokens(model), 0) << "the slots did not draft at all";
         }
         jllama_model_free(model);
     }
@@ -3303,6 +3321,39 @@ TEST(CApiBatchSize, AnEmbeddingContextWithAUbatchOfOneTokenLoads) {
     std::error_code ignored;
     std::filesystem::remove(llama, ignored);
     std::filesystem::remove(bert, ignored);
+}
+
+TEST(CApiBatchSize, ADecoderWithoutCausalAttentionEvaluatesItsInputAUbatchAtATime) {
+    // Without causal attention a call must fit one ubatch (decode() asserts it), while the context's
+    // batch was --batch-size: the load's memory probe and warmup with -ub 1, and with -b 64 -ub 2 the
+    // first prompt longer than two tokens, ended the process (patches/0036). The batch of such a
+    // context is its ubatch now, and every caller that splits by llama_n_batch() takes it.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-non-causal";
+    spec.causal = false;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    const BatchAnswer reference = batch_answer(path, {"-b", "2", "-ub", "2"});
+    ASSERT_TRUE(reference.error.empty()) << reference.error;
+    ASSERT_FALSE(reference.content.empty());
+    ASSERT_GT(reference.prompt_n, 2) << "the prompt must not fit one ubatch";
+    for (const std::vector<std::string> &extra : {std::vector<std::string>{"-b", "64", "-ub", "2"},
+                                                  std::vector<std::string>{"-b", "64", "-ub", "2", "--warmup"}}) {
+        SCOPED_TRACE(joined(extra));
+        const BatchAnswer a = batch_answer(path, extra);
+        EXPECT_TRUE(a.error.empty()) << a.error;
+        EXPECT_EQ(a.content, reference.content);
+        EXPECT_EQ(a.prompt_n, reference.prompt_n);
+    }
+    for (const std::vector<std::string> &extra :
+         {std::vector<std::string>{"-ub", "1"}, std::vector<std::string>{"-ub", "1", "--warmup"}}) {
+        SCOPED_TRACE(joined(extra));
+        const BatchAnswer a = batch_answer(path, extra);
+        EXPECT_TRUE(a.error.empty()) << a.error;
+        EXPECT_FALSE(a.content.empty());
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
@@ -4164,11 +4215,27 @@ TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
 #ifndef _WIN32
 namespace {
 
-// A TCP proxy on loopback in front of `target_port` that waits `delay` after it accepts a connection
-// before it forwards anything: an RPC server that is slow to answer, as one across a slow network is.
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0 // macOS: SO_NOSIGPIPE on each socket instead
+#endif
+
+void no_sigpipe(int fd) {
+#ifdef SO_NOSIGPIPE
+    const int on = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#else
+    (void)fd;
+#endif
+}
+
+// A TCP proxy on loopback in front of `target_port` that waits `delay` after it accepts one of its
+// first `delayed` connections before it forwards anything: an RPC server that is slow to answer, as
+// one across a slow network is. The later connections (the load's own, after its parse) are not
+// delayed, which keeps the test short.
 class delaying_proxy {
   public:
-    delaying_proxy(int target_port, std::chrono::milliseconds delay) : target_port_(target_port), delay_(delay) {
+    delaying_proxy(int target_port, std::chrono::milliseconds delay, int delayed)
+        : target_port_(target_port), delay_(delay), delayed_(delayed) {
         listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -4187,10 +4254,11 @@ class delaying_proxy {
     delaying_proxy &operator=(const delaying_proxy &) = delete;
     ~delaying_proxy() {
         stopping_ = true;
-        ::shutdown(listen_fd_, SHUT_RDWR);
-        ::close(listen_fd_);
         if (acceptor_.joinable()) {
-            acceptor_.join();
+            acceptor_.join(); // polls every 50 ms and sees stopping_
+        }
+        if (listen_fd_ >= 0) {
+            ::close(listen_fd_);
         }
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -4217,20 +4285,24 @@ class delaying_proxy {
             if (client < 0) {
                 continue;
             }
-            ++connections_;
+            no_sigpipe(client);
+            const bool delay = connections_++ < delayed_;
             std::lock_guard<std::mutex> lock(mutex_);
             open_.push_back(client);
-            pipes_.emplace_back([this, client]() { forward(client); });
+            pipes_.emplace_back([this, client, delay]() { forward(client, delay); });
         }
     }
-    void forward(int client) {
-        std::this_thread::sleep_for(delay_);
+    void forward(int client, bool delay) {
+        if (delay) {
+            std::this_thread::sleep_for(delay_);
+        }
         const int server = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(static_cast<uint16_t>(target_port_));
         if (server >= 0 && ::connect(server, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+            no_sigpipe(server);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 open_.push_back(server);
@@ -4275,6 +4347,7 @@ class delaying_proxy {
 
     int target_port_;
     std::chrono::milliseconds delay_;
+    int delayed_;
     int listen_fd_ = -1;
     int port_ = 0;
     std::atomic<bool> stopping_{false};
@@ -4333,15 +4406,18 @@ TEST(CApiRpc, ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects) {
         }
     }
     ASSERT_NE(port, 0) << "no RPC server could bind";
-    // every connection of the load waits this long (about ten of them: registration, device memory, the
-    // backend), so a parse that connected under the lock held a swap for about as long
-    const auto delay = std::chrono::milliseconds(400);
+    // The first two connections through a proxy wait this long: the registration, and the re-check of
+    // a cached registration that the parse made before (or the parse's own registration of
+    // LLAMA_ARG_RPC's server). A parse that connected under the log lock held a swap for about as
+    // long; the bound leaves the rest for a slow machine (qemu, s390x) to parse in.
+    const auto delay = std::chrono::milliseconds(1500);
+    const int delayed = 2;
     struct env_reset {
         ~env_reset() { unsetenv("LLAMA_ARG_RPC"); }
     } reset;
     for (const bool from_env : {false, true}) {
         SCOPED_TRACE(from_env ? "LLAMA_ARG_RPC" : "--rpc");
-        delaying_proxy proxy(port, delay); // a new endpoint each round: nothing of it is registered yet
+        delaying_proxy proxy(port, delay, delayed); // a new endpoint each round: nothing of it is registered yet
         ASSERT_NE(proxy.port(), 0);
         std::vector<std::string> args = {"jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
         if (from_env) {
@@ -4374,7 +4450,7 @@ TEST(CApiRpc, ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects) {
     {
         // the embedded server parses its argv once, in jllama_server_start, under the same lock
         SCOPED_TRACE("jllama_server_start");
-        delaying_proxy proxy(port, delay);
+        delaying_proxy proxy(port, delay, delayed);
         ASSERT_NE(proxy.port(), 0);
         const std::vector<std::string> args = {
             "llama-server", "-m",        path,     "-c", "64",    "-ngl",          "0",
@@ -4393,6 +4469,44 @@ TEST(CApiRpc, ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects) {
         if (native != nullptr) {
             EXPECT_EQ(jllama_server_stop(native), JLLAMA_STATUS_OK) << jllama_last_error();
         }
+    }
+    {
+        // an attached server parses its argv the same way; its --rpc servers are registered (and an
+        // unreachable one refused) before the parse, as for a start of its own
+        SCOPED_TRACE("jllama_server_start_attached");
+        jllama_model *model = load_tiny(path, {});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        delaying_proxy proxy(port, delay, delayed);
+        ASSERT_NE(proxy.port(), 0);
+        const std::vector<std::string> args = {"llama-server", "--host",        "127.0.0.1", "--port", "0",
+                                               "--rpc",        proxy.endpoint()};
+        jllama_server *attached = nullptr;
+        const auto longest = longest_log_swap_during([&]() {
+            std::vector<const char *> argv;
+            for (const auto &a : args) {
+                argv.push_back(a.c_str());
+            }
+            EXPECT_EQ(jllama_server_start_attached(model, static_cast<int>(argv.size()), argv.data(), &attached),
+                      JLLAMA_STATUS_OK)
+                << jllama_last_error();
+        });
+        EXPECT_GT(proxy.connections(), 0) << "the attach never registered the server";
+        EXPECT_LT(longest, delay / 2) << "a logger swap waited " << longest.count() << " ms for the parse";
+        if (attached != nullptr) {
+            EXPECT_EQ(jllama_server_stop(attached), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+        const std::vector<std::string> unreachable = {"llama-server", "--host",     "127.0.0.1", "--port", "0",
+                                                      "--rpc",        "127.0.0.1:1"};
+        std::vector<const char *> argv;
+        for (const auto &a : unreachable) {
+            argv.push_back(a.c_str());
+        }
+        jllama_server *refused = nullptr;
+        EXPECT_NE(jllama_server_start_attached(model, static_cast<int>(argv.size()), argv.data(), &refused),
+                  JLLAMA_STATUS_OK);
+        EXPECT_EQ(refused, nullptr);
+        EXPECT_NE(std::string(jllama_last_error()).find("127.0.0.1:1"), std::string::npos) << jllama_last_error();
+        jllama_model_free(model);
     }
 #endif
     server.reset();
@@ -8756,9 +8870,9 @@ TEST(CApiLogFile, ARefusedParseNeitherOpensNorClosesALogFile) {
     // The owner of the log file used to be decided from the argv's text: a load whose parse refused
     // an option before it reached --log-file still closed the process-wide file -- another model's.
     // The engine takes --log-file out of the argv and opens it only for an accepted parse. Upstream
-    // has no "--log-file=<path>" spelling; the parse refuses it like any unknown option. A batch below
-    // 2 and rank pooling on a model without a classification head are refused after an accepted parse,
-    // and the file was opened before those checks once.
+    // has no "--log-file=<path>" spelling; the parse refuses it like any unknown option. A batch of no
+    // tokens and rank pooling on a model without a classification head are refused after an accepted
+    // parse, and the file was opened before those checks once.
     const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-refused");
     ASSERT_FALSE(model.empty());
     const auto log_a = log_file_path("jllama-c-api-log-file-refused-a");
@@ -8771,7 +8885,7 @@ TEST(CApiLogFile, ARefusedParseNeitherOpensNorClosesALogFile) {
     for (const std::vector<std::string> refused :
          {std::vector<std::string>{"--no-such-option", "--log-file", log_b.string()},
           std::vector<std::string>{"--log-file=" + log_b.string()},
-          std::vector<std::string>{"-b", "1", "--log-file", log_b.string()},
+          std::vector<std::string>{"-b", "0", "--log-file", log_b.string()},
           std::vector<std::string>{"--embedding", "--pooling", "rank", "--log-file", log_b.string()}}) {
         EXPECT_EQ(load_tiny(model, refused), nullptr) << refused.front();
         const auto before = drained_size(log_a);
@@ -8870,7 +8984,7 @@ TEST(CApiLogFile, TheFileOfLlamaArgLogFileIsOwnedLikeTheOption) {
     {
         SCOPED_TRACE("refused after the parse");
         set_env_utf8("LLAMA_ARG_LOG_FILE", log_name.c_str());
-        EXPECT_EQ(load_tiny(model, {"-b", "1"}), nullptr);
+        EXPECT_EQ(load_tiny(model, {"-b", "0"}), nullptr);
         closed_after("the file a refused load's parse opened stayed open");
     }
 #ifdef JLLAMA_HAS_NATIVE_SERVER

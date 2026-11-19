@@ -16,8 +16,9 @@ std::filesystem::path, so no <windows.h> in this file); elsewhere it is std::get
 It covers every option with an environment variable, not only the paths: a value is text either
 way.
 
-Read from the source and found by the review of PR #612, not measured on Windows before this patch
-was written: the Windows jobs of CI are its first run there.
+Found by the review of PR #612; measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
 on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it

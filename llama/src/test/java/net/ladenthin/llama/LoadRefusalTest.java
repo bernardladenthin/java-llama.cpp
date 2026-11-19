@@ -19,9 +19,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Parameters llama.cpp refuses before it reads the model file. A batch of no tokens and a chat
- * template that does not parse used to end the process -- the JVM -- instead of failing the load, so the test
- * running on after the refusal is half of what they assert; an option's refused value failed the
- * load before too, but without its reason. Every refusal is a plain {@link LlamaException} (the C
+ * template that does not parse used to end the process -- the JVM -- instead of failing the load,
+ * so the test running on after the refusal is half of what they assert; an option's refused value
+ * failed the load before too, but without its reason. Every refusal is a plain {@link LlamaException} (the C
  * API's {@code JLLAMA_STATUS_ERROR}), not the subclass for an invalid request. No GGUF is needed:
  * the refusals come before the model path is opened.
  */

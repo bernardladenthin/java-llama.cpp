@@ -144,6 +144,9 @@ struct tiny_model_spec {
     // earlier position, so the server keeps context checkpoints for it and appends them to a slot
     // file -- the one path the plain decoder never takes.
     int n_swa = 0;
+    // false writes <arch>.attention.causal = false: a decoder whose tokens see the whole batch (as
+    // the diffusion models' do), which llama.cpp must evaluate one ubatch per call
+    bool causal = true;
     // arch "mamba" is a recurrent model: no attention and no KV cache, a state per layer that is
     // overwritten with every token (a convolution window and the state-space model's hidden state).
     // The server can only checkpoint such a model, and a slot file holds its state instead of rows.
@@ -335,6 +338,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_str(g, "tokenizer.chat_template.systemone",
                          "Question: {{ instructions | tojson }}\nState: {{ state | tojson }}\n"
                          "Options: {{ options | tojson }}\nAnswer: ");
+    }
+    if (!spec.causal) {
+        gguf_set_val_bool(g, (a + ".attention.causal").c_str(), false);
     }
     if (spec.pooling_type >= 0) {
         gguf_set_val_u32(g, (a + ".pooling_type").c_str(), static_cast<uint32_t>(spec.pooling_type));

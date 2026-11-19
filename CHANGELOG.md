@@ -265,10 +265,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   most its share of the server's batch; `-b 3` next to a draft model (whose default draft is three
   tokens) aborted at the first generation step, and the old refusal let it through. Each such model
   answers exactly what a model with a large batch answers in ubatches of one token. Only a batch of
-  no tokens is refused now ("--batch-size must be at least 1"). A `NativeServer` parses its argv
+  no tokens is refused now ("--batch-size must be at least 1"), and a negative `--ubatch-size`,
+  which an embedding context would take for its batch. A `NativeServer` parses its argv
   with llama.cpp's own parser before its worker starts, so the check reads every spelling and the
-  environment, and an argv the parser refuses fails `NativeServer`'s start itself (`CApiBatchSize`,
-  each case red without its patch; `SmallBatchIntegrationTest` over JNI; `LoadRefusalTest`).
+  environment, and an argv the parser refuses fails `NativeServer`'s start itself (`CApiBatchSize`:
+  `-b 1`, `-c 1`, `--embedding -ub 1`, two and four slots on a batch of one and two tokens, `-b 3`
+  next to a draft model and the server's start with `-b 1` each abort without their patch;
+  `SmallBatchIntegrationTest` over JNI; `LoadRefusalTest`).
 - **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
   tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
   `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before
@@ -640,12 +643,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   read and written as before for a server without adapters; llama.cpp's own reader ignores the
   section. A section that cannot be read, or that names an adapter at a scale other than 0 which
   the model has not loaded, refuses the restore by the adapter's path (`InvalidRequestException`,
-  `JLLAMA_STATUS_INVALID_REQUEST`) and leaves the slot empty (`LoraCacheFiles`, `LoraCacheFreshSlot`,
-  red against the previous form).
+  `JLLAMA_STATUS_INVALID_REQUEST`) and leaves the slot empty, and so does data after the state that
+  no section reads -- a checkpoint or draft section that was cut, behind which the config cannot be
+  found (`LoraCacheFiles`, `LoraCacheFreshSlot`, red against the previous form).
+- **A decoder without causal attention no longer ends the process at its first long prompt**
+  (`patches/0036`). Without causal attention a call must fit one ubatch, while the context's batch
+  was `--batch-size`: with the defaults (`-b 2048 -ub 512`) a prompt longer than 512 tokens, and
+  with `-ub 1` already the load's memory probe, asserted in `llama_context::decode`. Such a
+  context's batch is its ubatch now, and the server evaluates a longer input a ubatch at a time
+  (`CApiBatchSize.ADecoderWithoutCausalAttentionEvaluatesItsInputAUbatchAtATime`, a random GGUF with
+  `attention.causal = false`; an abort without the patch).
 - **A cut slot file fails its restore instead of ending the process** (`patches/0035`). llama.cpp's
-  file reader fills a read past the end of a file with zeros, so `llama_state_seq_load_file` read a
-  truncated slot file -- an interrupted save, a full disk -- as a state larger than the file and
-  asserted. The restore is an invalid slot file now and the slot is left empty
+  file reader does not fail a read past the end of a file on POSIX (it stops short and counts the
+  whole length), so `llama_state_seq_load_file` read a truncated slot file -- an interrupted save, a
+  full disk -- as a state larger than the file and asserted. The restore is an invalid slot file now and the slot is left empty
   (`CApiSlotFiles.ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn`, an abort without the patch).
 - **RPC servers are registered before the parse, never under the log lock.** The engine parses an
   argv under the lock of the process-wide log, and llama.cpp's `--rpc` handler registers -- connects
@@ -656,10 +667,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   The servers of `--rpc` and `LLAMA_ARG_RPC` are registered first now (an unreachable one of the
   variable fails the load by name too), the parse sees the argv without its `--rpc` pairs, and a
   previously registered endpoint is asked for its device count outside the lock
-  (`ggml_backend_rpc_get_device_count`, which `patches/0015` exposes instead). Measured with a TCP
+  (`ggml_backend_rpc_get_device_count`, which `patches/0015` exposes instead). The same holds for a
+  server attached to a loaded model (`NativeServer(model, ...)`), whose `--rpc` servers were
+  registered by its parse before. Every registration and read of ggml's device registry by this
+  library holds a mutex of its own, which a parse takes before the log lock, so two loads that
+  register servers at once no longer race on it. An empty entry (`--rpc a:1,`) is refused, as the
+  parse refused it. Measured with a TCP
   proxy delaying every connection by 400 ms: a logger swap during a load with `--rpc`, with
-  `LLAMA_ARG_RPC` and during `NativeServer`'s start waited about 400 ms before, a few ms now
-  (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`).
+  `LLAMA_ARG_RPC`, during `NativeServer`'s start and during an attach waited about as long as the
+  connect before, a few ms now (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`,
+  POSIX).
 - **A blocking call with `"stream": true` in its body no longer ends the process.** The raw JSON
   calls (`LlamaModel.handleCompletions` / `handleCompletionsOai`, `FfmLlamaModel.completions` /
   `chatCompletions`, `jllama_completions` & co.) passed the body's `stream` on, the server then sent

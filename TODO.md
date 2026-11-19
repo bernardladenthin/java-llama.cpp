@@ -260,6 +260,23 @@ the log lock)
 - **The slow-server test of the log lock is POSIX only**
   (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`): its delaying proxy uses BSD
   sockets and `poll`; the code it guards is the same on Windows.
+- **The RPC registry mutex covers this library's reads and writes, not llama.cpp's.** ggml's backend
+  registry has no lock; `rpc_support.hpp` serialises every registration and every read it makes
+  (and the engine's parse takes the mutex before the log lock), but a model load running at the same
+  time on another thread enumerates the devices inside llama.cpp without it. A first registration of
+  a new RPC server next to such a load can still race on the registry's vectors.
+- **A second load of a dead RPC server whose first model is still open ends the process.**
+  `ggml_backend_rpc_get_device_count`, with which `register_server` re-checks a known endpoint,
+  reuses the dispatcher the open model keeps alive, and a failed send there is upstream's
+  `RPC_STATUS_ASSERT` -- the same class as a server lost mid-inference (upstream has no error path).
+- **`LLAMA_ARG_RPC` is read with `std::getenv` by `prepare_argv`**, ANSI on Windows, while the parse
+  reads it as UTF-8 (`patches/0030`); only a non-ASCII host name would read differently.
+- **`patches/0033`'s share assumes one row per slot that does not draft**: a slot that streams audio
+  (a realtime transcription) adds its embedding rows, so on a very small batch the others' drafts
+  can still overflow it.
+- **`set_slot_prompt_similarity` from a caller thread** (`patches/0003`, used by `wake_server` and
+  `configure`) writes the scheduler's float while the server loop reads it: a benign data race that
+  ThreadSanitizer would report.
 - **A slot file's LoRA section matches adapters by the path the server was given.** The same adapter
   file loaded under another spelling of its path (relative against absolute, a symbolic link) is
   another adapter to the restore, which then refuses a state computed with it at a scale other
@@ -326,12 +343,6 @@ the log lock)
   that the frames arrive, with SmolVLM.
 
 **Upstream's, not patched here**
-- **A slot file does not record the adapters** (upstream's TODO in `server-slot-sched.h`): `0021`
-  assumes the server's, so a file saved after a request with its own adapters restores as if computed
-  under the server's. Storing the config in the file is upstream's to decide.
-- **The batch-size abort** (b12521): `server_context::load_model()` runs the same two-token probe, so
-  `llama-server -b 1` should end the same way (not run here); the engine's check can go once the
-  probe fits its batch.
 - **Qwen3-Next's legacy delta-net layout ignores `ssm_in.scale`**: the layout (`ssm_in` instead of
   `attn_qkv` + `attn_gate`) multiplies `ssm_in` without its `ssm_in.scale`, which the generic loader
   reads (`build_qkvz` in `src/models/qwen3next.cpp`). Unreachable for a current conversion, which

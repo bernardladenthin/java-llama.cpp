@@ -28,6 +28,8 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -477,10 +479,15 @@ jllama_status slot_file(jllama_model *model, jllama_slot_op op, const char *name
     return jllama_slot_action(model, op, 0, name, &response.s);
 }
 
+// The section's magic is a uint32_t the server writes in the host's byte order ("SLRA" on a
+// little-endian host, "ARLS" on s390x).
 bool holds_section(const std::filesystem::path &file) {
     std::ifstream in(file, std::ios::binary);
     const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return bytes.find("SLRA") != std::string::npos;
+    const uint32_t magic = 0x41524c53;
+    char native[sizeof(magic)];
+    std::memcpy(native, &magic, sizeof(magic));
+    return bytes.find(std::string(native, sizeof(native))) != std::string::npos;
 }
 
 } // namespace
@@ -541,6 +548,95 @@ TEST(LoraCacheFiles, AFileCarriesItsConfigIntoTheNextProcess) {
         EXPECT_EQ(none.at("timings").at("cache_n").get<int>(), 0) << none.dump();
         jllama_model_free(again);
     }
+    std::error_code ignored;
+    std::filesystem::remove(model_path, ignored);
+    std::filesystem::remove(adapter_path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(LoraCacheFiles, ASectionLostBehindADamagedDraftStateRefusesTheRestore) {
+    // The LoRA section follows the checkpoints and the draft state. When one of those cannot be read
+    // -- here the draft state of a model with a draft model, cut -- the restore cannot find the
+    // section behind it, and counting the state as computed under no adapters would reuse it on a
+    // server without any. The restore is refused, on a server with the adapter and on one without,
+    // and the uncut file restores and is kept.
+    const std::string model_path = write_tiny_llama_gguf("jllama-lora-cache-draft-model");
+    const std::string adapter_path = write_tiny_lora_gguf();
+    const std::string dir =
+        (std::filesystem::temp_directory_path() / ("jllama-lora-cache-draft-" + std::to_string(std::random_device{}())))
+            .string();
+    ASSERT_FALSE(model_path.empty());
+    ASSERT_FALSE(adapter_path.empty());
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const auto load = [&](bool with_adapter) {
+        std::vector<std::string> args = {"jllama",
+                                         "-m",
+                                         model_path,
+                                         "-c",
+                                         "256",
+                                         "-np",
+                                         "1",
+                                         "-ngl",
+                                         "0",
+                                         "-t",
+                                         "2",
+                                         "--cache-ram",
+                                         "0",
+                                         "--no-warmup",
+                                         "--slot-save-path",
+                                         dir,
+                                         "--spec-draft-model",
+                                         model_path,
+                                         "--spec-draft-ngl",
+                                         "0"};
+        if (with_adapter) {
+            args.insert(args.end(), {"--lora", adapter_path});
+        }
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *loaded = nullptr;
+        EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &loaded),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return loaded;
+    };
+    jllama_model *model = load(true);
+    ASSERT_NE(model, nullptr);
+    complete_slot_zero(model);
+    ASSERT_EQ(slot_file(model, JLLAMA_SLOT_SAVE, "whole.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+    const auto whole = std::filesystem::path(dir) / "whole.bin";
+    ASSERT_TRUE(holds_section(whole));
+    // the LoRA section: magic, version, count, then the adapter's path (with its length) and scale
+    const uintmax_t section = 3 * sizeof(uint32_t) + sizeof(uint64_t) + adapter_path.size() + sizeof(float);
+    std::error_code ec;
+    std::filesystem::copy_file(whole, std::filesystem::path(dir) / "cut.bin",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    std::filesystem::resize_file(std::filesystem::path(dir) / "cut.bin",
+                                 std::filesystem::file_size(whole) - section - 16, ec); // into the draft state
+    ASSERT_FALSE(ec) << ec.message();
+    for (const bool with_adapter : {true, false}) {
+        SCOPED_TRACE(with_adapter ? "with the adapter" : "without adapters");
+        if (!with_adapter) {
+            jllama_model_free(model);
+            model = load(false);
+            ASSERT_NE(model, nullptr);
+        }
+        EXPECT_EQ(slot_file(model, JLLAMA_SLOT_RESTORE, "cut.bin"), JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("LoRA config is unknown"), std::string::npos)
+            << jllama_last_error();
+        const json after = complete_slot_zero(model);
+        EXPECT_EQ(after.at("timings").at("cache_n").get<int>(), 0) << "the refused state stayed: " << after.dump();
+    }
+    jllama_model_free(model);
+    model = load(true);
+    ASSERT_NE(model, nullptr);
+    EXPECT_EQ(slot_file(model, JLLAMA_SLOT_RESTORE, "whole.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json kept = complete_slot_zero(model);
+    EXPECT_LE(kept.at("timings").at("prompt_n").get<int>(), 2) << kept.dump();
+    jllama_model_free(model);
     std::error_code ignored;
     std::filesystem::remove(model_path, ignored);
     std::filesystem::remove(adapter_path, ignored);

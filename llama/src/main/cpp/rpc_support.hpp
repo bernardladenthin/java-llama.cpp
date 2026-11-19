@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -56,8 +57,8 @@ struct device_info {
     std::string device_id; // ggml_backend_dev_props::device_id, used to drop duplicates; may be empty
 };
 
-// Splits a comma-separated `--rpc` value the way upstream's add_rpc_devices does (empty entries
-// are kept out, so "a:1,,b:2" is two endpoints). RpcServer's device-name list uses it too.
+// Splits a comma-separated list and keeps empty entries out, so "a:1,,b:2" is two entries
+// (RpcServer's device-name list, the `--device` value built below).
 [[nodiscard]] inline std::vector<std::string> split_endpoints(const std::string &value) {
     std::vector<std::string> out;
     std::string current;
@@ -77,19 +78,35 @@ struct device_info {
     return out;
 }
 
+// Splits a `--rpc` value the way upstream's add_rpc_devices does (string_split): an empty entry is
+// kept, and registering it fails, so "a:1," is refused here as the parse refused it.
+[[nodiscard]] inline std::vector<std::string> split_rpc_value(const std::string &value) {
+    std::vector<std::string> out(1);
+    for (char c : value) {
+        if (c == ',') {
+            out.emplace_back();
+        } else {
+            out.back().push_back(c);
+        }
+    }
+    return out;
+}
+
 // Every endpoint the argv asks for, in order, across repeated `--rpc` options (each one registers
 // its servers, so they accumulate in upstream too). argv[0] is treated like any other element. A
-// parse applies the environment before the argv, so LLAMA_ARG_RPC's endpoints (`env`, may be null)
-// come first.
+// parse applies the environment before the argv, so LLAMA_ARG_RPC's endpoints (`env`, may be null
+// or empty: not set) come first. The argv is read by name, not by position: a value of another
+// option that is literally "--rpc" is taken for the option (as take_log_file_option does for
+// --log-file), which a parse would not do.
 [[nodiscard]] inline std::vector<std::string> requested_endpoints(const std::vector<std::string> &argv,
                                                                   const char *env = nullptr) {
     std::vector<std::string> out;
-    if (env != nullptr) {
-        out = split_endpoints(env);
+    if (env != nullptr && *env != '\0') {
+        out = split_rpc_value(env);
     }
     for (size_t i = 0; i + 1 < argv.size(); ++i) {
         if (argv[i] == "--rpc") {
-            for (auto &ep : split_endpoints(argv[i + 1])) {
+            for (auto &ep : split_rpc_value(argv[i + 1])) {
                 out.push_back(ep);
             }
         }
@@ -99,7 +116,8 @@ struct device_info {
 
 // The argv without its `--rpc <servers>` pairs: the argv a parse sees once prepare_argv() has
 // registered those servers, so that the parse -- whose `--rpc` handler only registers devices --
-// does no network I/O. A `--rpc` without a value is left for the parse to refuse.
+// does no network I/O. A `--rpc` without a value is left for the parse to refuse. Read by name, like
+// requested_endpoints().
 [[nodiscard]] inline std::vector<std::string> without_rpc_options(const std::vector<std::string> &argv) {
     std::vector<std::string> out;
     out.reserve(argv.size());
@@ -243,6 +261,16 @@ struct device_info {
 
 // ---- glue over the ggml registry ------------------------------------------------------------
 
+// ggml's backend registry has no lock, and an RPC registration appends to it. Every registration
+// and every read of the registry in this file holds this mutex, so two loads that register servers
+// at once do not race on its vectors. It is never held while the engine holds the log lock: the
+// engine calls prepare_argv() before it takes that lock. Not covered: llama.cpp's own reads of the
+// registry in a load that runs at the same time on another thread (TODO.md).
+inline std::recursive_mutex &registry_mutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+
 // Resolves an RPC entry point through the RPC backend's proc-address table instead of linking it,
 // as upstream's own common/arg.cpp does: with GGML_BACKEND_DL the RPC backend is a module loaded at
 // run time, and a direct call would not even link. Every name used here is exported there, the
@@ -264,6 +292,7 @@ template <typename Fn> [[nodiscard]] Fn rpc_proc(const char *name) {
 }
 
 [[nodiscard]] inline std::vector<device_info> registered_devices() {
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     std::vector<device_info> out;
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
@@ -289,6 +318,7 @@ template <typename Fn> [[nodiscard]] Fn rpc_proc(const char *name) {
 // true when ggml-rpc registered the endpoint before in this process (its devices carry it as their
 // description); a registration is never undone.
 [[nodiscard]] inline bool is_registered(const std::string &endpoint) {
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
         if (is_rpc_device(dev) && endpoint == ggml_backend_dev_description(dev)) {
@@ -304,6 +334,10 @@ template <typename Fn> [[nodiscard]] Fn rpc_proc(const char *name) {
 // (patches/0015 puts that function into the proc-address table): a server that has gone away fails
 // the load now, instead of the first tensor upload aborting the process.
 inline void register_server(const std::string &endpoint) {
+    if (endpoint.empty()) {
+        throw std::invalid_argument("an empty RPC server endpoint (a ',' too many in --rpc or LLAMA_ARG_RPC?)");
+    }
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     const bool known = is_registered(endpoint);
     ggml_backend_reg_t reg =
         rpc_proc<decltype(&ggml_backend_rpc_add_server)>("ggml_backend_rpc_add_server")(endpoint.c_str());
@@ -320,6 +354,7 @@ inline void register_server(const std::string &endpoint) {
 // std::invalid_argument for an unreachable endpoint of `--rpc` or LLAMA_ARG_RPC. Takes no lock: the
 // connects happen here, before the caller's parse.
 [[nodiscard]] inline std::vector<std::string> prepare_argv(std::vector<std::string> argv) {
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     const auto requested = requested_endpoints(argv, std::getenv("LLAMA_ARG_RPC"));
     std::vector<std::string> registered;
     for (const auto &endpoint : requested) {
@@ -360,6 +395,7 @@ inline void register_server(const std::string &endpoint) {
 // Leaves an explicit params.devices alone. Returns what the multimodal projector should use, in
 // mmproj_device_override's terms; the caller applies it to its own mtmd/clip parameters.
 inline std::optional<std::string> exclude_stale_devices(std::vector<ggml_backend_dev_t> &params_devices) {
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     const auto devices = registered_devices();
     if (params_devices.empty()) {
         auto value = device_override(devices, {});
@@ -378,6 +414,7 @@ inline std::optional<std::string> exclude_stale_devices(std::vector<ggml_backend
 // Devices an in-process RPC server offers: every accelerator, else the CPU (upstream rpc-server's
 // default), but never an RPC device -- serving a remote device back out would forward to itself.
 [[nodiscard]] inline std::vector<ggml_backend_dev_t> server_devices() {
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     std::vector<ggml_backend_dev_t> devices;
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
@@ -405,6 +442,7 @@ inline std::optional<std::string> exclude_stale_devices(std::vector<ggml_backend
     if (names.empty()) {
         return server_devices();
     }
+    std::lock_guard<std::recursive_mutex> lock(registry_mutex());
     std::vector<ggml_backend_dev_t> devices;
     for (const auto &name : names) {
         ggml_backend_dev_t dev = ggml_backend_dev_by_name(name.c_str());

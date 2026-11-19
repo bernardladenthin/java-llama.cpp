@@ -16,6 +16,11 @@ the worker first, so entries already queued reach the previous sink.
 Upstream-submittable ("common : add a callback sink to common_log for embedding
 hosts"); not yet filed. Guarded by src/test/cpp/test_common_log_callback.cpp.
 
+Drop-check on every bump: `grep -n "common_log_set_.*callback\|set_callback" common/log.h` at the
+new tag. On upstream without this patch the grep returns nothing (common/log.h names only
+common_log_default_callback, which a plain `grep callback` finds either way); a hit is upstream's
+own sink -- port setLogger to it and drop the patch.
+
 diff --git a/common/log.cpp b/common/log.cpp
 index 25f12684e..1e0b89f1e 100644
 --- a/common/log.cpp

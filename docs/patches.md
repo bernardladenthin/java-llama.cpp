@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**25 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**26 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -47,6 +47,7 @@ match a binary to this page.
 | 0033 | [`0033-server-a-slot-drafts-at-most-its-share-of-the-batch.patch`](#0033-server-a-slot-drafts-at-most-its-share-of-the-batchpatch) | server : a slot drafts at most its share of the batch | 1 | 1 |
 | 0034 | [`0034-llama-a-context-holds-an-output-row-for-every-sequence.patch`](#0034-llama-a-context-holds-an-output-row-for-every-sequencepatch) | llama : a context holds an output row for every sequence | 1 | 1 |
 | 0035 | [`0035-llama-a-truncated-sequence-state-file-fails-the-load.patch`](#0035-llama-a-truncated-sequence-state-file-fails-the-loadpatch) | llama : a truncated sequence state file fails the load | 1 | 1 |
+| 0036 | [`0036-llama-a-non-causal-contexts-batch-is-its-ubatch.patch`](#0036-llama-a-non-causal-contexts-batch-is-its-ubatchpatch) | llama : a non-causal context's batch is its ubatch | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -65,6 +66,12 @@ server's reporter only when no callback is set OR when the one set is the server
 runs a second time on wake from the sleeping state (--sleep-idle-seconds), and a bare nullptr check
 would then leave user_data pointing at the dead stack frame of the first call (segfault on the
 first request after an idle window). Standalone llama-server is unaffected.
+
+Drop-check on every bump: read the load-progress assignments in server_context_impl::load_model()
+(tools/server/server-context.cpp) -- once upstream keeps a callback the caller set and still
+re-points its own reporter's user data at the current frame on every load (a second load runs when
+the server wakes from the idle sleep), drop the patch; until then it is needed, and the guard is
+LoadProgressCallbackTest plus CApiSleep.AWakeDoesNotCallTheLoadProgressCallbackAgain.
 ```
 
 ## 0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch
@@ -143,6 +150,10 @@ same server over an argv the embedding host has parsed already. NativeServer's e
 argv once, under its log lock, to refuse a bad argv at the start and to own the log file; a second
 parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
 /dev/stdin) the second time empty -- the server then ran without its API key.
+
+Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
+embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
+does) -- once it has one, port native_server.cpp to it and drop the patch.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -164,7 +175,8 @@ points cannot drift on the endpoint set; it answers /cors-proxy and /tools with 
 host belongs to a full llama-server), marks ready immediately and blocks in ctx_http.join() until
 llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
 server_routes' constructor registers a sleeping-state callback on the model's task queue that
-outlives the attach call. Applies after 0001 and 0006.
+outlives the attach call. Applies after 0006 (and builds only with it: it uses 0006's
+shutdown-handler functions).
 
 Refreshed at b11881: #31113 factored the route table out of llama_server() itself
 (server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
@@ -173,6 +185,10 @@ it -- the helper this patch used to add, and the "verbatim copy" invariant it ha
 Since the review of 2026-11-18 the patch also adds llama_server_attach_parsed(params, ...), the attach
 entry over an argv the host has parsed already (see 0006's llama_server_parsed: one parse, so a file
 option from a pipe is read once).
+
+Drop-check on every bump: read tools/server/server.cpp for an entry point that serves the HTTP
+routes over a server_context the caller loaded -- once upstream has one, port the attach mode to it
+and drop the patch.
 ```
 
 ## 0008-server-models-worker-cmd-override.patch
@@ -191,6 +207,10 @@ LLAMA_SERVER_WORKER_CMD (whitespace-split, read in server_model_meta::update_arg
 leading binary-path token of the rendered worker command, so a host relaunches workers through its
 own bootstrap -- here `java -cp app.jar net.ladenthin.llama.server.NativeServer`, set from Java by
 NativeServer.setWorkerCommand(). Also useful for containerised or wrapped deployments.
+
+Drop-check on every bump: read server_model_meta::update_args in tools/server/server-models.cpp --
+once the worker command can be replaced without re-executing the router's own binary (an option or
+an environment variable of upstream's), use that and drop the patch.
 ```
 
 ## 0014-common-log-callback-sink.patch
@@ -217,6 +237,11 @@ the worker first, so entries already queued reach the previous sink.
 
 Upstream-submittable ("common : add a callback sink to common_log for embedding
 hosts"); not yet filed. Guarded by src/test/cpp/test_common_log_callback.cpp.
+
+Drop-check on every bump: `grep -n "common_log_set_.*callback\|set_callback" common/log.h` at the
+new tag. On upstream without this patch the grep returns nothing (common/log.h names only
+common_log_default_callback, which a plain `grep callback` finds either way); a hit is upstream's
+own sink -- port setLogger to it and drop the patch.
 ```
 
 ## 0015-rpc-embeddable-client-and-stoppable-server.patch
@@ -231,20 +256,18 @@ ggml-rpc: let an embedding host register servers and stop its own server safely
 An embedding host (here: the java-llama.cpp JNI binding, which runs llama.cpp inside a
 JVM) cannot use ggml-rpc as it is:
 
-1. Every client-side connection problem is a GGML_ABORT: a malformed endpoint, a server
-   that is not running, a failed handshake. For a standalone tool that is an error exit;
-   inside a JVM it kills the whole application because of a typo in "--rpc". The
-   registration path now reports these as failures instead:
-   - rpc_dispatcher::start() returns false;
-   - try_get_dispatcher() returns nullptr;
-   - ggml_backend_rpc_get_device_count() returns 0;
-   - ggml_backend_rpc_add_server() returns nullptr.
-   add_rpc_devices() (common/arg.cpp) now throws std::invalid_argument naming the server,
-   where it used to register nullptr and silently run without the requested server.
+1. A registration that fails is an error. Upstream answers an unreachable or malformed endpoint
+   and a failed handshake with a nullptr since b12283 (#30415; until then this patch carried that
+   half, see "Reduced at b12283" below); add_rpc_devices() (common/arg.cpp) registered that nullptr
+   silently and ran without the requested server. It now throws std::invalid_argument naming the
+   server.
 
-   Every path that runs AFTER registration (buffer/graph/tensor calls) keeps the original
-   contract through get_dispatcher(), which still aborts. A server that vanishes mid-run
-   stays fatal; that needs a real error path through the backend interface.
+   A server that vanishes mid-run stays fatal: the paths after registration (buffer, graph and
+   tensor calls) abort through RPC_STATUS_ASSERT when a send fails. That includes
+   ggml_backend_rpc_get_device_count() for an endpoint whose dispatcher a still-open model keeps
+   alive (get_dispatcher() reuses it): a second load of a server that died while the first model on
+   it is still open ends the process in the host's re-check below. It needs a real error path
+   through the backend interface.
 
 2. add_server() returns a cached registration without checking that the server is still
    there, so re-using an endpoint whose server had stopped passed registration and aborted
@@ -256,11 +279,11 @@ JVM) cannot use ggml-rpc as it is:
    lock the caller held -- the engine parses under the lock of the process-wide log, so a slow
    server stalled every logger swap and every other load for as long as its connect took.
 
-   ggml_backend_rpc_get_device_memory() of a server that went away reports 0/0 instead of
-   aborting. Registered devices stay in ggml's process-wide registry forever, and code that
-   never uses them still queries their memory: common_init() lists every device at -lv 4,
-   and --list-devices does too. 0/0 is what --fit already reads as an unknown budget.
-   ggml_backend_rpc_init() keeps aborting if the registration fails.
+   ggml_backend_rpc_get_device_memory() of a server that went away reports 0/0 (upstream's own
+   behaviour since b12283), which matters because registered devices stay in ggml's process-wide
+   registry forever and code that never uses them still queries their memory: common_init() lists
+   every device at -lv 4, and --list-devices does too. ggml_backend_rpc_init() aborts by name when
+   the registration of a reachable server fails.
 
 3. ggml_backend_rpc_start_server() cannot be stopped: while(true) around accept(). Two new
    entry points, both also exposed through get_proc_address:
@@ -279,7 +302,7 @@ JVM) cannot use ggml-rpc as it is:
 
 Upstream-submittable; not filed upstream yet. The runnable guard is
 src/test/cpp/test_rpc.cpp: it links both new functions and exercises the registration and
-stop paths over loopback. test_rpc_comm.cpp drives protocol-v8 COMM_INIT through the C
+stop paths over loopback. test_rpc_comm.cpp drives protocol-v10 COMM_INIT through the C
 API: loopback/network binding, missing peer, stalled caps handshakes in both ranks,
 normal peer setup, socket cleanup and restart. Subprocess deadlines bound failures.
 
@@ -400,11 +423,13 @@ At b12525 (#32548, upstream's CI moved to LLVM 22.1.8) upstream took exactly tha
 now, the address is still 18x/34x too far. The patch was refreshed onto those lines (only the `-`
 side changed) and keeps both halves through ggml_prefetch_at.
 
-Runnable guard: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
-block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise. That test is red if this
-patch is dropped, and -- the case that matters -- also red if the cast is written around the
-whole expression, `(const char *)(&x[ib] + sizeof(block_q4_0))`, which fixes (1) and silently
-keeps (2).
+Runnable guards: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
+block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise -- the helper only, red when the
+helper is written element-wise or with the cast around the whole expression. That the four call
+sites of quants.c go through the helper is checked by llama/cmake/check-prefetch-byte-offset.cmake,
+which fails the configure on every platform when a _mm_prefetch call of the patched file does not
+(upstream's `(const char *)(&x[ib] + sizeof(block_q4_0))` compiles and keeps (2), so a refresh that
+lost the quants.c hunks would pass every other check).
 
 On a bump, check whether upstream fixed this themselves:
 `git grep -n _mm_prefetch ggml/src/ggml-cpu/arch/x86/quants.c` in the new tag. That grep is a
@@ -412,7 +437,7 @@ LOCATOR, NOT A VERDICT -- it returns FOUR hits at every tag, because the calls e
 (measured at b11639 (a0e6dc738): lines 846, 847, 864, 865). Read them: the fix is upstream's only
 when the cast to a byte pointer happens BEFORE the addition. `(const char *)(&x[ib] + sizeof(...))`
 casts the whole expression, silences the compiler and keeps the wrong address, so it looks fixed and
-is not -- test_prefetch.cpp is what tells those two apart. Only then DROP this patch rather than
+is not -- reading the four calls is what tells those two apart. Only then DROP this patch rather than
 refreshing it.
 ```
 
@@ -545,10 +570,14 @@ state with it on the adapters loaded at that time, matched by path; an adapter t
 name has scale 0. A state computed under no adapters writes no section, and a file without one --
 upstream's format, or one saved by a server without adapters -- counts as computed under none, which
 is what upstream assumes for a never-used slot: the first task with adapters clears it. A section
-that cannot be read, or that names an adapter at a scale other than 0 which this server has not
-loaded, refuses the restore (invalid request) and leaves the slot empty: no task of this server
-computes under that config, and keeping the state would hide why it is never reused. Upstream's
-reader ignores what follows its sections, so upstream reads these files as before.
+that cannot be read, data after the state that no section reads (a checkpoint or draft section that
+could not be read -- cut, or of another version -- behind which the config may lie), or a section
+that names an adapter at a scale other than 0 which this server has not loaded, refuses the restore
+(invalid request) and leaves the slot empty: no task of this server computes under that config, and
+"none" for an unknown config would reuse a state computed with adapters on a server without any.
+Upstream's reader ignores what follows its sections, so upstream reads these files as before. Not
+reset by a refused restore: the speculative state a draft section set, as upstream's SLOT_ERASE
+leaves it too.
 
 Only the scales and paths are stored, never the adapter infos: a wake from the idle sleep frees the
 adapters and loads them again, and a stored info would carry a pointer into freed memory
@@ -564,11 +593,12 @@ which upstream's comparison no longer reads.
 
 The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
 saved state into the never-used slot 1, which must reuse it; restores a state saved under other
-scales, which may not be reused, and a copy of a file under another name, which may; restores a
-file saved without adapters, which the first task clears; and refuses a truncated section.
-LoraCacheFiles restores a file into a model loaded again, which must reuse it, and refuses it in a
-model without the adapter; LoraCacheSleep restores a state after the model slept, which must be
-reused. The other cases hold upstream's half.
+scales, which may not be reused, and a copy of a file under another name, which may; and refuses a
+truncated section. LoraCacheFiles restores a file into a model loaded again, which must reuse it,
+refuses it in a model without the adapter, restores a file saved without adapters, which the first
+task clears, and refuses a file whose draft section was cut (the section behind it lost);
+LoraCacheSleep restores a state after the model slept, which must be reused. The other cases hold
+upstream's half.
 
 Drop-check on every bump: read the SLOT_SAVE and SLOT_RESTORE cases in
 tools/server/server-context.cpp at the new tag -- once the slot file stores the LoRA config and the
@@ -811,8 +841,9 @@ carry an activeCodePage=UTF-8 manifest, and a library loaded into java.exe canno
 The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose narrow
 encoding is UTF-8 already. Same class as 0024 and 0025.
 
-Read from the source, not measured on Windows before this patch was written: the Windows jobs of
-CI are its first run there.
+Measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when common_imatrix_load_legacy() no longer opens the narrow fname
 (u8path, a wide conversion, ggml_fopen) --
@@ -840,8 +871,9 @@ elsewhere -- the function the model files already go through.
 
 Read from the source and from the measurement of the same class in
 docs/handover/local-agent-report-windows-non-ascii-paths.md (which lists this site as open);
-not measured on Windows with the fix before it was written: CI's Windows C++ jobs are its first
-run there.
+then measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when set_file() no longer calls the narrow fopen() --
 CApiNonAsciiPaths.TheLogFileIsWrittenUnderItsNonAsciiName then stays green without it on a
@@ -868,8 +900,9 @@ activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
 The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose
 narrow encoding is UTF-8 already. Same class as 0024, 0025 and 0026.
 
-Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; not measured on
-Windows with the fix before it was written: CI's Windows C++ jobs are its first run there.
+Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; measured on
+Windows 11, code page 1252, on 2026-11-11 (docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md):
+red without the patch, green with it.
 
 Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
@@ -897,8 +930,9 @@ library loaded into java.exe cannot.
 The fix opens the stream on std::filesystem::u8path(), the identity on platforms whose narrow
 encoding is UTF-8 already. Same class as 0024 to 0028.
 
-Read from the source, not measured on Windows before this patch was written: the Windows jobs of
-CI are its first run there.
+Measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
 conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green
@@ -930,8 +964,9 @@ std::filesystem::path, so no <windows.h> in this file); elsewhere it is std::get
 It covers every option with an environment variable, not only the paths: a value is text either
 way.
 
-Read from the source and found by the review of PR #612, not measured on Windows before this patch
-was written: the Windows jobs of CI are its first run there.
+Found by the review of PR #612; measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when get_value_from_env() no longer takes a narrow std::getenv() value
 on Windows -- CApiNonAsciiPaths.AnOptionFromTheEnvironmentIsReadAsUtf8 then stays green without it
@@ -982,21 +1017,24 @@ common : the warmup and the memory probe take the context's batch
 
 common_context_can_seq_rm() (which the server runs for the target and the draft context when it
 loads a model) decodes two tokens in one batch, and the warmup of common_init_from_params() decodes
-up to params.n_batch tokens. A context whose batch holds one token -- -b 1, a causal context of one
-token (-c 1: llama_context caps n_batch at n_ctx), an embedding context with -ub 1 -- ended the
+up to params.n_batch tokens. A context whose batch holds one token -- -b 1, -c 1 (llama_context caps
+a causal context's n_batch at the n_ctx it was given, before it pads the cache to 256 cells), an
+embedding context with -ub 1 -- ended the
 process there: common_batch renders into a llama_batch_ext of n_batch tokens, and the second token is
 a GGML_ABORT ("failed to add token"). The server itself handles a batch of one token (it decodes in
 sub-batches of n_batch, and decode() treats n_batch == 1 on its own); only these two places did not.
 
 The probe now decodes the two tokens in sub-batches of the context's n_batch -- the same memory
-afterwards, and a second token that does not fit (a context of one token) fails the decode, which
-the probe already answers as "no partial removal". The warmup takes at most llama_n_batch(ctx)
+afterwards; with -c 1 the cache still holds the second token. The warmup takes at most llama_n_batch(ctx)
 tokens instead of params.n_batch, and the encoder's at most llama_n_ubatch(ctx), since an encoder
 reads its input in one ubatch.
 
-The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model loaded with -b 1, -c 1, -ub 1 and
---embedding -ub 1, with and without the warmup, loads and answers (an abort of the test process
-before). Until this patch the engine refused those values at load (jllama::engine::batch_refusal).
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model loaded with -b 1 or -c 1, with and
+without the warmup, answers what a model with a batch of 64 answers in ubatches of one token, and an
+embedding context and a BERT encoder with -ub 1 load (each an abort of the test process before; the
+case -b 2 -ub 1 loaded before too). Until this patch the engine refused those values at load
+(jllama::engine::batch_refusal). A decoder without causal attention needs patches/0036 as well: its
+batch has to be its ubatch.
 
 Drop-check on every bump: read common_context_can_seq_rm() and the warmup of
 common_init_from_params() in common/common.cpp -- once both decode no more than the context's batch
@@ -1016,7 +1054,7 @@ update_slots() puts the sampled token and the draft of every generating slot int
 holds max(n_batch, n_parallel) tokens (server_context_impl::batch). The length of a draft is limited
 by the context, the request and the speculative type's own n_max, never by that batch: with a batch
 smaller than one token plus a draft -- -b 3 next to a draft model, whose default draft is three
-tokens, or a causal context of three tokens, -c 3, since llama_context caps n_batch at n_ctx -- the
+tokens, or -c 3, since llama_context caps a causal context's n_batch at the n_ctx it was given -- the
 first generation step ended the process in handle_last_sampled_token() ("batch must be large enough
 to hold the sampled and draft tokens"). Several slots drafting at once need their drafts together.
 
@@ -1072,21 +1110,59 @@ The patch's own header, verbatim:
 ```text
 llama : a truncated sequence state file fails the load
 
-llama_state_seq_load_file() reads the state of a sequence through llama_file, which on POSIX fills a
-read past the end of the file with zeros (a padding meant for aligned direct-I/O reads at the end of
-a model file) instead of failing, and then asserts that it read no more than the file held. A
-truncated or cut slot file -- an interrupted save, a disk that filled up, a copy that did not finish
--- therefore ended the process on its restore (GGML_ASSERT(nread <= state_size) in
-state_seq_load_file): the server's /slots restore, LlamaModel.restoreSlot(), and the C API's slot
-action, all with a file the caller names.
+llama_state_seq_load_file() reads the state of a sequence through llama_file, whose reads past the
+end of the file are no error on POSIX: the buffered read (a state file is opened "rb", without
+direct I/O) stops short and leaves the rest of the destination as it was, the direct-I/O read fills
+it with zeros, and both count the whole length. state_seq_load_file() then asserted that it read no
+more than the file held, so a truncated or cut slot file -- an interrupted save, a disk that filled
+up, a copy that did not finish -- ended the process on its restore (GGML_ASSERT(nread <= state_size)):
+the server's /slots restore, LlamaModel.restoreSlot(), and the C API's slot action, all with a file
+the caller names. On Windows the read throws at the end of the file, which the C wrapper already
+answers with 0.
 
 The check now fails the load: an error is logged, the sequence is removed from the memory (it holds
-what the file had and zeros), and 0 is returned, which the server answers as an invalid slot file.
-llama_state_load_file(), the whole-context loader, already compares the bytes read with the file.
+what the file had and whatever the short reads left), and 0 is returned, which the server answers as
+an invalid slot file. llama_state_load_file(), the whole-context loader, already compares the bytes
+read with the file.
 
-The guard is CApiSlotFiles in src/test/cpp/test_c_api.cpp: a slot file cut inside its state is
-refused, and the model answers the next request (an abort of the test process before).
+The guard is CApiSlotFiles in src/test/cpp/test_c_api.cpp: a slot file cut at its end and inside its
+state is refused, and the model answers the next request (an abort of the test process before, on
+POSIX; the cut inside the header was refused by upstream already).
 
-Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp -- once a state larger
-than the file is an error and no assertion, drop the patch.
+Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp and the POSIX reads of
+llama_file in src/llama-mmap.cpp -- once a state larger than the file is an error and no assertion,
+or a read past the end of the file throws on every platform, drop the patch.
+```
+
+## 0036-llama-a-non-causal-contexts-batch-is-its-ubatch.patch
+
+**Files (1):** `src/llama-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : a non-causal context's batch is its ubatch
+
+Without causal attention every token of a call attends to every other, so llama_context::decode()
+asserts that a call fits one ubatch (GGML_ASSERT "non-causal attention requires n_ubatch >=
+n_tokens"). The context's batch, though, is --batch-size: for a causal context it is capped at
+n_ctx, for a non-causal one not at all, and llama_n_batch() then promises more tokens per call than
+a call may hold. Every caller that splits its input by llama_n_batch() ended the process on a
+decoder without causal attention (a diffusion model, or any GGUF with <arch>.attention.causal =
+false): the server's load at its two-token memory probe and its warmup with --ubatch-size 1, and
+with the defaults (-b 2048 -ub 512) the first prompt longer than 512 tokens. An encoder's
+embeddings were safe only because common_init_result sets n_batch to n_ubatch with --embedding.
+
+A non-causal context's batch is now its ubatch, so llama_n_batch() is what a call may hold, and the
+server and the warmup evaluate a longer input a ubatch at a time. Nothing changes for a causal
+context, or for a non-causal one whose batch already was its ubatch (every --embedding context).
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a random llama GGUF written with
+attention.causal = false loads with -ub 1 and answers a prompt longer than its ubatch with -ub 2,
+with the same answer as with -b 2 -ub 2 (an abort of the test process before, at the load or at the
+request).
+
+Drop-check on every bump: read the n_batch lines of llama_context's constructor in
+src/llama-context.cpp -- once a non-causal context's n_batch is no larger than its n_ubatch, or
+decode() splits a non-causal call itself, drop the patch.
 ```
