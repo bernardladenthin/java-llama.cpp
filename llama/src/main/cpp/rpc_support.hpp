@@ -13,9 +13,13 @@
 // model asked for, and if that server is gone by then, the first tensor upload aborts the whole
 // JVM (ggml-rpc treats a vanished server as fatal). So before an argv is parsed:
 //
-//   1. every endpoint it names in `--rpc` is registered here, up front, so an unreachable server
-//      fails the load with a clear message instead of reaching llama.cpp at all (patches/0015 makes
-//      ggml_backend_rpc_add_server return nullptr for it instead of aborting);
+//   1. every endpoint it names in `--rpc` or LLAMA_ARG_RPC is registered here, up front and before
+//      the caller takes any lock, so an unreachable server fails the load with a clear message
+//      instead of reaching llama.cpp at all, and the parse after it -- which the engine runs under
+//      the lock of the process-wide log -- finds every endpoint registered and connects to none
+//      (the argv it parses has no `--rpc` left, see without_rpc_options; LLAMA_ARG_RPC's endpoints
+//      are answered from ggml-rpc's cache). An endpoint registered before is asked again, since
+//      ggml-rpc answers it from its cache even when its server has gone away;
 //   2. if the registry holds RPC devices this argv did NOT ask for, and the caller did not choose
 //      devices itself (`--device`/`-dev`), an explicit `--device` list is appended: the requested
 //      RPC devices plus the local GPUs, chosen the way llama.cpp's default would choose them.
@@ -32,6 +36,8 @@
 #include "ggml-rpc.h"
 
 #include <cstddef>
+#include <cstdlib>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -72,15 +78,37 @@ struct device_info {
 }
 
 // Every endpoint the argv asks for, in order, across repeated `--rpc` options (each one registers
-// its servers, so they accumulate in upstream too). argv[0] is treated like any other element.
-[[nodiscard]] inline std::vector<std::string> requested_endpoints(const std::vector<std::string> &argv) {
+// its servers, so they accumulate in upstream too). argv[0] is treated like any other element. A
+// parse applies the environment before the argv, so LLAMA_ARG_RPC's endpoints (`env`, may be null)
+// come first.
+[[nodiscard]] inline std::vector<std::string> requested_endpoints(const std::vector<std::string> &argv,
+                                                                  const char *env = nullptr) {
     std::vector<std::string> out;
+    if (env != nullptr) {
+        out = split_endpoints(env);
+    }
     for (size_t i = 0; i + 1 < argv.size(); ++i) {
         if (argv[i] == "--rpc") {
             for (auto &ep : split_endpoints(argv[i + 1])) {
                 out.push_back(ep);
             }
         }
+    }
+    return out;
+}
+
+// The argv without its `--rpc <servers>` pairs: the argv a parse sees once prepare_argv() has
+// registered those servers, so that the parse -- whose `--rpc` handler only registers devices --
+// does no network I/O. A `--rpc` without a value is left for the parse to refuse.
+[[nodiscard]] inline std::vector<std::string> without_rpc_options(const std::vector<std::string> &argv) {
+    std::vector<std::string> out;
+    out.reserve(argv.size());
+    for (size_t i = 0; i < argv.size(); ++i) {
+        if (argv[i] == "--rpc" && i + 1 < argv.size()) {
+            ++i;
+            continue;
+        }
+        out.push_back(argv[i]);
     }
     return out;
 }
@@ -258,12 +286,29 @@ template <typename Fn> [[nodiscard]] Fn rpc_proc(const char *name) {
     return out;
 }
 
-// Registers one RPC server; throws std::invalid_argument when it cannot be reached (patches/0015
-// turns that case into a nullptr instead of an abort of the process).
+// true when ggml-rpc registered the endpoint before in this process (its devices carry it as their
+// description); a registration is never undone.
+[[nodiscard]] inline bool is_registered(const std::string &endpoint) {
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (is_rpc_device(dev) && endpoint == ggml_backend_dev_description(dev)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Registers one RPC server; throws std::invalid_argument when it cannot be reached (upstream answers
+// that with a nullptr since b12283). ggml-rpc answers an endpoint it registered before from its
+// cache, without contacting the server, so such an endpoint is asked for its device count
+// (patches/0015 puts that function into the proc-address table): a server that has gone away fails
+// the load now, instead of the first tensor upload aborting the process.
 inline void register_server(const std::string &endpoint) {
+    const bool known = is_registered(endpoint);
     ggml_backend_reg_t reg =
         rpc_proc<decltype(&ggml_backend_rpc_add_server)>("ggml_backend_rpc_add_server")(endpoint.c_str());
-    if (reg == nullptr) {
+    if (reg == nullptr ||
+        (known && rpc_proc<uint32_t (*)(const char *)>("ggml_backend_rpc_get_device_count")(endpoint.c_str()) == 0)) {
         throw std::invalid_argument("cannot reach RPC server " + endpoint +
                                     " (is an rpc-server / RpcServer listening there?)");
     }
@@ -271,11 +316,21 @@ inline void register_server(const std::string &endpoint) {
 }
 
 // See the header comment. Returns the argv to parse: the input, possibly with `--device <list>`
-// appended. Throws std::invalid_argument for an unreachable `--rpc` endpoint.
+// appended (the caller parses it without its `--rpc` pairs, without_rpc_options). Throws
+// std::invalid_argument for an unreachable endpoint of `--rpc` or LLAMA_ARG_RPC. Takes no lock: the
+// connects happen here, before the caller's parse.
 [[nodiscard]] inline std::vector<std::string> prepare_argv(std::vector<std::string> argv) {
-    const auto requested = requested_endpoints(argv);
+    const auto requested = requested_endpoints(argv, std::getenv("LLAMA_ARG_RPC"));
+    std::vector<std::string> registered;
     for (const auto &endpoint : requested) {
-        register_server(endpoint);
+        bool done = false;
+        for (const auto &r : registered) {
+            done = done || r == endpoint;
+        }
+        if (!done) {
+            register_server(endpoint);
+            registered.push_back(endpoint);
+        }
     }
     const auto devices = registered_devices();
     if (!has_mmproj_device_option(argv)) {

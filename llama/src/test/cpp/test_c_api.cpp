@@ -45,6 +45,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -57,6 +58,10 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -4155,6 +4160,246 @@ TEST(CApiRpc, AStopWhileNoServeRunsDoesNotStopTheNextOne) {
     EXPECT_TRUE(served);
     EXPECT_FALSE(jllama_rpc_server_listening());
 }
+
+#ifndef _WIN32
+namespace {
+
+// A TCP proxy on loopback in front of `target_port` that waits `delay` after it accepts a connection
+// before it forwards anything: an RPC server that is slow to answer, as one across a slow network is.
+class delaying_proxy {
+  public:
+    delaying_proxy(int target_port, std::chrono::milliseconds delay) : target_port_(target_port), delay_(delay) {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        socklen_t len = sizeof(addr);
+        if (listen_fd_ < 0 || ::bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0 ||
+            ::listen(listen_fd_, 16) != 0 ||
+            ::getsockname(listen_fd_, reinterpret_cast<sockaddr *>(&addr), &len) != 0) {
+            return;
+        }
+        port_ = ntohs(addr.sin_port);
+        acceptor_ = std::thread([this]() { accept_loop(); });
+    }
+    delaying_proxy(const delaying_proxy &) = delete;
+    delaying_proxy &operator=(const delaying_proxy &) = delete;
+    ~delaying_proxy() {
+        stopping_ = true;
+        ::shutdown(listen_fd_, SHUT_RDWR);
+        ::close(listen_fd_);
+        if (acceptor_.joinable()) {
+            acceptor_.join();
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (int fd : open_) {
+                ::shutdown(fd, SHUT_RDWR);
+            }
+        }
+        for (auto &pipe : pipes_) {
+            pipe.join();
+        }
+    }
+    int port() const { return port_; }
+    std::string endpoint() const { return "127.0.0.1:" + std::to_string(port_); }
+    int connections() const { return connections_.load(); }
+
+  private:
+    void accept_loop() {
+        while (!stopping_) {
+            pollfd p{listen_fd_, POLLIN, 0};
+            if (::poll(&p, 1, 50) <= 0) {
+                continue;
+            }
+            const int client = ::accept(listen_fd_, nullptr, nullptr);
+            if (client < 0) {
+                continue;
+            }
+            ++connections_;
+            std::lock_guard<std::mutex> lock(mutex_);
+            open_.push_back(client);
+            pipes_.emplace_back([this, client]() { forward(client); });
+        }
+    }
+    void forward(int client) {
+        std::this_thread::sleep_for(delay_);
+        const int server = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = htons(static_cast<uint16_t>(target_port_));
+        if (server >= 0 && ::connect(server, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                open_.push_back(server);
+            }
+            char buffer[65536];
+            pollfd fds[2] = {{client, POLLIN, 0}, {server, POLLIN, 0}};
+            while (!stopping_) {
+                if (::poll(fds, 2, 50) <= 0) {
+                    continue;
+                }
+                bool closed = false;
+                for (int k = 0; k < 2 && !closed; ++k) {
+                    if ((fds[k].revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+                        continue;
+                    }
+                    const ssize_t n = ::recv(fds[k].fd, buffer, sizeof(buffer), 0);
+                    if (n <= 0) {
+                        closed = true;
+                        break;
+                    }
+                    for (ssize_t sent = 0; sent < n && !closed;) {
+                        const ssize_t m =
+                            ::send(fds[1 - k].fd, buffer + sent, static_cast<size_t>(n - sent), MSG_NOSIGNAL);
+                        closed = m <= 0;
+                        sent += m > 0 ? m : 0;
+                    }
+                }
+                if (closed) {
+                    break;
+                }
+            }
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (int fd : {client, server}) {
+            if (fd >= 0) {
+                open_.erase(std::remove(open_.begin(), open_.end(), fd), open_.end());
+                ::shutdown(fd, SHUT_RDWR);
+                ::close(fd);
+            }
+        }
+    }
+
+    int target_port_;
+    std::chrono::milliseconds delay_;
+    int listen_fd_ = -1;
+    int port_ = 0;
+    std::atomic<bool> stopping_{false};
+    std::atomic<int> connections_{0};
+    std::mutex mutex_;
+    std::vector<int> open_;
+    std::vector<std::thread> pipes_;
+    std::thread acceptor_; // last: it reads the members above
+};
+
+// The longest a swap of the log callback waits while `load` runs on another thread. Every parse holds
+// the lock of the process-wide log, which the swap takes too.
+std::chrono::milliseconds longest_log_swap_during(const std::function<void()> &load) {
+    std::atomic<bool> loading{true};
+    std::chrono::steady_clock::duration longest{0};
+    std::thread swapper([&]() {
+        while (loading.load()) {
+            const auto started = std::chrono::steady_clock::now();
+            jllama_set_log_callback([](int, const char *, void *) {}, nullptr);
+            longest = std::max(longest, std::chrono::steady_clock::now() - started);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    });
+    load();
+    loading = false;
+    swapper.join();
+    jllama_set_log_callback(nullptr, nullptr);
+    return std::chrono::duration_cast<std::chrono::milliseconds>(longest);
+}
+
+} // namespace
+
+TEST(CApiRpc, ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects) {
+    // The engine parses a load's argv under the lock of the process-wide log, and upstream's --rpc
+    // handler registers -- connects to -- every server the parse sees. Before the review of 2026-11-19
+    // the registration of an endpoint the engine had just registered connected to it again inside the
+    // parse (patches/0015 re-checked the cache hit there), and LLAMA_ARG_RPC's servers were registered
+    // there for the first time: a slow server held every logger swap and every other load for as long
+    // as its connect took. The servers are registered before the parse now, and the parse connects to
+    // none.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-rpc-slow");
+    ASSERT_FALSE(path.empty());
+    int port = 0;
+    std::unique_ptr<rpc_serve_run> server;
+    for (int attempt = 0; attempt < 50 && port == 0; ++attempt) {
+        const int candidate = rpc_test_port(attempt);
+        server.reset(new rpc_serve_run(candidate));
+        for (int i = 0;
+             i < 500 && !jllama_rpc_server_listening() && !server->returned_within(std::chrono::milliseconds(0)); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (jllama_rpc_server_listening()) {
+            port = candidate;
+        } else {
+            server.reset();
+        }
+    }
+    ASSERT_NE(port, 0) << "no RPC server could bind";
+    // every connection of the load waits this long (about ten of them: registration, device memory, the
+    // backend), so a parse that connected under the lock held a swap for about as long
+    const auto delay = std::chrono::milliseconds(400);
+    struct env_reset {
+        ~env_reset() { unsetenv("LLAMA_ARG_RPC"); }
+    } reset;
+    for (const bool from_env : {false, true}) {
+        SCOPED_TRACE(from_env ? "LLAMA_ARG_RPC" : "--rpc");
+        delaying_proxy proxy(port, delay); // a new endpoint each round: nothing of it is registered yet
+        ASSERT_NE(proxy.port(), 0);
+        std::vector<std::string> args = {"jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
+        if (from_env) {
+            setenv("LLAMA_ARG_RPC", proxy.endpoint().c_str(), 1);
+        } else {
+            args.insert(args.end(), {"--rpc", proxy.endpoint()});
+        }
+        jllama_model *model = nullptr;
+        const auto longest = longest_log_swap_during([&]() {
+            std::vector<const char *> argv;
+            for (const auto &a : args) {
+                argv.push_back(a.c_str());
+            }
+            EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                      JLLAMA_STATUS_OK)
+                << jllama_last_error();
+        });
+        unsetenv("LLAMA_ARG_RPC");
+        EXPECT_GT(proxy.connections(), 0) << "the load never reached the server";
+        EXPECT_LT(longest, delay / 2) << "a logger swap waited " << longest.count() << " ms for the parse";
+        if (model != nullptr) {
+            Owned completion;
+            EXPECT_EQ(jllama_completions(model, R"({"prompt":"Hello","n_predict":2,"temperature":0})", &completion.s),
+                      JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            jllama_model_free(model);
+        }
+    }
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+    {
+        // the embedded server parses its argv once, in jllama_server_start, under the same lock
+        SCOPED_TRACE("jllama_server_start");
+        delaying_proxy proxy(port, delay);
+        ASSERT_NE(proxy.port(), 0);
+        const std::vector<std::string> args = {
+            "llama-server", "-m",        path,     "-c", "64",    "-ngl",          "0",
+            "--host",       "127.0.0.1", "--port", "0",  "--rpc", proxy.endpoint()};
+        jllama_server *native = nullptr;
+        const auto longest = longest_log_swap_during([&]() {
+            std::vector<const char *> argv;
+            for (const auto &a : args) {
+                argv.push_back(a.c_str());
+            }
+            EXPECT_EQ(jllama_server_start(static_cast<int>(argv.size()), argv.data(), &native), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+        });
+        EXPECT_GT(proxy.connections(), 0) << "the start never reached the server";
+        EXPECT_LT(longest, delay / 2) << "a logger swap waited " << longest.count() << " ms for the parse";
+        if (native != nullptr) {
+            EXPECT_EQ(jllama_server_stop(native), JLLAMA_STATUS_OK) << jllama_last_error();
+        }
+    }
+#endif
+    server.reset();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+#endif
 
 // jllama_tts_options (b12431): the defaults leave every choice to the engine or the model, and
 // struct_size is the library's own sizeof, which the FFM layout of llama-ffm is held to as well.

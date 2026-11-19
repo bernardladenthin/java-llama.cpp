@@ -246,9 +246,15 @@ JVM) cannot use ggml-rpc as it is:
    contract through get_dispatcher(), which still aborts. A server that vanishes mid-run
    stays fatal; that needs a real error path through the backend interface.
 
-2. add_server() returned a cached registration without checking that the server is still
+2. add_server() returns a cached registration without checking that the server is still
    there, so re-using an endpoint whose server had stopped passed registration and aborted
-   on the first tensor upload. The cache hit is now re-checked.
+   on the first tensor upload. ggml_backend_rpc_get_device_count() -- which asks the server
+   and answers 0 when it cannot be reached -- is now in the backend's proc-address table, and
+   the host asks it for an endpoint it registered before (rpc_support.hpp, register_server).
+   Until the review of 2026-11-19 the patch re-checked the cache hit inside add_server()
+   itself; that connected to the server again on every --rpc the parse saw, under whatever
+   lock the caller held -- the engine parses under the lock of the process-wide log, so a slow
+   server stalled every logger swap and every other load for as long as its connect took.
 
    ggml_backend_rpc_get_device_memory() of a server that went away reports 0/0 instead of
    aborting. Registered devices stay in ggml's process-wide registry forever, and code that
@@ -308,9 +314,9 @@ handshakes"): upstream took the client half -- rpc_dispatcher::start() returns f
 aborting, negotiate_hello() reports a failed exchange, get_dispatcher() returns nullptr and does
 not cache a failed attempt, and every consumer answers nullptr conservatively (device memory
 0/0, device count 0). Those hunks are dropped, with this patch's try_get_dispatcher() /
-aborting get_dispatcher() pair. What stays of the client: an endpoint registered earlier is
-re-checked on the next ggml_backend_rpc_add_server() (upstream returns the cached registration
-of a server that has gone away), and ggml_backend_rpc_init() aborts by name when the
+aborting get_dispatcher() pair. What stays of the client: the device count in the proc-address
+table, with which the host re-checks an endpoint registered earlier (upstream returns the cached
+registration of a server that has gone away), and ggml_backend_rpc_init() aborts by name when the
 registration of a reachable server fails. The server half (stop, listening, COMM_INIT bind
 address and cancellation, transport) is unchanged.
 

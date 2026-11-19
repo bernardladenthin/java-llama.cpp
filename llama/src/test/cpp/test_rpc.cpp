@@ -85,6 +85,26 @@ TEST(RpcSupport, RpcAsLastArgumentWithoutValueRequestsNothing) {
     EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama", "--rpc"}).empty());
 }
 
+TEST(RpcSupport, TheEnvironmentsEndpointsComeBeforeTheArgvs) {
+    // a parse applies LLAMA_ARG_RPC before the argv, and every value registers its servers
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "c:3"}, "a:1,,b:2"),
+              (std::vector<std::string>{"a:1", "b:2", "c:3"}));
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama"}, "a:1"), (std::vector<std::string>{"a:1"}));
+    EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama"}, "").empty());
+}
+
+TEST(RpcSupport, TheParsedArgvHasNoRpcOptionLeft) {
+    // prepare_argv has registered the servers; the parse, which runs under the log lock, connects to none
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "--rpc", "a:1", "-m", "x.gguf", "--rpc", "b:2", "-ngl", "9"}),
+              (std::vector<std::string>{"llama", "-m", "x.gguf", "-ngl", "9"}));
+    // a --rpc without a value stays, for the parse to refuse
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "-m", "x.gguf", "--rpc"}),
+              (std::vector<std::string>{"llama", "-m", "x.gguf", "--rpc"}));
+    // another option's value that happens to read --rpc is not an option
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "--alias", "--rpc"}),
+              (std::vector<std::string>{"llama", "--alias", "--rpc"}));
+}
+
 TEST(RpcSupport, DeviceOptionIsRecognisedInBothSpellings) {
     EXPECT_TRUE(jllama::rpc::has_device_option({"llama", "--device", "CUDA0"}));
     EXPECT_TRUE(jllama::rpc::has_device_option({"llama", "-dev", "none"}));
@@ -442,10 +462,67 @@ TEST(RpcClient, ARegisteredServerThatWentAwayIsReportedOnTheNextRegistration) {
         loopback_server server;
         ASSERT_TRUE(server.listening());
         endpoint = server.endpoint();
-        ASSERT_NE(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+        jllama::rpc::register_server(endpoint);
+        EXPECT_TRUE(jllama::rpc::is_registered(endpoint));
     }
-    // the endpoint is still cached in ggml-rpc's registry map; it must be re-checked, not trusted
-    EXPECT_EQ(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+    // ggml-rpc answers the endpoint from its cache, without contacting the server ...
+    EXPECT_NE(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+    // ... so the registration asks the server itself (patches/0015 exposes the device count), and
+    // the load fails now instead of at the first tensor upload
+    try {
+        jllama::rpc::register_server(endpoint);
+        FAIL() << "a server that went away was registered";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find(endpoint), std::string::npos) << e.what();
+    }
+}
+
+TEST(RpcClient, PrepareArgvRegistersTheEnvironmentsServersAndRefusesAnUnreachableOne) {
+    // upstream's parse registers LLAMA_ARG_RPC's servers itself, so prepare_argv registers them too:
+    // before the parse (outside its lock), with the same message for an unreachable one
+    struct env_reset {
+        ~env_reset() {
+#ifdef _WIN32
+            _putenv_s("LLAMA_ARG_RPC", "");
+#else
+            unsetenv("LLAMA_ARG_RPC");
+#endif
+        }
+    } reset;
+    const auto set_env = [](const std::string &value) {
+#ifdef _WIN32
+        _putenv_s("LLAMA_ARG_RPC", value.c_str());
+#else
+        setenv("LLAMA_ARG_RPC", value.c_str(), 1);
+#endif
+    };
+    set_env(closed_endpoint());
+    try {
+        (void)jllama::rpc::prepare_argv({"llama", "-m", "x.gguf"});
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find(closed_endpoint()), std::string::npos) << e.what();
+    }
+    loopback_server server;
+    ASSERT_TRUE(server.listening());
+    set_env(server.endpoint());
+    const auto argv = jllama::rpc::prepare_argv({"llama", "-m", "x.gguf"});
+    EXPECT_TRUE(jllama::rpc::is_registered(server.endpoint()));
+    // Other tests of this process leave RPC devices behind. If they are stale, the --device list that
+    // keeps them out must name the environment's server: this argv asked for it.
+    std::string name;
+    for (const auto &device : jllama::rpc::registered_devices()) {
+        if (device.endpoint == server.endpoint()) {
+            name = device.name;
+        }
+    }
+    ASSERT_FALSE(name.empty());
+    for (size_t i = 0; i + 1 < argv.size(); ++i) {
+        if (argv[i] == "--device") {
+            EXPECT_NE(jllama::rpc::split_endpoints(argv[i + 1]).front(), "none") << argv[i + 1];
+            EXPECT_NE(argv[i + 1].find(name), std::string::npos) << argv[i + 1];
+        }
+    }
 }
 
 TEST(RpcClient, AGoneServersDeviceReportsNoMemoryInsteadOfAborting) {

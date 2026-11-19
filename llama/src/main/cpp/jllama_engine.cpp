@@ -509,9 +509,12 @@ std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params 
     // --api-key-file /dev/stdin, a server without its key). LLAMA_ARG_LOG_FILE is applied by the
     // parse before the argv; the argv's --log-file is opened after it, as upstream orders them.
     const std::string path = take_log_file_option(argv);
+    // the `--rpc` servers are registered (rpc::prepare_argv, before this): the parse under the log
+    // lock connects to none of them
+    std::vector<std::string> parse_args = jllama::rpc::without_rpc_options(argv);
     std::vector<char *> parse_argv;
-    parse_argv.reserve(argv.size());
-    for (auto &arg : argv) {
+    parse_argv.reserve(parse_args.size());
+    for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
     log_file_claim log_file;
@@ -566,9 +569,12 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     std::vector<std::string> rpc_argv =
         jllama::rpc::prepare_argv(std::vector<std::string>(filtered_argv.begin(), filtered_argv.end()));
     const std::string log_file_path = take_log_file_option(rpc_argv);
+    // the parse below holds the log lock, and its `--rpc` handler would register -- connect to -- the
+    // servers prepare_argv has registered already
+    std::vector<std::string> parse_args = jllama::rpc::without_rpc_options(rpc_argv);
     std::vector<char *> parse_argv;
-    parse_argv.reserve(rpc_argv.size());
-    for (auto &arg : rpc_argv) {
+    parse_argv.reserve(parse_args.size());
+    for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
     log_file_claim log_file;
@@ -577,7 +583,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     {
         // Every parse holds the lock: --log-disable, --log-colors and LLAMA_ARG_LOG_FILE pause the log
         // worker inside it, and the server example's parse downloads nothing (common_params_parse_ex
-        // leaves that to the load), so it is short -- unless an --rpc server is slow to answer.
+        // leaves that to the load) and connects to no RPC server (see above), so it is short.
         std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
         {
             const c_numeric_locale numbers;
