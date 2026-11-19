@@ -467,9 +467,13 @@ std::string control_vector_refusal(const common_params &params) {
     if (g == nullptr) {
         return std::string();
     }
+    // -1 for a key that is missing or of another type -- as int64_t: in a ternary with the uint32_t of
+    // gguf_get_val_u32 the -1 became 4294967295, and a missing nextn_predict_layers made the layer
+    // count negative, which skipped every check below
     const auto u32 = [g](const std::string &key) -> int64_t {
         const int64_t id = gguf_find_key(g, key.c_str());
-        return id >= 0 && gguf_get_kv_type(g, id) == GGUF_TYPE_UINT32 ? gguf_get_val_u32(g, id) : -1;
+        return id >= 0 && gguf_get_kv_type(g, id) == GGUF_TYPE_UINT32 ? static_cast<int64_t>(gguf_get_val_u32(g, id))
+                                                                       : int64_t{-1};
     };
     const int64_t arch_id = gguf_find_key(g, "general.architecture");
     const std::string arch =

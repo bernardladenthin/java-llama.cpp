@@ -244,8 +244,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
   relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
   the way the plain one builds them, so these models reuse their compute graph with flash attention --
-  the reuse check failed on every step before (`CApiLfm3Tts` holds the reuse and that it answers as
-  without it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
+  the reuse check failed on every step before (`CApiGraphReuse`: the generator's LFM3 backbone with
+  `-fa on --kv-unified` reuses its graph and answers as with `LLAMA_GRAPH_REUSE_DISABLE=1`). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
   hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
   matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
   a reference clip clones it (see "Fixed": `TextToSpeech` refused it until the same day), and
@@ -264,7 +264,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   chip (#32542, b12543) and a fix of one of Metal's ranges (#32602), the graph parameters without the
   fields the graph reads from the model (#32596), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
   license texts are regenerated, 282 packages). All 26 patches applied unchanged at every step; `0037`
-  came with the tests of the bump, `0038`-`0040` with the fourth review round (see "Fixed").
+  came with the tests of the bump, `0038`-`0041` with the fourth review round (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
@@ -659,6 +659,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ### Fixed
 - **Found by the fourth review round of 2026-11-19 (two reviews and a test-gap hunt), each red before
   its fix:**
+  - **Two models loaded at the same time on two threads crashed the process** (a segmentation fault
+    in 6 of 6 runs): llama.cpp's fit step swapped the process-wide llama logger for one on the loading
+    thread's stack, and two overlapping loads restored each other's (`patches/0041`,
+    `CApiConcurrency`).
   - **Three ways a load ended the process (the JVM):** a draft that is no model (a projector, a
     control vector) given without `--spec-type` -- llama.cpp read its layer count without looking for
     it (`patches/0038`); `--spec-type ngram-cache` with a lookup cache that is missing or cut short

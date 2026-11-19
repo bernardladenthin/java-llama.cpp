@@ -259,6 +259,11 @@ found are fixed, these are what is left)
   do, see "RPC backend"), and `prepare_argv`, which does not know that server, counts it stale on the
   next load; a `version` or `list-devices` key would `exit(0)`. A file an administrator writes for the
   host, not one the caller hands in; not handled (the review of 2026-11-19).
+- **`jllama_configure` sets the thread counts on the caller's thread** (`llama_set_n_threads`), while
+  the worker reads them in `llama_decode`: a data race on two ints, formally undefined and in practice a
+  decode that runs with the old or the new count. A fix would post the change to the worker as upstream
+  posts every other change of the context; not done (the test-gap review of 2026-11-19, from reading;
+  no TSAN run). `patches/0003`'s similarity accessor has the same shape and is recorded there.
 - **The models handler honours its environment** (since the load runs it, 2026-11-19):
   `LLAMA_ARG_HF_REPO`, `LLAMA_ARG_MODEL_URL` and `LLAMA_ARG_DOCKER_REPO` in the JVM's environment
   reach every `LlamaModel` load as llama-server takes them -- `-hf` replaces an explicit `-m`, and a

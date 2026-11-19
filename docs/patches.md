@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**30 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**31 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -52,6 +52,7 @@ match a binary to this page.
 | 0038 | [`0038-common-a-draft-or-a-lookup-cache-that-is-no-such-file-fails-the-load.patch`](#0038-common-a-draft-or-a-lookup-cache-that-is-no-such-file-fails-the-loadpatch) | common : a draft or a lookup cache that is no such file fails the load, not the process | 2 | 7 |
 | 0039 | [`0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-names.patch`](#0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-namespatch) | common : argument files and lookup caches are opened by their UTF-8 names | 3 | 6 |
 | 0040 | [`0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch`](#0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-onpatch) | common : closing a log sink does not turn a disabled log back on | 1 | 3 |
+| 0041 | [`0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch`](#0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threadspatch) | common : the log scope of the fit is safe for loads on several threads | 1 | 2 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1307,4 +1308,35 @@ a later load prints nothing to stdout or stderr.
 
 Drop-check on every bump: read set_file() in common/log.cpp -- once it does not resume a paused
 worker when it closes the file, drop the patch (and keep the set_callback() half in 0014).
+```
+
+## 0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch
+
+**Files (1):** `common/fit.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : the log scope of the fit is safe for loads on several threads
+
+common_fit_params() demotes llama's log lines below a level to debug for the length of its probe
+loads, through common_fit_log_scope (common/fit.cpp): the scope saved the process-wide llama logger,
+installed one whose user data was the scope itself -- an object on the loading thread's stack -- and
+restored what it had saved. A host that embeds llama.cpp loads models on several threads at once; two
+overlapping scopes then restored each other's logger, the logger pointed at the frame of a scope that
+had ended, and the next log line of the process jumped into it (a SIGSEGV in llama_log_internal_v, in 4
+of 5 runs of two loads at once). The fit runs in every common_init_from_params(): a model's load, a
+wake from the idle sleep, text to speech, the trainer.
+
+The scopes share one logger now, installed by the first and removed by the last under a mutex, and
+each thread demotes only its own lines, by the level of its innermost scope (a thread_local). A line
+of another thread passes unchanged, where it was demoted by whichever scope was installed. Found by the
+test-gap review of 2026-11-19.
+
+The guard is CApiConcurrency.TwoModelsLoadedAtOnceOnTwoThreadsAnswerAsEachAlone in
+src/test/cpp/test_c_api.cpp (two loads at once on two threads, each model answering what it answers
+alone; a crash of the test process without the patch).
+
+Drop-check on every bump: read common_fit_log_scope in common/fit.cpp -- once it no longer installs a
+logger whose user data is the scope, or serialises the scopes itself, drop the patch.
 ```
