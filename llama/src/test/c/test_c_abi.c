@@ -17,7 +17,11 @@
 // right after the build, so the four modular CPU jobs run a test again (BUILD_TESTING is refused
 // there: jllama_test needs the CPU backend statically).
 //
-// Usage: jllama_c_abi <natives directory>   (JLLAMA_C_ABI_MODEL=<gguf> loads a model as well)
+// Usage: jllama_c_abi <natives directory> [implicit]   (JLLAMA_C_ABI_MODEL=<gguf> loads a model as well)
+//
+// `implicit` (the ctest `c_abi_implicit`) skips the program's own ggml_backend_load_all_from_path(): the
+// first C API call that needs a backend loads the modules next to libjllama (backend_modules.hpp). Before
+// that, a C consumer found no backend at all -- only JNI_OnLoad loaded them.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +63,47 @@ static const char * pinned_tag(const char * dir) {
     return tag;
 }
 
+/* The C API alone, with no module load of the program's own: no device before the first call (the
+ * modules are not loaded yet, so the test cannot pass vacuously), a model loaded and answering after it,
+ * and a CPU device among those ggml then reports. */
+static int implicit_load(const char * dir) {
+    const char * model_path = getenv("JLLAMA_C_ABI_MODEL");
+    if (model_path == NULL || model_path[0] == '\0') {
+        return fail("implicit: JLLAMA_C_ABI_MODEL is not set");
+    }
+    if (ggml_backend_dev_count() != 0) {
+        return fail("implicit: a device is registered before the first C API call");
+    }
+    const char * load_argv[] = {"c_abi", "-m", model_path, "-c", "128", "-ngl", "0", "--no-warmup", "-t", "1"};
+    jllama_model * served = NULL;
+    if (jllama_model_load((int) (sizeof load_argv / sizeof load_argv[0]), load_argv, NULL, NULL, &served) !=
+            JLLAMA_STATUS_OK || served == NULL) {
+        fprintf(stderr, "c_abi: implicit: %s\n", jllama_last_error());
+        return fail("implicit: jllama_model_load did not load the modules next to the library");
+    }
+    int cpu = 0;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+            cpu = 1;
+        }
+    }
+    char * response = NULL;
+    const jllama_status status =
+        jllama_completions(served, "{\"prompt\":\"Hello\",\"n_predict\":4,\"temperature\":0}", &response);
+    const int answered = status == JLLAMA_STATUS_OK && response != NULL && strstr(response, "\"content\"") != NULL;
+    jllama_string_free(response);
+    jllama_model_free(served);
+    if (!cpu) {
+        return fail("implicit: no CPU device after the load");
+    }
+    if (!answered) {
+        return fail("implicit: jllama_completions");
+    }
+    printf("c_abi: implicit: the C API loaded the modules of %s itself; %zu device(s)\n", dir, ggml_backend_dev_count());
+    printf("c_abi: OK\n");
+    return 0;
+}
+
 int main(int argc, char ** argv) {
     if (argc < 2 || argv[1][0] == '\0') {
         return fail("usage: jllama_c_abi <natives directory>");
@@ -79,6 +124,9 @@ int main(int argc, char ** argv) {
         return fail("jllama_build_info() does not name the pinned llama.cpp tag of its directory");
     }
     printf("c_abi: jllama C API %s over llama.cpp %s\n", api_version, build_info);
+    if (argc > 2 && strcmp(argv[2], "implicit") == 0) {
+        return implicit_load(dir);
+    }
     printf("c_abi: loading the backend modules from %s\n", dir);
     ggml_backend_load_all_from_path(dir);
     llama_backend_init();

@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12548)
-set(JLLAMA_GIT_COMMIT "f8caa5ea30b5775512906ae3b7ee53b21a7a6e1d")   # the commit the number b12548 names (not tagged yet; the commit stays the pin)
+set(JLLAMA_GIT_TAG    b12549)
+set(JLLAMA_GIT_COMMIT "8af68d486a9473820d24d00af8f33334ca80124d")   # the commit the number b12549 names (not tagged yet; the commit stays the pin)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -899,6 +899,7 @@ add_library(jllama SHARED
     src/main/cpp/jllama.cpp
     src/main/cpp/jllama_engine.cpp
     src/main/cpp/jllama_api.cpp
+    src/main/cpp/backend_modules.cpp
     src/main/cpp/tts_engine.cpp
     src/main/cpp/imatrix_engine.cpp
     src/main/cpp/train_engine.cpp
@@ -1317,8 +1318,13 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
         SKIP_BUILD_RPATH FALSE)
     enable_testing()
     add_test(NAME c_abi COMMAND jllama_c_abi "${JLLAMA_DIR}")
+    # The same program without its own module load: the C API loads the modules next to libjllama
+    # itself (backend_modules.hpp). Neither the executable (build/c-abi) nor ctest's working directory
+    # is the natives directory, so ggml's own search finds nothing there.
+    add_test(NAME c_abi_implicit COMMAND jllama_c_abi "${JLLAMA_DIR}" implicit)
     if(WIN32)
-        set_tests_properties(c_abi PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
+        set_tests_properties(c_abi c_abi_implicit PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
     endif()
     # The model-backed half: JLLAMA_C_ABI_MODEL from the configure environment, else the C++ suite's
     # random llama model, written by a helper linked against the shipped ggml-base only (ctest runs a
@@ -1341,13 +1347,13 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
             SKIP_BUILD_RPATH FALSE)
         add_test(NAME c_abi_model COMMAND jllama_c_abi_model "${JLLAMA_C_ABI_MODEL_FILE}")
         set_tests_properties(c_abi_model PROPERTIES FIXTURES_SETUP c_abi_model)
-        set_tests_properties(c_abi PROPERTIES FIXTURES_REQUIRED c_abi_model)
+        set_tests_properties(c_abi c_abi_implicit PROPERTIES FIXTURES_REQUIRED c_abi_model)
         if(WIN32)
             set_tests_properties(c_abi_model PROPERTIES
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
         endif()
     endif()
-    set_tests_properties(c_abi PROPERTIES ENVIRONMENT "JLLAMA_C_ABI_MODEL=${JLLAMA_C_ABI_MODEL_FILE}")
+    set_tests_properties(c_abi c_abi_implicit PROPERTIES ENVIRONMENT "JLLAMA_C_ABI_MODEL=${JLLAMA_C_ABI_MODEL_FILE}")
 endif()
 
 # BUILD_TESTING is declared at the top of this file, before any subproject (see there).
@@ -1438,6 +1444,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_c_api.cpp
         src/main/cpp/jllama_engine.cpp
         src/main/cpp/jllama_api.cpp
+        src/main/cpp/backend_modules.cpp
         # The engines behind the C API's TTS and trainer functions (test_c_api.cpp drives them).
         src/main/cpp/tts_engine.cpp
         src/main/cpp/imatrix_engine.cpp

@@ -15,6 +15,7 @@
 #include "server-chat.h"
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
+#include "backend_modules.hpp"
 #include "numeric_locale.hpp"
 #include "rpc_support.hpp"
 #include "tts_engine.h"
@@ -255,6 +256,7 @@ struct api_video_decoder {
 jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                       void *progress_user_data, const jllama_video_decoder *decoder,
                                       jllama_model **out) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     // The decoder's release callback is owed from here on, whatever fails below.
     jllama::engine::video_decoder engine_decoder;
     if (decoder != nullptr) {
@@ -642,6 +644,7 @@ jllama_status jllama_quantize(const char *input_path, const char *output_path, i
 
 jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype, int nthread,
                                       bool allow_requantize, const char *imatrix_path) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
     const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (input_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
@@ -661,6 +664,7 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
 jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
                              int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
                              void *progress_user_data, int *n_chunks) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
     const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
@@ -722,6 +726,7 @@ jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inpu
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 
 jllama_status jllama_server_start(int argc, const char *const *argv, jllama_server **out) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
     const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
@@ -799,6 +804,7 @@ void jllama_strings_free(char **strings, size_t count) {
 
 jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
                                       const char *devices) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (host == nullptr || devices == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "host and devices must not be null");
     }
@@ -888,6 +894,7 @@ bool jllama_rpc_server_listening(void) {
 }
 
 jllama_status jllama_rpc_server_devices(const char *devices, char ***names, size_t *count) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (devices == nullptr || names == nullptr || count == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "devices, names and count must not be null");
     }
@@ -921,6 +928,7 @@ void jllama_bytes_free(unsigned char *bytes) { std::free(bytes); }
 
 jllama_status jllama_tts_load(const char *model_path, const char *mmproj_path, int n_gpu_layers, int n_threads,
                               jllama_tts_model **out) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
     const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || mmproj_path == nullptr || out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, mmproj_path and out must not be null");
@@ -1118,6 +1126,7 @@ void jllama_tts_free(jllama_tts_model *tts) {
 // ------------------------------------------------------------------------------------------------
 
 jllama_status jllama_finetune(const char *config_json) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
     const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (config_json == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
@@ -1137,6 +1146,7 @@ jllama_status jllama_finetune(const char *config_json) {
 }
 
 jllama_status jllama_set_cpu_moe_batched(bool batched) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     try {
         jllama::engine::set_cpu_moe_batched(batched);
         t_last_error.clear();
@@ -1149,6 +1159,7 @@ jllama_status jllama_set_cpu_moe_batched(bool batched) {
 }
 
 jllama_status jllama_get_cpu_moe_batched(bool *batched) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (batched == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "batched must not be null");
     }

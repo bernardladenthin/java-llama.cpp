@@ -240,8 +240,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12548** (from b12525, 23 upstream commits in seven steps; master, pinned by commit
-  before upstream tags it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
+- **llama.cpp b12549** (from b12525, 24 upstream commits in eight steps; master, pinned by commit
+  before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
+  relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
+  the way the plain one builds them, so these models reuse their compute graph with flash attention --
+  the reuse check failed on every step before (`CApiLfm3Tts` holds the reuse and that it answers as
+  without it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
   hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
   matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
   a reference clip clones it (see "Fixed": `TextToSpeech` refused it until the same day), and
@@ -260,7 +264,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   chip (#32542, b12543) and a fix of one of Metal's ranges (#32602), the graph parameters without the
   fields the graph reads from the model (#32596), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
   license texts are regenerated, 282 packages). All 26 patches applied unchanged at every step; `0037`
-  came with the tests of the bump (see "Fixed").
+  came with the tests of the bump, `0038`-`0040` with the fourth review round (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
@@ -653,6 +657,59 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Found by the fourth review round of 2026-11-19 (two reviews and a test-gap hunt), each red before
+  its fix:**
+  - **Three ways a load ended the process (the JVM):** a draft that is no model (a projector, a
+    control vector) given without `--spec-type` -- llama.cpp read its layer count without looking for
+    it (`patches/0038`); `--spec-type ngram-cache` with a lookup cache that is missing or cut short
+    (`-lcs`, `-lcd`; `patches/0038`, which also writes the dynamic cache beside the file and renames it
+    over it); and the first request to a model whose file was moved or deleted while it slept
+    (`--sleep-idle-seconds`): the wake reloads the files and upstream aborts when that fails, so the
+    engine refuses such a wake by the missing path and answers once the file is back
+    (`CApiDraft`, `CApiNgramCache`, `CApiSleep`).
+  - `jllama_finetune` / `LlamaTrainer` reported success when the output could not be written (a
+    directory that does not exist): llama.cpp's saver ignores the failed write. The output is tried
+    before the training and checked after the save; 0 epochs and an unknown optimizer are refused, as
+    `TrainingParameters` refuses them, instead of being trained as one epoch and AdamW.
+  - An interrupted or closed `jllama_systemone` / `handleSystemOne` answered OK with an empty body;
+    it is `JLLAMA_STATUS_INTERRUPTED`.
+  - The C API (a C or FFM host without `JNI_OnLoad`) found no backend module in a modular library
+    jar: only `JNI_OnLoad` loaded the modules next to `libjllama`, and ggml's own search looks next to
+    the executable. Every C API function that needs a backend loads them first now
+    (`backend_modules.cpp`; the modular build jobs run `c_abi_implicit`, the plain-C test without its
+    own module load).
+  - A second embedded server (`jllama_server_start`, `FfmNativeServer`) while one ran replaced the
+    first one's shutdown handler, and the first one's stop never returned. It is refused while one
+    runs (`NativeServer` refused it already).
+  - An attached `NativeServer` turned log prefix and timestamps back on for the whole process,
+    undoing the model's `--no-log-prefix` / `--no-log-timestamps`.
+  - Closing a model's `--log-file` or clearing the logger turned a log disabled by `--log-disable`
+    back on, onto the console (`patches/0040`); setting a logger or a log file still turns it on.
+  - The refusal of a reranker without a classification head read the model before it was
+    downloaded, so `--model-url` / `-hf` of such an encoder reranked with meaningless scores; an `-hf`
+    repository of presets failed with "could not load model from given file path" and is refused by
+    its cause now.
+  - A control vector with a direction on a model's multi-token-prediction block passed the
+    refusal and was then dropped by llama.cpp (the refusal counted the MTP blocks).
+  - `embed("")` was a server error where `embeddings` refuses the empty input as the caller's
+    (`InvalidRequestException`); a LoRA list that is no array, an empty or blank speech text and an
+    image as the speaker reference are the caller's mistake too; malformed infill fields (`prompt`
+    that is no string, `input_extra` that is no array or holds a chunk without text) are refused as
+    upstream's `/infill` refuses them instead of being dropped.
+  - `jllama_tokenize_json` with pieces on a `--vocab-only` model rendered special tokens as `""`.
+  - A device list or projector setting given through the environment (`LLAMA_ARG_DEVICE`,
+    `LLAMA_ARG_MMPROJ_OFFLOAD` off) was overridden by the stale-RPC device selection.
+  - The name of an importance matrix recorded in a quantized GGUF was cut inside a character when
+    longer than 127 bytes.
+  - The per-thread numeric locale of every C API call leaked a locale object per call on macOS
+    (Apple's `newlocale` copies its base) and did nothing useful on Android (bionic); it no longer
+    copies the base on macOS and is a no-op on Android (`CApiLocale.TheNumericLocaleGuardLeaksNothing`,
+    red on a macOS job).
+  - `ModelParameters` split every value at U+001F into several arguments, so a chat template, an
+    alias or a path holding that character injected options into the argv; only the values of an
+    option of several values (`--control-vector-layer-range`) are several arguments now.
+  - Windows: `--grammar-file`, `--chat-template-file`, `-jf`, `--api-key-file` and the lookup caches
+    under a path outside ASCII were opened in the active code page (`patches/0039`).
 - **Found by the test-gap round of 2026-11-19, each red before its fix:**
   - An OpenAI-shaped embeddings answer named `"gpt-3.5-turbo"` as its model when the request named
     none; it names the server's model or alias, as upstream's route does (`CApiAlias`, `CApiBert`).

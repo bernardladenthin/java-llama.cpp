@@ -262,7 +262,7 @@ fi
 # whose shared upstream libraries cannot be linked and loaded by a plain C program is broken for
 # every consumer of layer A, Java included.
 if [ -f build/CTestTestfile.cmake ]; then
-  ctest --test-dir build --no-tests=ignore -R '^c_abi$' --output-on-failure || exit 1
+  ctest --test-dir build --no-tests=ignore -R '^c_abi(_implicit)?$' --output-on-failure || exit 1
 fi
 
 # macOS: put the minimum OS each built dylib was linked for into the log. It is set by

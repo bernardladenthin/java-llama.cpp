@@ -15,6 +15,7 @@
 #include "rpc_support.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -35,10 +36,46 @@ void bind_argv(native_server *srv) {
     }
 }
 
+// The embedded server that runs, if any. llama.cpp keeps the shutdown state of an embedded server in
+// globals (patches/0006, 0007): a second server replaced the first one's shutdown handler, so the
+// first one's stop() signalled the second, and its own loop then waited for a server that never ended.
+// One server at a time, as the C API documents and NativeServer enforces: a start while another runs
+// is refused, and a server that returned (stopped, or failed to start its model) gives the slot back.
+std::atomic<native_server *> g_live_server{nullptr};
+
+// Claims the slot for `srv`, or throws; given back by the destructor unless handed to the worker.
+class live_server_claim {
+  public:
+    explicit live_server_claim(native_server *srv) : srv_(srv) {
+        native_server *expected = nullptr;
+        if (!g_live_server.compare_exchange_strong(expected, srv)) {
+            throw std::runtime_error("an embedded server is already running in this process; stop it before "
+                                     "starting another one (llama.cpp keeps an embedded server's state in globals)");
+        }
+    }
+    live_server_claim(const live_server_claim &) = delete;
+    live_server_claim &operator=(const live_server_claim &) = delete;
+    ~live_server_claim() {
+        if (!handed_) {
+            release(srv_);
+        }
+    }
+    void hand_to_worker() { handed_ = true; }
+    static void release(native_server *srv) {
+        native_server *expected = srv;
+        g_live_server.compare_exchange_strong(expected, nullptr);
+    }
+
+  private:
+    native_server *srv_;
+    bool handed_ = false;
+};
+
 } // namespace
 
 native_server *start(const std::vector<std::string> &argv) {
     std::unique_ptr<native_server> owned(new native_server());
+    live_server_claim claim(owned.get());
     // Same RPC preparation as a model load (rpc_support.hpp): an unreachable `--rpc` server fails
     // here with a clear message (std::invalid_argument), and RPC devices another model registered
     // in this process stay out of this server's model.
@@ -48,7 +85,7 @@ native_server *start(const std::vector<std::string> &argv) {
     // argv's log file is opened. A --log-file is opened here too; the server owns the file until it
     // returns, then the file is closed (unless a model or another server took it).
     owned->params = std::make_shared<common_params>();
-    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params);
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params, false);
     bind_argv(owned.get());
 
     // Embedded mode: no process signal handlers, honour the forwarded argv (patches/0006).
@@ -59,11 +96,13 @@ native_server *start(const std::vector<std::string> &argv) {
             srv->exit_code = llama_server_parsed(*srv->params, static_cast<int>(srv->argv.size()), srv->argv.data());
             jllama::engine::release_log_file_of_server(log_file);
             srv->finished.store(true);
+            live_server_claim::release(srv);
         });
     } catch (...) {
         jllama::engine::release_log_file_of_server(log_file);
         throw;
     }
+    claim.hand_to_worker();
     return owned.release();
 }
 
@@ -82,11 +121,12 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
         throw std::runtime_error("a vocab-only model has no server context to attach to");
     }
     std::unique_ptr<native_server> owned(new native_server());
+    live_server_claim claim(owned.get());
     // The parse below sees the argv without its --rpc pairs, so their servers are registered (and an
     // unreachable one refused) here, before it takes the log lock -- as for start().
     owned->args = jllama::rpc::prepare_argv(argv);
     owned->params = std::make_shared<common_params>();
-    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params);
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params, true);
     bind_argv(owned.get());
 
     // The attach entry always parses the forwarded argv; set the embedded flag anyway so any shared
@@ -104,6 +144,7 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
             srv->exit_code = llama_server_attach_parsed(*srv->params, *ctx_server, *routes);
             jllama::engine::release_log_file_of_server(log_file);
             srv->finished.store(true);
+            live_server_claim::release(srv);
             release_jllama_context_impl(held);
         });
     } catch (...) {
@@ -111,6 +152,7 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
         jllama::engine::release_log_file_of_server(log_file);
         throw;
     }
+    claim.hand_to_worker();
     return owned.release();
 }
 

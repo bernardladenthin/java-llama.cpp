@@ -131,7 +131,7 @@ if not "!BUILD_RC!"=="0" (
 REM The plain-C test of a modular build (ctest `c_abi`, see build.sh for what it proves); a no-op
 REM for every build that registers no such test (--no-tests=ignore).
 if exist build\CTestTestfile.cmake (
-    ctest --test-dir build -C Release --no-tests=ignore -R "^c_abi$" --output-on-failure
+    ctest --test-dir build -C Release --no-tests=ignore -R "^c_abi(_implicit)?$" --output-on-failure
     if errorlevel 1 (
         echo build.bat: the c_abi test failed.
         exit /b 1

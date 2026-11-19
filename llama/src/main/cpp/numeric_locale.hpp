@@ -22,8 +22,11 @@ namespace jllama {
 // its environment in effect: under de_DE "--temp 0.7" read as 0, "--repeat-penalty 0.9" was refused
 // and a template rendered {{ 0.5 }} as "0," (measured). llama_server() sets the "C" numeric locale
 // for the whole process, but only once it runs -- after the engine's parse, and never for a model
-// load. Per thread, so nothing else of the host process changes: every C API call runs under one
-// (jllama_api.cpp), and so do the load and the server's worker thread (jllama_engine.cpp).
+// load. Per thread, so the host process keeps its own: every C API call runs under one
+// (jllama_api.cpp), and so do the load and the server's worker thread (jllama_engine.cpp). The one
+// exception is the embedded server: llama_server_parsed() / llama_server_attach_parsed() (patches/0006,
+// 0007) set the "C" numeric locale for the whole process, as llama_server() does, because its HTTP
+// threads read and render numbers and no guard of ours runs on them.
 class c_numeric_locale {
   public:
     c_numeric_locale(const c_numeric_locale &) = delete;
@@ -44,8 +47,22 @@ class c_numeric_locale {
   private:
     int previous_mode_;
     std::string previous_;
+#elif defined(__ANDROID__)
+    // bionic formats and reads every number in the "C" locale whatever the locale is, and its
+    // newlocale() ignores the base it is given (a fresh object each time, the duplocale() below leaked
+    // one per call) and drops MB_CUR_MAX to 1 for a "C" locale -- nothing to do, and nothing to gain.
+    c_numeric_locale() = default;
 #else
     c_numeric_locale() : previous_(uselocale(static_cast<locale_t>(0))) {
+#if defined(__APPLE__)
+        // Apple's newlocale() copies the base and leaves it to the caller (Libc, locale/xlocale.c:
+        // _duplocale(base), never a release), where POSIX lets it consume the base: a duplocale() of
+        // the base leaked one locale object per C API call (a stream: one per token). Given directly;
+        // LC_GLOBAL_LOCALE is a base it takes.
+        c_locale_ = newlocale(LC_NUMERIC_MASK, "C", previous_);
+#else
+        // glibc and musl consume the base on success (and may return it modified), so they get a copy
+        // of the thread's locale, which LC_GLOBAL_LOCALE itself must never be.
         locale_t base = duplocale(previous_);
         if (base != static_cast<locale_t>(0)) {
             c_locale_ = newlocale(LC_NUMERIC_MASK, "C", base);
@@ -53,6 +70,7 @@ class c_numeric_locale {
                 freelocale(base);
             }
         }
+#endif
         if (c_locale_ != static_cast<locale_t>(0)) {
             uselocale(c_locale_);
         }

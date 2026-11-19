@@ -37,6 +37,37 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         err = "val_split must be in [0, 1), was " + std::to_string(cfg.val_split);
         return false;
     }
+    // what TrainingParameters refuses, refused here too: build_train_params made 0 epochs one and an
+    // unknown optimizer AdamW, so a C caller's typo trained something else than it asked for
+    if (cfg.epochs < 1) {
+        err = "epochs must be at least 1, was " + std::to_string(cfg.epochs);
+        return false;
+    }
+    if (cfg.optimizer != 0 && cfg.optimizer != 1) {
+        err = "optimizer must be 0 (AdamW) or 1 (SGD), was " + std::to_string(cfg.optimizer);
+        return false;
+    }
+    // llama_model_save_to_file() returns nothing and ignores a failed write (upstream's saver drops
+    // gguf_write_to_file's bool): a run into a directory that does not exist reported success and left
+    // no file. The output is tried before the training, which takes long, and checked after the save.
+    if (cfg.output_path.empty()) {
+        err = "output_path is required";
+        return false;
+    }
+    const std::filesystem::path output = std::filesystem::u8path(cfg.output_path);
+    {
+        std::error_code ec;
+        const bool existed = std::filesystem::exists(output, ec);
+        std::ofstream probe(output, std::ios::binary | std::ios::app);
+        if (!probe) {
+            err = "cannot write the output file: " + cfg.output_path;
+            return false;
+        }
+        probe.close();
+        if (!existed) {
+            std::filesystem::remove(output, ec);
+        }
+    }
     common_params params = build_train_params(cfg);
 
     // The corpus is either read from a file or supplied inline.
@@ -119,7 +150,21 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     ggml_opt_result_free(result_eval);
     ggml_opt_dataset_free(dataset);
 
+    // Gone before the save, so that a file afterwards is the save's and not an older one -- a regular
+    // file only: an output such as /dev/null is written to, never removed, and not checked.
+    std::error_code ec;
+    const bool regular = !std::filesystem::exists(output, ec) || std::filesystem::is_regular_file(output, ec);
+    if (regular) {
+        std::filesystem::remove(output, ec);
+    }
     llama_model_save_to_file(model, params.out_file.c_str());
+    if (regular) {
+        const auto written = std::filesystem::file_size(output, ec);
+        if (ec || written == 0) {
+            err = "could not write the trained model to " + cfg.output_path;
+            return false;
+        }
+    }
 
     // Deliberately NOT calling llama_backend_free(): other live llama contexts in this JVM
     // (e.g. an inference LlamaModel) may still depend on the initialized backend.

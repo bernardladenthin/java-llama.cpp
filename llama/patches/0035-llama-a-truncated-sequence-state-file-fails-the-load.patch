@@ -1,14 +1,14 @@
 llama : a truncated sequence state file fails the load
 
 llama_state_seq_load_file() reads the state of a sequence through llama_file, whose reads past the
-end of the file are no error on POSIX: the buffered read (a state file is opened "rb", without
-direct I/O) stops short and leaves the rest of the destination as it was, the direct-I/O read fills
-it with zeros, and both count the whole length. state_seq_load_file() then asserted that it read no
+end of the file are no error: the buffered read (a state file is opened "rb", without direct I/O)
+stops short and leaves the rest of the destination as it was, the direct-I/O read fills it with
+zeros, and both count the whole length -- on POSIX, and on Windows too, where a buffered read is
+clamped to the rest of the file and throws only when it starts past the end (since b12232, #26014). state_seq_load_file() then asserted that it read no
 more than the file held, so a truncated or cut slot file -- an interrupted save, a disk that filled
 up, a copy that did not finish -- ended the process on its restore (GGML_ASSERT(nread <= state_size)):
 the server's /slots restore, LlamaModel.restoreSlot(), and the C API's slot action, all with a file
-the caller names. On Windows the read throws at the end of the file, which the C wrapper already
-answers with 0.
+the caller names.
 
 The check now fails the load: an error is logged, the sequence is removed from the memory (it holds
 what the file had and whatever the short reads left), and 0 is returned, which the server answers as
@@ -17,9 +17,9 @@ read with the file.
 
 The guard is CApiSlotFiles in src/test/cpp/test_c_api.cpp: a slot file cut at its end and inside its
 state is refused, and the model answers the next request (an abort of the test process before, on
-POSIX; the cut inside the header was refused by upstream already).
+every platform; the cut inside the header was refused by upstream already).
 
-Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp and the POSIX reads of
+Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp and the reads of
 llama_file in src/llama-mmap.cpp -- once a state larger than the file is an error and no assertion,
 or a read past the end of the file throws on every platform, drop the patch.
 
@@ -31,7 +31,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
              return 0;
          }
 -        GGML_ASSERT(nread <= state_size);
-+        // a read past the end of the file is no error in llama_file on POSIX -- the buffered read stops
++        // a read past the end of the file is no error in llama_file, on any platform -- the buffered read stops
 +        // short and leaves the rest of the buffer as it was, the direct-I/O read fills it with zeros --
 +        // and counts the whole length, so a truncated file arrives here as a state larger than the file
 +        if (nread > state_size) {

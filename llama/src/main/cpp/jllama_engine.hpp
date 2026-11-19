@@ -115,8 +115,8 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
                               std::vector<raw_buffer> files = {});
 
 /** Wakes the queue, then posts (see the comment in the .cpp for why the wake is not optional). */
-void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false);
-void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, server_task &&task, bool front = false);
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, std::vector<server_task> &&tasks,
                    const common_chat_session &session = {});
 
 /**
@@ -254,9 +254,11 @@ void set_cpu_moe_batched(bool batched);
  * opened is closed again). Then the server's half of the --log-file ownership: takes "--log-file
  * <path>" out of `argv` and opens the file after the variable's, as upstream orders them, and
  * returns the owner id (0: no log file). The release closes the file unless a model's load or
- * another server has taken it over since.
+ * another server has taken it over since. `attached`: the server serves a loaded model, whose load ran
+ * common_init() already -- running it again turned the log prefix and timestamps of the model's
+ * --no-log-prefix / --no-log-timestamps back on, process-wide.
  */
-[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params);
+[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params, bool attached);
 void release_log_file_of_server(std::uint64_t owner);
 
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */

@@ -35,6 +35,8 @@
 #include "ggml-backend.h"
 #include "ggml-rpc.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -368,7 +370,20 @@ inline void register_server(const std::string &endpoint) {
         }
     }
     const auto devices = registered_devices();
-    if (!has_mmproj_device_option(argv)) {
+    // The parse applies the environment before the argv, so what is appended here overrides a choice
+    // the caller made through it as well: LLAMA_ARG_DEVICE is a device list like --device, and
+    // LLAMA_ARG_MMPROJ_OFFLOAD off keeps the projector on the CPU like --no-mmproj-offload (on, it
+    // names no device, as --mmproj-offload does not, and the projector is pinned as without it).
+    const auto env_value = [](const char *name) {
+        const char *value = std::getenv(name);
+        return value != nullptr ? std::string(value) : std::string();
+    };
+    std::string mmproj_offload = env_value("LLAMA_ARG_MMPROJ_OFFLOAD");
+    std::transform(mmproj_offload.begin(), mmproj_offload.end(), mmproj_offload.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool mmproj_kept_off =
+        mmproj_offload == "0" || mmproj_offload == "false" || mmproj_offload == "off" || mmproj_offload == "disabled";
+    if (!has_mmproj_device_option(argv) && !mmproj_kept_off) {
         auto mmproj = mmproj_device_override(devices, requested);
         if (mmproj && mmproj->empty()) {
             argv.emplace_back("--no-mmproj-offload");
@@ -377,7 +392,7 @@ inline void register_server(const std::string &endpoint) {
             argv.push_back(*mmproj);
         }
     }
-    if (has_device_option(argv)) {
+    if (has_device_option(argv) || !env_value("LLAMA_ARG_DEVICE").empty()) {
         return argv;
     }
     auto value = device_override(devices, requested);

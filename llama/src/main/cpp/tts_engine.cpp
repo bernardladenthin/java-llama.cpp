@@ -130,6 +130,12 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         err = "engine is null";
         return false;
     }
+    // Nothing to speak: upstream's /tts refuses an empty input (400), and the pipelines answered one --
+    // or a text of spaces -- each its own way: audio of nothing, "failed to set TTS input" or "no audio
+    // was generated", none of them the caller's mistake.
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        return refuse("the text is empty: there is nothing to speak");
+    }
     // Values no model can take, before anything is loaded.
     const std::string invalid = synthesis_options_refusal(options);
     if (!invalid.empty()) {
@@ -181,6 +187,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
             return refuse("failed to load speaker reference audio: " + speaker_reference_path);
         }
         speaker_bitmap.reset(wrapper.bitmap);
+        // the helper reads images too: an image named as the reference reached set_input, which
+        // refused it with a message that said neither why nor that the request was at fault
+        if (!mtmd_bitmap_is_audio(speaker_bitmap.get())) {
+            return refuse("the speaker reference is no audio: " + speaker_reference_path);
+        }
     }
 
     // b12061 (#31429): mtmd_helper_gen_audio_inp lost its `voice`; a model with predefined voices

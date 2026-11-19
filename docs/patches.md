@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**27 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**30 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -49,6 +49,9 @@ match a binary to this page.
 | 0035 | [`0035-llama-a-truncated-sequence-state-file-fails-the-load.patch`](#0035-llama-a-truncated-sequence-state-file-fails-the-loadpatch) | llama : a truncated sequence state file fails the load | 1 | 1 |
 | 0036 | [`0036-llama-a-non-causal-contexts-batch-is-its-ubatch.patch`](#0036-llama-a-non-causal-contexts-batch-is-its-ubatchpatch) | llama : a non-causal context's batch is its ubatch | 1 | 1 |
 | 0037 | [`0037-mtmd-a-model-the-projector-keeps-on-the-cpu-uses-no-other-device.patch`](#0037-mtmd-a-model-the-projector-keeps-on-the-cpu-uses-no-other-devicepatch) | mtmd : a model the projector keeps on the CPU uses no other device | 1 | 1 |
+| 0038 | [`0038-common-a-draft-or-a-lookup-cache-that-is-no-such-file-fails-the-load.patch`](#0038-common-a-draft-or-a-lookup-cache-that-is-no-such-file-fails-the-loadpatch) | common : a draft or a lookup cache that is no such file fails the load, not the process | 2 | 7 |
+| 0039 | [`0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-names.patch`](#0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-namespatch) | common : argument files and lookup caches are opened by their UTF-8 names | 3 | 6 |
+| 0040 | [`0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch`](#0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-onpatch) | common : closing a log sink does not turn a disabled log back on | 1 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1115,14 +1118,14 @@ The patch's own header, verbatim:
 llama : a truncated sequence state file fails the load
 
 llama_state_seq_load_file() reads the state of a sequence through llama_file, whose reads past the
-end of the file are no error on POSIX: the buffered read (a state file is opened "rb", without
-direct I/O) stops short and leaves the rest of the destination as it was, the direct-I/O read fills
-it with zeros, and both count the whole length. state_seq_load_file() then asserted that it read no
+end of the file are no error: the buffered read (a state file is opened "rb", without direct I/O)
+stops short and leaves the rest of the destination as it was, the direct-I/O read fills it with
+zeros, and both count the whole length -- on POSIX, and on Windows too, where a buffered read is
+clamped to the rest of the file and throws only when it starts past the end (since b12232, #26014). state_seq_load_file() then asserted that it read no
 more than the file held, so a truncated or cut slot file -- an interrupted save, a disk that filled
 up, a copy that did not finish -- ended the process on its restore (GGML_ASSERT(nread <= state_size)):
 the server's /slots restore, LlamaModel.restoreSlot(), and the C API's slot action, all with a file
-the caller names. On Windows the read throws at the end of the file, which the C wrapper already
-answers with 0.
+the caller names.
 
 The check now fails the load: an error is logged, the sequence is removed from the memory (it holds
 what the file had and whatever the short reads left), and 0 is returned, which the server answers as
@@ -1131,9 +1134,9 @@ read with the file.
 
 The guard is CApiSlotFiles in src/test/cpp/test_c_api.cpp: a slot file cut at its end and inside its
 state is refused, and the model answers the next request (an abort of the test process before, on
-POSIX; the cut inside the header was refused by upstream already).
+every platform; the cut inside the header was refused by upstream already).
 
-Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp and the POSIX reads of
+Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp and the reads of
 llama_file in src/llama-mmap.cpp -- once a state larger than the file is an error and no assertion,
 or a read past the end of the file throws on every platform, drop the patch.
 ```
@@ -1201,4 +1204,107 @@ then the generator's tiny-voca and VoxCPM2 pairs synthesize (both failed before)
 
 Drop-check on every bump: read the else branch of mtmd_owned_llama_load() in tools/mtmd/mtmd.cpp --
 once it sets mparams.devices itself (to an empty list or the CPU), drop the patch.
+```
+
+## 0038-common-a-draft-or-a-lookup-cache-that-is-no-such-file-fails-the-load.patch
+
+**Files (2):** `common/speculative.cpp`, `common/ngram-cache.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : a draft or a lookup cache that is no such file fails the load, not the process
+
+Three places of common/ end the process (GGML_ASSERT / GGML_ABORT) on a file the caller named, which a
+host that embeds llama.cpp -- a JVM, a server with other models loaded -- answers with its own death:
+
+- common_speculative_types_from_gguf() reads `<arch>.block_count` with gguf_get_val_u32() without
+  looking whether the key is there. The models handler calls it for every draft model given without
+  --spec-type, so a GGUF that has an architecture and no layer count -- a projector, a LoRA adapter, a
+  control vector named as the draft -- aborted the load. It now infers no type from such a file, and
+  the load refuses it as it refuses any file that is no model.
+- The n-gram lookup caches of --spec-type ngram-cache (-lcs, -lcd): a static cache that cannot be read,
+  or a dynamic one that exists and cannot be read, was GGML_ABORT; common_ngram_cache_load() asserted
+  on every short read, so a cache cut short or a file of another kind aborted as well. They throw now:
+  the server logs "failed to initialize speculative decoding context" and runs without that type, as
+  it does for every other speculative type that fails to start. An empty file is an empty cache, as
+  before; a file cut inside an n-gram is refused too (it used to read as the n-grams before the cut).
+- The dynamic cache is saved when the server stops, with a plain std::ofstream over the file: a save
+  cut short (the process killed, a full disk) left the truncated file that aborted the next load. It
+  is written beside the file and renamed over it now.
+
+The guards are CApiDraft.ADraftThatIsNoModelFailsTheLoadAndTheProcessGoesOn and
+CApiNgramCache.* in src/test/cpp/test_c_api.cpp (an abort of the test process without the patch).
+
+Drop-check on every bump: read common_speculative_types_from_gguf() in common/speculative.cpp (once
+it checks the key before gguf_get_val_u32, drop that hunk), the two GGML_ABORTs of the ngram-cache
+implementation's constructor, and common_ngram_cache_load() in common/ngram-cache.cpp (once neither
+aborts on the file's content, drop those hunks).
+```
+
+## 0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-names.patch
+
+**Files (3):** `common/arg.cpp`, `common/ngram-cache.cpp`, `common/speculative.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : argument files and lookup caches are opened by their UTF-8 names
+
+Windows: the files the server's options name were opened with narrow streams, which MSVC's runtime
+reads in the active code page. The argv is UTF-8 -- every handler reads it so, and 0030 reads the
+environment so -- and upstream's executables are UTF-8 processes through an app manifest; a library
+inside java.exe is not. A path outside ASCII on a code page such as 1252 failed with "failed to open
+file", the same class as 0024-0029:
+
+- common/arg.cpp: read_file(), behind --grammar-file, --chat-template-file, --ui-config-file, -f and
+  -sysf; the stream of --json-schema-file (-jf); the one of --api-key-file.
+- common/ngram-cache.cpp: common_ngram_cache_load() and _save() (--lookup-cache-static,
+  --lookup-cache-dynamic of --spec-type ngram-cache), and in common/speculative.cpp the existence
+  check of the dynamic cache.
+
+They open std::filesystem::u8path(name) now, which is the identity elsewhere. Applies after 0038,
+which rewrites the same functions of the two cache files.
+
+Not covered here, and recorded in TODO.md: the download cache. Its paths are std::filesystem::path
+values that common/hf-cache.cpp and common/download.cpp turn back into strings with .string() (the
+code page) before they reach ggml_fopen (UTF-8), so -hf and --model-url without -m fail under a
+Windows user profile outside ASCII; and BoringSSL's file BIO behind --ssl-key-file / --ssl-cert-file.
+
+The guards are CApiNonAsciiPaths.ArgumentFilesAreReadUnderNonAsciiNames and
+CApiNonAsciiPaths.LookupCachesAreReadAndWrittenUnderNonAsciiNames in src/test/cpp/test_c_api.cpp,
+which only a Windows job can turn red (the names are UTF-8 elsewhere either way).
+
+Drop-check on every bump: read read_file(), the --json-schema-file and --api-key-file handlers of
+common/arg.cpp and the two functions of common/ngram-cache.cpp -- once none of them opens the narrow
+string, drop the patch.
+```
+
+## 0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch
+
+**Files (1):** `common/log.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : closing a log sink does not turn a disabled log back on
+
+--log-disable pauses common_log's worker, and every setter of common_log pauses and resumes it --
+so a setter restarts a paused log. For a setter that asks for output (a log file, a callback) that is
+what the caller wants. For one that only takes a sink away it is not: a host process runs several
+models with one common_log, and closing the log file of one of them (common_log_set_file(log,
+nullptr)) or clearing its callback (common_log_set_callback(log, nullptr, nullptr), which
+LlamaModel.setLogger(format, null) does to flush) turned the log of a process loaded with
+--log-disable back on, onto the console.
+
+set_file() and set_callback() (the sink 0014 adds) resume the worker now only when it ran before or
+when they set a sink. Nothing changes for a log that was not disabled. Applies after 0014 and 0027,
+which touch the same two functions.
+
+The guard is CApiLogFile.ClosingALogSinkLeavesADisabledLogDisabled in src/test/cpp/test_c_api.cpp:
+a model loaded with --log-disable --log-file is freed (its file closed) and the logger cleared, and
+a later load prints nothing to stdout or stderr.
+
+Drop-check on every bump: read set_file() in common/log.cpp -- once it does not resume a paused
+worker when it closes the file, drop the patch (and keep the set_callback() half in 0014).
 ```

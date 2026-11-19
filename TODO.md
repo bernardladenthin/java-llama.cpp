@@ -205,7 +205,14 @@ fix every site measured, [`docs/handover/local-agent-report-windows-non-ascii-pa
   the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently. Not
   decided.
 - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the built-in
-  file tools.
+  file tools. Since 2026-11-19 the load runs llama.cpp's models handler, so `-hf` and `--model-url`
+  without `-m` reach the default Hugging Face cache of `LlamaModel` too: `hf-cache.cpp` builds its paths
+  from `USERPROFILE` / `LOCALAPPDATA` and turns them back into strings with `.string()` (the code
+  page), which `ggml_fopen` then reads as UTF-8 -- under a Windows user name outside ASCII the download
+  is likely to succeed and the load to fail (the review of 2026-11-19, from reading). The same review
+  found BoringSSL's file BIO (`crypto/bio/file.cc`, a narrow `fopen`) behind `--ssl-key-file` /
+  `--ssl-cert-file`; BoringSSL is no llama.cpp source, so `llama/patches/` cannot reach it. (`0039`
+  covers the argument files and the lookup caches.)
 - **An extraction directory with a character outside the ANSI code page cannot be loaded from.**
   `java.io.tmpdir` / `net.ladenthin.llama.tmpdir` under `tmp-日` on code page 1252: Java extracts the
   files, `System.load` then names `tmp-?` and fails (the JVM passes the path in `sun.jnu.encoding`).
@@ -246,8 +253,17 @@ found are fixed, these are what is left)
 - **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
   log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
   `common_log`.
-- **Log keys of `/etc/llama.cpp/config.ini`** (applied inside the parse) bypass the log-file owner
-  record and the scan for `--log-disable`.
+- **Keys of `/etc/llama.cpp/config.ini`** (`common_params_apply_system_config`, applied inside every
+  parse): the log keys bypass the log-file owner record and the scan for `--log-disable`; an `rpc` key
+  connects to its server inside the parse, under the log lock (the argv and `LLAMA_ARG_RPC` no longer
+  do, see "RPC backend"), and `prepare_argv`, which does not know that server, counts it stale on the
+  next load; a `version` or `list-devices` key would `exit(0)`. A file an administrator writes for the
+  host, not one the caller hands in; not handled (the review of 2026-11-19).
+- **The models handler honours its environment** (since the load runs it, 2026-11-19):
+  `LLAMA_ARG_HF_REPO`, `LLAMA_ARG_MODEL_URL` and `LLAMA_ARG_DOCKER_REPO` in the JVM's environment
+  reach every `LlamaModel` load as llama-server takes them -- `-hf` replaces an explicit `-m`, and a
+  `--model-url` downloads onto the `-m` file when no `.etag` matches. Upstream's semantics, the same
+  as for every other `LLAMA_ARG_*` variable the parse reads; not changed, named in the README.
 - **A vocabulary gap in the server's own `--reasoning-budget-message`** is answered as
   `JLLAMA_STATUS_INVALID_REQUEST` (the completion wrapper takes every error of the task's setup for
   the request's).
@@ -433,6 +449,14 @@ aarch64 (CI builds and runs it).
   and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
 
 ### RPC backend — follow-ups
+
+- **A protocol skew under one version number (b12543, #32542).** Metal's `get_alloc_size` adds the
+  split-K scratch of `CONV_2D`, and `ggml_op_alloc_size_may_expand` gained `CONV_2D`, which the RPC
+  client asks before it sizes a tensor; `RPC_PROTO` stayed 10.0.0. A client of b12387..b12542 (an
+  earlier 6.x jar) next to a Metal `RpcServer` of b12543 on sizes a `CONV_2D` tensor with
+  `ggml_nbytes`, and the server's scratch overruns its neighbour -- silently. Projector and codec graphs
+  only (an LLM graph has no `CONV_2D`). The docs say "both ends need the same llama.cpp" for a major
+  protocol step; it holds for every step (the patch review of 2026-11-19, from reading).
 
 - **Old Windows and COMM_INIT's retries** (`patches/0015`): the stoppable non-blocking connect waits
   through `WSAPoll`, which does not report a refused connect before Windows 10 2004 / Server 2022 (its

@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12548](https://img.shields.io/badge/llama.cpp-%23b12548-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12548)  
+[![llama.cpp b12549](https://img.shields.io/badge/llama.cpp-%23b12549-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12549)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -418,7 +418,7 @@ cmake --build build --config Release
 ```
 
 > [!TIP]
-> Downloading a model from Java (`ModelParameters#setModelUrl(String)`, `setHfRepo(String)`) needs no build option: the build links BoringSSL statically and fetches `https://` URLs out of the box (not on Android, s390x or a Linux SYCL build). `-DLLAMA_CURL` is deprecated upstream and ignored.
+> Downloading a model from Java (`ModelParameters#setModelUrl(String)`, `setHfRepo(String)`) needs no build option: the build links BoringSSL statically and fetches `https://` URLs out of the box (not on Android, s390x or a Linux SYCL build). `-DLLAMA_CURL` is deprecated upstream and ignored. The download runs at the load, through llama.cpp's own models handler, which also reads `LLAMA_ARG_HF_REPO`, `LLAMA_ARG_MODEL_URL` and `LLAMA_ARG_DOCKER_REPO` from the JVM's environment, as `llama-server` does: set there, they apply to every load (`-hf` takes the place of an explicit `setModel`). A Hugging Face repository of presets (a `preset.ini` at its root) is a set of models and is refused by a `LlamaModel`; `NativeServer` serves it in router mode.
 
 The library is put in a directory matching your platform and backend, which appears in the cmake output. For example:
 

@@ -131,6 +131,17 @@ cc -I<natives dir> example.c -L<natives dir> -ljllama -Wl,-rpath,<natives dir> -
 On Windows the import library `jllama.lib` ships next to `jllama.dll` in the same directory (named
 in `jllama-files.txt`, extracted and never loaded), so `cl example.c /I<natives dir> <natives
 dir>\jllama.lib` links the entry points directly; `LoadLibrary` + `GetProcAddress` works as well.
+
+The library jars of Linux, Android and Windows are modular: the CPU variants, `ggml-rpc` and every GPU
+module lie as files next to `libjllama`. The first C API call that needs a backend (`jllama_model_load`,
+the quantizer, `jllama_imatrix`, `jllama_finetune`, `jllama_tts_load`, the RPC and embedded servers)
+loads them from that directory, once per process; a program need not call
+`ggml_backend_load_all_from_path()` itself (it may, before). Until 2026-11-19 only the JVM's
+`JNI_OnLoad` did, and a C program found no backend.
+
+One embedded server runs at a time: `jllama_server_start()` / `_attached()` while another server runs
+is `JLLAMA_STATUS_ERROR`. The server sets the "C" numeric locale for the whole process, as
+`llama-server` does; every other call sets it for its own thread only.
 Streaming:
 
 ```c

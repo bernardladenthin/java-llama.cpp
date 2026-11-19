@@ -470,6 +470,45 @@ TEST(RpcClient, AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt) {
     EXPECT_GT(checked, 0u);
 }
 
+TEST(RpcClient, ADeviceChoiceMadeThroughTheEnvironmentIsNotOverridden) {
+    // The parse applies the environment before the argv, so what prepare_argv appends overrides a
+    // choice made through it: a LLAMA_ARG_DEVICE list was replaced by the --device prepare_argv wrote,
+    // and a LLAMA_ARG_MMPROJ_OFFLOAD that kept the projector on the CPU by its --mmproj-device. A
+    // registered server this argv does not ask for makes both appear without the variables.
+    loopback_server server;
+    ASSERT_TRUE(server.listening());
+    (void)jllama::rpc::prepare_argv({"llama", "--rpc", server.endpoint()});
+    const auto set = [](const char *name, const char *value) {
+#ifdef _WIN32
+        _putenv_s(name, value != nullptr ? value : "");
+#else
+        if (value != nullptr) {
+            setenv(name, value, 1);
+        } else {
+            unsetenv(name);
+        }
+#endif
+    };
+    const std::vector<std::string> argv = {"llama", "-m", "x.gguf"};
+    const auto plain = jllama::rpc::prepare_argv(argv);
+    ASSERT_TRUE(jllama::rpc::has_device_option(plain));
+    ASSERT_TRUE(jllama::rpc::has_mmproj_device_option(plain));
+
+    set("LLAMA_ARG_DEVICE", "none");
+    const auto with_device = jllama::rpc::prepare_argv(argv);
+    set("LLAMA_ARG_DEVICE", nullptr);
+    EXPECT_FALSE(jllama::rpc::has_device_option(with_device));
+
+    for (const char *off : {"0", "false", "off", "disabled", "OFF"}) {
+        set("LLAMA_ARG_MMPROJ_OFFLOAD", off);
+        EXPECT_FALSE(jllama::rpc::has_mmproj_device_option(jllama::rpc::prepare_argv(argv))) << off;
+    }
+    // on, it names no device -- as --mmproj-offload does not -- and the projector is pinned as without it
+    set("LLAMA_ARG_MMPROJ_OFFLOAD", "1");
+    EXPECT_TRUE(jllama::rpc::has_mmproj_device_option(jllama::rpc::prepare_argv(argv)));
+    set("LLAMA_ARG_MMPROJ_OFFLOAD", nullptr);
+}
+
 TEST(RpcClient, ARegisteredServerThatWentAwayIsReportedOnTheNextRegistration) {
     std::string endpoint;
     {

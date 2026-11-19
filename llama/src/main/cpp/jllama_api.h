@@ -469,7 +469,9 @@ JLLAMA_API jllama_status jllama_imatrix_merge(const char *const *input_paths, si
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
  * worker thread inside this library. Not available on Android (server.cpp does not build there);
- * these functions are absent from the Android library. ONE server per process.
+ * these functions are absent from the Android library. ONE server per process: a start while another
+ * server runs (classic or attached) is JLLAMA_STATUS_ERROR; a server that returned (stopped, or its
+ * model failed to load) gives the slot back. The server sets the "C" numeric locale for the process.
  * ---------------------------------------------------------------------------------------------- */
 
 /** A running embedded server; opaque. */
