@@ -1017,3 +1017,5 @@ Used during `llama.cpp` version bumps: when upgrading, scan this file from the r
 | b12541–b12542 | patches | All 26 apply unchanged. |
 | b12542–b12543 | `ggml/src/ggml-metal/` (#32542: CONV_2D through the Metal tensor API on M5, split-K on every chip) | No project change: the convolutions of the speech and vision projectors run faster on Metal. Measured by no job here (the macOS runners' paravirtual GPU, see "RPC backend"). |
 | b12542–b12543 | patches | All 27 apply unchanged. |
+| b12543–b12548 | `.github` (#32594), `README.md` (#32597), `src/llama-graph.{h,cpp}` / `llama-context.cpp` (#32596: `llm_graph_params` loses `hparams`, `prec_policy` and `hdmd`, which the graph context reads from the model), `ggml-webgpu` (#32250: POOL_2D), `ggml-metal` (#32602: the second argument of an `NSMakeRange`) | No project change: no project code builds `llm_graph_params`, and the generator's models build their graphs through upstream's code. |
+| b12543–b12548 | patches | All 27 apply unchanged (`0034` and `0036` next to the changed `graph_params` of `llama-context.cpp`). |
