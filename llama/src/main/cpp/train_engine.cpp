@@ -16,6 +16,8 @@
 
 #include <jni.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +30,13 @@ using json = nlohmann::json;
 namespace jllama_train {
 
 bool finetune(const finetune_config &cfg, std::string &err) {
+    // llama_opt_epoch asserts 0 <= the training part <= the windows, so a split outside [0, 1) ended
+    // the process (a negative or a too large part), and 1 trained on nothing; LlamaTrainer's
+    // TrainingParameters refuses the same range, the C API did not.
+    if (!(cfg.val_split >= 0.0f && cfg.val_split < 1.0f)) {
+        err = "val_split must be in [0, 1), was " + std::to_string(cfg.val_split);
+        return false;
+    }
     common_params params = build_train_params(cfg);
 
     // The corpus is either read from a file or supplied inline.
@@ -58,12 +67,31 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     }
 
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
-    if (tokens.size() < 2) {
-        err = "training corpus produced too few tokens (need at least 2)";
+    // llama.cpp's dataset (common_opt_dataset_init) cuts the corpus into windows of n_ctx + 1 tokens,
+    // one every `stride` tokens, and counts them as (tokens - n_ctx - 1) / stride in size_t: a corpus
+    // shorter than one window wrapped to a huge count, and one shorter than a window and a stride gave
+    // none -- ggml asserts on either, which ended the process (the JVM). The context is the padded one
+    // llama.cpp made (a multiple of 256), not the n_ctx asked for.
+    const int64_t n_ctx = llama_n_ctx(ctx);
+    const int64_t stride = std::max<int64_t>(1, n_ctx / 2);
+    const int64_t minimum = n_ctx + 1 + stride;
+    if (static_cast<int64_t>(tokens.size()) < minimum) {
+        err = "training corpus produced too few tokens: " + std::to_string(tokens.size()) + ", need at least " +
+              std::to_string(minimum) + " (one window of n_ctx + 1 = " + std::to_string(n_ctx + 1) +
+              " tokens and a stride of " + std::to_string(stride) + ")";
         return false;
     }
 
-    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx, tokens, llama_n_ctx(ctx) / 2);
+    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx, tokens, stride);
+    // a split that holds every window out leaves nothing to train on, and the run wrote the model it
+    // was given as a success
+    const int64_t n_windows = ggml_opt_dataset_ndata(dataset);
+    if (static_cast<int64_t>(n_windows * (1.0f - params.val_split)) < 1) {
+        ggml_opt_dataset_free(dataset);
+        err = "val_split " + std::to_string(params.val_split) + " leaves no training window of the " +
+              std::to_string(n_windows) + " the corpus gives (" + std::to_string(tokens.size()) + " tokens)";
+        return false;
+    }
 
     llama_opt_params lopt_params = {
         /*n_ctx_train     =*/0,

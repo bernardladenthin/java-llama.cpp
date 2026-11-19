@@ -652,6 +652,24 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Found by the test-gap round of 2026-11-19, each red before its fix:**
+  - An OpenAI-shaped embeddings answer named `"gpt-3.5-turbo"` as its model when the request named
+    none; it names the server's model or alias, as upstream's route does (`CApiAlias`, `CApiBert`).
+  - `"stop": ""` on a raw completion with `messages` replaced the `-r` stop words instead of being
+    dropped like an empty entry of a stop array (`CApiTemplateStops`).
+  - `decode` / `jllama_detokenize` of a token id outside the vocabulary was a `LlamaException` with
+    the C++ library's `vector::_M_range_check`; it is an `InvalidRequestException` naming the id and
+    the vocabulary size (`DecodeOutOfVocabularyIntegrationTest`).
+  - `jllama_finetune` / `LlamaTrainer` ended the process on a corpus shorter than one training
+    window (an assertion in ggml) and on a `val_split` outside [0, 1) given to the C API, and wrote the
+    untouched model as a success for a split that left no training window; all three are refused by
+    name.
+  - `--lora-init-without-apply` (`ModelParameters.setLoraInitWithoutApply`) did nothing: upstream's
+    server applies the loaded adapters at their scales to every batch. Such adapters start at scale 0
+    now, until `setLoraAdapters` / `jllama_set_lora_adapters` sets one.
+  - A negative slot id named some slot (upstream takes the id modulo the slot count in `size_t`); a
+    slot action refuses it (`JLLAMA_STATUS_INVALID_REQUEST`). An id at or above the slot count still
+    wraps around, as upstream's server does.
 - **`ModelParameters.setControlVectorLayerRange` failed every load.** It wrote `"START,END"` as one
   argument, while llama.cpp reads `--control-vector-layer-range START END` as two: the parser took
   the next argument as END. The builder renders the two values as two arguments now (`putValues`);

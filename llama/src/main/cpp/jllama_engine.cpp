@@ -641,6 +641,15 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     } catch (const std::exception &e) {
         throw std::runtime_error(std::string("failed to fetch the model files: ") + e.what());
     }
+    // --lora-init-without-apply: upstream's common_init_from_params leaves the adapters unapplied to the
+    // context, but the server applies params' adapters at their scales to every batch, so the option did
+    // nothing (b12541) -- ModelParameters.setLoraInitWithoutApply was a no-op. Scale 0 is "loaded, not
+    // applied", which jllama_set_lora_adapters (the server's POST /lora-adapters) later changes.
+    if (params.lora_init_without_apply) {
+        for (auto &adapter : params.lora_adapters) {
+            adapter.scale = 0.0f;
+        }
+    }
     if (!vocab_only) {
         const std::string vectors = control_vector_refusal(params);
         if (!vectors.empty()) {
@@ -1349,7 +1358,9 @@ static void add_template_stops(jllama_context *jctx, json &data, const std::vect
     }
     json stops = json::array();
     const json requested = data.contains("stop") ? data.at("stop") : json();
-    if (requested.is_string()) {
+    // an empty word is no stop (upstream #32093 drops it), in a string as in an array, and the CLI
+    // defaults then apply as the schema applies them
+    if (requested.is_string() && !requested.get<std::string>().empty()) {
         stops.push_back(requested);
     } else if (requested.is_array()) {
         for (const auto &word : requested) {
@@ -1604,10 +1615,9 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
     for (const auto &result : br.results) {
         responses.push_back(result->to_json());
     }
-    const json out =
-        (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
-            ? format_embeddings_response_oaicompat(body, model_name, responses, use_base64)
-            : responses;
+    const json out = (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
+                         ? format_embeddings_response_oaicompat(body, model_name, responses, use_base64)
+                         : responses;
     return safe_json_to_str(out);
 }
 
@@ -1673,6 +1683,16 @@ std::string tokenize_json(jllama_context *jctx, const std::string &text, bool ad
 
 std::string detokenize(jllama_context *jctx, const std::vector<llama_token> &tokens) {
     wake_server(jctx);
+    // An id the vocabulary does not have is the caller's mistake. llama.cpp reads the piece of one
+    // with an at() (llama_vocab::token_get_attr), whose std::out_of_range reached the caller as a
+    // server error with the C++ library's message, naming neither the id nor the vocabulary.
+    const int32_t n_vocab = llama_vocab_n_tokens(jctx->vocab);
+    for (const llama_token token : tokens) {
+        if (token < 0 || token >= n_vocab) {
+            throw jllama_invalid_request("token id " + std::to_string(token) + " is outside the vocabulary of " +
+                                         std::to_string(n_vocab) + " tokens");
+        }
+    }
     if (jctx->vocab_only) {
         return tokens_to_str(jctx->vocab, tokens);
     }
@@ -1706,6 +1726,11 @@ std::string metrics(jllama_context *jctx) {
 // the directory had no effect and a file could be written anywhere the process may write. Erasing
 // needs no file and stays available.
 std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename) {
+    // Upstream takes the id modulo the slot count in size_t: -1 named some slot (slot 1 of two), and its
+    // "Invalid slot ID" was unreachable. An id at or above the count wraps around on purpose.
+    if (id_slot < 0) {
+        throw jllama_invalid_request("Invalid slot ID " + std::to_string(id_slot) + ": a slot id is not negative");
+    }
     if (op == slot_op::erase) {
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = id_slot;

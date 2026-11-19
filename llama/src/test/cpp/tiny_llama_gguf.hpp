@@ -115,6 +115,9 @@ inline void confine_output_to_ascii(ggml_tensor *output) {
 struct tiny_model_spec {
     std::string prefix = "jllama-c-api";
     bool fim = false;
+    // With fim, the bytes 4 and 5 are declared the repo-level FIM tokens too (FIM_REP, FIM_SEP), which
+    // llama.cpp's infill prompt puts before the project name and before every extra file.
+    bool fim_repo = false;
     uint32_t eos = '>';
     // Declares the end token a control token, as a real model's is: its piece is then not part of
     // the text (a normal token's is, so an answer of the default fixture ends with the byte).
@@ -489,6 +492,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, "tokenizer.ggml.fim_pre_token_id", 1);
         gguf_set_val_u32(g, "tokenizer.ggml.fim_suf_token_id", 2);
         gguf_set_val_u32(g, "tokenizer.ggml.fim_mid_token_id", 3);
+        if (spec.fim_repo) {
+            gguf_set_val_u32(g, "tokenizer.ggml.fim_rep_token_id", 4);
+            gguf_set_val_u32(g, "tokenizer.ggml.fim_sep_token_id", 5);
+        }
     }
 
     ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};

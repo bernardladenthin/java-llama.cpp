@@ -835,6 +835,87 @@ TEST_F(CApi, TokenizeAndDetokenizeRoundTrip) {
     EXPECT_EQ(jllama_tokenize(model_, nullptr, false, &tokens, &count), JLLAMA_STATUS_INVALID_ARGUMENT);
 }
 
+TEST_F(CApi, ATokenIdOutsideTheVocabularyIsTheCallersFaultAndTheModelGoesOn) {
+    // An id the vocabulary does not have is the caller's mistake. In a prompt the server refuses it
+    // when the slot takes the task ("Prompt contains invalid tokens", upstream's 400). Detokenizing
+    // one read past the vocabulary's table (llama_vocab::token_get_attr, an at() that throws
+    // std::out_of_range), which surfaced as a server error with the C++ library's message; it is
+    // refused by name, before llama.cpp is asked.
+    for (const int id : {N_VOCAB, 99999, -5}) {
+        SCOPED_TRACE(id);
+        const int ids[] = {'H', id};
+        Owned text;
+        size_t length = 0;
+        EXPECT_EQ(jllama_detokenize(model_, ids, 2, &text.s, &length), JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find(std::to_string(id)), std::string::npos) << jllama_last_error();
+        EXPECT_EQ(text.s, nullptr);
+        Owned detokenized;
+        EXPECT_EQ(jllama_detokenize_json(model_, ids, 2, &detokenized.s), JLLAMA_STATUS_INVALID_REQUEST);
+
+        const json prompt = json::array({'H', id});
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, json{{"prompt", prompt}, {"n_predict", 2}}.dump().c_str(), &response.s),
+                  JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("invalid tokens"), std::string::npos) << jllama_last_error();
+        EXPECT_EQ(
+            jllama_completions_oai(model_, json{{"prompt", prompt}, {"max_tokens", 2}}.dump().c_str(), &response.s),
+            JLLAMA_STATUS_INVALID_REQUEST);
+        int task = -1;
+        ASSERT_EQ(
+            jllama_completions_stream_request(model_, json{{"prompt", prompt}, {"n_predict", 2}}.dump().c_str(), &task),
+            JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        Owned payload;
+        bool stop = false;
+        EXPECT_EQ(jllama_completions_stream_receive(model_, task, &payload.s, &stop), JLLAMA_STATUS_INVALID_REQUEST);
+    }
+    // the model and its vocabulary are unharmed
+    const int last[] = {'H', N_VOCAB - 1};
+    Owned text;
+    size_t length = 0;
+    EXPECT_EQ(jllama_detokenize(model_, last, 2, &text.s, &length), JLLAMA_STATUS_OK) << jllama_last_error();
+    Owned next;
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":[72,105],"n_predict":2,"temperature":0})", &next.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
+TEST_F(CApi, ARequestMaySampleOnTheBackendAndAnswersAsOnTheCpu) {
+    // "backend_sampling" (upstream's per-request field, --backend-sampling for the server) moves the
+    // sampler chain into the graph where the backend supports it; greedily both places take the argmax
+    // of the same logits, so the answer is the one sampled on the CPU.
+    const auto answer = [](bool backend) {
+        const json request = {{"prompt", "Hello there"},     {"n_predict", 8},     {"temperature", 0},
+                              {"backend_sampling", backend}, {"ignore_eos", true}, {"cache_prompt", false}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = response.s != nullptr ? json::parse(response.str()) : json::object();
+        EXPECT_EQ(j.at("timings").at("cache_n").get<int>(), 0) << j.dump();
+        EXPECT_EQ(j.at("generation_settings").at("backend_sampling").get<bool>(), backend) << j.dump();
+        return j.at("content").get<std::string>();
+    };
+    const std::string on_cpu = answer(false);
+    EXPECT_EQ(on_cpu.size(), 8u);
+    EXPECT_EQ(answer(true), on_cpu);
+}
+
+TEST_F(CApi, ConfigureIgnoresAKeyItDoesNotKnow) {
+    // jllama_configure reads n_threads, n_threads_batch and slot_prompt_similarity and nothing else: a
+    // key it does not know -- a misspelling among them -- is accepted and changes nothing, as an unknown
+    // field of a request is. A known key with a value it cannot take is refused.
+    EXPECT_EQ(jllama_configure(model_, R"({"n_thread":1})"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({"unknown":{"nested":true}})"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({})"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({"n_threads":0})"), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(jllama_configure(model_, R"({"n_threads":"two"})"), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(jllama_configure(model_, R"([1,2])"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({"n_threads":2})"), JLLAMA_STATUS_OK) << jllama_last_error();
+    Owned next;
+    EXPECT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &next.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
 TEST_F(CApi, MetricsCarryTheCountersAndTheSlots) {
     Owned metrics;
     ASSERT_EQ(jllama_metrics(model_, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
@@ -1465,8 +1546,7 @@ TEST_F(CApiVision, ARawCompletionWhoseMessagesCarryAnImageEvaluatesItsPatches) {
     const json messages = json::array(
         {json{{"role", "user"}, {"content", json::array({json{{"type", "text"}, {"text", "look"}}, image_part})}}});
     Owned rendered;
-    ASSERT_EQ(jllama_apply_template(model_, json{{"messages", messages}}.dump().c_str(), &rendered.s),
-              JLLAMA_STATUS_OK)
+    ASSERT_EQ(jllama_apply_template(model_, json{{"messages", messages}}.dump().c_str(), &rendered.s), JLLAMA_STATUS_OK)
         << jllama_last_error();
     std::string text_only = rendered.str();
     const size_t at = text_only.find(marker);
@@ -1474,11 +1554,12 @@ TEST_F(CApiVision, ARawCompletionWhoseMessagesCarryAnImageEvaluatesItsPatches) {
     text_only.erase(at, marker.size());
     ASSERT_EQ(text_only.find(marker), std::string::npos) << "one image, one marker: " << rendered.str();
     Owned reference;
-    ASSERT_EQ(jllama_completions(
-                  model_,
-                  json{{"prompt", text_only}, {"n_predict", 1}, {"temperature", 0}, {"cache_prompt", false}}.dump().c_str(),
-                  &reference.s),
-              JLLAMA_STATUS_OK)
+    ASSERT_EQ(
+        jllama_completions(
+            model_,
+            json{{"prompt", text_only}, {"n_predict", 1}, {"temperature", 0}, {"cache_prompt", false}}.dump().c_str(),
+            &reference.s),
+        JLLAMA_STATUS_OK)
         << jllama_last_error();
     const int text_tokens = json::parse(reference.str()).at("tokens_evaluated").get<int>();
 
@@ -2329,6 +2410,134 @@ std::string greedy_answer(jllama_model *model, int n_predict = 8) {
 
 } // namespace
 
+TEST(CApiTemplateStops, ARawCompletionWithMessagesKeepsTheCliStopsBesideTheTemplatesOwn) {
+    // The completion schema falls back to the CLI's stops (-r, --reverse-prompt) when a request names
+    // no effective stop; the raw paths write the template's stops into "stop", which would hide the
+    // CLI's -- so add_template_stops falls back to them first. Without "stop", with "stop": [""] and
+    // with "stop": "" (an empty word is dropped, upstream #32093), both the CLI's word and the
+    // template's are in force. The string form was kept as a word, which hid the CLI's stop.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-stops-cli", false, 4);
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- laguna_glm_thinking -#}"
+                             "{%- for message in messages -%}"
+                             "<|im_start|>{{ message.role }}\n{{ message.content }}<|im_end|>\n"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}<|im_start|>assistant\n{%- endif -%}";
+    jllama_model *model = load_tiny(path, {"-c", "128", "--chat-template", tmpl, "-r", "zzz"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const json messages = json::array({json{{"role", "user"}, {"content", "Hi"}}});
+    for (const json &stop : {json(), json::array({""}), json("")}) {
+        SCOPED_TRACE(stop.dump());
+        for (const char *forced : {"zzz", "</assistant>"}) {
+            SCOPED_TRACE(forced);
+            json request = {{"messages", messages},
+                            {"grammar", std::string("root ::= \"") + forced + "\""},
+                            {"n_predict", 20},
+                            {"temperature", 0}};
+            if (!stop.is_null()) {
+                request["stop"] = stop;
+            }
+            Owned completion;
+            ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            const json blocking = json::parse(completion.str());
+            EXPECT_EQ(blocking.at("stop_type").get<std::string>(), "word") << blocking.dump();
+            EXPECT_EQ(blocking.at("stopping_word").get<std::string>(), forced) << blocking.dump();
+            EXPECT_EQ(blocking.at("generation_settings").at("stop"), json::array({"zzz", "</assistant>"}))
+                << blocking.dump();
+            int task = -1;
+            ASSERT_EQ(jllama_completions_stream_request(model, request.dump().c_str(), &task), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            EXPECT_EQ(receive_to_stop(model, task).at("stopping_word").get<std::string>(), forced);
+        }
+    }
+    // a word of the request replaces the CLI's, as the schema does, and the template's stays
+    const json own = {{"messages", messages},
+                      {"grammar", "root ::= \"zzz</assistant>\""},
+                      {"stop", json::array({"", "qqq"})},
+                      {"n_predict", 20},
+                      {"temperature", 0}};
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, own.dump().c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json answer = json::parse(completion.str());
+    EXPECT_EQ(answer.at("generation_settings").at("stop"), json::array({"qqq", "</assistant>"})) << answer.dump();
+    EXPECT_EQ(answer.at("stopping_word").get<std::string>(), "</assistant>") << answer.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiFimRepo, TheInfillPromptCarriesTheExtraFilesAndTheOrderOfTheFimTokens) {
+    // The infill prompt is upstream's format_prompt_infill: the extra files (input_extra) before the
+    // FIM prefix, each after a separator -- the FIM_SEP token and its file name when the model has one,
+    // else the "--- snippet ---" line -- and with FIM_REP a "myproject" line first; --spm-infill puts
+    // the suffix before the prefix. Every byte is one token in this vocabulary, so the counts are exact.
+    tiny_model_spec plain_spec;
+    plain_spec.prefix = "jllama-c-api-fim-extra";
+    plain_spec.fim = true;
+    tiny_model_spec repo_spec = plain_spec;
+    repo_spec.prefix = "jllama-c-api-fim-repo";
+    repo_spec.fim_repo = true;
+    const std::string plain_path = write_tiny_llama_gguf(plain_spec);
+    const std::string repo_path = write_tiny_llama_gguf(repo_spec);
+    ASSERT_FALSE(plain_path.empty());
+    ASSERT_FALSE(repo_path.empty());
+    const json base = {{"input_prefix", "abcdefghij"},
+                       {"input_suffix", "klmnopqrst"},
+                       {"n_predict", 1},
+                       {"temperature", 0},
+                       {"cache_prompt", false}};
+    json with_extra = base;
+    with_extra["input_extra"] = json::array({json{{"filename", "a.c"}, {"text", "xyz"}}});
+    const auto infill = [](jllama_model *model, const json &request) {
+        Owned response;
+        EXPECT_EQ(jllama_infill(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()) : json::object();
+    };
+    const auto tokens = [](const json &result) { return result.at("tokens_evaluated").get<int>(); };
+    const std::string prefix = std::string("\x01") + "abcdefghij";
+    const std::string suffix = std::string("\x02") + "klmnopqrst";
+
+    jllama_model *plain = load_tiny(plain_path, {"-c", "512", "-b", "64"});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    const json plain_base = infill(plain, base);
+    const int n_base = tokens(plain_base);
+    EXPECT_GE(n_base, 23); // ten prefix and ten suffix bytes around the three FIM tokens
+    const std::string prompt = plain_base.at("prompt").get<std::string>();
+    EXPECT_LT(prompt.find(prefix), prompt.find(suffix)) << "prefix first without --spm-infill";
+    const json plain_extra = infill(plain, with_extra);
+    // the 19 bytes of "\n\n--- snippet ---\n\n" and the file's three
+    EXPECT_EQ(tokens(plain_extra), n_base + 19 + 3) << plain_extra.dump();
+    EXPECT_NE(plain_extra.at("prompt").get<std::string>().find("--- snippet ---\n\nxyz"), std::string::npos)
+        << plain_extra.dump();
+    jllama_model_free(plain);
+
+    jllama_model *spm = load_tiny(plain_path, {"-c", "512", "-b", "64", "--spm-infill"});
+    ASSERT_NE(spm, nullptr) << jllama_last_error();
+    const json spm_base = infill(spm, base);
+    EXPECT_EQ(tokens(spm_base), n_base);
+    const std::string spm_prompt = spm_base.at("prompt").get<std::string>();
+    EXPECT_LT(spm_prompt.find(suffix), spm_prompt.find(prefix)) << "suffix first with --spm-infill";
+    jllama_model_free(spm);
+
+    jllama_model *repo = load_tiny(repo_path, {"-c", "512", "-b", "64"});
+    ASSERT_NE(repo, nullptr) << jllama_last_error();
+    // FIM_REP "myproject\n" and the closing FIM_SEP "filename\n", around no extra file
+    const json repo_base = infill(repo, base);
+    EXPECT_EQ(tokens(repo_base), n_base + 1 + 10 + 1 + 9) << repo_base.dump();
+    // and the file after its own FIM_SEP "a.c\n"
+    const json repo_extra = infill(repo, with_extra);
+    EXPECT_EQ(tokens(repo_extra), tokens(repo_base) + 1 + 4 + 3) << repo_extra.dump();
+    EXPECT_NE(repo_extra.at("prompt").get<std::string>().find(std::string("\x04") + "myproject\n\x05" + "a.c\nxyz\x05" +
+                                                              "filename\n"),
+              std::string::npos)
+        << repo_extra.dump();
+    jllama_model_free(repo);
+    std::error_code ignored;
+    std::filesystem::remove(plain_path, ignored);
+    std::filesystem::remove(repo_path, ignored);
+}
+
 namespace {
 
 // What a model answers greedily, with the probabilities of every step: two models that compute the
@@ -2640,6 +2849,88 @@ TEST(CApiDraft, TheDraftIsSampledOnTheBackendOrOnTheCpuWithTheSameAnswer) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiDraft, APlainDraftModelGivesTheGreedyAnswerOfTheModelAlone) {
+    // Speculative decoding verifies the draft with the target, so greedily the answer is the
+    // target's: the model with itself as a draft-simple draft proposes tokens and answers what the
+    // model alone answers. Both are fresh models, so each evaluates its prompt whole.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-draft-same");
+    ASSERT_FALSE(path.empty());
+    jllama_model *alone = load_tiny(path, {});
+    ASSERT_NE(alone, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(alone, 32);
+    EXPECT_EQ(drafted_tokens(alone), 0);
+    jllama_model_free(alone);
+    jllama_model *drafted =
+        load_tiny(path, {"--spec-draft-model", path, "--spec-draft-ngl", "0", "--spec-type", "draft-simple"});
+    ASSERT_NE(drafted, nullptr) << jllama_last_error();
+    EXPECT_FALSE(expected.empty());
+    EXPECT_EQ(greedy_answer(drafted, 32), expected);
+    EXPECT_GT(drafted_tokens(drafted), 0);
+    jllama_model_free(drafted);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiAlias, TheAliasIsTheModelOfEveryOpenAiAnswer) {
+    // --alias names the model to the API (model_name, the first alias): every OpenAI answer and chunk
+    // carries it, blocking and streamed, for chat and completions, as upstream's server does.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-alias");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--alias", "my-model"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("name").get<std::string>(), "my-model") << meta.str();
+
+    const char *chat = R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":2})";
+    const char *completion = R"({"prompt":"Hi","max_tokens":2})";
+    Owned blocking_chat;
+    ASSERT_EQ(jllama_chat_completions(model, chat, &blocking_chat.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(blocking_chat.str()).at("model").get<std::string>(), "my-model");
+    Owned blocking_completion;
+    ASSERT_EQ(jllama_completions_oai(model, completion, &blocking_completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(blocking_completion.str()).at("model").get<std::string>(), "my-model");
+    const auto streamed_models = [model](int task) {
+        std::set<std::string> models;
+        bool stop = false;
+        for (int i = 0; i < 20 && !stop; ++i) {
+            Owned envelope;
+            EXPECT_EQ(jllama_chat_completions_stream_receive(model, task, &envelope.s, &stop), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            if (envelope.s == nullptr) {
+                break;
+            }
+            const json data = json::parse(envelope.str()).at("data");
+            for (const json &chunk : data.is_array() ? data : json::array({data})) {
+                models.insert(chunk.at("model").get<std::string>());
+            }
+        }
+        EXPECT_TRUE(stop);
+        return models;
+    };
+    int task = -1;
+    ASSERT_EQ(jllama_chat_completions_stream_request(model, chat, &task), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(streamed_models(task), std::set<std::string>{"my-model"});
+    ASSERT_EQ(jllama_completions_oai_stream_request(model, completion, &task), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(streamed_models(task), std::set<std::string>{"my-model"});
+    jllama_model_free(model);
+
+    // and the OpenAI embeddings of an encoder, unless the request names a model of its own
+    const std::string encoder = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */, "jllama-bert-alias");
+    ASSERT_FALSE(encoder.empty());
+    jllama_model *embedder = load_tiny(encoder, {"--embedding", "--alias", "my-encoder"});
+    ASSERT_NE(embedder, nullptr) << jllama_last_error();
+    Owned embeddings;
+    ASSERT_EQ(jllama_embeddings(embedder, R"({"input":"hello"})", true, &embeddings.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(embeddings.str()).at("model").get<std::string>(), "my-encoder") << embeddings.str();
+    jllama_model_free(embedder);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(encoder, ignored);
+}
+
 TEST(CApiMoeCache, TheCpuShareOfTheMoeCacheIsAcceptedAndRangeChecked) {
     // --moe-cache-cpu-share (llama.cpp b12191, ModelParameters.setMoeCacheCpuShare). Without a cache
     // the share has no effect, so the model loads and answers with it on any host -- which is what
@@ -2778,6 +3069,156 @@ TEST(CApiSlotFiles, ASlotFileNameWithNonAsciiCharactersIsOneFileThatRestoresWhol
     }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiSlotFiles, ASlotIdOutOfRangeWrapsAroundAsUpstreamsServerDoesAndANegativeOneIsRefused) {
+    // llama.cpp's server takes a slot id modulo the slot count ("allow id_slot to be out of bounds
+    // (wrap around)", server_context::get_slot_by_id), deliberately, for the slots route and a
+    // request's id_slot alike: slot 3 of two slots is slot 1, slot 5 of one slot is slot 0. A negative
+    // id is refused by the engine: upstream takes the modulo in size_t, so -1 named some slot as well
+    // (slot 1 of two) and its "Invalid slot ID" branch was unreachable.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-ids");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-slot-ids-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const json request = {
+        {"prompt", "Hello there, a prompt of some length"}, {"n_predict", 2}, {"temperature", 0}, {"id_slot", 1}};
+    {
+        jllama_model *model = load_tiny(path, {"-c", "256", "-np", "2", "--slot-save-path", dir.string()});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned answer;
+        ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &answer.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        // slot 3 is slot 1, which holds the prompt; slot 0 holds nothing
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 3, "wrapped.bin", &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(json::parse(saved.str()).at("id_slot").get<int>(), 3) << saved.str();
+        EXPECT_GT(json::parse(saved.str()).at("n_saved").get<int>(), 0) << "slot 3 was not slot 1: " << saved.str();
+        Owned empty;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 2, "empty.bin", &empty.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(json::parse(empty.str()).at("n_saved").get<int>(), 0) << "slot 2 was not slot 0: " << empty.str();
+        Owned erased;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 3, nullptr, &erased.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_model_free(model);
+    }
+    {
+        // one slot: every id is slot 0 -- slot 5 saves it, slot 7 erases it, and the file restores
+        // into slot 0, from which the next request takes its prompt
+        // no host-memory prompt cache, which could hand the erased state back
+        jllama_model *model = load_tiny(path, {"-c", "256", "--cache-ram", "0", "--slot-save-path", dir.string()});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        json again = request;
+        again.erase("id_slot");
+        Owned answer;
+        ASSERT_EQ(jllama_completions(model, again.dump().c_str(), &answer.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 5, "one.bin", &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_GT(json::parse(saved.str()).at("n_saved").get<int>(), 0) << "slot 5 was not slot 0: " << saved.str();
+        Owned erased;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 7, nullptr, &erased.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        Owned emptied;
+        ASSERT_EQ(jllama_completions(model, again.dump().c_str(), &emptied.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_EQ(json::parse(emptied.str()).at("timings").at("cache_n").get<int>(), 0)
+            << "slot 7 did not erase slot 0: " << emptied.str();
+        Owned restored;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "one.bin", &restored.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        Owned kept;
+        ASSERT_EQ(jllama_completions(model, again.dump().c_str(), &kept.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_GT(json::parse(kept.str()).at("timings").at("cache_n").get<int>(), 0) << kept.str();
+        // a negative id is no slot: refused by every action, before the file is looked at
+        for (const jllama_slot_op op : {JLLAMA_SLOT_SAVE, JLLAMA_SLOT_RESTORE, JLLAMA_SLOT_ERASE}) {
+            Owned refused;
+            EXPECT_EQ(jllama_slot_action(model, op, -1, op == JLLAMA_SLOT_ERASE ? nullptr : "one.bin", &refused.s),
+                      JLLAMA_STATUS_INVALID_REQUEST)
+                << op;
+            EXPECT_NE(std::string(jllama_last_error()).find("Invalid slot ID -1"), std::string::npos)
+                << jllama_last_error();
+        }
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiSlotFiles, ASlotFileOfAnotherModelIsRefusedAndTheModelGoesOn) {
+    // A slot file holds the KV rows of the model that wrote it and the prompt's token ids. One of a
+    // model with other rows (wider), of another vocabulary (merge tokens this one does not have) or of
+    // a longer context than this one's slot is refused as an invalid slot file, the slot is left
+    // empty, and the model answers the next request.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("jllama-c-api-slot-foreign-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const std::string target_path = write_tiny_llama_gguf("jllama-c-api-slot-foreign-target");
+    tiny_model_spec bpe;
+    bpe.prefix = "jllama-c-api-slot-foreign-bpe";
+    bpe.tokenizer = tiny_model_spec::tokenizer_kind::BPE_MERGES;
+    const std::string bpe_path = write_tiny_llama_gguf(bpe);
+    const std::string wide_path = write_tiny_llama_gguf(tiny_model_spec::wide(64, "jllama-c-api-slot-foreign-wide"));
+    // the target's weights with a training context that does not cap the slot at 128 tokens
+    tiny_model_spec long_spec;
+    long_spec.prefix = "jllama-c-api-slot-foreign-long";
+    long_spec.n_ctx_train = 1024;
+    const std::string long_path = write_tiny_llama_gguf(long_spec);
+    ASSERT_FALSE(target_path.empty());
+    ASSERT_FALSE(long_path.empty());
+    ASSERT_FALSE(bpe_path.empty());
+    ASSERT_FALSE(wide_path.empty());
+    const auto save = [&dir](const std::string &model_path, const std::vector<std::string> &extra,
+                             const std::string &prompt, const char *name) {
+        std::vector<std::string> args = {"--slot-save-path", dir.string()};
+        args.insert(args.end(), extra.begin(), extra.end());
+        jllama_model *model = load_tiny(model_path, args);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned answer;
+        ASSERT_EQ(jllama_completions(model, json{{"prompt", prompt}, {"n_predict", 2}}.dump().c_str(), &answer.s),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, name, &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_model_free(model);
+    };
+    save(wide_path, {}, "hello world", "wide.bin");
+    save(bpe_path, {}, "hello world hello world", "bpe.bin");
+    save(long_path, {"-c", "512"}, std::string(300, 'a'), "long.bin");
+
+    struct row {
+        const char *name;
+        std::string model;
+    };
+    // the long file is restored into the same model with a context of 256 tokens (llama.cpp pads to
+    // 256), shorter than the state's 300
+    for (const row &r : {row{"wide.bin", target_path}, row{"bpe.bin", target_path}, row{"long.bin", long_path}}) {
+        SCOPED_TRACE(r.name);
+        jllama_model *target = load_tiny(r.model, {"--slot-save-path", dir.string()});
+        ASSERT_NE(target, nullptr) << jllama_last_error();
+        const char *name = r.name;
+        Owned refused;
+        EXPECT_EQ(jllama_slot_action(target, JLLAMA_SLOT_RESTORE, 0, name, &refused.s), JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("Unable to restore slot"), std::string::npos)
+            << jllama_last_error();
+        Owned next;
+        ASSERT_EQ(jllama_completions(target, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &next.s),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        EXPECT_EQ(json::parse(next.str()).at("timings").at("cache_n").get<int>(), 0)
+            << "a refused state stayed: " << next.str();
+        jllama_model_free(target);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(target_path, ignored);
+    std::filesystem::remove(long_path, ignored);
+    std::filesystem::remove(bpe_path, ignored);
+    std::filesystem::remove(wide_path, ignored);
     std::filesystem::remove_all(dir, ignored);
 }
 
@@ -4234,6 +4675,46 @@ TEST(CApiServer, AnApiKeyFileThatCanBeReadOnlyOnceProtectsTheServer) {
     std::filesystem::remove_all(dir, ignored);
 }
 #endif
+
+TEST(CApiServer, AServerWhoseModelFailsToLoadEndsAndTheNextServerStarts) {
+    // The model is loaded on the server's worker thread, after jllama_server_start returned: a file
+    // that is no GGUF ends llama_server(), the server reports that it no longer runs, a stop returns
+    // at once, and the process can start the next server (one server per process, so the first must
+    // really be gone).
+    const std::filesystem::path broken = std::filesystem::temp_directory_path() /
+                                         ("jllama-c-api-broken-" + std::to_string(std::random_device{}()) + ".gguf");
+    {
+        std::ofstream out(broken, std::ios::binary);
+        out << "this is no gguf file";
+    }
+    const std::string broken_path = broken.string();
+    const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0", "-m", broken_path.c_str(), "-ngl", "0"};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(server, nullptr);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (jllama_server_is_running(server) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_FALSE(jllama_server_is_running(server)) << "a server whose model failed to load still runs";
+    const auto before_stop = std::chrono::steady_clock::now();
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_LT(std::chrono::steady_clock::now() - before_stop, std::chrono::seconds(5));
+
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-models-next-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string models_dir = dir.string();
+    const char *router[] = {"llama-server", "--host", "127.0.0.1", "--port", "0", "--models-dir", models_dir.c_str()};
+    jllama_server *next = nullptr;
+    ASSERT_EQ(jllama_server_start(7, router, &next), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_TRUE(jllama_server_is_running(next)) << "the next server did not start";
+    EXPECT_EQ(jllama_server_stop(next), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    std::filesystem::remove(broken, ignored);
+}
 
 namespace {
 // the attached server of a model on a free loopback port with the HTTP options of `extra`, up once
@@ -7630,6 +8111,143 @@ TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {
     std::filesystem::remove(out, ec);
 }
 
+namespace {
+
+// The tensors of a GGUF file, name -> data.
+std::map<std::string, std::vector<uint8_t>> gguf_tensor_bytes(const std::string &path) {
+    std::map<std::string, std::vector<uint8_t>> tensors;
+    ggml_context *data = nullptr;
+    gguf_init_params params = {false, &data};
+    gguf_context *g = gguf_init_from_file(path.c_str(), params);
+    EXPECT_NE(g, nullptr) << path;
+    if (g == nullptr) {
+        return tensors;
+    }
+    for (int64_t i = 0; i < gguf_get_n_tensors(g); ++i) {
+        const char *name = gguf_get_tensor_name(g, i);
+        const ggml_tensor *t = ggml_get_tensor(data, name);
+        const auto *bytes = static_cast<const uint8_t *>(t->data);
+        tensors[name] = std::vector<uint8_t>(bytes, bytes + ggml_nbytes(t));
+    }
+    gguf_free(g);
+    ggml_free(data);
+    return tensors;
+}
+
+// A corpus of words over the printable ASCII the model knows.
+std::string training_corpus(int sentences) {
+    std::string corpus;
+    for (int i = 0; i < sentences; ++i) {
+        corpus += "the quick brown fox jumps over the lazy dog. ";
+    }
+    return corpus;
+}
+
+} // namespace
+
+TEST_F(CApi, FinetuneChangesTheWeightsWithEitherOptimizerAndWithAValidationSplit) {
+    // A run that writes a file is not yet a run that trained: the output's tensors are the input's,
+    // and at least one of them moved -- with AdamW, with SGD (optimizer 1), and with a part of the
+    // corpus held out for validation.
+    const auto input = gguf_tensor_bytes(path_);
+    ASSERT_FALSE(input.empty());
+    struct run {
+        const char *what;
+        int optimizer;
+        double learning_rate;
+        double val_split;
+    };
+    for (const run &r :
+         {run{"AdamW", 0, 1e-4, 0.0}, run{"SGD", 1, 1e-3, 0.0}, run{"AdamW, validation", 0, 1e-4, 0.25}}) {
+        SCOPED_TRACE(r.what);
+        const std::string out = path_ + ".trained.gguf";
+        const json config = {{"model_path", path_},
+                             {"training_text", training_corpus(24)},
+                             {"output_path", out},
+                             {"epochs", 1},
+                             {"learning_rate", r.learning_rate},
+                             {"optimizer", r.optimizer},
+                             {"n_ctx", 64},
+                             {"n_gpu_layers", 0},
+                             {"val_split", r.val_split}};
+        ASSERT_EQ(jllama_finetune(config.dump().c_str()), JLLAMA_STATUS_OK) << jllama_last_error();
+        const auto output = gguf_tensor_bytes(out);
+        ASSERT_EQ(output.size(), input.size());
+        int changed = 0;
+        for (const auto &tensor : input) {
+            ASSERT_EQ(output.count(tensor.first), 1u) << tensor.first;
+            ASSERT_EQ(output.at(tensor.first).size(), tensor.second.size()) << tensor.first;
+            changed += output.at(tensor.first) != tensor.second ? 1 : 0;
+        }
+        EXPECT_GT(changed, 0) << "the trainer wrote the input's weights back";
+        // and the trained model loads and answers
+        jllama_model *trained = load_tiny(out, {});
+        ASSERT_NE(trained, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(trained, 4).empty());
+        jllama_model_free(trained);
+        std::error_code ec;
+        std::filesystem::remove(out, ec);
+    }
+}
+
+TEST_F(CApi, FinetuneRefusesACorpusShorterThanOneTrainingWindowAndASplitWithoutTrainingData) {
+    // llama.cpp's dataset cuts the corpus into windows of n_ctx + 1 tokens, one every n_ctx / 2
+    // tokens (common_opt_dataset_init), and computes their count in size_t: a corpus shorter than a
+    // window wrapped to a huge count, and one shorter than a window and a stride gave none, which
+    // ggml_opt_dataset_init asserts on -- both ended the process. A validation split outside [0, 1), or
+    // one that leaves no window to train on, ended it too (llama_opt_epoch asserts on the split) or
+    // wrote the untouched model as a success. Each is refused by name, before anything is written.
+    const std::string out = path_ + ".refused.gguf";
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+    const auto finetune = [&out](const std::string &text, double val_split) {
+        const json config = {{"model_path", path_}, {"training_text", text}, {"output_path", out},
+                             {"epochs", 1},         {"learning_rate", 1e-4}, {"n_ctx", 64},
+                             {"n_gpu_layers", 0},   {"val_split", val_split}};
+        return jllama_finetune(config.dump().c_str());
+    };
+    for (const std::string &text : {std::string("abc"), std::string(300, 'a')}) {
+        SCOPED_TRACE(text.size());
+        EXPECT_EQ(finetune(text, 0.0), JLLAMA_STATUS_ERROR);
+        EXPECT_NE(std::string(jllama_last_error()).find("too few tokens"), std::string::npos) << jllama_last_error();
+        EXPECT_FALSE(std::filesystem::exists(out));
+    }
+    // the shortest corpus that trains is the one the refusal names: one window and one stride
+    finetune("abc", 0.0);
+    const std::string message = jllama_last_error();
+    std::smatch need;
+    ASSERT_TRUE(std::regex_search(message, need, std::regex("need at least ([0-9]+)"))) << message;
+    const size_t minimum = std::stoul(need[1].str());
+    // as many tokens as the trainer counts: the same vocabulary, with the special tokens
+    const auto tokens_of = [](const std::string &text) {
+        int *tokens = nullptr;
+        size_t count = 0;
+        EXPECT_EQ(jllama_tokenize(model_, text.c_str(), true, &tokens, &count), JLLAMA_STATUS_OK);
+        jllama_tokens_free(tokens);
+        return count;
+    };
+    const size_t specials = tokens_of("");
+    const std::string exact(minimum - specials, 'a');
+    ASSERT_EQ(tokens_of(exact), minimum);
+    const std::string one_short(minimum - specials - 1, 'a');
+    EXPECT_EQ(finetune(one_short, 0.0), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("too few tokens"), std::string::npos) << jllama_last_error();
+    // one window: a split holds it out and leaves nothing to train on
+    EXPECT_EQ(finetune(exact, 0.5), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("val_split"), std::string::npos) << jllama_last_error();
+    EXPECT_FALSE(std::filesystem::exists(out));
+    for (const double val_split : {-0.5, 1.0, 1.5}) {
+        SCOPED_TRACE(val_split);
+        EXPECT_EQ(finetune(training_corpus(24), val_split), JLLAMA_STATUS_ERROR);
+        EXPECT_NE(std::string(jllama_last_error()).find("val_split"), std::string::npos) << jllama_last_error();
+        EXPECT_FALSE(std::filesystem::exists(out));
+    }
+    // and the window itself trains
+    ASSERT_EQ(finetune(exact, 0.0), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(std::filesystem::exists(out));
+    std::filesystem::remove(out, ec);
+}
+
 TEST_F(CApi, TheLogCallbackSeesTheServersLinesAndNullFlushesSynchronously) {
     struct Sink {
         std::mutex m;
@@ -8729,9 +9347,9 @@ TEST(CApiSleep, EveryOperationAsTheFirstCallAfterASleepLetsTheModelSleepAgain) {
         {"a stream received to its end",
          [model]() {
              int task = -1;
-             ASSERT_EQ(jllama_completions_stream_request(model, R"({"prompt":"Hi","n_predict":3,"temperature":0})",
-                                                         &task),
-                       JLLAMA_STATUS_OK)
+             ASSERT_EQ(
+                 jllama_completions_stream_request(model, R"({"prompt":"Hi","n_predict":3,"temperature":0})", &task),
+                 JLLAMA_STATUS_OK)
                  << jllama_last_error();
              EXPECT_TRUE(receive_to_stop(model, task).at("stop").get<bool>());
          }},
@@ -10244,6 +10862,20 @@ std::string write_tiny_lora_for_paths() {
 
 } // namespace
 
+TEST(CApiNonAsciiPaths, TheProcessReadsANarrowPathInACodePageOtherThanUtf8) {
+    // The tests of this suite are the guards of patches/0024-0030 only where a narrow path is read in
+    // the active code page and that is not UTF-8: a process whose code page is UTF-8 (an application
+    // manifest, the "Beta: Use Unicode UTF-8" system setting) reads every narrow path as UTF-8, and the
+    // tests pass without the patches -- as they do outside Windows, where a path is bytes. java.exe
+    // carries no such manifest, so the JVM reads in the ANSI code page, and so must this binary.
+#ifdef _WIN32
+    EXPECT_NE(GetACP(), static_cast<UINT>(CP_UTF8))
+        << "the active code page is UTF-8: CApiNonAsciiPaths passes here with or without patches 0024-0030";
+#else
+    GTEST_SKIP() << "a narrow path is bytes outside Windows; the code page matters on Windows only";
+#endif
+}
+
 TEST(CApiNonAsciiPaths, TheModelFilesAreReadUnderANonAsciiPath) {
     // -m, --shard and --lora are opened through ggml_fopen, and --mmproj through gguf and a wide
     // std::ifstream. All of them read the path as UTF-8 on Windows: measured to work on code page
@@ -10468,6 +11100,53 @@ TEST(CApiLogFile, AFreedModelClosesTheLogFileItsLoadOpened) {
     jllama_model_free(second);
     EXPECT_EQ(drained_size(log), written) << "a model without --log-file wrote into the file of a freed one";
     EXPECT_TRUE(std::filesystem::remove(log, ec)) << ec.message();
+    std::filesystem::remove(model, ec);
+}
+
+TEST(CApiLogFile, AVocabOnlyModelOwnsItsLogFileAndAMissingFileIsRefused) {
+    // A --vocab-only load takes its own path through the engine (no server context): it must own the
+    // --log-file it opened like a full load and close it at its free, and a file that is not there
+    // is refused like any load.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-vocab");
+    ASSERT_FALSE(model.empty());
+    jllama_model *missing = load_tiny(model + ".missing.gguf", {"--vocab-only"});
+    EXPECT_EQ(missing, nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("could not load tokenizer"), std::string::npos)
+        << jllama_last_error();
+    jllama_model_free(missing);
+
+    const auto log = log_file_path("jllama-c-api-log-file-vocab");
+    std::error_code ec;
+    std::filesystem::remove(log, ec);
+    jllama_model *vocab = load_tiny(model, {"--vocab-only", "--log-file", log.string()});
+    ASSERT_NE(vocab, nullptr) << jllama_last_error();
+    int *tokens = nullptr;
+    size_t count = 0;
+    EXPECT_EQ(jllama_tokenize(vocab, "Hello", false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tokens_free(tokens);
+    jllama_model_free(vocab);
+    const auto written = drained_size(log);
+    EXPECT_GT(written, 0u) << "the vocab-only load logged nothing into its file";
+
+    jllama_model *later = load_tiny(model, {});
+    ASSERT_NE(later, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(later).empty());
+    jllama_model_free(later);
+    EXPECT_EQ(drained_size(log), written) << "a later model wrote into the file of a freed vocab-only one";
+
+    // a missing file with --log-file closes the file it opened at once
+    const auto failed_log = log_file_path("jllama-c-api-log-file-vocab-failed");
+    std::filesystem::remove(failed_log, ec);
+    jllama_model *failed = load_tiny(model + ".missing.gguf", {"--vocab-only", "--log-file", failed_log.string()});
+    EXPECT_EQ(failed, nullptr);
+    const auto failed_written = drained_size(failed_log);
+    jllama_model *after = load_tiny(model, {});
+    ASSERT_NE(after, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(after).empty());
+    jllama_model_free(after);
+    EXPECT_EQ(drained_size(failed_log), failed_written) << "a failed vocab-only load left its log file open";
+    EXPECT_TRUE(std::filesystem::remove(log, ec)) << ec.message();
+    std::filesystem::remove(failed_log, ec);
     std::filesystem::remove(model, ec);
 }
 

@@ -33,6 +33,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <random>
 #include <string>
@@ -47,13 +48,15 @@ using namespace jllama_test;
 constexpr int LORA_RANK = 4;
 
 // A LoRA adapter for write_tiny_llama_gguf()'s model. lora_a is {in, rank}, lora_b {rank, out} in
-// ggml order (llama-adapter.cpp validates exactly that); alpha = rank keeps the scale at 1.
-std::string write_tiny_lora_gguf() {
+// ggml order (llama-adapter.cpp validates exactly that); alpha = rank keeps the scale at 1. Another
+// name and seed give a second adapter of other weights; the defaults write the one every test used
+// before there were two.
+std::string write_tiny_lora_gguf(const std::string &name = "adapter", unsigned seed = 7) {
     static const unsigned run_id = std::random_device{}();
-    const std::string path =
-        (std::filesystem::temp_directory_path() / ("jllama-lora-cache-adapter-" + std::to_string(run_id) + ".gguf"))
-            .string();
-    std::mt19937 rng(7);
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              ("jllama-lora-cache-" + name + "-" + std::to_string(run_id) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(seed);
     gguf_context *g = gguf_init_empty();
     gguf_set_val_str(g, "general.type", "adapter");
     gguf_set_val_str(g, "general.architecture", "llama");
@@ -805,4 +808,207 @@ TEST_F(LoraCacheHostMemory, AStateIsLoadedOnlyUnderTheAdaptersItWasComputedWith)
     const json again = complete();
     EXPECT_EQ(timing(again, "cache_n"), timing(back, "cache_n")) << again.dump() << "\n" << back.dump();
     EXPECT_EQ(again.at("content").get<std::string>(), back.at("content").get<std::string>());
+}
+
+namespace {
+
+// A model of write_tiny_llama_gguf() with one slot, the slot directory and the options of `extra`.
+jllama_model *load_with(const std::string &model, const std::string &dir, const std::vector<std::string> &extra) {
+    std::vector<std::string> args = {"jllama", "-m",          model,  "-c",          "256",
+                                     "-np",    "1",           "-ngl", "0",           "-t",
+                                     "2",      "--cache-ram", "0",    "--no-warmup", "--slot-save-path",
+                                     dir};
+    args.insert(args.end(), extra.begin(), extra.end());
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *loaded = nullptr;
+    EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &loaded),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    return loaded;
+}
+
+// The adapters the server lists, path -> scale.
+std::map<std::string, float> listed_adapters(jllama_model *model) {
+    Owned list;
+    EXPECT_EQ(jllama_lora_adapters(model, &list.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::map<std::string, float> scales;
+    if (list.s != nullptr) {
+        for (const auto &adapter : json::parse(list.str())) {
+            scales[adapter.at("path").get<std::string>()] = adapter.at("scale").get<float>();
+        }
+    }
+    return scales;
+}
+
+// The answer to PROMPT on an emptied slot, its whole prompt evaluated in one batch.
+std::string fresh_answer_of(jllama_model *model) {
+    Owned erased;
+    EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json request = {{"prompt", PROMPT}, {"n_predict", 8},        {"temperature", 0},
+                          {"top_k", 1},       {"cache_prompt", false}, {"id_slot", 0}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    if (response.s == nullptr) {
+        return std::string();
+    }
+    const json answer = json::parse(response.str());
+    EXPECT_EQ(answer.at("timings").at("cache_n").get<int>(), 0) << answer.dump();
+    return answer.at("content").get<std::string>();
+}
+
+void set_scales(jllama_model *model, const json &adapters) {
+    Owned response;
+    EXPECT_EQ(jllama_set_lora_adapters(model, adapters.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
+// Another prompt on slot 0, so a later restore shows whether it put its own state there.
+void complete_other(jllama_model *model) {
+    const json request = {{"prompt", "A different prompt, so the slot holds other tokens"},
+                          {"n_predict", 4},
+                          {"temperature", 0},
+                          {"cache_prompt", true},
+                          {"id_slot", 0}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+}
+
+} // namespace
+
+TEST(LoraCacheTwoAdapters, BothAdaptersApplyAndASlotFileMatchesThemByPathInEitherOrder) {
+    // --lora a,b loads two adapters, both applied at scale 1; each changes the answer. A slot file
+    // saved under the pair at scales 1 and 0.5 carries both in its section (patches/0021); a model that
+    // loads them in the other order, or through --lora-scaled, matches them by path, not by place: at
+    // the same scales the state is kept, at the scales swapped it is cleared.
+    const std::string model_path = write_tiny_llama_gguf("jllama-lora-two-model");
+    const std::string a = write_tiny_lora_gguf("adapter-a", 7);
+    const std::string b = write_tiny_lora_gguf("adapter-b", 11);
+    const std::string dir =
+        (std::filesystem::temp_directory_path() / ("jllama-lora-two-" + std::to_string(std::random_device{}())))
+            .string();
+    ASSERT_FALSE(model_path.empty());
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    std::string scaled_answer; // a at 1, b at 0.5
+    {
+        jllama_model *pair = load_with(model_path, dir, {"--lora", a + "," + b});
+        ASSERT_NE(pair, nullptr);
+        const std::map<std::string, float> listed = listed_adapters(pair);
+        EXPECT_EQ(listed, (std::map<std::string, float>{{a, 1.0f}, {b, 1.0f}}));
+        const std::string both = fresh_answer_of(pair);
+        set_scales(pair, json::array({{{"id", 0}, {"scale", 1.0f}}, {{"id", 1}, {"scale", 0.0f}}}));
+        const std::string only_a = fresh_answer_of(pair);
+        set_scales(pair, json::array({{{"id", 0}, {"scale", 0.0f}}, {{"id", 1}, {"scale", 1.0f}}}));
+        const std::string only_b = fresh_answer_of(pair);
+        EXPECT_NE(both, only_a) << "the second adapter changed nothing";
+        EXPECT_NE(both, only_b) << "the first adapter changed nothing";
+
+        set_scales(pair, json::array({{{"id", 0}, {"scale", 1.0f}}, {{"id", 1}, {"scale", 0.5f}}}));
+        scaled_answer = fresh_answer_of(pair);
+        EXPECT_NE(scaled_answer, both) << "the scale 0.5 changed nothing";
+        Owned saved;
+        ASSERT_EQ(jllama_slot_action(pair, JLLAMA_SLOT_SAVE, 0, "pair.bin", &saved.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_model_free(pair);
+    }
+    const auto restore_and_complete = [](jllama_model *model) {
+        complete_other(model);
+        Owned restored;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "pair.bin", &restored.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json request = {{"prompt", PROMPT}, {"n_predict", 8},       {"temperature", 0},
+                              {"top_k", 1},       {"cache_prompt", true}, {"id_slot", 0}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()) : json::object();
+    };
+    {
+        // the other order: id 0 is b now
+        jllama_model *reversed = load_with(model_path, dir, {"--lora", b + "," + a});
+        ASSERT_NE(reversed, nullptr);
+        set_scales(reversed, json::array({{{"id", 0}, {"scale", 0.5f}}, {{"id", 1}, {"scale", 1.0f}}}));
+        const json kept = restore_and_complete(reversed);
+        EXPECT_LE(kept.at("timings").at("prompt_n").get<int>(), 2) << kept.dump();
+        // the same places at the file's scales are the scales swapped: b at 1, a at 0.5
+        set_scales(reversed, json::array({{{"id", 0}, {"scale", 1.0f}}, {{"id", 1}, {"scale", 0.5f}}}));
+        const json swapped = restore_and_complete(reversed);
+        EXPECT_EQ(swapped.at("timings").at("cache_n").get<int>(), 0) << swapped.dump();
+        jllama_model_free(reversed);
+    }
+    // --lora-scaled reads FNAME:SCALE and splits on every colon, so an absolute path with a drive
+    // letter cannot be expressed (ModelParameters.addLoraScaledAdapter says so): relative paths.
+    std::error_code ec;
+    const std::string rel_a = std::filesystem::relative(a, std::filesystem::current_path(), ec).string();
+    const std::string rel_b = std::filesystem::relative(b, std::filesystem::current_path(), ec).string();
+    if (!rel_a.empty() && !rel_b.empty() && rel_a.find(':') == std::string::npos &&
+        rel_b.find(':') == std::string::npos) {
+        jllama_model *scaled = load_with(model_path, dir, {"--lora-scaled", rel_b + ":0.5," + rel_a + ":1"});
+        ASSERT_NE(scaled, nullptr);
+        const std::map<std::string, float> listed = listed_adapters(scaled);
+        EXPECT_EQ(listed, (std::map<std::string, float>{{rel_a, 1.0f}, {rel_b, 0.5f}}));
+        // both applied at their own scales from the load on: the answer of the pair set to them
+        EXPECT_EQ(fresh_answer_of(scaled), scaled_answer);
+        // The section names the paths the first model was given, and the match is by path: these are
+        // other spellings of the same files, so the file names adapters this server has not loaded,
+        // and the restore is refused -- the conservative answer, never a state reused under adapters
+        // it may not have been computed with.
+        Owned restored;
+        EXPECT_EQ(jllama_slot_action(scaled, JLLAMA_SLOT_RESTORE, 0, "pair.bin", &restored.s),
+                  JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("which this server has not loaded"), std::string::npos)
+            << jllama_last_error();
+        jllama_model_free(scaled);
+    } else {
+        ADD_FAILURE() << "no relative path to the adapters from " << std::filesystem::current_path();
+    }
+    std::filesystem::remove(model_path, ec);
+    std::filesystem::remove(a, ec);
+    std::filesystem::remove(b, ec);
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(LoraCacheTwoAdapters, AnAdapterLoadedWithoutApplyAnswersAsNoAdapterUntilItIsSet) {
+    // --lora-init-without-apply loads an adapter without applying it ("apply later via POST
+    // /lora-adapters"): the model answers as without the adapter until jllama_set_lora_adapters
+    // gives it a scale, and then as the model loaded with the adapter applied.
+    const std::string model_path = write_tiny_llama_gguf("jllama-lora-init-model");
+    const std::string adapter = write_tiny_lora_gguf("adapter-init", 7);
+    const std::string dir =
+        (std::filesystem::temp_directory_path() / ("jllama-lora-init-" + std::to_string(std::random_device{}())))
+            .string();
+    ASSERT_FALSE(model_path.empty());
+    ASSERT_FALSE(adapter.empty());
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *plain = load_with(model_path, dir, {});
+    ASSERT_NE(plain, nullptr);
+    const std::string without = fresh_answer_of(plain);
+    jllama_model_free(plain);
+    jllama_model *applied = load_with(model_path, dir, {"--lora", adapter});
+    ASSERT_NE(applied, nullptr);
+    const std::string with = fresh_answer_of(applied);
+    jllama_model_free(applied);
+    ASSERT_NE(without, with) << "the adapter changes nothing";
+
+    jllama_model *deferred = load_with(model_path, dir, {"--lora", adapter, "--lora-init-without-apply"});
+    ASSERT_NE(deferred, nullptr);
+    // Upstream's server ignores the option (b12541): common_init_from_params leaves the adapters
+    // unapplied, but the server lists them at the scale --lora gave and applies the slot's adapters to
+    // every batch (common_set_adapter_lora in update_slots), so the model answered as with the adapter
+    // from the first request on. The engine starts such adapters at scale 0 (red without it).
+    EXPECT_EQ(listed_adapters(deferred), (std::map<std::string, float>{{adapter, 0.0f}}));
+    EXPECT_EQ(fresh_answer_of(deferred), without);
+    set_scales(deferred, json::array({{{"id", 0}, {"scale", 1.0f}}}));
+    EXPECT_EQ(listed_adapters(deferred), (std::map<std::string, float>{{adapter, 1.0f}}));
+    EXPECT_EQ(fresh_answer_of(deferred), with);
+    jllama_model_free(deferred);
+    std::error_code ec;
+    std::filesystem::remove(model_path, ec);
+    std::filesystem::remove(adapter, ec);
+    std::filesystem::remove_all(dir, ec);
 }
