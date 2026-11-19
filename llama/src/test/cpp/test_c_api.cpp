@@ -2859,6 +2859,83 @@ TEST(CApiShard, AnExtraShardInAnotherDirectoryCompletesTheModel) {
     std::filesystem::remove_all(std::filesystem::path(shard).parent_path(), ignored);
 }
 
+// HRM-Text (llama.cpp's hrm_text) expands its low and high stacks into block_count cache slots,
+// layers_per_stack * h_cycles * (l_cycles + 1) of them. Until b12556 (#32601) the loader asserted that
+// product -- a GGUF whose count did not match ended the process -- and computed it in 32 bits, so a
+// product of block_count + 2^32 passed and the tensor loader indexed past the layers. It throws now,
+// in 64 bits. The GGUF carries the hparams and a byte vocabulary, no tensors: the check stands before
+// the tensors, so a count that matches fails the load at the first missing tensor instead, which tells
+// the refusal apart from any other failed load.
+TEST(CApiHrm, ASlotCountThatDoesNotMatchTheBlockCountFailsTheLoadAndTheProcessGoesOn) {
+    const auto write = [](const std::string &prefix, uint32_t per_stack, uint32_t h_cycles, uint32_t l_cycles) {
+        const std::string path = (std::filesystem::temp_directory_path() / (prefix + ".gguf")).string();
+        gguf_context *g = gguf_init_empty();
+        const std::string a = "hrm_text";
+        gguf_set_val_str(g, "general.architecture", a.c_str());
+        gguf_set_val_u32(g, (a + ".context_length").c_str(), 64);
+        gguf_set_val_u32(g, (a + ".embedding_length").c_str(), 32);
+        gguf_set_val_u32(g, (a + ".block_count").c_str(), 4);
+        gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), 64);
+        gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), 2);
+        gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), 2);
+        gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-6f);
+        gguf_set_val_u32(g, (a + ".hrm.layers_per_stack").c_str(), per_stack);
+        gguf_set_val_u32(g, (a + ".hrm.h_cycles").c_str(), h_cycles);
+        gguf_set_val_u32(g, (a + ".hrm.l_cycles").c_str(), l_cycles);
+        const std::vector<std::string> tokens = jllama_test::byte_tokens();
+        std::vector<const char *> token_ptrs;
+        for (const std::string &t : tokens) {
+            token_ptrs.push_back(t.c_str());
+        }
+        const std::vector<int32_t> token_types(tokens.size(), 1);
+        const char *merges[] = {"Ġ Ġ"};
+        gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+        gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+        gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+        gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+        gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+        const bool ok = gguf_write_to_file(g, path.c_str(), false);
+        gguf_free(g);
+        return ok ? path : std::string();
+    };
+    const auto load_log = [](const std::string &path) {
+        LogCapture log;
+        EXPECT_EQ(load_tiny(path, {}), nullptr);
+        log.stop();
+        return log.text();
+    };
+
+    // 1 * 1 * (1 + 1) = 2 slots against 4 blocks: an assertion that ended the process until b12556
+    const std::string mismatch = write("jllama-c-api-hrm-mismatch", 1, 1, 1);
+    ASSERT_FALSE(mismatch.empty());
+    EXPECT_NE(load_log(mismatch).find("hrm: cache-slot count 2 (layers_per_stack 1, h_cycles 1, l_cycles 1) does not "
+                                      "match block_count 4"),
+              std::string::npos);
+
+    // 1073741825 * 2 * (1 + 1) = 2^32 + 4: in 32 bits that was 4 and passed
+    const std::string wrapping = write("jllama-c-api-hrm-wrapping", 1073741825u, 2, 1);
+    ASSERT_FALSE(wrapping.empty());
+    EXPECT_NE(load_log(wrapping).find("hrm: cache-slot count 4294967300"), std::string::npos);
+
+    // 1 * 2 * (1 + 1) = 4 matches: the load passes the check and fails at the tensors the GGUF does not have
+    const std::string matching = write("jllama-c-api-hrm-matching", 1, 2, 1);
+    ASSERT_FALSE(matching.empty());
+    const std::string text = load_log(matching);
+    EXPECT_EQ(text.find("hrm: cache-slot count"), std::string::npos) << text;
+    EXPECT_NE(text.find("tensor 'token_embd.weight' not found"), std::string::npos) << text;
+
+    // and the process loads and answers the next model
+    const std::string tiny = write_tiny_llama_gguf("jllama-c-api-hrm-after");
+    jllama_model *model = load_tiny(tiny, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model).empty());
+    jllama_model_free(model);
+
+    for (const std::string &p : {mismatch, wrapping, matching, tiny}) {
+        std::remove(p.c_str());
+    }
+}
+
 namespace {
 
 // The tokens the model's draft has proposed so far, from the metrics.
