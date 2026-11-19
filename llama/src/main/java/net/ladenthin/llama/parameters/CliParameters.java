@@ -32,6 +32,12 @@ import org.jspecify.annotations.Nullable;
 abstract class CliParameters {
 
     /**
+     * Separates the values of an option that llama.cpp reads as several arguments: they are stored as
+     * one string, joined by this character (which no argument holds), and rendered as one argument each.
+     */
+    static final char VALUE_SEPARATOR = '\u001f';
+
+    /**
      * The arguments by name, in the order they were first set, so {@link #toArray()} and
      * {@link #toString()} are reproducible; a flag maps to {@code null}.
      */
@@ -89,12 +95,6 @@ abstract class CliParameters {
         parameters.put(option.getCliOption(), value);
         return (T) this;
     }
-
-    /**
-     * Separates the values of an option that llama.cpp reads as several arguments: they are stored as
-     * one string, joined by this character (which no argument holds), and rendered as one argument each.
-     */
-    static final char VALUE_SEPARATOR = '\u001f';
 
     /**
      * Store the values of an option llama.cpp reads as several arguments ({@code
