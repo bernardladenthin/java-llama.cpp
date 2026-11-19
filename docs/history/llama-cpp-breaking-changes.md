@@ -1015,3 +1015,5 @@ Used during `llama.cpp` version bumps: when upgrading, scan this file from the r
 | b12537–b12541 | patches | All 26 apply unchanged (`0028` next to the changed split path of `llama-quant.cpp`). |
 | b12541–b12542 | `src/models/qwen3vl.cpp` (#32589: the graph records each layer's input, `t_layer_inp`, which an EAGLE-3 draft reads) | No project change: an EAGLE-3 draft over a Qwen3-VL target now gets the target's layer inputs; this project has no EAGLE-3 draft in CI's set. |
 | b12541–b12542 | patches | All 26 apply unchanged. |
+| b12542–b12543 | `ggml/src/ggml-metal/` (#32542: CONV_2D through the Metal tensor API on M5, split-K on every chip) | No project change: the convolutions of the speech and vision projectors run faster on Metal. Measured by no job here (the macOS runners' paravirtual GPU, see "RPC backend"). |
+| b12542–b12543 | patches | All 27 apply unchanged. |

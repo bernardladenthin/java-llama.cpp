@@ -240,7 +240,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12542** (from b12525, 17 upstream commits in five steps; master, pinned by commit
+- **llama.cpp b12543** (from b12525, 18 upstream commits in six steps; master, pinned by commit
   before upstream tags it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
   hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
   matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
@@ -256,7 +256,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (#32545), the IQ2 quantizer caches its grid search (#31910), `PATH_MAX` is gone (#32557: on Windows a split model under a path of
   more than 260 bytes of UTF-8 did not load, `CApiShard.AModelSplitByGgufSplitLoadsFromItsFirstFile`,
   over a gguf-split pair the generator writes), Vulkan,
-  CUDA and OpenCL kernel work, and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
+  CUDA and OpenCL kernel work, CONV_2D through Metal's tensor API on M5 and split-K on every Apple
+  chip (#32542, b12543), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
   license texts are regenerated, 282 packages). All 26 patches apply unchanged at every step.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
