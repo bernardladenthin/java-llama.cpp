@@ -740,7 +740,8 @@ CLAUDE.md, "Linux s390x".
   tests in the same round): lfm3-d1 decision packing (b12525, #32553; the generator would need the
   LFM3 backbone non-causal with `lfm3.decision.type = lfm3-d1`), video beyond the llava projector
   (LFM3-Omni's soundtrack through `jllama_video_decoder.read_audio`, the LFM3 and Qwen3-VL video
-  templates; needs their vision towers), Qwen3-TTS's ICL mode, Fish Audio S2 and YuE2 in the generator,
+  templates; needs their vision towers), Qwen3-TTS's ICL mode, Fish Audio S2 and YuE2 in the generator
+  (a YuE2 projector without `cls.output.weight` would guard b12553's #32606, which no test here reaches),
   and the RPC server's `cache_dir` hash path (only weights above 10 MB are hashed). The PIT gate leaves
   the `server` package and the `json` stream parsers out (`llama/pom.xml`).
 
