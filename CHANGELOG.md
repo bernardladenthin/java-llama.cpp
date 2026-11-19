@@ -240,6 +240,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
+- **llama.cpp b12541** (from b12525, 16 upstream commits in four steps; master, pinned by commit
+  before upstream tags it). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
+  hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
+  matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
+  a reference clip clones it, and `flow_steps` / `cfg_scale` (`SpeechParameters`, `/tts`) reach it
+  without a change here. A `/v1/realtime` session on a model that fell asleep wakes it before it
+  touches the model (#32567; a segmentation fault before, `CApiLfm3AudioSleep`), a recurrent cell
+  is cleared with zeros instead of scaled by 0, so a NaN left in it no longer reaches the next
+  sequence (#31913, `CApiRecurrent.AStateThatOverflowedDoesNotReachTheNextSequence`, a Mamba whose
+  state grows until it overflows: `tiny_model_spec::ssm_a_growth`), `limite` refuses mudd metadata
+  past its index array (#32562), a direct-I/O read that fails with `EIO` falls back to buffered I/O
+  (#32545), the IQ2 quantizer caches its grid search (#31910), `PATH_MAX` is gone (#32557), Vulkan,
+  CUDA and OpenCL kernel work, and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
+  license texts are regenerated, 282 packages). All 26 patches apply unchanged at every step.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
