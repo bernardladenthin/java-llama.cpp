@@ -238,21 +238,6 @@ found are fixed, these are what is left)
 - **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
   log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
   `common_log`.
-- **`--rpc` connects while the log lock is held.** The `--rpc` handler of the parse registers its
-  servers, and `patches/0015` re-checks a registration that is already cached, so the parse a load or
-  a server start runs under `g_common_log_mutex` waits for a TCP connect; a `setLogger` or another
-  load waits as long (an unreachable endpoint: the connect's timeout). `rpc::prepare_argv` has
-  already registered every endpoint before the lock is taken; letting the parse skip the re-check
-  would need a hook in `patches/0015`.
-- **The batch refusals refuse more than they have to.** `-b 1`, `--embedding -ub 1` and `-c 1` are
-  refused for every model, because the server's load probes the memory with two tokens in one batch
-  (`common_context_can_seq_rm`); a model without memory (a non-causal encoder) and a recurrent one
-  return before the probe. Refusing only where the probe runs needs the model's memory type before
-  the load.
-- **`patches/0021` knows a slot file by its path.** A file another process (or a server before a
-  restart) wrote under a name this server saved, or one that was edited, is labelled with the scales
-  of this server's last save under that name. Storing the scales in the file itself, or a hash of the
-  saved bytes next to them, would close it; upstream's own TODO is the former.
 - **Log keys of `/etc/llama.cpp/config.ini`** (applied inside the parse) bypass the log-file owner
   record and the scan for `--log-disable`.
 - **A vocabulary gap in the server's own `--reasoning-budget-message`** is answered as
@@ -264,6 +249,21 @@ found are fixed, these are what is left)
   (stop strings, `preserved_tokens`, a string `logit_bias`): those still answer `unordered_map::at`.
 - **That a freed model's teardown lines reach its log file** has no test: the random models and the
   draft model log nothing at teardown, even at `-lv 4`.
+
+**Left open by the changes of 2026-11-19** (small batches, the slot file's LoRA section, RPC outside
+the log lock)
+- **Two slots drafting into a small batch have no deterministic guard.** `patches/0033` gives each
+  slot at most its share of the batch; `CApiBatchSize` holds it with one slot (`-b 3` next to the
+  default draft of three tokens aborts without the patch), while two slots on a batch of four reach
+  the abort only when both draft long at the same step, which the random model does not do on
+  demand.
+- **The slow-server test of the log lock is POSIX only**
+  (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`): its delaying proxy uses BSD
+  sockets and `poll`; the code it guards is the same on Windows.
+- **A slot file's LoRA section matches adapters by the path the server was given.** The same adapter
+  file loaded under another spelling of its path (relative against absolute, a symbolic link) is
+  another adapter to the restore, which then refuses a state computed with it at a scale other
+  than 0.
 
 **Not tested, for want of a model or a case**
 - **ZAYA1 with real weights** (b12521, #32071): the generator's model has the architecture's shapes

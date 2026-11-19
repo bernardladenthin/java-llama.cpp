@@ -253,17 +253,22 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   keeps the router and the grouped convolution in F32 when quantized) and `CApiThreads` (the
   embedding lookup of a 2100-token prompt gives the same answer on one and four threads; red with a
   broken row split).
-- **A batch size below 2 is refused at load instead of ending the process.** The server evaluates
-  two tokens in one batch while it loads (`common_context_can_seq_rm`), and with `--batch-size 1`
-  (`ModelParameters.setBatchSize(1)`) llama.cpp aborted there (`GGML_ABORT` in
-  `common_batch::get_sub_batch`), taking the JVM with it. The context's batch is smaller than
-  `--batch-size` in two more cases, and both aborted the same way: `--embedding` / `--reranking`
-  with `--ubatch-size 1` (an embedding context's batch is its ubatch) and `--ctx-size 1` (a causal
-  context's batch is at most its size). The load now fails with a `LlamaException` naming the
-  option. A `NativeServer` parses its argv with llama.cpp's own parser before its worker starts, so
-  the same check reads every spelling and the environment (`LLAMA_ARG_BATCH="1 "` is 1, as `std::stoi`
-  reads it), and an argv the parser refuses fails `NativeServer`'s start itself
-  (`CApiBatchSize`, red without the checks; the server cases crashed).
+- **A batch of one token, more slots than batch tokens, and a draft model next to a small batch
+  work.** Three places in llama.cpp ended the process -- the JVM -- for a small batch, and the
+  engine refused a `--batch-size` below 2 to avoid the first. `patches/0032`: the server's load
+  evaluates two tokens in one batch to probe the memory (`common_context_can_seq_rm`) and the warmup
+  up to `--batch-size` tokens; both take the context's batch now, so `setBatchSize(1)`,
+  `setCtxSize(1)` (a causal context's batch is at most its size) and `--embedding` with
+  `--ubatch-size 1` load and answer. `patches/0034`: a context with more sequences than its batch
+  holds tokens -- `setParallel(4)` on a batch of 2, or a `NativeServer`'s four default slots on a
+  batch of 1 -- asserted while it was created (`n_outputs_max`). `patches/0033`: a slot drafts at
+  most its share of the server's batch; `-b 3` next to a draft model (whose default draft is three
+  tokens) aborted at the first generation step, and the old refusal let it through. Each such model
+  answers exactly what a model with a large batch answers in ubatches of one token. Only a batch of
+  no tokens is refused now ("--batch-size must be at least 1"). A `NativeServer` parses its argv
+  with llama.cpp's own parser before its worker starts, so the check reads every spelling and the
+  environment, and an argv the parser refuses fails `NativeServer`'s start itself (`CApiBatchSize`,
+  each case red without its patch; `SmallBatchIntegrationTest` over JNI; `LoadRefusalTest`).
 - **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
   tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
   `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before
@@ -300,12 +305,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the
   Javadoc named. A recurrent or hybrid model reuses its context checkpoints by the position of its
   state, not by a sliding window (#32434). `patches/0021` now labels a restored slot with the LoRA
-  scales its file was saved with, which the server records per file and applies to the adapters
-  loaded at the restore -- also after the model slept and loaded them again (renamed
-  `0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`); without it a slot
-  file restored on a server started with `--lora` was cleared again at its first request, and a
-  state saved under other scales than the current ones must not be reused (`LoraCacheFreshSlot`,
-  `LoraCacheSleep`). Also Vulkan `rms_norm` on Qualcomm (#30824).
+  scales its file was saved with and applies them to the adapters loaded at the restore -- also
+  after the model slept and loaded them again; without it a slot file restored on a server started
+  with `--lora` was cleared again at its first request, and a state saved under other scales than
+  the current ones must not be reused (`LoraCacheFreshSlot`, `LoraCacheSleep`; the file carries the
+  config since, see "Fixed"). Also Vulkan `rms_norm` on Qualcomm (#30824).
 - **llama.cpp b12497** (from b12496, 1 upstream commit: tiny-voca TTS, #32427). The `tts`
   template's new `tts_g2p()` asks the projector's letter-to-sound model for the pronunciation of a
   word; the engine hands it `mtmd_gen_audio_g2p`, as `/tts` and `llama-tts` do, so a tiny-voca pair
@@ -625,6 +629,37 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A slot file carries the LoRA config its state was computed with** (`patches/0021`, renamed
+  `0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-with.patch`). The server
+  kept the scales of the files it had saved in a map by path, so a model loaded again -- the next
+  process -- or a copy of a file counted every state as computed under no adapters, and the first
+  request with adapters cleared it. The config is a section of the file now, after the checkpoints
+  and the draft state (`SLRA`, version 1: each adapter's path and scale), and a restore labels the
+  state with it on the adapters loaded then, matched by path. A state computed under no adapters
+  writes no section and a file without one counts as computed under none, so upstream's format is
+  read and written as before for a server without adapters; llama.cpp's own reader ignores the
+  section. A section that cannot be read, or that names an adapter at a scale other than 0 which
+  the model has not loaded, refuses the restore by the adapter's path (`InvalidRequestException`,
+  `JLLAMA_STATUS_INVALID_REQUEST`) and leaves the slot empty (`LoraCacheFiles`, `LoraCacheFreshSlot`,
+  red against the previous form).
+- **A cut slot file fails its restore instead of ending the process** (`patches/0035`). llama.cpp's
+  file reader fills a read past the end of a file with zeros, so `llama_state_seq_load_file` read a
+  truncated slot file -- an interrupted save, a full disk -- as a state larger than the file and
+  asserted. The restore is an invalid slot file now and the slot is left empty
+  (`CApiSlotFiles.ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn`, an abort without the patch).
+- **RPC servers are registered before the parse, never under the log lock.** The engine parses an
+  argv under the lock of the process-wide log, and llama.cpp's `--rpc` handler registers -- connects
+  to -- every server it sees: `patches/0015` re-checked a cached registration inside
+  `ggml_backend_rpc_add_server`, so the endpoint the engine had just registered was connected to
+  again under the lock, and `LLAMA_ARG_RPC`'s servers were registered there for the first time. A
+  slow server held every `setLogger` call and every other load for as long as its connect took.
+  The servers of `--rpc` and `LLAMA_ARG_RPC` are registered first now (an unreachable one of the
+  variable fails the load by name too), the parse sees the argv without its `--rpc` pairs, and a
+  previously registered endpoint is asked for its device count outside the lock
+  (`ggml_backend_rpc_get_device_count`, which `patches/0015` exposes instead). Measured with a TCP
+  proxy delaying every connection by 400 ms: a logger swap during a load with `--rpc`, with
+  `LLAMA_ARG_RPC` and during `NativeServer`'s start waited about 400 ms before, a few ms now
+  (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`).
 - **A blocking call with `"stream": true` in its body no longer ends the process.** The raw JSON
   calls (`LlamaModel.handleCompletions` / `handleCompletionsOai`, `FfmLlamaModel.completions` /
   `chatCompletions`, `jllama_completions` & co.) passed the body's `stream` on, the server then sent
@@ -652,7 +687,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   therefore during `jllama_model_free`) a receive of a stream in flight answered "Task not found", an
   error that reads as the caller's mistake, and a stream asked for afterwards got a task nobody would
   answer; both are `JLLAMA_STATUS_INTERRUPTED` now (`CApiInterrupt`).
-- **A load refused after its parse leaves the log files alone.** A batch below 2 and rank pooling on
+- **A load refused after its parse leaves the log files alone.** A batch of no tokens (below 2 until `patches/0032`) and rank pooling on
   a model without a classification head are refused after llama.cpp accepted the argv, and the
   load's `--log-file` had been opened by then -- closing the file another model logged into. The
   refusal is decided before the file is opened (`CApiLogFile`); a `LLAMA_ARG_LOG_FILE` the refused
