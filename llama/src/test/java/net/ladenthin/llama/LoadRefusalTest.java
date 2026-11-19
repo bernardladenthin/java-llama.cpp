@@ -18,15 +18,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Parameters llama.cpp refuses before it reads the model file. A batch below 2 and a chat template
- * that does not parse used to end the process -- the JVM -- instead of failing the load, so the test
+ * Parameters llama.cpp refuses before it reads the model file. A batch of no tokens and a chat
+ * template that does not parse used to end the process -- the JVM -- instead of failing the load, so the test
  * running on after the refusal is half of what they assert; an option's refused value failed the
  * load before too, but without its reason. Every refusal is a plain {@link LlamaException} (the C
  * API's {@code JLLAMA_STATUS_ERROR}), not the subclass for an invalid request. No GGUF is needed:
  * the refusals come before the model path is opened.
  */
 @ClaudeGenerated(
-        purpose = "Model-free guard that a refused --batch-size and a chat template llama.cpp cannot parse "
+        purpose = "Model-free guard that a --batch-size of 0 and a chat template llama.cpp cannot parse "
                 + "fail the load with a LlamaException naming the reason instead of ending the JVM.")
 class LoadRefusalTest {
 
@@ -38,13 +38,13 @@ class LoadRefusalTest {
     }
 
     @Test
-    void aBatchSizeBelowTwoIsRefusedByName() {
-        // llama.cpp's load evaluates two tokens in one batch and aborted the process on a batch of 1
+    void aBatchOfNoTokensIsRefusedByName() {
+        // a context whose batch holds no token aborts the process at its first decode
         LlamaException refused = assertThrows(
                 LlamaException.class,
                 () -> new LlamaModel(
-                        new ModelParameters().setModel(NO_MODEL).setBatchSize(1).setFit(false)));
-        assertThat(refused.getMessage(), containsString("--batch-size must be at least 2"));
+                        new ModelParameters().setModel(NO_MODEL).setBatchSize(0).setFit(false)));
+        assertThat(refused.getMessage(), containsString("--batch-size must be at least 1"));
         assertEquals(LlamaException.class, refused.getClass(), "the status of a refused parse");
     }
 

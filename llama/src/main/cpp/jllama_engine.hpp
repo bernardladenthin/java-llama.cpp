@@ -240,9 +240,8 @@ void set_cpu_moe_batched(bool batched);
                                  const std::vector<std::string> &documents);
 
 /**
- * Why llama.cpp would abort the process loading a model with these parameters, or empty: the
- * server's load evaluates two tokens in one batch, and the context's batch is --batch-size, or
- * --ubatch-size for an embedding context, or at most --ctx-size for a causal one.
+ * Why llama.cpp would abort the process loading a model with these parameters, or empty: a
+ * --batch-size of 0 gives a context whose batch holds no token, and the first decode aborts.
  */
 [[nodiscard]] std::string batch_refusal(const common_params &params);
 

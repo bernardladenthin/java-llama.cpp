@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**21 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**24 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -43,6 +43,9 @@ match a binary to this page.
 | 0029 | [`0029-server-media-file-reads-utf8.patch`](#0029-server-media-file-reads-utf8patch) | server: open a file:// media URL by its UTF-8 path on Windows | 1 | 1 |
 | 0030 | [`0030-common-arg-env-reads-utf8.patch`](#0030-common-arg-env-reads-utf8patch) | common: read an option's environment variable as UTF-8 on Windows | 1 | 2 |
 | 0031 | [`0031-common-params-parse-reports-its-error.patch`](#0031-common-params-parse-reports-its-errorpatch) | common: report a refused argument parse instead of ending the process | 2 | 3 |
+| 0032 | [`0032-common-the-warmup-and-the-memory-probe-take-the-context-batch.patch`](#0032-common-the-warmup-and-the-memory-probe-take-the-context-batchpatch) | common : the warmup and the memory probe take the context's batch | 1 | 3 |
+| 0033 | [`0033-server-a-slot-drafts-at-most-its-share-of-the-batch.patch`](#0033-server-a-slot-drafts-at-most-its-share-of-the-batchpatch) | server : a slot drafts at most its share of the batch | 1 | 1 |
+| 0034 | [`0034-llama-a-context-holds-an-output-row-for-every-sequence.patch`](#0034-llama-a-context-holds-an-output-row-for-every-sequencepatch) | llama : a context holds an output row for every sequence | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -948,4 +951,96 @@ generic message).
 
 Drop-check: drop this patch when common_params_parse() no longer calls exit() for an error and
 hands its reason to the caller.
+```
+
+## 0032-common-the-warmup-and-the-memory-probe-take-the-context-batch.patch
+
+**Files (1):** `common/common.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : the warmup and the memory probe take the context's batch
+
+common_context_can_seq_rm() (which the server runs for the target and the draft context when it
+loads a model) decodes two tokens in one batch, and the warmup of common_init_from_params() decodes
+up to params.n_batch tokens. A context whose batch holds one token -- -b 1, a causal context of one
+token (-c 1: llama_context caps n_batch at n_ctx), an embedding context with -ub 1 -- ended the
+process there: common_batch renders into a llama_batch_ext of n_batch tokens, and the second token is
+a GGML_ABORT ("failed to add token"). The server itself handles a batch of one token (it decodes in
+sub-batches of n_batch, and decode() treats n_batch == 1 on its own); only these two places did not.
+
+The probe now decodes the two tokens in sub-batches of the context's n_batch -- the same memory
+afterwards, and a second token that does not fit (a context of one token) fails the decode, which
+the probe already answers as "no partial removal". The warmup takes at most llama_n_batch(ctx)
+tokens instead of params.n_batch, and the encoder's at most llama_n_ubatch(ctx), since an encoder
+reads its input in one ubatch.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model loaded with -b 1, -c 1, -ub 1 and
+--embedding -ub 1, with and without the warmup, loads and answers (an abort of the test process
+before). Until this patch the engine refused those values at load (jllama::engine::batch_refusal).
+
+Drop-check on every bump: read common_context_can_seq_rm() and the warmup of
+common_init_from_params() in common/common.cpp -- once both decode no more than the context's batch
+in one call, drop the patch.
+```
+
+## 0033-server-a-slot-drafts-at-most-its-share-of-the-batch.patch
+
+**Files (1):** `tools/server/server-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server : a slot drafts at most its share of the batch
+
+update_slots() puts the sampled token and the draft of every generating slot into one batch, which
+holds max(n_batch, n_parallel) tokens (server_context_impl::batch). The length of a draft is limited
+by the context, the request and the speculative type's own n_max, never by that batch: with a batch
+smaller than one token plus a draft -- -b 3 next to a draft model, whose default draft is three
+tokens, or a causal context of three tokens, -c 3, since llama_context caps n_batch at n_ctx -- the
+first generation step ended the process in handle_last_sampled_token() ("batch must be large enough
+to hold the sampled and draft tokens"). Several slots drafting at once need their drafts together.
+
+A slot now drafts at most n_tokens_alloc / n_parallel - 1 tokens, its equal share of the batch: with
+the default batch of 2048 tokens nothing changes (2047 per slot alone, 511 with four slots), with a
+batch of one token per slot the slot does not draft and generates without the draft model. A draft
+is the model's own proposal either way, so a shorter one changes how many tokens a step accepts,
+not the answer.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model with a draft model and -b 3
+drafts and answers what the model answers without one, and with -b 1 it does not draft (an abort of
+the test process at -b 3 before; two slots drafting into a batch of four reach the abort only when
+their drafts happen to be long at the same step, so that case is no guard).
+
+Drop-check on every bump: read the drafting loop of update_slots() in tools/server/server-context.cpp
+-- once the draft's n_max is limited by the room left in the batch, drop the patch.
+```
+
+## 0034-llama-a-context-holds-an-output-row-for-every-sequence.patch
+
+**Files (1):** `src/llama-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : a context holds an output row for every sequence
+
+llama_context's constructor caps the outputs of a batch at n_batch (or the caller's n_outputs_max),
+and output_reserve(), which the constructor calls, keeps max(n_outputs, n_seq_max) rows and asserts
+that this is within that cap. A context with more sequences than its batch holds tokens -- -b 2
+-np 4 in the server, or any caller with n_seq_max above n_batch -- therefore ended the process while
+it was being created (GGML_ASSERT(n_outputs_max <= cparams.n_outputs_max) in output_reserve), and
+the server's load took the same path through common_fit_params(). A context of four sequences and a
+batch of two tokens is valid otherwise: the server decodes its batch in sub-batches of n_batch.
+
+The cap is now at least n_seq_max, the rows output_reserve() keeps anyway. Nothing changes for a
+context whose batch holds a token per sequence, which is every context with the default batch.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: two slots on a batch of one token, and
+four on a batch of two, load and answer what one slot answers (an abort of the test process before).
+
+Drop-check on every bump: read the n_outputs_max lines of llama_context's constructor in
+src/llama-context.cpp -- once the cap is at least n_seq_max, or output_reserve() no longer keeps a
+row per sequence, drop the patch.
 ```

@@ -3072,64 +3072,228 @@ TEST(CApiThreads, ALongPromptsEmbeddingLookupGivesTheSameAnswerOnOneAndOnFourThr
     std::filesystem::remove(path, ignored);
 }
 
-TEST(CApiBatchSize, ABatchSizeBelowTwoIsRefusedInsteadOfEndingTheProcess) {
+namespace {
+
+// What a model loaded with extra answers greedily to one prompt, evaluated whole, with the prompt
+// tokens it evaluated -- or why it did not load or answer.
+struct BatchAnswer {
+    std::string content;
+    int prompt_n = -1;
+    int drafted = -1;
+    std::string error;
+};
+
+BatchAnswer batch_answer(jllama_model *model) {
+    BatchAnswer a;
+    Owned completion;
+    const char *request = R"({"prompt":"Hello there","temperature":0,"n_predict":16,"cache_prompt":false})";
+    if (jllama_completions(model, request, &completion.s) == JLLAMA_STATUS_OK) {
+        const json j = json::parse(completion.str());
+        a.content = j.at("content").get<std::string>();
+        a.prompt_n = j.at("timings").at("prompt_n").get<int>();
+    } else {
+        a.error = jllama_last_error();
+    }
+    return a;
+}
+
+BatchAnswer batch_answer(const std::string &path, const std::vector<std::string> &extra) {
+    jllama_model *model = load_tiny(path, extra);
+    if (model == nullptr) {
+        BatchAnswer refused;
+        refused.error = jllama_last_error();
+        return refused;
+    }
+    BatchAnswer a = batch_answer(model);
+    a.drafted = drafted_tokens(model);
+    jllama_model_free(model);
+    return a;
+}
+
+std::string joined(const std::vector<std::string> &args) {
+    std::string text;
+    for (const auto &a : args) {
+        text += (text.empty() ? "" : " ") + a;
+    }
+    return text;
+}
+
+} // namespace
+
+TEST(CApiBatchSize, ABatchOfOneTokenLoadsAndAnswersAsUbatchesOfOneTokenDo) {
     // The server's load evaluates two tokens in one batch to learn whether the memory can drop part
-    // of a sequence (common_context_can_seq_rm). With --batch-size 1 llama.cpp aborted the process in
-    // common_batch::get_sub_batch -- a JVM, for setBatchSize(1). The load is refused by name instead,
-    // the process goes on, and a batch of 2 loads and answers.
+    // of a sequence (common_context_can_seq_rm), and the warmup up to --batch-size tokens. A context
+    // whose batch holds fewer -- --batch-size 1, or -c 1, since a causal context's batch is at most
+    // its size -- aborted the process in common_batch::get_sub_batch: a JVM, for setBatchSize(1).
+    // Since patches/0032 both evaluate the context's batch at a time, and such a model answers what a
+    // model with a larger batch answers in ubatches of one token: the same evaluation, token by token.
     const std::string path = write_tiny_llama_gguf("jllama-c-api-batch-size");
     ASSERT_FALSE(path.empty());
-    for (const char *size : {"1", "0"}) {
-        EXPECT_EQ(load_tiny(path, {"-b", size}), nullptr) << size;
-        EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 2"), std::string::npos)
+    const BatchAnswer reference = batch_answer(path, {"-b", "64", "-ub", "1"});
+    ASSERT_TRUE(reference.error.empty()) << reference.error;
+    ASSERT_FALSE(reference.content.empty());
+    ASSERT_GT(reference.prompt_n, 1);
+    for (const std::vector<std::string> &extra :
+         {std::vector<std::string>{"-b", "1"}, std::vector<std::string>{"-b", "1", "--warmup"},
+          std::vector<std::string>{"-c", "1"}, std::vector<std::string>{"-c", "1", "--warmup"},
+          std::vector<std::string>{"-b", "2", "-ub", "1", "--warmup"}}) {
+        SCOPED_TRACE(joined(extra));
+        const BatchAnswer a = batch_answer(path, extra);
+        EXPECT_TRUE(a.error.empty()) << a.error;
+        EXPECT_EQ(a.content, reference.content);
+        EXPECT_EQ(a.prompt_n, reference.prompt_n);
+    }
+    // A draft model's proposals go into the target's batch next to the sampled token, and a slot
+    // drafts at most its share of that batch (patches/0033; before it, a batch of three next to the
+    // default draft of three tokens ended the process). A batch of one leaves no room and the model
+    // generates without drafting, a batch of three drafts up to two tokens; checked in ubatches of
+    // one token, the answer stays the same.
+    for (const char *batch : {"1", "3"}) {
+        const std::vector<std::string> extra = {
+            "-b", batch, "-ub", "1", "--warmup", "--spec-draft-model", path, "--spec-draft-ngl", "0"};
+        SCOPED_TRACE(joined(extra));
+        const BatchAnswer a = batch_answer(path, extra);
+        EXPECT_TRUE(a.error.empty()) << a.error;
+        EXPECT_EQ(a.content, reference.content);
+        if (std::string(batch) == "1") {
+            EXPECT_EQ(a.drafted, 0);
+        } else {
+            EXPECT_GT(a.drafted, 0);
+        }
+    }
+    // a batch of no tokens cannot evaluate anything: the load is refused by name, the process goes on
+    for (const char *flag : {"-b", "--batch_size"}) {
+        EXPECT_EQ(load_tiny(path, {flag, "0"}), nullptr) << flag;
+        EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 1"), std::string::npos)
             << jllama_last_error();
     }
-    // The batch a context gets can be smaller than --batch-size: an embedding context takes the
-    // ubatch (common_init_result clamps n_batch to it), a causal one at most its size (llama_context).
-    // Both reached the same probe and aborted the process.
-    EXPECT_EQ(load_tiny(path, {"--embedding", "-ub", "1"}), nullptr);
-    EXPECT_NE(std::string(jllama_last_error()).find("--ubatch-size must be at least 2 with --embedding"),
-              std::string::npos)
-        << jllama_last_error();
-    EXPECT_EQ(load_tiny(path, {"-c", "1"}), nullptr);
-    EXPECT_NE(std::string(jllama_last_error()).find("--ctx-size must be at least 2"), std::string::npos)
-        << jllama_last_error();
-    jllama_model *embedding = load_tiny(path, {"--embedding", "-ub", "2"});
-    ASSERT_NE(embedding, nullptr) << jllama_last_error();
-    jllama_model_free(embedding);
-    jllama_model *model = load_tiny(path, {"-b", "2", "-ub", "1"});
-    ASSERT_NE(model, nullptr) << jllama_last_error();
-    EXPECT_FALSE(greedy_answer(model, 4).empty());
-    jllama_model_free(model);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiBatchSize, SlotsShareABatchSmallerThanTheirTokens) {
+    // Requests at once put a token of every slot into each generation step, more tokens than a small
+    // batch holds: the server decodes them a batch at a time, and each request answers what it
+    // answers alone. A context of more sequences than batch tokens ended the process while it was
+    // being created (patches/0034); two slots that draft get half of a batch of four each
+    // (patches/0033).
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-batch-size-slots");
+    ASSERT_FALSE(path.empty());
+    struct row {
+        int slots;
+        std::vector<std::string> extra;
+    };
+    for (const row &r :
+         {row{2, {"-b", "1", "--warmup"}}, row{4, {"-b", "2", "-ub", "1", "--warmup"}},
+          row{2, {"-b", "4", "-ub", "1", "--warmup", "--spec-draft-model", path, "--spec-draft-ngl", "0"}}}) {
+        const std::string slots = std::to_string(r.slots);
+        std::vector<std::string> extra = r.extra;
+        extra.insert(extra.end(), {"-np", slots});
+        SCOPED_TRACE(joined(extra));
+        const BatchAnswer reference = batch_answer(path, {"-b", "64", "-ub", "1", "-np", slots});
+        ASSERT_TRUE(reference.error.empty()) << reference.error;
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        for (int round = 0; round < 3; ++round) {
+            std::vector<BatchAnswer> answers(static_cast<size_t>(r.slots));
+            std::vector<std::thread> callers;
+            for (size_t i = 0; i < answers.size(); ++i) {
+                callers.emplace_back([&answers, i, model]() { answers[i] = batch_answer(model); });
+            }
+            for (auto &caller : callers) {
+                caller.join();
+            }
+            for (const BatchAnswer &a : answers) {
+                EXPECT_TRUE(a.error.empty()) << a.error;
+                EXPECT_EQ(a.content, reference.content);
+            }
+        }
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiBatchSize, AnEmbeddingContextWithAUbatchOfOneTokenLoads) {
+    // An embedding context's batch is its ubatch (common_init_result clamps n_batch to it), so
+    // --embedding -ub 1 reached the same probe and aborted the process; a non-causal encoder's warmup
+    // encoded two tokens in a ubatch of one. Both load now, and an input longer than the ubatch is
+    // refused by the server, which an encoder reads whole.
+    const std::string llama = write_tiny_llama_gguf("jllama-c-api-batch-size-embedding");
+    ASSERT_FALSE(llama.empty());
+    for (const std::vector<std::string> &extra : {std::vector<std::string>{"--embedding", "-ub", "1"},
+                                                  std::vector<std::string>{"--embedding", "-ub", "1", "--warmup"}}) {
+        SCOPED_TRACE(joined(extra));
+        jllama_model *model = load_tiny(llama, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        jllama_model_free(model);
+    }
+    const std::string bert = write_tiny_bert_gguf(false, 2 /* LLAMA_POOLING_TYPE_CLS */, "jllama-bert-batch-size");
+    ASSERT_FALSE(bert.empty());
+    jllama_model *encoder = load_tiny(bert, {"--embedding", "-b", "1", "-ub", "1", "--warmup"});
+    ASSERT_NE(encoder, nullptr) << jllama_last_error();
+    Owned refused;
+    EXPECT_NE(jllama_embeddings(encoder, R"({"content":"hello there"})", false, &refused.s), JLLAMA_STATUS_OK);
+    EXPECT_NE(std::string(jllama_last_error()).find("too large to process"), std::string::npos) << jllama_last_error();
+    jllama_model_free(encoder);
+    std::error_code ignored;
+    std::filesystem::remove(llama, ignored);
+    std::filesystem::remove(bert, ignored);
+}
+
 #ifdef JLLAMA_HAS_NATIVE_SERVER
-TEST(CApiBatchSize, AServerWithABatchBelowTwoIsRefusedBeforeItStarts) {
-    // The embedded server loads its model inside llama_server(), past the engine's load and its
-    // check: with -b 1 the same two-token probe aborted the process there. The server's argv is
-    // read before the worker starts, in every spelling the parse accepts.
+TEST(CApiBatchSize, AServerWithABatchOfOneTokenStartsAndAnswers) {
+    // The embedded server loads its model inside llama_server(), past the engine's load: with -b 1
+    // the same probe aborted the process there (patches/0032), and so did its four default slots on a
+    // batch of one token (patches/0034). It starts and answers now, with the batch from the argv or
+    // from the environment; a batch of no tokens is refused before the worker starts.
     const std::string path = write_tiny_llama_gguf("jllama-c-api-server-batch-size");
     ASSERT_FALSE(path.empty());
-    // upstream reads the number with std::stoi, so "1x" is 1; and an embedding server's batch is its ubatch
-    for (const std::vector<std::string> batch :
-         {std::vector<std::string>{"-b", "1"}, std::vector<std::string>{"--batch_size", "0"},
-          std::vector<std::string>{"-b", "4", "--batch-size", "1"}, std::vector<std::string>{"-b", "1x"},
-          std::vector<std::string>{"--embedding", "-ub", "1"}}) {
-        std::vector<std::string> args = {"llama-server", "-m",        path,     "-c", "64", "-ngl", "0",
-                                         "--host",       "127.0.0.1", "--port", "0"};
+    const auto start = [&](const std::vector<std::string> &batch, jllama_server **server, int *port) {
+        httplib::Server probe;
+        *port = probe.bind_to_any_port("127.0.0.1");
+        std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+        probe.wait_until_ready();
+        probe.stop();
+        probe_listener.join();
+        const std::string port_text = std::to_string(*port);
+        std::vector<std::string> args = {"llama-server", "-m",        path,     "-c",     "64", "-ngl", "0",
+                                         "--host",       "127.0.0.1", "--port", port_text};
         args.insert(args.end(), batch.begin(), batch.end());
         std::vector<const char *> argv;
         for (const auto &a : args) {
             argv.push_back(a.c_str());
         }
+        return jllama_server_start(static_cast<int>(argv.size()), argv.data(), server);
+    };
+    const auto answers = [](int port) {
+        httplib::Client client("127.0.0.1", port);
+        httplib::Result health;
+        for (int i = 0; i < 200 && !(health && health->status == 200); i++) {
+            health = client.Get("/health");
+            if (!(health && health->status == 200)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
+        EXPECT_TRUE(health && health->status == 200);
+        const auto completion =
+            client.Post("/completion", R"({"prompt":"Hello there","n_predict":4,"temperature":0})", "application/json");
+        EXPECT_TRUE(completion) << httplib::to_string(completion.error());
+        if (completion) {
+            EXPECT_EQ(completion->status, 200) << completion->body;
+            EXPECT_EQ(json::parse(completion->body).at("tokens_predicted").get<int>(), 4) << completion->body;
+        }
+    };
+    // upstream reads the number with std::stoi, so "1x" is 1
+    for (const std::vector<std::string> &batch :
+         {std::vector<std::string>{"-b", "1"}, std::vector<std::string>{"-b", "1x"},
+          std::vector<std::string>{"-b", "4", "--batch-size", "1"}}) {
+        SCOPED_TRACE(joined(batch));
         jllama_server *server = nullptr;
-        EXPECT_EQ(jllama_server_start(static_cast<int>(argv.size()), argv.data(), &server), JLLAMA_STATUS_ERROR)
-            << batch.back();
-        EXPECT_EQ(server, nullptr);
-        EXPECT_NE(std::string(jllama_last_error()).find("must be at least 2"), std::string::npos)
-            << jllama_last_error();
+        int port = 0;
+        ASSERT_EQ(start(batch, &server, &port), JLLAMA_STATUS_OK) << jllama_last_error();
+        answers(port);
+        EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
     }
     {
         // from the environment, which the parse applies before the argv
@@ -3139,23 +3303,29 @@ TEST(CApiBatchSize, AServerWithABatchBelowTwoIsRefusedBeforeItStarts) {
 #else
         setenv("LLAMA_ARG_BATCH", "1 ", 1);
 #endif
-        const std::vector<std::string> args = {"llama-server", "-m",        path,     "-c", "64", "-ngl", "0",
-                                               "--host",       "127.0.0.1", "--port", "0"};
-        std::vector<const char *> argv;
-        for (const auto &a : args) {
-            argv.push_back(a.c_str());
-        }
         jllama_server *server = nullptr;
-        const jllama_status status = jllama_server_start(static_cast<int>(argv.size()), argv.data(), &server);
+        int port = 0;
+        const jllama_status status = start({}, &server, &port);
         const std::string error = jllama_last_error();
 #ifdef _WIN32
         _putenv_s("LLAMA_ARG_BATCH", "");
 #else
         unsetenv("LLAMA_ARG_BATCH");
 #endif
-        EXPECT_EQ(status, JLLAMA_STATUS_ERROR);
+        ASSERT_EQ(status, JLLAMA_STATUS_OK) << error;
+        answers(port);
+        EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    }
+    for (const std::vector<std::string> &batch :
+         {std::vector<std::string>{"-b", "0"}, std::vector<std::string>{"--batch_size", "0"},
+          std::vector<std::string>{"-b", "4", "--batch-size", "0"}}) {
+        SCOPED_TRACE(joined(batch));
+        jllama_server *server = nullptr;
+        int port = 0;
+        EXPECT_EQ(start(batch, &server, &port), JLLAMA_STATUS_ERROR);
         EXPECT_EQ(server, nullptr);
-        EXPECT_NE(error.find("--batch-size must be at least 2"), std::string::npos) << error;
+        EXPECT_NE(std::string(jllama_last_error()).find("--batch-size must be at least 1"), std::string::npos)
+            << jllama_last_error();
     }
     {
         // an argv the parse refuses fails the start itself, not the worker later

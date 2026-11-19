@@ -1,0 +1,40 @@
+server : a slot drafts at most its share of the batch
+
+update_slots() puts the sampled token and the draft of every generating slot into one batch, which
+holds max(n_batch, n_parallel) tokens (server_context_impl::batch). The length of a draft is limited
+by the context, the request and the speculative type's own n_max, never by that batch: with a batch
+smaller than one token plus a draft -- -b 3 next to a draft model, whose default draft is three
+tokens, or a causal context of three tokens, -c 3, since llama_context caps n_batch at n_ctx -- the
+first generation step ended the process in handle_last_sampled_token() ("batch must be large enough
+to hold the sampled and draft tokens"). Several slots drafting at once need their drafts together.
+
+A slot now drafts at most n_tokens_alloc / n_parallel - 1 tokens, its equal share of the batch: with
+the default batch of 2048 tokens nothing changes (2047 per slot alone, 511 with four slots), with a
+batch of one token per slot the slot does not draft and generates without the draft model. A draft
+is the model's own proposal either way, so a shorter one changes how many tokens a step accepts,
+not the answer.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model with a draft model and -b 3
+drafts and answers what the model answers without one, and with -b 1 it does not draft (an abort of
+the test process at -b 3 before; two slots drafting into a batch of four reach the abort only when
+their drafts happen to be long at the same step, so that case is no guard).
+
+Drop-check on every bump: read the drafting loop of update_slots() in tools/server/server-context.cpp
+-- once the draft's n_max is limited by the room left in the batch, drop the patch.
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3868,7 +3868,11 @@
+                 const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+                 const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+ 
+-                const int n_draft_max = slot.get_n_draft_max();
++                // the sampled token and the draft of every generating slot go into one batch of
++                // n_tokens_alloc tokens: a slot drafts at most its share of it, or handle_last_sampled_token()
++                // finds no room and aborts the process
++                const int n_draft_share = batch.n_tokens_alloc / std::max(1, params_base.n_parallel) - 1;
++                const int n_draft_max   = std::min(slot.get_n_draft_max(), n_draft_share);
+ 
+                 if (n_draft_max > 0) {
+                     GGML_ASSERT(slot.can_speculate());

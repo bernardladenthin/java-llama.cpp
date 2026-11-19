@@ -492,21 +492,13 @@ struct load_progress_relay {
 } // namespace
 
 std::string batch_refusal(const common_params &params) {
-    // The server's load probes the memory with two tokens in one batch (common_context_can_seq_rm);
-    // with a smaller logical batch llama.cpp aborts the process there (GGML_ABORT in
-    // common_batch::get_sub_batch) -- the JVM, for a Java caller. The batch the context gets is
-    // smaller than --batch-size in two cases: an embedding context takes n_ubatch (common_init_result
-    // and llama_server() both clamp it), and a causal context takes at most n_ctx (llama_context).
-    const std::string why = "): the server evaluates two tokens in one batch when it loads the model";
-    if (params.n_batch < 2) {
-        return "--batch-size must be at least 2 (got " + std::to_string(params.n_batch) + why;
-    }
-    if (params.embedding && params.n_ubatch < 2) {
-        return "--ubatch-size must be at least 2 with --embedding or --reranking (got " +
-               std::to_string(params.n_ubatch) + "; an embedding context's batch is its ubatch" + why;
-    }
-    if (params.n_ctx == 1) {
-        return "--ctx-size must be at least 2 (got 1; a causal context's batch is at most its size" + why;
+    // A batch of no tokens: llama_context takes n_ubatch from it too, and every decode -- the warmup,
+    // the server's memory probe -- aborts the process adding its first token (GGML_ABORT "failed to
+    // add token") -- the JVM, for a Java caller. A batch of one token works since patches/0032, which
+    // makes the warmup and the probe decode no more than the context's batch in one call.
+    if (params.n_batch < 1) {
+        return "--batch-size must be at least 1 (got " + std::to_string(params.n_batch) +
+               "): a batch of no tokens cannot evaluate anything";
     }
     return std::string();
 }
