@@ -2725,9 +2725,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
+      # llama.cpp's option parser reads numbers with std::stof, which follows LC_NUMERIC; the engine
+      # parses under the "C" numeric locale. CApiLocale proves it under a locale with a decimal
+      # comma, which the runner image does not have -- generated here, and required by the variable.
+      - name: Generate a locale with a decimal comma
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -i '^de_DE'
       - name: Run C++ unit tests
         env:
           JLLAMA_REQUIRE_FFMPEG: "1"
+          JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE: "1"
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-linux-aarch64:

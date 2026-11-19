@@ -238,12 +238,21 @@ found are fixed, these are what is left)
 - **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
   log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
   `common_log`.
-- **An embedded server's own parse runs outside `g_common_log_mutex`.** The engine parses the argv
-  first under the lock (`prepare_server_argv`), but `llama_server()` parses it again on its worker,
-  so a `--log-disable`, `--log-colors` or `LLAMA_ARG_LOG_FILE` there pauses the log worker without the
-  lock a concurrent `setLogger` takes -- and with `LLAMA_ARG_LOG_FILE` set the argv's `--log-file`
-  is left to that parse too, to keep upstream's order. A hook in `patches/0006`/`0007` after their
-  parse would close it.
+- **`--rpc` connects while the log lock is held.** The `--rpc` handler of the parse registers its
+  servers, and `patches/0015` re-checks a registration that is already cached, so the parse a load or
+  a server start runs under `g_common_log_mutex` waits for a TCP connect; a `setLogger` or another
+  load waits as long (an unreachable endpoint: the connect's timeout). `rpc::prepare_argv` has
+  already registered every endpoint before the lock is taken; letting the parse skip the re-check
+  would need a hook in `patches/0015`.
+- **The batch refusals refuse more than they have to.** `-b 1`, `--embedding -ub 1` and `-c 1` are
+  refused for every model, because the server's load probes the memory with two tokens in one batch
+  (`common_context_can_seq_rm`); a model without memory (a non-causal encoder) and a recurrent one
+  return before the probe. Refusing only where the probe runs needs the model's memory type before
+  the load.
+- **`patches/0021` knows a slot file by its path.** A file another process (or a server before a
+  restart) wrote under a name this server saved, or one that was edited, is labelled with the scales
+  of this server's last save under that name. Storing the scales in the file itself, or a hash of the
+  saved bytes next to them, would close it; upstream's own TODO is the former.
 - **Log keys of `/etc/llama.cpp/config.ini`** (applied inside the parse) bypass the log-file owner
   record and the scan for `--log-disable`.
 - **A vocabulary gap in the server's own `--reasoning-budget-message`** is answered as

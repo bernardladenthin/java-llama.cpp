@@ -177,6 +177,26 @@ TEST_F(LoraCache, TheAdapterChangesTheAnswerAndTheSlotReusesItsCache) {
     EXPECT_NE(fresh_answer(), with_adapter);
 }
 
+// jllama_set_lora_adapters answers upstream's {"success": true}, not the list (the header said
+// otherwise once), and an adapter the array does not name gets scale 0, as POST /lora-adapters does.
+TEST_F(LoraCache, SettingTheAdaptersAnswersSuccessAndAnAdapterNotNamedGetsScaleZero) {
+    const auto scale_of_adapter_0 = []() {
+        Owned list;
+        EXPECT_EQ(jllama_lora_adapters(model_, &list.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json adapters = json::parse(list.str());
+        EXPECT_EQ(adapters.size(), 1u) << adapters.dump();
+        return adapters.at(0).at("scale").get<float>();
+    };
+    Owned response;
+    ASSERT_EQ(jllama_set_lora_adapters(model_, R"([{"id":0,"scale":0.5}])", &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(response.str()), json({{"success", true}})) << response.str();
+    EXPECT_FLOAT_EQ(scale_of_adapter_0(), 0.5f);
+    Owned none;
+    ASSERT_EQ(jllama_set_lora_adapters(model_, "[]", &none.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_FLOAT_EQ(scale_of_adapter_0(), 0.0f) << "an adapter the array does not name";
+}
+
 TEST_F(LoraCache, ASetLoraChangeIsNotAnsweredFromTheOldCache) {
     complete(); // the slot's cache is now computed with the adapter at scale 1
     set_scale(0.0f);
@@ -284,6 +304,38 @@ std::string LoraCacheFreshSlot::save_dir_;
 jllama_model *LoraCacheFreshSlot::model_ = nullptr;
 
 } // namespace
+
+TEST_F(LoraCacheFreshSlot, ARequestWithoutASlotGoesToTheSlotOfItsLoraConfig) {
+    // b12498 (#32434): the slot scheduler skips a slot whose state another LoRA config computed, which
+    // the task would clear. Two slots hold the same prompt, one computed at scale 1, one at scale 0; a
+    // request that names no slot takes the slot of its own config and reuses its cache. Without the
+    // check the first slot of the best similarity won whatever its config, and the request cleared it.
+    set_scale(1.0f);
+    slot_action(JLLAMA_SLOT_ERASE, 0, nullptr);
+    slot_action(JLLAMA_SLOT_ERASE, 1, nullptr);
+    const auto complete = [](int slot, const json &lora) {
+        json request = {{"prompt", PROMPT}, {"n_predict", 8}, {"temperature", 0}, {"top_k", 1}, {"cache_prompt", true}};
+        if (slot >= 0) {
+            request["id_slot"] = slot;
+        }
+        if (!lora.is_null()) {
+            request["lora"] = lora;
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model_, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return json::parse(response.str());
+    };
+    const json scale_zero = json::array({{{"id", 0}, {"scale", 0.0f}}});
+    complete(0, json());     // slot 0: the server's scale 1
+    complete(1, scale_zero); // slot 1: the request's scale 0
+    const json at_zero = complete(-1, scale_zero);
+    EXPECT_EQ(at_zero.at("id_slot").get<int>(), 1) << "a request at scale 0 went to the slot of scale 1";
+    EXPECT_GT(at_zero.at("timings").at("cache_n").get<int>(), 0) << at_zero.dump();
+    const json at_one = complete(-1, json());
+    EXPECT_EQ(at_one.at("id_slot").get<int>(), 0) << "a request at scale 1 went to the slot of scale 0";
+    EXPECT_GT(at_one.at("timings").at("cache_n").get<int>(), 0) << at_one.dump();
+}
 
 TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     ASSERT_NE(model_, nullptr);

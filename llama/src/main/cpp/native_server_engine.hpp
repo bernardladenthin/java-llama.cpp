@@ -20,16 +20,20 @@
 #include "jllama_context.hpp"
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+struct common_params;
 
 namespace jllama::server_engine {
 
 // A running (or finished) server: the argv storage for its lifetime plus the worker thread.
 struct native_server {
-    std::vector<std::string> args; // args[0] is the program name
-    std::vector<char *> argv;      // points into `args`
+    std::vector<std::string> args;         // args[0] is the program name
+    std::vector<char *> argv;              // points into `args`
+    std::shared_ptr<common_params> params; // the one parse of args (jllama::engine::prepare_server_argv)
     std::thread worker;
     std::atomic<bool> finished{false};
     int exit_code = -1;

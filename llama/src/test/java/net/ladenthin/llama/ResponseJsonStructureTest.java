@@ -73,6 +73,19 @@ public class ResponseJsonStructureTest {
     // Non-OAI completion response structure
     // -------------------------------------------------------------------------
 
+    /**
+     * A raw body with {@code "stream": true} on a blocking call: the server sent the answer in
+     * chunks, all with index 0, and the blocking wait ended the JVM at the second one (llama.cpp's
+     * {@code GGML_ASSERT "duplicate result received"}). The blocking calls answer the whole result.
+     */
+    @Test
+    public void testABlockingCallAnswersAStreamRequestWhole() {
+        String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + ",\"stream\":true}";
+        assertThat(model.handleCompletions(json), containsString("\"stop\":true"));
+        String oai = "{\"prompt\":\"" + PROMPT + "\",\"max_tokens\":" + N_PREDICT + DETERMINISTIC + ",\"stream\":true}";
+        assertThat(model.handleCompletionsOai(oai), containsString("\"text_completion\""));
+    }
+
     @Test
     public void testNonOaiCompletionHasContentField() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";

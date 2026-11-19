@@ -191,10 +191,12 @@ JLLAMA_API void jllama_model_free(jllama_model *model);
 /**
  * The first half of jllama_model_free, which it runs itself: cancels the model's streaming tasks and
  * makes every call that waits for its inference loop -- in flight or later -- return within about a
- * second with JLLAMA_STATUS_INTERRUPTED, unless its answer arrives first; calls that do not wait
- * (metadata, tokenization) still answer. Nothing is released, and there is no way back: the model must still be freed. For a host
- * whose own lock keeps a call from reaching a freed handle and therefore waits for the calls in
- * flight before it frees (llama-ffm): interrupt first, so that the wait ends. Null is ignored.
+ * second with JLLAMA_STATUS_INTERRUPTED, unless its answer arrives first -- a stream's receive
+ * included, and a stream asked for afterwards is refused with it; calls that do not wait (metadata,
+ * tokenization) still answer. Nothing is released, and there is no way back: the model must still be
+ * freed. For a host whose own lock keeps a call from reaching a freed handle and therefore waits for
+ * the calls in flight before it frees (llama-ffm): interrupt first, so that the wait ends. Null is
+ * ignored.
  */
 JLLAMA_API void jllama_model_interrupt(jllama_model *model);
 
@@ -339,7 +341,8 @@ JLLAMA_API jllama_status jllama_apply_template(jllama_model *model, const char *
 
 /**
  * The embedding of one prompt (a model loaded with `--embedding`): *values holds *count floats
- * (jllama_floats_free).
+ * (jllama_floats_free). A model loaded with `--pooling none` has one vector per token, of which this
+ * is the first; jllama_embeddings answers all of them.
  */
 JLLAMA_API jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count);
 
@@ -402,7 +405,11 @@ JLLAMA_API jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op 
 /** The LoRA adapters of the model (the GET /lora-adapters array). */
 JLLAMA_API jllama_status jllama_lora_adapters(jllama_model *model, char **response_json);
 
-/** Sets the LoRA adapter scales from a JSON array of `{"id": n, "scale": f}`; the resulting list. */
+/**
+ * Sets the LoRA adapter scales from a JSON array of `{"id": n, "scale": f}` (an adapter the array does
+ * not name gets scale 0, as upstream's POST /lora-adapters); *response_json is `{"success": true}`,
+ * and jllama_lora_adapters() reads the scales back.
+ */
 JLLAMA_API jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters_json, char **response_json);
 
 /**
@@ -634,8 +641,19 @@ typedef struct jllama_tts_options {
     int raw_prompt;
 } jllama_tts_options;
 
-/** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */
-JLLAMA_API void jllama_tts_options_init(jllama_tts_options *options);
+/**
+ * Fills the first `size` bytes of *options with the defaults -- at most the library's own
+ * sizeof(jllama_tts_options) -- and sets struct_size to the bytes written; null, or a size that does
+ * not hold struct_size, is ignored. Call it through jllama_tts_options_init(), which passes the
+ * size of the caller's header: a later library never writes past an older caller's struct.
+ * Since 6.1.0.
+ */
+JLLAMA_API void jllama_tts_options_init_size(jllama_tts_options *options, size_t size);
+
+/** Fills *options with the defaults (struct_size included) for this header's struct; null is ignored. */
+static inline void jllama_tts_options_init(jllama_tts_options *options) {
+    jllama_tts_options_init_size(options, sizeof(jllama_tts_options));
+}
 
 /**
  * jllama_tts_synthesize_temperature with every option of llama.cpp's /tts route (b12431): top-p and

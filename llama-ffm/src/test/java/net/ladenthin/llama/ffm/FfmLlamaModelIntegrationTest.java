@@ -147,6 +147,57 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
+    void anOaiCompletionAndABlockingCallWithStreamTrue() throws IOException {
+        JsonNode oai = JSON.readTree(model.completionsOai("{\"prompt\": \"Hello\", \"max_tokens\": 3, \"temperature\": 0}"));
+        assertEquals("text_completion", oai.path("object").asText());
+        assertTrue(oai.path("choices").isArray() && oai.path("choices").size() == 1, oai.toString());
+        // a raw body with "stream": true on a blocking call ended the JVM: the server sent chunks, all
+        // with index 0, and the blocking wait aborted at the second ("duplicate result received")
+        JsonNode chat = JSON.readTree(model.chatCompletions(
+                "{\"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}], \"max_tokens\": 4, \"temperature\": 0,"
+                        + " \"stream\": true}"));
+        assertEquals("chat.completion", chat.path("object").asText());
+        assertTrue(JSON.readTree(model.completions(
+                        "{\"prompt\": \"Hello\", \"n_predict\": 3, \"temperature\": 0, \"stream\": true}"))
+                .path("stop")
+                .asBoolean());
+    }
+
+    @Test
+    void aRawChatStreamGivesLlamaCppsResultObjectsUntilStop() throws IOException {
+        int results = 0;
+        boolean sawStop = false;
+        try (FfmTaskStream stream = model.chatCompletionsRaw(CHAT_REQUEST)) {
+            while (stream.hasNext()) {
+                JsonNode result = JSON.readTree(stream.next());
+                assertTrue(result.has("content"), result.toString());
+                assertFalse(result.has("data"), "a raw result has no chunk envelope: " + result);
+                results++;
+                sawStop = result.path("stop").asBoolean();
+            }
+        }
+        assertThat(results, greaterThan(0));
+        assertTrue(sawStop, "the last result carries stop");
+    }
+
+    @Test
+    void whatTheModelWasNotLoadedForIsRefusedByNameAndIsNotTheRequestsFault() {
+        // llama.cpp's server answers these 501: a capability the model lacks, not a bad request
+        LlamaException embeddings =
+                assertThrows(LlamaException.class, () -> model.embeddings("{\"input\": \"Hello\"}", true));
+        assertTrue(embeddings.getMessage().contains("embedding support"), embeddings.getMessage());
+        LlamaException infill = assertThrows(
+                LlamaException.class, () -> model.infill("{\"input_prefix\": \"def f(\", \"input_suffix\": \"):\"}"));
+        assertTrue(infill.getMessage().contains("fill-in-the-middle"), infill.getMessage());
+        LlamaException systemOne = assertThrows(
+                LlamaException.class, () -> model.systemOne("{\"state\": \"x\", \"questions\": []}"));
+        assertTrue(systemOne.getMessage().contains("not a decision model"), systemOne.getMessage());
+        for (LlamaException e : new LlamaException[] {embeddings, infill, systemOne}) {
+            assertFalse(e instanceof InvalidRequestException, e.getMessage());
+        }
+    }
+
+    @Test
     void tokenizeAndDetokenizeRoundTrip() throws IOException {
         int[] tokens = model.tokenize("Hello", false);
         assertThat(tokens.length, greaterThan(0));
@@ -315,11 +366,19 @@ class FfmLlamaModelIntegrationTest {
             closer.start();
             closer.join(500);
             assertTrue(closer.isAlive(), "the close did not wait for the call in flight");
+            // A second close frees nothing, but it must not return before the first has freed the
+            // weights either: it returned at once, while the model was still loaded.
+            Thread second = new Thread(other::close, "ffm-second-closer");
+            second.start();
+            second.join(500);
+            assertTrue(second.isAlive(), "the second close returned before the first had freed the model");
             release.countDown();
             caller.join(60_000);
             closer.join(60_000);
+            second.join(60_000);
             assertFalse(caller.isAlive());
             assertFalse(closer.isAlive());
+            assertFalse(second.isAlive());
             assertEquals(null, failure[0]);
             assertTrue(tokens[0] != null && tokens[0].length > 0, "the held call answered on the live handle");
             assertThrows(IllegalStateException.class, () -> other.tokenize("Hello there", true));

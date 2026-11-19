@@ -62,6 +62,14 @@ struct jllama_context {
     // context closes the file if it still owns it.
     std::uint64_t log_file_owner = 0;
 
+    // configure() was called: wake_server() applies its thread counts and similarity again where a
+    // resume from the idle sleep built the context and the slot scheduler from the load-time params.
+    // Decided by the values, not by the context's address: a rebuilt context can be allocated where
+    // the freed one was. tuning_mutex orders configure()'s writes of params' three values with
+    // wake_server()'s reads of them.
+    std::atomic<bool> configured{false};
+    std::mutex tuning_mutex;
+
     // Saved copy of common_params used to load the model.
     // Required by server_schema::eval_llama_cmpl_schema which takes common_params&.
     common_params params;

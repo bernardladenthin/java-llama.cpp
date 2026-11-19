@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <clocale>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,12 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+
+#if defined(__APPLE__)
+#include <xlocale.h> // newlocale / uselocale
+#elif !defined(_WIN32)
+#include <locale.h>
+#endif
 
 namespace jllama::engine {
 
@@ -146,6 +153,9 @@ server_task_result_ptr post_and_wait(jllama_context *jctx, server_task task) {
     task.id = rd.get_new_id();
     wake_and_post(rd, std::move(task), true);
     auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
+    if (!result && jctx->closing.load()) {
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     require_result_ok(result);
     return result;
 }
@@ -165,6 +175,10 @@ json special_tokens_json(const llama_vocab *vocab) {
 // The streaming reader of a task, copied out under the lock so it stays alive across next(),
 // which runs without the lock and may race a concurrent task_release()/free().
 std::shared_ptr<server_response_reader> reader_of(jllama_context *jctx, int id_task) {
+    if (jctx->closing.load()) {
+        // jllama_model_interrupt cleared the readers: the task was cut, not unknown
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     std::lock_guard<std::mutex> lk(jctx->readers_mutex);
     auto it = jctx->readers.find(id_task);
     if (it == jctx->readers.end()) {
@@ -369,6 +383,74 @@ void release_log_file(std::uint64_t owner) noexcept {
     }
 }
 
+// The "C" numeric locale on the calling thread while it lives. llama.cpp's option parser reads
+// numbers with std::stof / std::stoi, which follow LC_NUMERIC, and a JVM leaves the locale of its
+// environment in effect: under de_DE "--temp 0.7" read as 0 and "--repeat-penalty 0.9" was refused
+// (measured). llama_server() sets the "C" numeric locale for the whole process, but only once it
+// runs -- after the engine's parse, and never for a model load. Per thread, so nothing else of the
+// host process changes.
+class c_numeric_locale {
+  public:
+    c_numeric_locale(const c_numeric_locale &) = delete;
+    c_numeric_locale &operator=(const c_numeric_locale &) = delete;
+#if defined(_WIN32)
+    c_numeric_locale() : previous_mode_(_configthreadlocale(_ENABLE_PER_THREAD_LOCALE)) {
+        const char *current = std::setlocale(LC_NUMERIC, nullptr);
+        previous_ = current != nullptr ? current : "C";
+        std::setlocale(LC_NUMERIC, "C");
+    }
+    ~c_numeric_locale() {
+        std::setlocale(LC_NUMERIC, previous_.c_str());
+        if (previous_mode_ != -1) {
+            _configthreadlocale(previous_mode_);
+        }
+    }
+
+  private:
+    int previous_mode_;
+    std::string previous_;
+#else
+    c_numeric_locale() : previous_(uselocale(static_cast<locale_t>(0))) {
+        locale_t base = duplocale(previous_);
+        if (base != static_cast<locale_t>(0)) {
+            c_locale_ = newlocale(LC_NUMERIC_MASK, "C", base);
+            if (c_locale_ == static_cast<locale_t>(0)) {
+                freelocale(base);
+            }
+        }
+        if (c_locale_ != static_cast<locale_t>(0)) {
+            uselocale(c_locale_);
+        }
+    }
+    ~c_numeric_locale() {
+        if (c_locale_ != static_cast<locale_t>(0)) {
+            uselocale(previous_);
+            freelocale(c_locale_);
+        }
+    }
+
+  private:
+    locale_t previous_;
+    locale_t c_locale_ = static_cast<locale_t>(0);
+#endif
+};
+
+// Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
+// embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
+// that looks like a relevance and is none. Refused by the model file's tensor list -- and by the
+// lists of its --shard files, any of which may carry the head (b12233). Empty when it can rerank.
+std::string rank_pooling_refusal(const common_params &params) {
+    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
+        gguf_lacks_classification_head(params.model.path) &&
+        std::all_of(params.model.shards.begin(), params.model.shards.end(),
+                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
+        return "'" + params.model.path +
+               "' has no classification head (cls / cls.output tensors), so it cannot rerank: rank pooling needs a "
+               "reranker model";
+    }
+    return std::string();
+}
+
 // `what` with the reason the last refused parse on this thread gave (patches/0031), without the
 // usage text upstream appends after a blank line.
 std::string parse_refusal(const char *what) {
@@ -429,27 +511,37 @@ std::string batch_refusal(const common_params &params) {
     return std::string();
 }
 
-std::uint64_t prepare_server_argv(std::vector<std::string> &argv) {
-    // With LLAMA_ARG_LOG_FILE set the server's own parse applies the variable before the argv, so a
-    // --log-file of the argv stays there for that parse to apply after it, as upstream orders them;
-    // without it the engine opens the file, under the lock, once the argv was accepted.
-    const bool env = env_is_set("LLAMA_ARG_LOG_FILE");
-    const std::string path = env ? std::string() : take_log_file_option(argv);
+std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params) {
+    // The only parse of the server's argv: llama_server_parsed() (patches/0006) runs on these
+    // params, so a file option is read once -- a second parse read one from a pipe empty (an
+    // --api-key-file /dev/stdin, a server without its key). LLAMA_ARG_LOG_FILE is applied by the
+    // parse before the argv; the argv's --log-file is opened after it, as upstream orders them.
+    const std::string path = take_log_file_option(argv);
     std::vector<char *> parse_argv;
     parse_argv.reserve(argv.size());
     for (auto &arg : argv) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
-    std::lock_guard<std::mutex> lk(g_common_log_mutex);
-    common_params params;
-    if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
-        throw std::runtime_error(parse_refusal("Failed to parse server parameters"));
+    log_file_claim log_file;
+    bool parsed = false;
+    std::string refusal;
+    {
+        std::lock_guard<std::mutex> lk(g_common_log_mutex);
+        {
+            const c_numeric_locale numbers;
+            parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
+                                         LLAMA_EXAMPLE_SERVER);
+        }
+        refusal = parsed ? batch_refusal(params) : parse_refusal("Failed to parse server parameters");
+        // a file the variable opened is this start's whatever happens; a refused start closes it
+        log_file.owner = open_log_file_locked(refusal.empty() ? path : std::string(), env_is_set("LLAMA_ARG_LOG_FILE"),
+                                              has_long_option(argv, "--log-disable"));
     }
-    const std::string refusal = batch_refusal(params);
     if (!refusal.empty()) {
         throw std::runtime_error(refusal);
     }
-    return open_log_file_locked(path, env, has_long_option(argv, "--log-disable"));
+    log_file.handed = true;
+    return log_file.owner;
 }
 
 void release_log_file_of_server(std::uint64_t owner) { release_log_file(owner); }
@@ -489,32 +581,36 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     }
     log_file_claim log_file;
     bool parsed = false;
+    std::string refusal;
     {
         // Every parse holds the lock: --log-disable, --log-colors and LLAMA_ARG_LOG_FILE pause the log
         // worker inside it, and the server example's parse downloads nothing (common_params_parse_ex
-        // leaves that to the load), so it is short.
+        // leaves that to the load), so it is short -- unless an --rpc server is slow to answer.
         std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
-        parsed =
-            common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER);
+        {
+            const c_numeric_locale numbers;
+            parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
+                                         LLAMA_EXAMPLE_SERVER);
+        }
+        // A refused load parameter, like a refused parse: JLLAMA_STATUS_ERROR / LlamaException. Decided
+        // before the argv's --log-file is opened: opening it closes the file another model logs into.
+        if (!parsed) {
+            refusal = parse_refusal("Failed to parse model parameters");
+        } else if (!vocab_only) {
+            refusal = batch_refusal(params);
+            if (refusal.empty()) {
+                refusal = rank_pooling_refusal(params);
+            }
+        }
         // A parse in a process with LLAMA_ARG_LOG_FILE set opened that file before it read the argv;
         // a refused one too (unless an earlier environment variable was refused first, which this
-        // cannot tell apart). The --log-file of the argv is opened only for an accepted parse.
-        const bool env_opened = env_is_set("LLAMA_ARG_LOG_FILE");
-        if (parsed || env_opened) {
-            log_file.owner = open_log_file_locked(parsed ? log_file_path : std::string(), env_opened,
-                                                  has_long_option(rpc_argv, "--log-disable"));
-        }
+        // cannot tell apart), and the claim closes it then.
+        log_file.owner =
+            open_log_file_locked(refusal.empty() ? log_file_path : std::string(), env_is_set("LLAMA_ARG_LOG_FILE"),
+                                 has_long_option(rpc_argv, "--log-disable"));
     }
-    if (!parsed) {
-        throw std::runtime_error(parse_refusal("Failed to parse model parameters"));
-    }
-
-    // A refused load parameter, like a refused parse: JLLAMA_STATUS_ERROR / LlamaException.
-    if (!vocab_only) {
-        const std::string refusal = batch_refusal(params);
-        if (!refusal.empty()) {
-            throw std::runtime_error(refusal);
-        }
+    if (!refusal.empty()) {
+        throw std::runtime_error(refusal);
     }
 
     // A draft model nobody asks: upstream's speculative types default to none, and the parse above
@@ -560,19 +656,6 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     if (params.n_parallel <= N_PARALLEL_AUTO) {
         params.n_parallel = N_PARALLEL_DEFAULT;
         jctx->params.n_parallel = N_PARALLEL_DEFAULT;
-    }
-
-    // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
-    // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
-    // that looks like a relevance and is none. Refused here, by the model file's tensor list -- and
-    // by the lists of its --shard files, any of which may carry the head (b12233).
-    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
-        gguf_lacks_classification_head(params.model.path) &&
-        std::all_of(params.model.shards.begin(), params.model.shards.end(),
-                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
-        throw std::runtime_error("'" + params.model.path +
-                                 "' has no classification head (cls / cls.output tensors), so it cannot rerank: "
-                                 "rank pooling needs a reranker model");
     }
 
     LOG_INF("%s: loading model\n", __func__);
@@ -738,8 +821,22 @@ void wake_server(jllama_context *jctx) {
     }
     server_response_reader rd = jctx->server.get_response_reader();
     jllama_hold_server_awake(rd.queue_tasks);
+    llama_context *lctx = jctx->server.get_llama_context();
     // Re-read the vocab: a sleep/resume cycle replaced the model this pointer came from.
-    jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
+    jctx->vocab = llama_model_get_vocab(llama_get_model(lctx));
+    // The resume built that context from the load-time params, and the slot scheduler took its
+    // similarity from them too: what configure() set is applied again where it differs.
+    if (jctx->configured.load() && lctx != nullptr) {
+        std::lock_guard<std::mutex> tuning(jctx->tuning_mutex);
+        const int n = jctx->params.cpuparams.n_threads;
+        const int nb = jctx->params.cpuparams_batch.n_threads;
+        if (llama_n_threads(lctx) != n || llama_n_threads_batch(lctx) != nb) {
+            llama_set_n_threads(lctx, n, nb);
+        }
+        if (jctx->server.get_slot_prompt_similarity() != jctx->params.slot_prompt_similarity) {
+            jctx->server.set_slot_prompt_similarity(jctx->params.slot_prompt_similarity);
+        }
+    }
 }
 
 server_context_meta wake_and_get_meta(jllama_context *jctx) {
@@ -908,6 +1005,10 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
     task.apply_chat_session(session);
     apply_raw_chat_sampling(task, raw_chat);
     task.params.res_type = res_type;
+    // A blocking call answers the whole result. With the body's "stream": true the server sends it
+    // in chunks, all with index 0, and wait_for_all ends the process at the second one
+    // (GGML_ASSERT "duplicate result received") -- a raw JSON body reaches this path as it is.
+    task.params.stream = false;
     name_completion_task(task, meta);
     std::vector<server_task> tasks;
     tasks.push_back(std::move(task));
@@ -920,6 +1021,9 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
 int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
                       std::vector<raw_buffer> files, const common_chat_session &session,
                       const raw_chat_sampling &raw_chat) {
+    if (jctx->closing.load()) {
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     auto meta = wake_and_get_meta(jctx);
     auto rd = std::make_shared<server_response_reader>(jctx->server.get_response_reader());
     const int tid = rd->get_new_id();
@@ -950,6 +1054,9 @@ json stream_next(jllama_context *jctx, int id_task, bool &stop) {
         // events.
         while (true) {
             server_task_result_ptr result = rd->next([jctx] { return jctx->closing.load(); });
+            if (!result && jctx->closing.load()) {
+                throw jllama_interrupted("inference interrupted by close()");
+            }
             require_result_ok(result);
             json payload = result->to_json();
             if (payload.is_null()) {
@@ -1602,6 +1709,10 @@ void configure(jllama_context *jctx, const std::string &config_json) {
     // n_threads / n_threads_batch through the public llama.h API. The setter requires both values;
     // a missing one is filled from the cached common_params so a single-field update is a no-op for
     // the other field, and the cache is kept in sync so a follow-up call reads back what was applied.
+    // Woken first: a sleeping model has no context to set, and a resume would rebuild it from the
+    // load-time params (wake_server applies these values again after every later resume).
+    wake_server(jctx);
+    std::lock_guard<std::mutex> tuning(jctx->tuning_mutex);
     if (n_threads_opt.has_value() || n_threads_batch_opt.has_value()) {
         llama_context *lctx = jctx->server.get_llama_context();
         if (lctx == nullptr) {
@@ -1618,7 +1729,9 @@ void configure(jllama_context *jctx, const std::string &config_json) {
     // server_context::set_slot_prompt_similarity(), carried as patches/0003 (upstream #22393).
     if (slot_sim_opt.has_value()) {
         jctx->server.set_slot_prompt_similarity(*slot_sim_opt);
+        jctx->params.slot_prompt_similarity = *slot_sim_opt;
     }
+    jctx->configured.store(true);
 }
 
 std::string systemone(jllama_context *jctx, const std::string &body) {

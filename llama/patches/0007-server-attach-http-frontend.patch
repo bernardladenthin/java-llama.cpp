@@ -16,19 +16,25 @@ Refreshed at b11881: #31113 factored the route table out of llama_server() itsel
 (server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
 it -- the helper this patch used to add, and the "verbatim copy" invariant it had to keep, are gone.
 
+Since the review of 2026-11-18 the patch also adds llama_server_attach_parsed(params, ...), the attach
+entry over an argv the host has parsed already (see 0006's llama_server_parsed: one parse, so a file
+option from a pipe is read once).
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 2fa87673c..7d0691999 100644
+index 97ad17901..b7a5b84d1 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -96,6 +96,7 @@ int llama_server(int argc, char ** argv);
+@@ -100,6 +100,9 @@ int llama_server_parsed(common_params & params, int argc, char ** argv);
  
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
 +int llama_server_attach(int argc, char ** argv, server_context & ctx_server, server_routes & routes);
++// [jllama] llama_server_attach() over an argv the embedding host has parsed already
++int llama_server_attach_parsed(common_params & params, server_context & ctx_server, server_routes & routes);
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
-@@ -831,3 +832,96 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -933,3 +936,103 @@ int llama_server(common_params & params, int argc, char ** argv) {
      server_role role;
      return server_run(params, argc, argv, role, opts);
  }
@@ -61,6 +67,13 @@ index 2fa87673c..7d0691999 100644
 +    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_SERVER)) {
 +        return 1;
 +    }
++    return llama_server_attach_parsed(params, ctx_server, routes);
++}
++
++// The argv parsed once, by the host (see llama_server_parsed): a second parse read a file option
++// from a pipe the second time empty.
++int llama_server_attach_parsed(common_params & params, server_context & ctx_server, server_routes & routes) {
++    std::setlocale(LC_NUMERIC, "C");
 +
 +    // stream session GC: lifecycle is symmetric with the HTTP frontend (same as llama_server)
 +    server_stream_session_manager_start();

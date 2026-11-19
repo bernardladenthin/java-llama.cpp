@@ -43,11 +43,12 @@ native_server *start(const std::vector<std::string> &argv) {
     // here with a clear message (std::invalid_argument), and RPC devices another model registered
     // in this process stay out of this server's model.
     owned->args = jllama::rpc::prepare_argv(argv);
-    // The argv is parsed here first, as llama_server() will parse it: a refused argv, or a batch
-    // llama.cpp would abort the process on, fails this call -- before any log file is opened or
-    // closed. A --log-file is opened here too; the server owns the file until it returns, then the
-    // file is closed (unless a model or another server took it).
-    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args);
+    // The argv is parsed here, once, and the worker runs on these params (llama_server_parsed): a
+    // refused argv, or a batch llama.cpp would abort the process on, fails this call -- before the
+    // argv's log file is opened. A --log-file is opened here too; the server owns the file until it
+    // returns, then the file is closed (unless a model or another server took it).
+    owned->params = std::make_shared<common_params>();
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params);
     bind_argv(owned.get());
 
     // Embedded mode: no process signal handlers, honour the forwarded argv (patches/0006).
@@ -55,7 +56,7 @@ native_server *start(const std::vector<std::string> &argv) {
     native_server *srv = owned.get();
     try {
         srv->worker = std::thread([srv, log_file]() {
-            srv->exit_code = llama_server(static_cast<int>(srv->argv.size()), srv->argv.data());
+            srv->exit_code = llama_server_parsed(*srv->params, static_cast<int>(srv->argv.size()), srv->argv.data());
             jllama::engine::release_log_file_of_server(log_file);
             srv->finished.store(true);
         });
@@ -82,7 +83,8 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     }
     std::unique_ptr<native_server> owned(new native_server());
     owned->args = argv;
-    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args);
+    owned->params = std::make_shared<common_params>();
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params);
     bind_argv(owned.get());
 
     // The attach entry always parses the forwarded argv; set the embedded flag anyway so any shared
@@ -97,8 +99,7 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     jllama_context *held = acquire_jllama_context(jctx);
     try {
         srv->worker = std::thread([srv, ctx_server, routes, held, log_file]() {
-            srv->exit_code =
-                llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server, *routes);
+            srv->exit_code = llama_server_attach_parsed(*srv->params, *ctx_server, *routes);
             jllama::engine::release_log_file_of_server(log_file);
             srv->finished.store(true);
             release_jllama_context_impl(held);

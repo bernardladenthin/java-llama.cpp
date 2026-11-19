@@ -388,10 +388,17 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Computes the embedding vector of a text, taken verbatim.
      *
+     * <p>One vector per text, which is what a pooled model answers. A model loaded with pooling
+     * {@code none} answers one vector per token, of which this returns the first; use
+     * {@link #handleEmbeddings(String, boolean)} for all of them.
+     *
      * @param prompt the text
      * @return its embedding
-     * @throws IllegalStateException unless the model was loaded with
-     *     {@link net.ladenthin.llama.parameters.ModelParameters#enableEmbedding()}
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if the text is rejected, e.g. because it does
+     *         not tokenize with this vocabulary
+     * @throws net.ladenthin.llama.exception.LlamaException unless the model was loaded with
+     *         {@link net.ladenthin.llama.parameters.ModelParameters#enableEmbedding()}, or when the model is closed
+     *         during the call
      */
     public native float[] embed(String prompt);
 

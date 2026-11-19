@@ -1021,7 +1021,8 @@ request names none. `rawPrompt` (b12494, `/tts`'s `raw_prompt`) speaks the text 
 without the model's `tts` chat template -- for a caller that renders the prompt itself.
 
 `FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's
-`jllama_tts_synthesize_options` (a `jllama_tts_options` struct, filled by `jllama_tts_options_init`).
+`jllama_tts_synthesize_options` (a `jllama_tts_options` struct, filled by `jllama_tts_options_init_size`
+with the size of the module's own layout, as a C caller's `jllama_tts_options_init` passes its header's).
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS

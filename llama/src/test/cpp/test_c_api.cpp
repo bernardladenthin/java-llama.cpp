@@ -40,6 +40,7 @@
 #include <map>
 #include <atomic>
 #include <chrono>
+#include <clocale>
 #include <condition_variable>
 #include <cstring>
 #include <filesystem>
@@ -54,6 +55,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX // or windows.h's min/max macros break std::min / std::max below
@@ -323,6 +328,31 @@ TEST_F(CApi, RawCompletionsReturnTheResultObject) {
     EXPECT_LE(j.at("tokens_predicted").get<int>(), 2);
     EXPECT_TRUE(j.at("stop").get<bool>());
     EXPECT_EQ(jllama_completions(model_, "{not json", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, ABlockingCallAnswersAStreamRequestWhole) {
+    // "stream": true in the body of a blocking call made the server send the answer in chunks, which
+    // the blocking wait collects by their index -- every chunk has index 0, and the second one ended
+    // the process (GGML_ASSERT "duplicate result received" in server_response_reader::wait_for_all).
+    // A blocking call answers the whole result whatever the body says.
+    Owned raw;
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":4,"temperature":0,"stream":true})", &raw.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_TRUE(json::parse(raw.str()).at("stop").get<bool>()) << raw.str();
+    Owned chat;
+    ASSERT_EQ(jllama_chat_completions(
+                  model_,
+                  R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":4,"temperature":0,"stream":true})",
+                  &chat.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(chat.str()).at("object").get<std::string>(), "chat.completion") << chat.str();
+    Owned oai;
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":4,"temperature":0,"stream":true})", &oai.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(oai.str()).at("object").get<std::string>(), "text_completion") << oai.str();
 }
 
 TEST_F(CApi, AGrammarTriggerOfAnUnknownTypeIsTheCallersFault) {
@@ -1005,7 +1035,7 @@ TEST_F(CApi, SlotActionsAndLoraAdapters) {
     EXPECT_TRUE(json::parse(adapters.str()).is_array());
     Owned set;
     ASSERT_EQ(jllama_set_lora_adapters(model_, "[]", &set.s), JLLAMA_STATUS_OK) << jllama_last_error();
-    EXPECT_NO_THROW(json::parse(set.str())); // upstream's own result object for the set task
+    EXPECT_EQ(json::parse(set.str()), json({{"success", true}})) << set.str(); // upstream's result of the set task
     EXPECT_EQ(jllama_set_lora_adapters(model_, "{}", &set.s), JLLAMA_STATUS_ERROR);
     EXPECT_EQ(jllama_set_lora_adapters(model_, "[", &set.s), JLLAMA_STATUS_INVALID_REQUEST);
 }
@@ -3174,6 +3204,109 @@ TEST(CApiInterrupt, InterruptEndsACallInFlightAndTheModelIsStillFreed) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiInterrupt, AnInterruptEndsAStreamInFlightAndRefusesANewOne) {
+    // The streamed half of the interrupt: a receive that waits for the next chunk of an endless stream
+    // returns JLLAMA_STATUS_INTERRUPTED (it answered "Task not found" once the reader was cleared, a
+    // status that reads as the caller's mistake), and a stream asked for afterwards is refused with
+    // the same status instead of a task nobody will answer.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-interrupt-stream");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--context-shift"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const char *endless = R"({"prompt":"Hello there","n_predict":-1,"ignore_eos":true,"temperature":0,"stream":true})";
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(model, endless, &task), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::atomic<int> status{-1};
+    std::atomic<int> chunks{0};
+    std::thread receiver([model, task, &status, &chunks]() {
+        for (;;) {
+            Owned chunk;
+            bool stop = false;
+            const jllama_status s = jllama_completions_stream_receive(model, task, &chunk.s, &stop);
+            if (s != JLLAMA_STATUS_OK || stop) {
+                status.store(stop && s == JLLAMA_STATUS_OK ? -2 : s);
+                return;
+            }
+            chunks.fetch_add(1);
+        }
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (chunks.load() < 3 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_GE(chunks.load(), 3) << "the stream produced nothing";
+    EXPECT_EQ(status.load(), -1) << "the endless stream ended by itself";
+    jllama_model_interrupt(model);
+    receiver.join();
+    EXPECT_EQ(status.load(), JLLAMA_STATUS_INTERRUPTED) << jllama_last_error();
+
+    int later = -1;
+    EXPECT_EQ(jllama_completions_stream_request(model, endless, &later), JLLAMA_STATUS_INTERRUPTED);
+    Owned blocking;
+    EXPECT_EQ(jllama_completions(model, endless, &blocking.s), JLLAMA_STATUS_INTERRUPTED);
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+namespace {
+// The process's LC_NUMERIC set to a locale with a decimal comma while it lives, as a JVM started in
+// such an environment leaves it; ok() is false when the machine has none.
+class DecimalCommaLocale {
+  public:
+    DecimalCommaLocale() {
+        const char *current = std::setlocale(LC_NUMERIC, nullptr);
+        previous_ = current != nullptr ? current : "C";
+        for (const char *name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "de-DE", "German_Germany.1252"}) {
+            if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+                if (std::string(std::localeconv()->decimal_point) == ",") {
+                    ok_ = true;
+                    return;
+                }
+            }
+        }
+        std::setlocale(LC_NUMERIC, previous_.c_str());
+    }
+    ~DecimalCommaLocale() { std::setlocale(LC_NUMERIC, previous_.c_str()); }
+    DecimalCommaLocale(const DecimalCommaLocale &) = delete;
+    DecimalCommaLocale &operator=(const DecimalCommaLocale &) = delete;
+    bool ok() const { return ok_; }
+
+  private:
+    std::string previous_;
+    bool ok_ = false;
+};
+} // namespace
+
+TEST(CApiLocale, ANumberOfTheArgvIsReadWithADecimalPointUnderADecimalCommaLocale) {
+    // llama.cpp's option handlers read numbers with std::stof, which follows LC_NUMERIC, and a JVM
+    // leaves the locale of its environment in effect: under de_DE "--temp 0.25" was read as 0 and
+    // "--repeat-penalty 0.9" refused. The engine parses under the "C" numeric locale of the calling
+    // thread (and leaves the process's as it found it).
+    const DecimalCommaLocale comma;
+    if (!comma.ok()) {
+        if (std::getenv("JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE") != nullptr) {
+            FAIL() << "JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE is set, and no locale with a decimal comma is installed";
+        }
+        GTEST_SKIP() << "no locale with a decimal comma is installed (locale-gen de_DE.UTF-8)";
+    }
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-locale");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--temp", "0.25", "--top-p", "0.5", "--repeat-penalty", "0.9"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_EQ(std::string(std::localeconv()->decimal_point), ",") << "the load changed the process's locale";
+    Owned completion;
+    ASSERT_EQ(jllama_completions(model, R"({"prompt":"Hello there","n_predict":2})", &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json settings = json::parse(completion.str()).at("generation_settings");
+    EXPECT_FLOAT_EQ(settings.at("temperature").get<float>(), 0.25f) << settings.dump();
+    EXPECT_FLOAT_EQ(settings.at("top_p").get<float>(), 0.5f) << settings.dump();
+    EXPECT_FLOAT_EQ(settings.at("repeat_penalty").get<float>(), 0.9f) << settings.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiParseErrors, AChatTemplateThatDoesNotParseIsRefusedWithItsErrorAndTheProcessGoesOn) {
     // A --chat-template is verified after the arguments are read, and upstream's parse called
     // exit(1) for that refusal (std::runtime_error, not std::invalid_argument): setChatTemplate()
@@ -3410,6 +3543,57 @@ TEST(CApiServer, TheEmbeddedServerStartsInRouterModeAndStops) {
     EXPECT_TRUE(cleared == nullptr || cleared[0] == '\0');
     EXPECT_EQ(jllama_server_set_worker_command(nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
 }
+
+#ifndef _WIN32
+TEST(CApiServer, AnApiKeyFileThatCanBeReadOnlyOnceProtectsTheServer) {
+    // llama.cpp reads --api-key-file while it parses the argv. The embedded server's argv was parsed
+    // twice -- by the engine for its own checks, then again inside llama_server() -- so a file that
+    // gives its contents once (a pipe: /dev/stdin, a process substitution) was read empty by the
+    // second parse, and the server ran without a key, answering every request. The engine's parse is
+    // the only one now; the server takes its parameters.
+    int fds[2];
+    ASSERT_EQ(pipe(fds), 0);
+    const std::string key = "jllama-test-key";
+    const std::string line = key + "\n";
+    ASSERT_EQ(write(fds[1], line.data(), line.size()), static_cast<ssize_t>(line.size()));
+    close(fds[1]);
+    const std::string key_file = "/dev/fd/" + std::to_string(fds[0]);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-api-key-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string models_dir = dir.string();
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "--host",           "127.0.0.1",      "--port",        port_text.c_str(),
+                          "--models-dir", models_dir.c_str(), "--api-key-file", key_file.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    EXPECT_TRUE(health && health->status == 200);
+    const auto without = client.Get("/models");
+    ASSERT_TRUE(without) << httplib::to_string(without.error());
+    EXPECT_EQ(without->status, 401) << "the server answered without its key: " << without->body;
+    const auto with = client.Get("/models", httplib::Headers{{"Authorization", "Bearer " + key}});
+    ASSERT_TRUE(with) << httplib::to_string(with.error());
+    EXPECT_EQ(with->status, 200) << with->body;
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    close(fds[0]);
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+}
+#endif
 
 TEST_F(CApi, TheAttachedServerServesTheModelAndLeavesItUsable) {
     const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0"};
@@ -3772,6 +3956,33 @@ TEST(CApiTts, TheOptionsStartAtTheDefaultsOfTheEngine) {
     EXPECT_EQ(options.flow_steps, engine.flow_steps);
 }
 
+// jllama_tts_options_init is a static inline over jllama_tts_options_init_size with the header's
+// sizeof, so a library that grew never writes past an older caller's struct: asked for the 64 bytes
+// of 6.1.0's first header it writes those and struct_size 64; asked for more than it knows it writes
+// its own sizeof; a size that does not hold struct_size writes nothing.
+TEST(CApiTts, TheOptionsInitWritesNoMoreThanTheCallerDeclares) {
+    const size_t first = offsetof(jllama_tts_options, speaker_reference_text);
+    unsigned char bytes[256];
+    std::memset(bytes, 0x5a, sizeof(bytes));
+    auto *options = reinterpret_cast<jllama_tts_options *>(bytes);
+    jllama_tts_options_init_size(options, first);
+    EXPECT_EQ(options->struct_size, first);
+    EXPECT_FLOAT_EQ(options->loudness, 0.0f);
+    for (size_t i = first; i < sizeof(bytes); i++) {
+        ASSERT_EQ(bytes[i], 0x5a) << "byte " << i << " is behind the caller's struct";
+    }
+    std::memset(bytes, 0x5a, sizeof(bytes));
+    jllama_tts_options_init_size(options, sizeof(bytes));
+    EXPECT_EQ(options->struct_size, sizeof(jllama_tts_options));
+    for (size_t i = sizeof(jllama_tts_options); i < sizeof(bytes); i++) {
+        ASSERT_EQ(bytes[i], 0x5a) << "byte " << i << " is behind the library's struct";
+    }
+    std::memset(bytes, 0x5a, sizeof(bytes));
+    jllama_tts_options_init_size(options, sizeof(size_t) - 1);
+    EXPECT_EQ(bytes[0], 0x5a);
+    jllama_tts_options_init_size(nullptr, sizeof(jllama_tts_options)); // ignored
+}
+
 // What is checked before the model is touched, so a pointer that is no engine never reaches it: a
 // struct_size that does not hold the field is the caller's mistake, a value no model can take the
 // request's fault -- the out-parameters stay untouched either way.
@@ -3788,6 +3999,15 @@ TEST(CApiTts, TheOptionsAreCheckedBeforeTheModel) {
     EXPECT_NE(std::string(jllama_last_error()).find("struct_size"), std::string::npos) << jllama_last_error();
     EXPECT_EQ(wav, &sentinel);
     EXPECT_EQ(length, 7u);
+    // a size between the sizes of the header's versions cuts a field: half of the transcript's pointer
+    // read as one, or cfg_scale without flow_steps
+    for (const size_t cut : {offsetof(jllama_tts_options, speaker_reference_text) + 4,
+                             offsetof(jllama_tts_options, flow_steps), sizeof(jllama_tts_options) - 4, size_t(40)}) {
+        options.struct_size = cut;
+        EXPECT_EQ(jllama_tts_synthesize_options(tts, "Hi", &options, &wav, &length), JLLAMA_STATUS_INVALID_ARGUMENT)
+            << cut;
+        EXPECT_EQ(wav, &sentinel);
+    }
 
     const auto expect_refused = [&](const jllama_tts_options &o, const char *name) {
         unsigned char *out = nullptr;
@@ -4900,6 +5120,30 @@ struct RealtimeSession {
     }
 };
 } // namespace
+
+TEST_F(CApiLfm3Audio, AnIdleRealtimeSessionDoesNotHoldTheServerStop) {
+    // A /v1/realtime client that connected and then sends nothing holds a WebSocket the server reads
+    // from; the stop must close it rather than wait for the client. Run on a thread of its own, so a
+    // stop that hangs fails the test instead of the whole run.
+    auto attached = std::make_unique<AttachedServer>(model());
+    ASSERT_NE(attached->server, nullptr);
+    RealtimeSession session(attached->port);
+    ASSERT_TRUE(session.open());
+    const json created = session.await("session.created");
+    ASSERT_EQ(created.value("type", std::string()), "session.created") << created.dump();
+    jllama_server *server = attached->server;
+    attached->server = nullptr; // stopped here, not by the destructor
+    auto stopped = std::make_shared<std::atomic<int>>(-1);
+    std::thread([server, stopped]() { stopped->store(jllama_server_stop(server)); }).detach();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (stopped->load() == -1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(stopped->load(), JLLAMA_STATUS_OK) << "the stop waited for the idle realtime client";
+    EXPECT_TRUE(session.next().is_null()) << "the session outlived the server";
+    // the model is the model's, not the server's: it still answers
+    EXPECT_GT(hear(wav_of(8000, 440.0f)).value("tokens_evaluated", -1), 0);
+}
 
 TEST_F(CApiLfm3Audio, ARealtimeSessionReportsItsFormatsAndAnswersATextMessageInText) {
     // /v1/realtime without intent=transcription: the model hears and speaks, so the server holds a
@@ -6754,6 +6998,18 @@ TEST(CApiBert, AnEncoderEmbedsWithEveryPoolingTypeAndItsOwnByDefault) {
         by_pooling[pooling] = embedding_rows(model, text, 32);
         // the same text twice is the same vector: an encoder has no cache to differ over
         EXPECT_EQ(by_pooling[pooling], embedding_rows(model, text, 32));
+        // jllama_embed (LlamaModel.embed) answers one vector: the pooled one, or with --pooling none
+        // the first token's row
+        float *values = nullptr;
+        size_t count = 0;
+        ASSERT_EQ(jllama_embed(model, text.c_str(), &values, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+        ASSERT_FALSE(by_pooling[pooling].empty());
+        const json first = json::parse(by_pooling[pooling].front());
+        ASSERT_EQ(count, first.size());
+        for (size_t j = 0; j < count; ++j) {
+            EXPECT_FLOAT_EQ(values[j], first.at(j).get<float>()) << "column " << j;
+        }
+        jllama_floats_free(values);
         jllama_model_free(model);
     }
     EXPECT_EQ(by_pooling["none"].size(), 5u) << "one row per token, the two special tokens included";
@@ -8026,7 +8282,9 @@ TEST(CApiLogFile, ARefusedParseNeitherOpensNorClosesALogFile) {
     // The owner of the log file used to be decided from the argv's text: a load whose parse refused
     // an option before it reached --log-file still closed the process-wide file -- another model's.
     // The engine takes --log-file out of the argv and opens it only for an accepted parse. Upstream
-    // has no "--log-file=<path>" spelling; the parse refuses it like any unknown option.
+    // has no "--log-file=<path>" spelling; the parse refuses it like any unknown option. A batch below
+    // 2 and rank pooling on a model without a classification head are refused after an accepted parse,
+    // and the file was opened before those checks once.
     const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-refused");
     ASSERT_FALSE(model.empty());
     const auto log_a = log_file_path("jllama-c-api-log-file-refused-a");
@@ -8038,7 +8296,9 @@ TEST(CApiLogFile, ARefusedParseNeitherOpensNorClosesALogFile) {
     ASSERT_NE(a, nullptr) << jllama_last_error();
     for (const std::vector<std::string> refused :
          {std::vector<std::string>{"--no-such-option", "--log-file", log_b.string()},
-          std::vector<std::string>{"--log-file=" + log_b.string()}}) {
+          std::vector<std::string>{"--log-file=" + log_b.string()},
+          std::vector<std::string>{"-b", "1", "--log-file", log_b.string()},
+          std::vector<std::string>{"--embedding", "--pooling", "rank", "--log-file", log_b.string()}}) {
         EXPECT_EQ(load_tiny(model, refused), nullptr) << refused.front();
         const auto before = drained_size(log_a);
         EXPECT_FALSE(greedy_answer(a).empty());
@@ -8097,6 +8357,59 @@ TEST(CApiLogFile, LogDisableAfterTheLogFileStillDisablesTheLog) {
     EXPECT_EQ(written, 0u) << "the disabled log was written into " << log.string();
     jllama_model_free(loaded);
     jllama_set_log_callback(nullptr, nullptr); // a swap resumes the worker for whatever runs next
+    std::filesystem::remove(log, ec);
+    std::filesystem::remove(model, ec);
+}
+
+TEST(CApiLogFile, TheFileOfLlamaArgLogFileIsOwnedLikeTheOption) {
+    // LLAMA_ARG_LOG_FILE opens its file inside the parse, before the argv, so the engine cannot take it
+    // out of the argv as it takes --log-file: the load whose parse opened it owns it -- its free closes
+    // it, a load refused after its parse closes it at once, and so does a refused server argv.
+    const std::string model = write_tiny_llama_gguf("jllama-c-api-log-file-env");
+    ASSERT_FALSE(model.empty());
+    const auto log = log_file_path("jllama-c-api-log-file-env");
+    const std::string log_name = log.string();
+    std::error_code ec;
+    std::filesystem::remove(log, ec);
+    struct EnvReset {
+        ~EnvReset() { set_env_utf8("LLAMA_ARG_LOG_FILE", nullptr); }
+    } env_reset;
+    const auto closed_after = [&](const char *what) {
+        set_env_utf8("LLAMA_ARG_LOG_FILE", nullptr);
+        const auto written = drained_size(log);
+        jllama_model *later = load_tiny(model, {});
+        ASSERT_NE(later, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(later).empty());
+        jllama_model_free(later);
+        EXPECT_EQ(drained_size(log), written) << what;
+    };
+    {
+        SCOPED_TRACE("freed");
+        set_env_utf8("LLAMA_ARG_LOG_FILE", log_name.c_str());
+        jllama_model *owner = load_tiny(model, {});
+        ASSERT_NE(owner, nullptr) << jllama_last_error();
+        EXPECT_FALSE(greedy_answer(owner).empty());
+        jllama_model_free(owner);
+        EXPECT_GT(drained_size(log), 0u) << "the model logged nothing into the file of the variable";
+        closed_after("the file of a freed model's variable stayed open");
+    }
+    {
+        SCOPED_TRACE("refused after the parse");
+        set_env_utf8("LLAMA_ARG_LOG_FILE", log_name.c_str());
+        EXPECT_EQ(load_tiny(model, {"-b", "1"}), nullptr);
+        closed_after("the file a refused load's parse opened stayed open");
+    }
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+    {
+        SCOPED_TRACE("refused server argv");
+        set_env_utf8("LLAMA_ARG_LOG_FILE", log_name.c_str());
+        const char *argv[] = {"llama-server", "--no-such-option", "--host", "127.0.0.1", "--port", "0"};
+        jllama_server *server = nullptr;
+        EXPECT_EQ(jllama_server_start(6, argv, &server), JLLAMA_STATUS_ERROR);
+        EXPECT_EQ(server, nullptr);
+        closed_after("the file a refused server argv's parse opened stayed open");
+    }
+#endif
     std::filesystem::remove(log, ec);
     std::filesystem::remove(model, ec);
 }

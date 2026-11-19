@@ -92,7 +92,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   refused; two models of the same shape are not told apart, so the inputs have to be one model's.
 - **`TextToSpeech.synthesize(text, SpeechParameters)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_options()` with `jllama_tts_options` / `jllama_tts_options_init()` in the C
-  API): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
+  API -- a static inline over the exported `jllama_tts_options_init_size()`, so a library that grew
+  never writes past an older caller's struct, and a `struct_size` that is no version of the header is
+  refused): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
   (`topK`, `topP`, `repeatPenalty`, `seed`, `temperature`) and the delivery of a model that controls
   it, `speed` and `loudness` (llama.cpp b12431, ZONOS3 Mini). A model without delivery control
   refuses a speed other than 1 or a loudness other than 0, and values out of range (a top-p outside
@@ -623,6 +625,44 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A blocking call with `"stream": true` in its body no longer ends the process.** The raw JSON
+  calls (`LlamaModel.handleCompletions` / `handleCompletionsOai`, `FfmLlamaModel.completions` /
+  `chatCompletions`, `jllama_completions` & co.) passed the body's `stream` on, the server then sent
+  the answer in chunks with the same index, and the blocking wait aborted at the second one
+  (`GGML_ASSERT "duplicate result received"`). A blocking call answers the whole result now
+  (`CApi.ABlockingCallAnswersAStreamRequestWhole`, `ResponseJsonStructureTest`, red without the fix).
+- **An embedded server reads its argv once.** `NativeServer` parsed it in the engine and again inside
+  llama.cpp, so an option that reads a file which gives its contents once -- `--api-key-file` from a
+  pipe or `/dev/stdin` -- was read empty the second time, and the server ran without its key,
+  answering every request. Patches `0006` and `0007` add `llama_server_parsed` /
+  `llama_server_attach_parsed`, which run on the engine's parameters, and the parse runs under the
+  log lock, so a `--log-disable` or `LLAMA_ARG_LOG_FILE` there no longer pauses the log worker
+  without it (`CApiServer.AnApiKeyFileThatCanBeReadOnlyOnceProtectsTheServer`, red without the fix).
+- **Numbers on the command line are read with a decimal point whatever the locale.** llama.cpp's
+  option handlers read them with `std::stof`, which follows `LC_NUMERIC`, and a JVM keeps the locale
+  of its environment: under `de_DE` `ModelParameters.setTemp(0.25f)` loaded the model at temperature
+  0 and `setRepeatPenalty(0.9f)` refused the load. The engine parses under the "C" numeric locale of the
+  calling thread, the process's stays as it was (`CApiLocale`, red without the fix; the Linux C++ job
+  generates `de_DE.UTF-8` for it).
+- **What `configureParallelInference` / `jllama_configure` set holds after the idle sleep.** The wake
+  of `--sleep-idle-seconds` built the context from the load's threads and the slot scheduler took the
+  load's similarity; the engine applies the configured values after every wake, wherever they
+  differ from the context's (`EngineTuning`, red without the fix).
+- **An interrupted stream answers `JLLAMA_STATUS_INTERRUPTED`.** After `jllama_model_interrupt` (and
+  therefore during `jllama_model_free`) a receive of a stream in flight answered "Task not found", an
+  error that reads as the caller's mistake, and a stream asked for afterwards got a task nobody would
+  answer; both are `JLLAMA_STATUS_INTERRUPTED` now (`CApiInterrupt`).
+- **A load refused after its parse leaves the log files alone.** A batch below 2 and rank pooling on
+  a model without a classification head are refused after llama.cpp accepted the argv, and the
+  load's `--log-file` had been opened by then -- closing the file another model logged into. The
+  refusal is decided before the file is opened (`CApiLogFile`); a `LLAMA_ARG_LOG_FILE` the refused
+  parse opened is closed at once, as after a free or a refused server argv.
+- **A second `FfmLlamaModel.close()` returns only once the model is freed.** It returned at once
+  while the first was still waiting for the calls in flight, so the weights could still be loaded
+  after a `close()` had returned (`FfmLlamaModelIntegrationTest`).
+- **The C functions that free or stop catch every exception** (`jllama_model_free`,
+  `jllama_server_stop`, `jllama_rpc_server_stop`): one that is no `std::exception` no longer unwinds
+  into a C caller.
 - **A model woken from its idle sleep no longer calls the load-progress callback of its first load.**
   The server keeps the caller's callback and runs the model load again when `--sleep-idle-seconds`
   woke it -- on its own thread, long after the load returned and its user data was gone (the stack

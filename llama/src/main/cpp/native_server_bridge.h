@@ -28,8 +28,14 @@
 
 struct server_context;
 struct server_routes;
+struct common_params;
 
 int llama_server(int argc, char **argv);
+// llama_server() over params the caller parsed from argv already (patches/0006): one parse, so a file
+// option such as --api-key-file is read once; argv is still what router mode hands its workers
+int llama_server_parsed(common_params &params, int argc, char **argv);
 int llama_server_attach(int argc, char **argv, server_context &ctx_server, server_routes &routes);
+// llama_server_attach() over params the caller parsed already (patches/0007)
+int llama_server_attach_parsed(common_params &params, server_context &ctx_server, server_routes &routes);
 void llama_server_set_embedded(bool embedded);
 void llama_server_request_shutdown();

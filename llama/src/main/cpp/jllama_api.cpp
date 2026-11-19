@@ -292,7 +292,16 @@ jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_
     }
 }
 
-void jllama_model_free(jllama_model *model) { jllama::engine::free(reinterpret_cast<jllama_context *>(model)); }
+void jllama_model_free(jllama_model *model) {
+    // Nothing may unwind into a C caller; free() fails only on a mutex or thread error of the platform.
+    try {
+        jllama::engine::free(reinterpret_cast<jllama_context *>(model));
+    } catch (const std::exception &e) {
+        fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        fail(JLLAMA_STATUS_ERROR, "jllama_model_free: an exception that is no std::exception");
+    }
+}
 
 void jllama_model_interrupt(jllama_model *model) {
     jllama::engine::interrupt(reinterpret_cast<jllama_context *>(model));
@@ -745,6 +754,8 @@ jllama_status jllama_server_stop(jllama_server *server) {
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "jllama_server_stop: an exception that is no std::exception");
     }
 }
 
@@ -853,6 +864,8 @@ jllama_status jllama_rpc_server_stop(void) {
         }
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "jllama_rpc_server_stop: an exception that is no std::exception");
     }
 }
 
@@ -949,27 +962,30 @@ jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const cha
     return jllama_tts_synthesize_options(tts, text, &options, wav, length);
 }
 
-void jllama_tts_options_init(jllama_tts_options *options) {
-    if (options == nullptr) {
+void jllama_tts_options_init_size(jllama_tts_options *options, size_t size) {
+    if (options == nullptr || size < sizeof(size_t)) {
         return;
     }
     const jllama_tts::synthesis_options defaults;
-    options->struct_size = sizeof(jllama_tts_options);
-    options->speaker_reference_path = nullptr;
-    options->lang = nullptr;
-    options->voice = nullptr;
-    options->max_frames = defaults.max_frames;
-    options->top_k = defaults.top_k;
-    options->seed = defaults.seed;
-    options->temperature = defaults.temperature;
-    options->top_p = defaults.top_p;
-    options->repeat_penalty = defaults.repeat_penalty;
-    options->speed = defaults.speed;
-    options->loudness = defaults.loudness;
-    options->speaker_reference_text = nullptr;
-    options->cfg_scale = defaults.cfg_scale;
-    options->flow_steps = defaults.flow_steps;
-    options->raw_prompt = defaults.raw_prompt ? 1 : 0;
+    jllama_tts_options full;
+    full.struct_size = std::min(size, sizeof(jllama_tts_options));
+    full.speaker_reference_path = nullptr;
+    full.lang = nullptr;
+    full.voice = nullptr;
+    full.max_frames = defaults.max_frames;
+    full.top_k = defaults.top_k;
+    full.seed = defaults.seed;
+    full.temperature = defaults.temperature;
+    full.top_p = defaults.top_p;
+    full.repeat_penalty = defaults.repeat_penalty;
+    full.speed = defaults.speed;
+    full.loudness = defaults.loudness;
+    full.speaker_reference_text = nullptr;
+    full.cfg_scale = defaults.cfg_scale;
+    full.flow_steps = defaults.flow_steps;
+    full.raw_prompt = defaults.raw_prompt ? 1 : 0;
+    // an older caller's struct is shorter: its bytes only
+    std::memcpy(options, &full, full.struct_size);
 }
 
 jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
@@ -985,9 +1001,17 @@ jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *t
     jllama_tts_options given;
     jllama_tts_options_init(&given);
     if (options != nullptr) {
-        if (options->struct_size < sizeof(size_t)) {
+        // the size of some version of the header: up to loudness (6.1.0's first), speaker_reference_text,
+        // cfg_scale and flow_steps, raw_prompt -- or a later, longer one. Another size would cut a field
+        // (half a pointer read as one).
+        const size_t size = options->struct_size;
+        const bool known = size == offsetof(jllama_tts_options, speaker_reference_text) ||
+                           size == offsetof(jllama_tts_options, cfg_scale) ||
+                           size == offsetof(jllama_tts_options, raw_prompt) || size >= sizeof(jllama_tts_options);
+        if (!known) {
             return fail(JLLAMA_STATUS_INVALID_ARGUMENT,
-                        "options->struct_size must be sizeof(jllama_tts_options), see jllama_tts_options_init");
+                        "options->struct_size must be sizeof(jllama_tts_options) of some version of jllama_api.h, "
+                        "see jllama_tts_options_init");
         }
         std::memcpy(&given, options, std::min(options->struct_size, sizeof(jllama_tts_options)));
     }

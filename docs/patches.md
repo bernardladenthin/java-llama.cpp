@@ -24,7 +24,7 @@ match a binary to this page.
 |---|---|---|---:|---:|
 | 0002 | [`0002-server-preserve-caller-load-progress-callback.patch`](#0002-server-preserve-caller-load-progress-callbackpatch) | server: keep a load-progress callback the embedding caller installed | 1 | 1 |
 | 0003 | [`0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch`](#0003-pr22393-server-add-slot-prompt-similarity-getter-setterpatch) | Upstream PR: ggml-org/llama.cpp#22393 — "server : add slot_prompt_similarity getter/setter" | 2 | 2 |
-| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 6 |
+| 0006 | [`0006-server-embed-native-server-jni.patch`](#0006-server-embed-native-server-jnipatch) | server: make llama_server() embeddable in a host process (no signal handlers, stoppable) | 1 | 7 |
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
@@ -133,6 +133,12 @@ opts.install_signal_handlers.
 Since the review of 2026-11-18 the embedded server also skips the common_log_flush() at the end of
 llama_server(): it pauses and resumes common_log's worker without the engine's g_common_log_mutex,
 and the host's setLogger / log-file changes take that lock.
+
+Since round three of that review the patch also adds llama_server_parsed(params, argc, argv): the
+same server over an argv the embedding host has parsed already. NativeServer's engine parses the
+argv once, under its log lock, to refuse a bad argv at the start and to own the log file; a second
+parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
+/dev/stdin) the second time empty -- the server then ran without its API key.
 ```
 
 ## 0007-server-attach-http-frontend.patch
@@ -159,6 +165,10 @@ outlives the attach call. Applies after 0001 and 0006.
 Refreshed at b11881: #31113 factored the route table out of llama_server() itself
 (server_register_routes, server_register_stream_routes), so the patch no longer extracts a copy of
 it -- the helper this patch used to add, and the "verbatim copy" invariant it had to keep, are gone.
+
+Since the review of 2026-11-18 the patch also adds llama_server_attach_parsed(params, ...), the attach
+entry over an argv the host has parsed already (see 0006's llama_server_parsed: one parse, so a file
+option from a pipe is read once).
 ```
 
 ## 0008-server-models-worker-cmd-override.patch

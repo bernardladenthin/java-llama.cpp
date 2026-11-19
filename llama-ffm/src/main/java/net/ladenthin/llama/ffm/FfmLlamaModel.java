@@ -22,6 +22,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.callback.LoadProgressCallback;
@@ -52,6 +53,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      * while another thread closed the model used the freed handle.
      */
     private final ReentrantReadWriteLock lifecycle = new ReentrantReadWriteLock();
+    /** Counted down once the first {@link #close()} has freed the handle; a second close waits for it. */
+    private final CountDownLatch freed = new CountDownLatch(1);
     /** The video decoder's stubs, freed after the model; null for a model loaded without one. */
     private final FfmVideoDecoder video;
 
@@ -194,11 +197,13 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /**
      * Frees the model: cancels its streaming tasks, waits for the calls in flight, stops its inference
-     * loop and releases the weights. A second call is a no-op.
+     * loop and releases the weights. A second call frees nothing and returns once the first has: after
+     * any {@code close()} returns, the weights are released.
      */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
+            awaitFreed();
             return;
         }
         // A new call is refused from here on (handle() checks the flag under the read lock). The calls
@@ -215,6 +220,23 @@ public final class FfmLlamaModel implements AutoCloseable {
             }
         } finally {
             lifecycle.writeLock().unlock();
+            freed.countDown();
+        }
+    }
+
+    /** Waits for the first close to free the handle; an interrupt is kept for the caller. */
+    private void awaitFreed() {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                freed.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -369,7 +391,9 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * The embedding of one prompt (a model loaded with {@code --embedding}).
+     * The embedding of one prompt (a model loaded with {@code --embedding}). A model loaded with
+     * {@code --pooling none} has one vector per token, of which this is the first; {@link #embeddings}
+     * answers all of them.
      *
      * @param prompt the text
      * @return the vector
@@ -517,10 +541,11 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * Sets the LoRA adapter scales.
+     * Sets the LoRA adapter scales; an adapter the array does not name gets scale 0, as upstream's
+     * {@code POST /lora-adapters}. {@link #loraAdapters()} reads the scales back.
      *
      * @param adaptersJson a JSON array of {@code {"id": n, "scale": f}}
-     * @return the resulting adapter list
+     * @return {@code {"success": true}}, the server's answer
      */
     public String setLoraAdapters(String adaptersJson) {
         return stringOut(JllamaNative.SET_LORA_ADAPTERS, requireNonNull(adaptersJson, "adaptersJson"));

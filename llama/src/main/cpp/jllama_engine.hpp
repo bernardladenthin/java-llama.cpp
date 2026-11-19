@@ -247,15 +247,16 @@ void set_cpu_moe_batched(bool batched);
 [[nodiscard]] std::string batch_refusal(const common_params &params);
 
 /**
- * Parses an embedded server's argv the way llama_server() will, before its worker starts: a refused
- * argv or batch (batch_refusal) throws std::runtime_error with the reason, synchronously and before
- * any log file is opened or closed. Then the server's half of the --log-file ownership: takes
- * "--log-file <path>" out of `argv` and opens the file, or with LLAMA_ARG_LOG_FILE set claims the
- * files the server's own parse opens (the argv's --log-file stays for it, applied after the
- * variable as upstream orders them), and returns the owner id (0: no log file). The release closes
- * the file unless a model's load or another server has taken it over since.
+ * Parses an embedded server's argv into `params` before its worker starts -- the only parse: the
+ * worker runs llama_server_parsed() / llama_server_attach_parsed() (patches/0006, 0007) on them, so a
+ * file option is read once. A refused argv or batch (batch_refusal) throws std::runtime_error with
+ * the reason, synchronously and before the argv's log file is opened (a file LLAMA_ARG_LOG_FILE
+ * opened is closed again). Then the server's half of the --log-file ownership: takes "--log-file
+ * <path>" out of `argv` and opens the file after the variable's, as upstream orders them, and
+ * returns the owner id (0: no log file). The release closes the file unless a model's load or
+ * another server has taken it over since.
  */
-[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv);
+[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params);
 void release_log_file_of_server(std::uint64_t owner);
 
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */

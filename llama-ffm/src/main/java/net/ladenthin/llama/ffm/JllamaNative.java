@@ -188,8 +188,13 @@ final class JllamaNative {
             JAVA_INT.withName("raw_prompt"),
             MemoryLayout.paddingLayout(4));
 
+    /**
+     * {@code jllama_tts_options_init_size}: the header's {@code jllama_tts_options_init} is a static
+     * inline over it, so this module passes the size of its own layout, as a C caller passes its
+     * header's {@code sizeof}.
+     */
     static final MethodHandle TTS_OPTIONS_INIT =
-            downcall("jllama_tts_options_init", FunctionDescriptor.ofVoid(ADDRESS));
+            downcall("jllama_tts_options_init_size", FunctionDescriptor.ofVoid(ADDRESS, JAVA_LONG));
     static final MethodHandle TTS_SYNTHESIZE =
             downcall("jllama_tts_synthesize_options", json(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle TTS_SUPPORTS_SPEAKER_REFERENCE =
@@ -379,12 +384,13 @@ final class JllamaNative {
 
     /**
      * A {@code jllama_tts_options} of {@code parameters} in {@code arena}: filled by
-     * {@code jllama_tts_options_init} first, so {@code struct_size} is the library's own, then set
-     * field by field. The strings live in {@code arena} as long as the struct.
+     * {@code jllama_tts_options_init_size} first with this layout's size, so {@code struct_size} is
+     * the size of this module's struct, then set field by field. The strings live in {@code arena} as
+     * long as the struct.
      */
     static MemorySegment ttsOptions(Arena arena, SpeechParameters parameters) {
         MemorySegment options = arena.allocate(TTS_OPTIONS);
-        invoke(TTS_OPTIONS_INIT, options);
+        invoke(TTS_OPTIONS_INIT, options, TTS_OPTIONS.byteSize());
         options.set(ADDRESS, offset("speaker_reference_path"), cString(arena, parameters.getSpeakerReferenceAudioPath()));
         options.set(ADDRESS, offset("lang"), cString(arena, parameters.getLanguage()));
         options.set(ADDRESS, offset("voice"), cString(arena, parameters.getVoice()));
