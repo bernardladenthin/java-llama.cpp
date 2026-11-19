@@ -441,6 +441,38 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void everyAliasOfARouteReachesItsHandler() throws IOException {
+        // the aliases no other test requested: a typo in one of them is a 404 for the clients that use it
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            int port = server.getPort();
+            String rerank = "{\"query\":\"q\",\"documents\":[\"a\",\"b\"]}";
+            for (String path : new String[] {"/rerank", "/reranking", "/v1/reranking", "/v1/rerank"}) {
+                Response response = post(port, path, rerank, "");
+                assertThat(path, response.code, is(200));
+                assertThat(path, response.body, containsString("relevance_score"));
+            }
+            String infill = "{\"input_prefix\":\"def add(a,b):\\n    return \",\"input_suffix\":\"\"}";
+            for (String path : new String[] {"/infill", "/v1/infill"}) {
+                Response response = post(port, path, infill, "");
+                assertThat(path, response.code, is(200));
+                assertThat(path, response.body, containsString("content"));
+            }
+            String messages = "{\"model\":\"test-model\",\"max_tokens\":16,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response anthropic = post(port, "/messages", messages, "");
+            assertThat(anthropic.code, is(200));
+            assertThat(anthropic.body, containsString("\"type\":\"message\""));
+            Response responses = post(port, "/responses", "{\"model\":\"test-model\",\"input\":\"hi\"}", "");
+            assertThat(responses.code, is(200));
+            assertThat(responses.body, containsString("\"object\":\"response\""));
+            // without a speech engine the speech routes are there and say so (501), not missing (404)
+            for (String path : new String[] {"/audio/speech", "/v1/audio/speech", "/tts"}) {
+                assertThat(path, post(port, path, "{\"input\":\"hi\"}", "").code, is(501));
+            }
+        }
+    }
+
+    @Test
     public void upstreamsRerankingAliasStillAnswers() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
             String body = "{\"query\":\"q\",\"documents\":[\"a\"]}";
