@@ -651,6 +651,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`ModelParameters.setControlVectorLayerRange` failed every load.** It wrote `"START,END"` as one
+  argument, while llama.cpp reads `--control-vector-layer-range START END` as two: the parser took
+  the next argument as END. The builder renders the two values as two arguments now (`putValues`);
+  `ControlVectorLayerRangeIntegrationTest` loads a model with it through JNI. No test had loaded a
+  control vector at all: `CApiControlVector` applies one the generator writes, over every layer of
+  its range or none.
+- **A control vector llama.cpp cannot apply is refused by the load.** One whose width or layer count
+  does not fit the model was logged by `common_init_from_params()`, which then returned the context
+  without the vector and without the steps after it (the LoRA adapters, the warmup): the model ran
+  unsteered and the caller never heard. The load names the vector and the mismatch now.
+- **Chat templates read and write their numbers with a decimal point under any locale.** llama.cpp's
+  Jinja parses a float literal and the `float` filter with `std::stod` and prints a float through the
+  C library, both of which follow `LC_NUMERIC`, which a JVM takes from its environment: under `de_DE`
+  `{{ 0.5 }}` rendered as `0,`. Every C API call, the load and the server's worker thread run under
+  the "C" numeric locale of their own thread now (`numeric_locale.hpp`), and the process's locale stays
+  as it is (`CApiLocale.AChatTemplateReadsAndWritesItsNumbersWithADecimalPointUnderADecimalCommaLocale`,
+  red before).
 - **`LlamaModel` downloads its model files, and reads a draft's type from it.** The load parses its
   argv as llama.cpp's server example, whose parse leaves the model files to `llama_server()`
   (`common_models_handler_apply`), and the load is no `llama_server()`: `setModelUrl`, `setHfRepo`

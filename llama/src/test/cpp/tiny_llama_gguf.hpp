@@ -715,6 +715,40 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     return ok ? path : std::string();
 }
 
+// A control vector for write_tiny_llama_gguf()'s default model, in the format llama.cpp's
+// cvector-generator writes (general.architecture "controlvector", one F32 direction.<layer> of n_embd
+// per layer, layers counted from 1). llama.cpp adds direction.<il> times the scale to the output of
+// layer il, for the layers of --control-vector-layer-range. The values are large, so that a vector
+// changes a greedy answer of the random model.
+inline std::string write_tiny_control_vector_gguf(const std::string &prefix = "jllama-control-vector",
+                                                  int n_layer = N_LAYER, int n_embd = N_EMBD) {
+    static std::atomic<int> counter{0};
+    const std::string path =
+        (std::filesystem::temp_directory_path() /
+         (prefix + "-" + std::to_string(std::random_device{}()) + "-" + std::to_string(counter++) + ".gguf"))
+            .string();
+    std::mt19937 rng(11);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "controlvector");
+    ggml_init_params ip = {static_cast<size_t>(n_layer) * n_embd * sizeof(float) + 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    std::normal_distribution<float> dist(0.0f, 8.0f);
+    for (int il = 1; il <= n_layer; ++il) {
+        // add_random_tensor writes a 1-D tensor as ones (a norm); a direction is noise
+        ggml_tensor *t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        auto *data = static_cast<float *>(t->data);
+        for (int i = 0; i < n_embd; ++i) {
+            data[i] = dist(rng);
+        }
+        ggml_set_name(t, ("direction." + std::to_string(il)).c_str());
+        gguf_add_tensor(g, t);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 inline std::string write_tiny_llama_gguf(const std::string &prefix = "jllama-c-api", bool fim = false,
                                          uint32_t eos = '>', const std::vector<std::string> &special = {},
                                          std::string *shard_path = nullptr) {

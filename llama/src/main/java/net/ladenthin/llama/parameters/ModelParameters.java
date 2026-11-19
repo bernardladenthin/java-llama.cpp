@@ -1165,8 +1165,8 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setControlVectorLayerRange(int start, int end) {
-        putString(ModelOption.CONTROL_VECTOR_LAYER_RANGE, start + "," + end);
-        return this;
+        // two arguments: "start,end" as one made every load fail (upstream reads START and END apart)
+        return putValues(ModelOption.CONTROL_VECTOR_LAYER_RANGE, String.valueOf(start), String.valueOf(end));
     }
 
     /**

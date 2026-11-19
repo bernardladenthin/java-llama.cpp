@@ -21,6 +21,7 @@
 #include "jllama_engine.hpp"
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
+#include "numeric_locale.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -36,12 +37,6 @@
 #include <mutex>
 #include <optional>
 #include <thread>
-
-#if defined(__APPLE__)
-#include <xlocale.h> // newlocale / uselocale
-#elif !defined(_WIN32)
-#include <locale.h>
-#endif
 
 namespace jllama::engine {
 
@@ -400,58 +395,6 @@ void release_log_file(std::uint64_t owner) noexcept {
     }
 }
 
-// The "C" numeric locale on the calling thread while it lives. llama.cpp's option parser reads
-// numbers with std::stof / std::stoi, which follow LC_NUMERIC, and a JVM leaves the locale of its
-// environment in effect: under de_DE "--temp 0.7" read as 0 and "--repeat-penalty 0.9" was refused
-// (measured). llama_server() sets the "C" numeric locale for the whole process, but only once it
-// runs -- after the engine's parse, and never for a model load. Per thread, so nothing else of the
-// host process changes.
-class c_numeric_locale {
-  public:
-    c_numeric_locale(const c_numeric_locale &) = delete;
-    c_numeric_locale &operator=(const c_numeric_locale &) = delete;
-#if defined(_WIN32)
-    c_numeric_locale() : previous_mode_(_configthreadlocale(_ENABLE_PER_THREAD_LOCALE)) {
-        const char *current = std::setlocale(LC_NUMERIC, nullptr);
-        previous_ = current != nullptr ? current : "C";
-        std::setlocale(LC_NUMERIC, "C");
-    }
-    ~c_numeric_locale() {
-        std::setlocale(LC_NUMERIC, previous_.c_str());
-        if (previous_mode_ != -1) {
-            _configthreadlocale(previous_mode_);
-        }
-    }
-
-  private:
-    int previous_mode_;
-    std::string previous_;
-#else
-    c_numeric_locale() : previous_(uselocale(static_cast<locale_t>(0))) {
-        locale_t base = duplocale(previous_);
-        if (base != static_cast<locale_t>(0)) {
-            c_locale_ = newlocale(LC_NUMERIC_MASK, "C", base);
-            if (c_locale_ == static_cast<locale_t>(0)) {
-                freelocale(base);
-            }
-        }
-        if (c_locale_ != static_cast<locale_t>(0)) {
-            uselocale(c_locale_);
-        }
-    }
-    ~c_numeric_locale() {
-        if (c_locale_ != static_cast<locale_t>(0)) {
-            uselocale(previous_);
-            freelocale(c_locale_);
-        }
-    }
-
-  private:
-    locale_t previous_;
-    locale_t c_locale_ = static_cast<locale_t>(0);
-#endif
-};
-
 // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
 // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
 // that looks like a relevance and is none. Refused by the model file's tensor list -- and by the
@@ -508,6 +451,51 @@ struct load_progress_relay {
 
 } // namespace
 
+// A control vector llama.cpp cannot apply: common_init_from_params() logs it and returns the context
+// without the vector -- and without the steps after it, the LoRA adapters and the warmup among them --
+// so the model ran unsteered and the caller never heard. Decided before the load from the files: the
+// vectors' width against the model's (<arch>.embedding_length) and their layers against its block
+// count, as common_control_vector_load() reads them. Empty when every vector applies, or when the model
+// file cannot be read here (the load reports that).
+std::string control_vector_refusal(const common_params &params) {
+    if (params.control_vectors.empty() || params.model.path.empty()) {
+        return std::string();
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(params.model.path.c_str(), no_data);
+    if (g == nullptr) {
+        return std::string();
+    }
+    const auto u32 = [g](const std::string &key) -> int64_t {
+        const int64_t id = gguf_find_key(g, key.c_str());
+        return id >= 0 && gguf_get_kv_type(g, id) == GGUF_TYPE_UINT32 ? gguf_get_val_u32(g, id) : -1;
+    };
+    const int64_t arch_id = gguf_find_key(g, "general.architecture");
+    const std::string arch =
+        arch_id >= 0 && gguf_get_kv_type(g, arch_id) == GGUF_TYPE_STRING ? gguf_get_val_str(g, arch_id) : "";
+    const int64_t n_embd = u32(arch + ".embedding_length");
+    const int64_t n_layer = u32(arch + ".block_count");
+    gguf_free(g);
+    if (n_embd < 0 || n_layer < 0) {
+        return std::string();
+    }
+    std::string names;
+    for (const auto &cvec : params.control_vectors) {
+        names += (names.empty() ? "" : ", ") + cvec.fname;
+    }
+    const common_control_vector_data data = common_control_vector_load(params.control_vectors, n_layer);
+    if (data.n_embd == -1) {
+        return "a control vector cannot be applied to this model (" + names +
+               "): a file that cannot be read, a direction tensor that is not 1-D F32, or a layer past the model's " +
+               std::to_string(n_layer) + " (llama.cpp's log names which)";
+    }
+    if (data.n_embd != n_embd) {
+        return "a control vector has " + std::to_string(data.n_embd) + " values per layer and the model " +
+               std::to_string(n_embd) + " (" + names + ")";
+    }
+    return std::string();
+}
+
 std::string batch_refusal(const common_params &params) {
     // A batch of no tokens: llama_context takes n_ubatch from it too, and every decode -- the warmup,
     // the server's memory probe -- aborts the process adding its first token (GGML_ABORT "failed to
@@ -548,7 +536,7 @@ std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params 
         std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
         std::lock_guard<std::mutex> lk(g_common_log_mutex);
         {
-            const c_numeric_locale numbers;
+            const jllama::c_numeric_locale numbers;
             parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
                                          LLAMA_EXAMPLE_SERVER);
         }
@@ -568,6 +556,8 @@ void release_log_file_of_server(std::uint64_t owner) { release_log_file(owner); 
 
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data, const video_decoder *decoder) {
+    // The load parses the chat templates (and the argv, under its own guard as well).
+    const jllama::c_numeric_locale numbers;
     // First, so that the host's release callback runs on every way out of this function.
     std::shared_ptr<video_decoder_host> video_host;
     if (decoder != nullptr) {
@@ -615,7 +605,7 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
         std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
         {
-            const c_numeric_locale numbers;
+            const jllama::c_numeric_locale numbers;
             parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
                                          LLAMA_EXAMPLE_SERVER);
         }
@@ -650,6 +640,12 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         common_models_handler_apply(models, params);
     } catch (const std::exception &e) {
         throw std::runtime_error(std::string("failed to fetch the model files: ") + e.what());
+    }
+    if (!vocab_only) {
+        const std::string vectors = control_vector_refusal(params);
+        if (!vectors.empty()) {
+            throw std::runtime_error(vectors);
+        }
     }
 
     // A draft model nobody asks: upstream's speculative types default to none, and the models handler
@@ -758,6 +754,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // which is also what lets the same loop serve a C caller without a JVM at all.
     jllama_context *raw_ctx = jctx.get();
     jctx->worker = std::thread([raw_ctx]() {
+        // for the thread's life: the worker renders what the server does on its own thread
+        const jllama::c_numeric_locale numbers;
         raw_ctx->worker_ready.store(true);
         raw_ctx->server.start_loop();
     });

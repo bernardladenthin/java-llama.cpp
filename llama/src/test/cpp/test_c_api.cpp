@@ -1025,9 +1025,12 @@ TEST(CApiSlotFiles, ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn) {
     // llama_file's reads past the end of a file are no error on POSIX (they stop short and count the
     // whole length), so llama_state_seq_load_file read a cut slot file as a state larger than the file
     // and asserted -- the process ended on the restore of a file the caller names (patches/0035; on
-    // Windows the read throws and the restore failed already). Every cut is now an invalid slot
-    // file, the slot is left empty, and the whole file still restores. The cut inside the header was
-    // refused by upstream already (the token count exceeds the file).
+    // Windows the read throws and the restore failed already). A cut is now an invalid slot file, the
+    // slot is left empty, and the whole file still restores: every cut of the first 1024 bytes (the
+    // header, the token list and the cells' positions and sequences, where a short read leaves a
+    // value unread) and every 97th byte after them. A cut inside the header was refused by upstream
+    // already (the token count exceeds the file). Measured once over every byte of the first 4096 and
+    // every 61st after them, 4205 cuts of a 10.7 KB file: all refused, none aborted.
     const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-cut");
     ASSERT_FALSE(path.empty());
     const std::filesystem::path dir =
@@ -1055,7 +1058,15 @@ TEST(CApiSlotFiles, ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn) {
         << jllama_last_error();
     const uintmax_t size = std::filesystem::file_size(dir / "whole.bin");
     ASSERT_GT(size, 64u);
-    for (const uintmax_t cut : {size - 1, size - 64, size / 2, uintmax_t{16}}) {
+    std::vector<uintmax_t> cuts;
+    for (uintmax_t cut = 0; cut < size; cut += cut < 1024 ? 1 : 97) {
+        cuts.push_back(cut);
+    }
+    cuts.push_back(size - 1);
+    for (const uintmax_t cut : cuts) {
+        if (::testing::Test::HasFailure()) {
+            break; // the first cut that is not refused is the finding; the rest would repeat it
+        }
         SCOPED_TRACE("cut at " + std::to_string(cut) + " of " + std::to_string(size));
         std::error_code ec;
         std::filesystem::copy_file(dir / "whole.bin", dir / "cut.bin",
@@ -2251,6 +2262,53 @@ TEST(CApiWeightScales, QwenNextScalesEveryProjectionOfItsDeltaNet) {
     // loaded without a word. The generator's qwen3next has a delta net and an attention layer, both
     // with experts and a shared expert, and every matrix of them carries a scale.
     expect_weight_scales_applied(tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next"));
+}
+
+TEST(CApiControlVector, AControlVectorChangesTheAnswerOnlyOnTheLayersOfItsRange) {
+    // --control-vector and --control-vector-layer-range START END (ModelParameters.setControlVector,
+    // setControlVectorLayerRange): llama.cpp adds the vector's direction to the output of every layer
+    // of the range. No test loaded a control vector before; setControlVectorLayerRange wrote "START,END"
+    // as one argument until 2026-11-19, which failed every load (upstream reads two).
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-cvec-model");
+    const std::string cvec = write_tiny_control_vector_gguf();
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(cvec.empty());
+    const auto answer = [&](const std::vector<std::string> &extra) {
+        jllama_model *model = load_tiny(path, extra);
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return std::string("<no model>");
+        }
+        const std::string text = greedy_answer(model, 16);
+        jllama_model_free(model);
+        return text;
+    };
+    const std::string plain = answer({});
+    const std::string steered = answer({"--control-vector", cvec});
+    EXPECT_NE(steered, plain) << "the control vector changed nothing";
+    // scaled by 0 it adds nothing
+    EXPECT_EQ(answer({"--control-vector-scaled", cvec + ":0"}), plain);
+    // its range covers every layer (1 and 2) or none of them
+    EXPECT_EQ(answer({"--control-vector", cvec, "--control-vector-layer-range", "1", "2"}), steered);
+    EXPECT_EQ(answer({"--control-vector", cvec, "--control-vector-layer-range", "5", "9"}), plain);
+    // the range is two arguments: as one ("1,2") the next argument is read as END
+    EXPECT_EQ(load_tiny(path, {"--control-vector-layer-range", "1,2", "--ctx-size", "64"}), nullptr);
+    // a vector llama.cpp cannot apply is refused by the load: upstream logs it and runs without it
+    // (common_init_from_params returns the context before the vector, the LoRA adapters and the warmup)
+    const std::string wide = write_tiny_control_vector_gguf("jllama-control-vector-wide", N_LAYER, 2 * N_EMBD);
+    EXPECT_EQ(load_tiny(path, {"--control-vector", wide}), nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("values per layer and the model 32"), std::string::npos)
+        << jllama_last_error();
+    const std::string deep = write_tiny_control_vector_gguf("jllama-control-vector-deep", N_LAYER + 1, N_EMBD);
+    EXPECT_EQ(load_tiny(path, {"--control-vector", deep}), nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("cannot be applied to this model"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_EQ(load_tiny(path, {"--control-vector", cvec + ".missing"}), nullptr);
+    EXPECT_EQ(answer({"--control-vector", cvec}), steered) << "the model loads with a vector that fits";
+    std::error_code ec;
+    for (const std::string &p : {path, cvec, wide, deep}) {
+        std::filesystem::remove(p, ec);
+    }
 }
 
 TEST(CApiShard, AModelSplitByGgufSplitLoadsFromItsFirstFile) {
@@ -3713,6 +3771,34 @@ TEST(CApiLocale, ANumberOfTheArgvIsReadWithADecimalPointUnderADecimalCommaLocale
     EXPECT_FLOAT_EQ(settings.at("temperature").get<float>(), 0.25f) << settings.dump();
     EXPECT_FLOAT_EQ(settings.at("top_p").get<float>(), 0.5f) << settings.dump();
     EXPECT_FLOAT_EQ(settings.at("repeat_penalty").get<float>(), 0.9f) << settings.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiLocale, AChatTemplateReadsAndWritesItsNumbersWithADecimalPointUnderADecimalCommaLocale) {
+    // llama.cpp's Jinja reads a float literal and the float filter with std::stod and writes a float
+    // through the C library, both of which follow LC_NUMERIC: under de_DE a template read 0.5 as 0. The
+    // template is parsed at the load and rendered by every request, on the caller's thread and the
+    // server's.
+    const DecimalCommaLocale comma;
+    if (!comma.ok()) {
+        if (std::getenv("JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE") != nullptr) {
+            FAIL() << "JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE is set, and no locale with a decimal comma is installed";
+        }
+        GTEST_SKIP() << "no locale with a decimal comma is installed (locale-gen de_DE.UTF-8)";
+    }
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-locale-template");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"--jinja", "--chat-template",
+                                           "[{{ 0.5 }}|{{ '0.25' | float }}|{{ 1.5 * 2 }}]{{ messages[0].content }}"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned prompt;
+    ASSERT_EQ(jllama_apply_template(model, R"({"messages":[{"role":"user","content":"Hi"}]})", &prompt.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(prompt.str().find("[0.5|0.25|3.0]Hi"), std::string::npos) << prompt.str();
+    EXPECT_EQ(std::string(std::localeconv()->decimal_point), ",") << "a call changed the process's locale";
     jllama_model_free(model);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);

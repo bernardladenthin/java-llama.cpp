@@ -91,6 +91,31 @@ abstract class CliParameters {
     }
 
     /**
+     * Separates the values of an option that llama.cpp reads as several arguments: they are stored as
+     * one string, joined by this character (which no argument holds), and rendered as one argument each.
+     */
+    static final char VALUE_SEPARATOR = '\u001f';
+
+    /**
+     * Store the values of an option llama.cpp reads as several arguments ({@code
+     * --control-vector-layer-range START END}) and return this builder typed as the concrete subtype.
+     * {@link #toArray()} renders each value as an argument of its own: a value joined into one, such as
+     * {@code "2,10"}, is read by upstream's parser as the first value, and the argument after it as the
+     * second -- the next option's name, which fails the load.
+     *
+     * @param option the option to set
+     * @param values its values, in order
+     * @param <T>    the concrete subtype of this builder
+     * @return this builder
+     */
+    // Self-typing builder idiom — see putScalar above.
+    @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
+    protected final <T extends CliParameters> T putValues(ModelOption option, String... values) {
+        parameters.put(option.getCliOption(), String.join(String.valueOf(VALUE_SEPARATOR), values));
+        return (T) this;
+    }
+
+    /**
      * Append one value to an option llama.cpp reads as a comma-separated list, so that a builder
      * method documented as repeatable really is.
      *
@@ -195,7 +220,10 @@ abstract class CliParameters {
         parameters.forEach((name, value) -> {
             arguments.add(name);
             if (value != null) {
-                arguments.add(value);
+                // an option of several values (putValues) is one argument per value
+                for (String part : value.split(String.valueOf(VALUE_SEPARATOR), -1)) {
+                    arguments.add(part);
+                }
             }
         });
         return arguments;

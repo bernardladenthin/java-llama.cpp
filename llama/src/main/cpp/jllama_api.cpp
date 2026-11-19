@@ -15,6 +15,7 @@
 #include "server-chat.h"
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
+#include "numeric_locale.hpp"
 #include "rpc_support.hpp"
 #include "tts_engine.h"
 #include "imatrix_engine.h"
@@ -59,6 +60,8 @@ jllama_status run_guarded(jllama_model *model, const char *operation, bool needs
     if (jctx == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model is null");
     }
+    // a request renders the chat template on the calling thread (numeric_locale.hpp)
+    const jllama::c_numeric_locale numbers;
     jllama_context_guard guard{acquire_jllama_context(jctx)};
     try {
         if (needs_server) {
@@ -616,6 +619,7 @@ jllama_status jllama_systemone(jllama_model *model, const char *request_json, ch
 }
 
 jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (schema_json == nullptr || grammar == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "schema_json and grammar must not be null");
     }
@@ -638,6 +642,7 @@ jllama_status jllama_quantize(const char *input_path, const char *output_path, i
 
 jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype, int nthread,
                                       bool allow_requantize, const char *imatrix_path) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (input_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
     }
@@ -656,6 +661,7 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
 jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
                              int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
                              void *progress_user_data, int *n_chunks) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
     }
@@ -684,6 +690,7 @@ jllama_status jllama_imatrix(const char *model_path, const char *text_path, cons
 
 jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
                                    bool legacy_format, int *n_chunks) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (input_paths == nullptr || n_inputs == 0 || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_paths and output_path must not be null or empty");
     }
@@ -715,6 +722,7 @@ jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inpu
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 
 jllama_status jllama_server_start(int argc, const char *const *argv, jllama_server **out) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
     }
@@ -735,6 +743,7 @@ jllama_status jllama_server_start(int argc, const char *const *argv, jllama_serv
 
 jllama_status jllama_server_start_attached(jllama_model *model, int argc, const char *const *argv,
                                            jllama_server **out) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
     }
@@ -912,6 +921,7 @@ void jllama_bytes_free(unsigned char *bytes) { std::free(bytes); }
 
 jllama_status jllama_tts_load(const char *model_path, const char *mmproj_path, int n_gpu_layers, int n_threads,
                               jllama_tts_model **out) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || mmproj_path == nullptr || out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, mmproj_path and out must not be null");
     }
@@ -990,6 +1000,7 @@ void jllama_tts_options_init_size(jllama_tts_options *options, size_t size) {
 
 jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
                                             unsigned char **wav, size_t *length) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (tts == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
     }
@@ -1107,6 +1118,7 @@ void jllama_tts_free(jllama_tts_model *tts) {
 // ------------------------------------------------------------------------------------------------
 
 jllama_status jllama_finetune(const char *config_json) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (config_json == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
     }

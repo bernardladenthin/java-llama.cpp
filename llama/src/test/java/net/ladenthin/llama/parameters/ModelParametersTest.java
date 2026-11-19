@@ -326,19 +326,38 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setControlVectorLayerRange — "start,end" format
+    // setControlVectorLayerRange — two arguments, START and END
     // -------------------------------------------------------------------------
 
+    /** The option and the arguments after it in {@code p.toArray()}. */
+    private static java.util.List<String> rangeArguments(ModelParameters p, int count) {
+        java.util.List<String> argv = java.util.Arrays.asList(p.toArray());
+        int at = argv.indexOf("--control-vector-layer-range");
+        return argv.subList(at, Math.min(argv.size(), at + 1 + count));
+    }
+
     @Test
-    public void testSetControlVectorLayerRange() {
-        ModelParameters p = new ModelParameters().setControlVectorLayerRange(2, 10);
-        assertThat(p.parameters.get("--control-vector-layer-range"), is("2,10"));
+    public void testSetControlVectorLayerRangeIsTwoArguments() {
+        // upstream reads START and END as two arguments; "2,10" as one made every load fail
+        ModelParameters p =
+                new ModelParameters().setControlVectorLayerRange(2, 10).setCtxSize(64);
+        assertThat(
+                rangeArguments(p, 3),
+                is(java.util.Arrays.asList("--control-vector-layer-range", "2", "10", "--ctx-size")));
+        assertThat(p.toString().contains("--control-vector-layer-range 2 10 --ctx-size 64 "), is(true));
     }
 
     @Test
     public void testSetControlVectorLayerRangeSameStartEnd() {
         ModelParameters p = new ModelParameters().setControlVectorLayerRange(5, 5);
-        assertThat(p.parameters.get("--control-vector-layer-range"), is("5,5"));
+        assertThat(rangeArguments(p, 2), is(java.util.Arrays.asList("--control-vector-layer-range", "5", "5")));
+    }
+
+    @Test
+    public void testSetControlVectorLayerRangeReplacesTheEarlierRange() {
+        ModelParameters p =
+                new ModelParameters().setControlVectorLayerRange(1, 2).setControlVectorLayerRange(3, 4);
+        assertThat(rangeArguments(p, 3), is(java.util.Arrays.asList("--control-vector-layer-range", "3", "4")));
     }
 
     // -------------------------------------------------------------------------
