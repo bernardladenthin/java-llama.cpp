@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**24 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**25 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -32,7 +32,7 @@ match a binary to this page.
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
-| 0021 | [`0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch`](#0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-withpatch) | server : a restored slot keeps the LoRA config it was saved with | 1 | 4 |
+| 0021 | [`0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-with.patch`](#0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-withpatch) | server : a slot file carries the LoRA config its state was computed with | 1 | 5 |
 | 0022 | [`0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch`](#0022-ggml-cpu-repack-batch-the-tokens-of-an-expertpatch) | ggml-cpu : batch the tokens of an expert in the repack MUL_MAT_ID, and hand its work out dynamically | 3 | 7 |
 | 0023 | [`0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baseline.patch`](#0023-ggml-cpu-s390x-variants-build-with-clang-and-a-z13-baselinepatch) | ggml-cpu(s390x): CPU variants that build with clang, and a scalar z13 baseline | 3 | 3 |
 | 0024 | [`0024-common-fs-is-directory-reads-utf8.patch`](#0024-common-fs-is-directory-reads-utf8patch) | common: read the directory of --slot-save-path and --media-path as UTF-8 on Windows | 1 | 1 |
@@ -46,6 +46,7 @@ match a binary to this page.
 | 0032 | [`0032-common-the-warmup-and-the-memory-probe-take-the-context-batch.patch`](#0032-common-the-warmup-and-the-memory-probe-take-the-context-batchpatch) | common : the warmup and the memory probe take the context's batch | 1 | 3 |
 | 0033 | [`0033-server-a-slot-drafts-at-most-its-share-of-the-batch.patch`](#0033-server-a-slot-drafts-at-most-its-share-of-the-batchpatch) | server : a slot drafts at most its share of the batch | 1 | 1 |
 | 0034 | [`0034-llama-a-context-holds-an-output-row-for-every-sequence.patch`](#0034-llama-a-context-holds-an-output-row-for-every-sequencepatch) | llama : a context holds an output row for every sequence | 1 | 1 |
+| 0035 | [`0035-llama-a-truncated-sequence-state-file-fails-the-load.patch`](#0035-llama-a-truncated-sequence-state-file-fails-the-loadpatch) | llama : a truncated sequence state file fails the load | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -514,14 +515,14 @@ Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-all
 tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
 ```
 
-## 0021-server-a-restored-slot-keeps-the-lora-config-it-was-saved-with.patch
+## 0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-with.patch
 
 **Files (1):** `tools/server/server-context.cpp`
 
 The patch's own header, verbatim:
 
 ```text
-server : a restored slot keeps the LoRA config it was saved with
+server : a slot file carries the LoRA config its state was computed with
 
 Since upstream #32434 (b12498) a slot's prompt carries the LoRA config its tokens were processed
 with (server_prompt::lora): launch_slot_with_task() compares a task's adapters with it, the
@@ -532,30 +533,41 @@ task then read the restored state as "computed under no adapters" and cleared it
 prompt tokens evaluated again), and in a slot that had served a task under other adapters the
 restored state kept that slot's label.
 
-The patch remembers the config of every slot file the server saves, by path, and labels a restored
-state with it. A file the server did not save -- one of an earlier process -- counts as computed
-under no adapters, which is what upstream assumes for a never-used slot: the first task with
-adapters clears it. It keeps the scales only, one per adapter of params_base, and rebuilds the
-label from the adapters loaded at the time of the restore: a wake from the idle sleep frees the
-adapters and loads them again, and a stored adapter info would carry a pointer into freed memory
-(are_lora_equal compares the pointers, lora_should_clear_cache reads through them). A save forgets
-the file's config before it writes, so a save that fails half way leaves the file without one.
+The patch appends the config to the slot file, after the checkpoints and the draft state, as a
+section of its own ("SLRA", version 1: per adapter its path and its scale), and a restore labels the
+state with it on the adapters loaded at that time, matched by path; an adapter the section does not
+name has scale 0. A state computed under no adapters writes no section, and a file without one --
+upstream's format, or one saved by a server without adapters -- counts as computed under none, which
+is what upstream assumes for a never-used slot: the first task with adapters clears it. A section
+that cannot be read, or that names an adapter at a scale other than 0 which this server has not
+loaded, refuses the restore (invalid request) and leaves the slot empty: no task of this server
+computes under that config, and keeping the state would hide why it is never reused. Upstream's
+reader ignores what follows its sections, so upstream reads these files as before.
 
-History: in the first round of the review of 2026-11-18 the patch stored the adapter infos
-themselves (pointers that a sleep frees); before it, it labelled a restored state with the
-server's adapters at the time of the restore, which reused a state saved under scale 1 after
-setLoraAdapters() had set scale 0; until b12497 it started every slot with
-slot.lora = params_base.lora_adapters in init(), which upstream's comparison no longer reads.
+Only the scales and paths are stored, never the adapter infos: a wake from the idle sleep frees the
+adapters and loads them again, and a stored info would carry a pointer into freed memory
+(are_lora_equal compares the pointers, lora_should_clear_cache reads through them).
+
+History: until the review of 2026-11-19 the patch kept the scales of every file the server saved in
+a map by path, so a file of an earlier process, or a copy under another name, counted as computed
+under none; in the first round of the review of 2026-11-18 it stored the adapter infos themselves
+(pointers that a sleep frees); before it, it labelled a restored state with the server's adapters at
+the time of the restore, which reused a state saved under scale 1 after setLoraAdapters() had set
+scale 0; until b12497 it started every slot with slot.lora = params_base.lora_adapters in init(),
+which upstream's comparison no longer reads.
 
 The guard is src/test/cpp/test_lora_cache.cpp: its LoraCacheFreshSlot fixture restores slot 0's
 saved state into the never-used slot 1, which must reuse it; restores a state saved under other
-adapters, and a copy of a file under another name, neither of which may be reused; and restores a
-state after the model slept, which must be reused (LoraCacheSleep). The other cases hold
-upstream's half.
+scales, which may not be reused, and a copy of a file under another name, which may; restores a
+file saved without adapters, which the first task clears; and refuses a truncated section.
+LoraCacheFiles restores a file into a model loaded again, which must reuse it, and refuses it in a
+model without the adapter; LoraCacheSleep restores a state after the model slept, which must be
+reused. The other cases hold upstream's half.
 
-Drop-check on every bump: read the SLOT_RESTORE case in tools/server/server-context.cpp at the new
-tag -- once the restore sets prompt.lora from what the save recorded (or the slot file stores it),
-drop the patch.
+Drop-check on every bump: read the SLOT_SAVE and SLOT_RESTORE cases in
+tools/server/server-context.cpp at the new tag -- once the slot file stores the LoRA config and the
+restore sets prompt.lora from it, drop the patch; if upstream stores it in another form, a file
+written by this patch is still read by upstream (it ignores the trailing section).
 ```
 
 ## 0022-ggml-cpu-repack-batch-the-tokens-of-an-expert.patch
@@ -1043,4 +1055,32 @@ four on a batch of two, load and answer what one slot answers (an abort of the t
 Drop-check on every bump: read the n_outputs_max lines of llama_context's constructor in
 src/llama-context.cpp -- once the cap is at least n_seq_max, or output_reserve() no longer keeps a
 row per sequence, drop the patch.
+```
+
+## 0035-llama-a-truncated-sequence-state-file-fails-the-load.patch
+
+**Files (1):** `src/llama-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : a truncated sequence state file fails the load
+
+llama_state_seq_load_file() reads the state of a sequence through llama_file, which on POSIX fills a
+read past the end of the file with zeros (a padding meant for aligned direct-I/O reads at the end of
+a model file) instead of failing, and then asserts that it read no more than the file held. A
+truncated or cut slot file -- an interrupted save, a disk that filled up, a copy that did not finish
+-- therefore ended the process on its restore (GGML_ASSERT(nread <= state_size) in
+state_seq_load_file): the server's /slots restore, LlamaModel.restoreSlot(), and the C API's slot
+action, all with a file the caller names.
+
+The check now fails the load: an error is logged, the sequence is removed from the memory (it holds
+what the file had and zeros), and 0 is returned, which the server answers as an invalid slot file.
+llama_state_load_file(), the whole-context loader, already compares the bytes read with the file.
+
+The guard is CApiSlotFiles in src/test/cpp/test_c_api.cpp: a slot file cut inside its state is
+refused, and the model answers the next request (an abort of the test process before).
+
+Drop-check on every bump: read state_seq_load_file() in src/llama-context.cpp -- once a state larger
+than the file is an error and no assertion, drop the patch.
 ```

@@ -9,7 +9,8 @@
 // POST /lora-adapters) or restored after a request with its own adapters -- and the slot went on with
 // KV entries computed under the old scales (measured at b11639 with stories15M_MOE and its
 // Shakespeare adapter, F67); upstream #30367 and #32434 (b12498) compare them since. What upstream
-// still lacks is the config of a state restored from a slot file, which patches/0021 supplies.
+// still lacks is the config of a state restored from a slot file, which patches/0021 writes into
+// the file as a section of its own.
 //
 // Hermetic: a tiny random llama model and a random LoRA adapter written here with the public gguf
 // API. The adapter touches K, V and the FFN output of every layer, so the KV cache depends on it.
@@ -28,6 +29,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <random>
 #include <string>
@@ -373,15 +376,20 @@ TEST_F(LoraCacheFreshSlot, AStateRestoredIntoANeverUsedSlotIsKept) {
     EXPECT_EQ(restored.at("content").get<std::string>(), saved_slot.at("content").get<std::string>());
 }
 
-TEST_F(LoraCacheFreshSlot, AStateSavedUnderOtherAdaptersIsNotKeptAfterTheRestore) {
-    // The label of a restored state is the config it was saved with, not the server's at the time of
-    // the restore: a state saved with the adapter at scale 1 and restored after setLoraAdapters() set
-    // scale 0 was reused, and the answer at scale 0 came from KV computed at scale 1. A file this
-    // server did not save (here: a copy under another name) counts as computed under no adapters,
-    // which the first task with adapters clears -- what upstream assumes for a never-used slot.
+TEST_F(LoraCacheFreshSlot, AStateIsKeptOnlyUnderTheScalesItWasSavedWith) {
+    // The label of a restored state is the config it was saved with, which the file carries, not the
+    // server's at the time of the restore: a state saved with the adapter at scale 1 and restored
+    // after setLoraAdapters() set scale 0 was reused, and the answer at scale 0 came from KV computed
+    // at scale 1. A copy of the file under another name carries the same config and is kept too.
     ASSERT_NE(model_, nullptr);
     complete_on(0); // computed with the adapter at scale 1, the --lora default
-    slot_action(JLLAMA_SLOT_SAVE, 0, "scaled.bin");
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "scaled.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const auto scaled = std::filesystem::path(save_dir_) / "scaled.bin";
+    // the bytes the save reports are the whole file, the section included
+    EXPECT_EQ(json::parse(saved.str()).at("n_written").get<uintmax_t>(), std::filesystem::file_size(scaled))
+        << saved.str();
 
     // Before each restore slot 1 runs another prompt at the current scale, so its label is that config
     // and its tokens are others: a restore that left the label alone would keep it (server_prompt::clear
@@ -394,14 +402,17 @@ TEST_F(LoraCacheFreshSlot, AStateSavedUnderOtherAdaptersIsNotKeptAfterTheRestore
     set_scale(1.0f);
 
     std::error_code ec;
-    std::filesystem::copy_file(std::filesystem::path(save_dir_) / "scaled.bin",
-                               std::filesystem::path(save_dir_) / "copied.bin",
+    std::filesystem::copy_file(scaled, std::filesystem::path(save_dir_) / "copied.bin",
                                std::filesystem::copy_options::overwrite_existing, ec);
     ASSERT_FALSE(ec) << ec.message();
     complete_other_on(1);
-    slot_action(JLLAMA_SLOT_RESTORE, 1, "copied.bin");
-    const json unknown = complete_on(1);
-    EXPECT_EQ(unknown.at("timings").at("cache_n").get<int>(), 0) << unknown.dump();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_RESTORE, 1, "copied.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(restored.str()).at("n_read").get<uintmax_t>(), std::filesystem::file_size(scaled))
+        << restored.str();
+    const json copied = complete_on(1);
+    EXPECT_LE(copied.at("timings").at("prompt_n").get<int>(), 2) << copied.dump();
 
     // and the file it saved under these adapters is kept: slot 1 holds another prompt, so only the
     // restored state can supply this one
@@ -411,12 +422,138 @@ TEST_F(LoraCacheFreshSlot, AStateSavedUnderOtherAdaptersIsNotKeptAfterTheRestore
     EXPECT_LE(same_scale.at("timings").at("prompt_n").get<int>(), 2) << same_scale.dump();
 }
 
+TEST_F(LoraCacheFreshSlot, ASectionThatCannotBeReadRefusesTheRestore) {
+    // A config read half is no config: the restore is refused and the slot left empty, rather than
+    // the state kept under a label nobody can vouch for.
+    ASSERT_NE(model_, nullptr);
+    complete_on(0);
+    slot_action(JLLAMA_SLOT_SAVE, 0, "whole.bin");
+    const auto whole = std::filesystem::path(save_dir_) / "whole.bin";
+    const auto cut = std::filesystem::path(save_dir_) / "cut.bin";
+    std::error_code ec;
+    std::filesystem::copy_file(whole, cut, std::filesystem::copy_options::overwrite_existing, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    std::filesystem::resize_file(cut, std::filesystem::file_size(whole) - 2, ec); // into the last scale
+    ASSERT_FALSE(ec) << ec.message();
+    Owned refused;
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_RESTORE, 1, "cut.bin", &refused.s), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("truncated LoRA config"), std::string::npos) << jllama_last_error();
+    const json after = complete_on(1);
+    EXPECT_EQ(after.at("timings").at("cache_n").get<int>(), 0) << "the refused state stayed: " << after.dump();
+}
+
+namespace {
+
+// A model of write_tiny_llama_gguf() with the slot directory and, when adapter is not empty, the adapter.
+jllama_model *load_with_slots(const std::string &model, const std::string &adapter, const std::string &dir) {
+    std::vector<std::string> args = {"jllama", "-m",          model,  "-c",          "256",
+                                     "-np",    "1",           "-ngl", "0",           "-t",
+                                     "2",      "--cache-ram", "0",    "--no-warmup", "--slot-save-path",
+                                     dir};
+    if (!adapter.empty()) {
+        args.insert(args.end(), {"--lora", adapter});
+    }
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *loaded = nullptr;
+    EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &loaded),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    return loaded;
+}
+
+json complete_slot_zero(jllama_model *model) {
+    const json request = {{"prompt", PROMPT}, {"n_predict", 8},       {"temperature", 0},
+                          {"top_k", 1},       {"cache_prompt", true}, {"id_slot", 0}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    return response.s != nullptr ? json::parse(response.str()) : json::object();
+}
+
+jllama_status slot_file(jllama_model *model, jllama_slot_op op, const char *name) {
+    Owned response;
+    return jllama_slot_action(model, op, 0, name, &response.s);
+}
+
+bool holds_section(const std::filesystem::path &file) {
+    std::ifstream in(file, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return bytes.find("SLRA") != std::string::npos;
+}
+
+} // namespace
+
+TEST(LoraCacheFiles, AFileCarriesItsConfigIntoTheNextProcess) {
+    // The config travels with the file, so a model loaded again -- the next process, as far as the
+    // server knows -- keeps a state saved under its adapters. Until the section existed the server
+    // remembered the config of the files it had saved itself, by path, and a model loaded again
+    // counted every file as computed under none: the first task cleared it.
+    const std::string model_path = write_tiny_llama_gguf("jllama-lora-cache-files-model");
+    const std::string adapter_path = write_tiny_lora_gguf();
+    const std::string dir =
+        (std::filesystem::temp_directory_path() / ("jllama-lora-cache-files-" + std::to_string(std::random_device{}())))
+            .string();
+    ASSERT_FALSE(model_path.empty());
+    ASSERT_FALSE(adapter_path.empty());
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    {
+        jllama_model *first = load_with_slots(model_path, adapter_path, dir);
+        ASSERT_NE(first, nullptr);
+        complete_slot_zero(first); // at scale 1
+        EXPECT_EQ(slot_file(first, JLLAMA_SLOT_SAVE, "scaled.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        Owned response;
+        EXPECT_EQ(jllama_set_lora_adapters(first, R"([{"id":0,"scale":0}])", &response.s), JLLAMA_STATUS_OK);
+        complete_slot_zero(first); // at scale 0: the adapter is in the config, and computes nothing
+        EXPECT_EQ(slot_file(first, JLLAMA_SLOT_SAVE, "zero.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        jllama_model_free(first);
+    }
+    EXPECT_TRUE(holds_section(std::filesystem::path(dir) / "scaled.bin"));
+    {
+        // Without the adapter no task computes under scale 1: the restore is refused, by the adapter's
+        // name, and the slot left empty. A state at scale 0 is a state without it, and is kept. A state
+        // this model saves has no config to write, and the file has no section -- upstream's format.
+        jllama_model *plain = load_with_slots(model_path, "", dir);
+        ASSERT_NE(plain, nullptr);
+        EXPECT_EQ(slot_file(plain, JLLAMA_SLOT_RESTORE, "scaled.bin"), JLLAMA_STATUS_INVALID_REQUEST);
+        const std::string error = jllama_last_error();
+        EXPECT_NE(error.find(adapter_path), std::string::npos) << error;
+        EXPECT_NE(error.find("which this server has not loaded"), std::string::npos) << error;
+        const json refused = complete_slot_zero(plain);
+        EXPECT_EQ(refused.at("timings").at("cache_n").get<int>(), 0) << refused.dump();
+        EXPECT_EQ(slot_file(plain, JLLAMA_SLOT_RESTORE, "zero.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json zero = complete_slot_zero(plain);
+        EXPECT_LE(zero.at("timings").at("prompt_n").get<int>(), 2) << zero.dump();
+        EXPECT_EQ(slot_file(plain, JLLAMA_SLOT_SAVE, "plain.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        jllama_model_free(plain);
+    }
+    EXPECT_FALSE(holds_section(std::filesystem::path(dir) / "plain.bin"));
+    {
+        jllama_model *again = load_with_slots(model_path, adapter_path, dir);
+        ASSERT_NE(again, nullptr);
+        EXPECT_EQ(slot_file(again, JLLAMA_SLOT_RESTORE, "scaled.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json kept = complete_slot_zero(again);
+        EXPECT_LE(kept.at("timings").at("prompt_n").get<int>(), 2) << kept.dump();
+        // a file without a section counts as computed under none, which the task at scale 1 clears
+        EXPECT_EQ(slot_file(again, JLLAMA_SLOT_RESTORE, "plain.bin"), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json none = complete_slot_zero(again);
+        EXPECT_EQ(none.at("timings").at("cache_n").get<int>(), 0) << none.dump();
+        jllama_model_free(again);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(model_path, ignored);
+    std::filesystem::remove(adapter_path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
 TEST(LoraCacheSleep, AStateRestoredAfterTheModelSleptIsKept) {
     // A wake from the idle sleep loads the adapters again, under new pointers, and llama.cpp compares
     // adapter configs by pointer and scale. The first form of patches/0021 stored the adapter infos of
     // a saved file, so after a sleep the label of a restored state pointed into freed memory -- a
     // mismatch at best (the state cleared), a read of the freed adapter at worst. The patch stores
-    // the scales and rebuilds the label from the adapters loaded now: the state is kept. Not red
+    // paths and scales in the file and rebuilds the label from the adapters loaded now: the state is
+    // kept. Not red
     // against that first form in every run: the allocator may give the reloaded adapter its old
     // address, and then the stale pointer compares equal; what this pins is the behaviour.
     const std::string model_path = write_tiny_llama_gguf("jllama-lora-cache-sleep-model");

@@ -1013,6 +1013,65 @@ TEST(CApiSlotFiles, ASlotFileIsNamedInsideTheSlotSaveDirectory) {
     std::filesystem::remove("slot0.bin", ignored); // only written by the defect this test pins
 }
 
+TEST(CApiSlotFiles, ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn) {
+    // llama_file fills a read past the end of a file with zeros, so llama_state_seq_load_file read a
+    // cut slot file as a state larger than the file and asserted -- the process ended on the restore
+    // of a file the caller names (patches/0035). Every cut is now an invalid slot file, the slot is
+    // left empty, and the whole file still restores.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-slot-cut");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-slot-cut-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    const std::vector<std::string> args = {
+        "jllama", "-m", path, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2", "--slot-save-path", dir.string()};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const char *request =
+        R"({"prompt":"Hello there, a prompt of some tokens","n_predict":4,"temperature":0,"cache_prompt":true})";
+    const auto complete = [&]() {
+        Owned completion;
+        EXPECT_EQ(jllama_completions(model, request, &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        return completion.s != nullptr ? json::parse(completion.str()) : json::object();
+    };
+    complete();
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "whole.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const uintmax_t size = std::filesystem::file_size(dir / "whole.bin");
+    ASSERT_GT(size, 64u);
+    for (const uintmax_t cut : {size - 1, size - 64, size / 2, uintmax_t{16}}) {
+        SCOPED_TRACE("cut at " + std::to_string(cut) + " of " + std::to_string(size));
+        std::error_code ec;
+        std::filesystem::copy_file(dir / "whole.bin", dir / "cut.bin",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        ASSERT_FALSE(ec) << ec.message();
+        std::filesystem::resize_file(dir / "cut.bin", cut, ec);
+        ASSERT_FALSE(ec) << ec.message();
+        Owned refused;
+        EXPECT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "cut.bin", &refused.s),
+                  JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("invalid slot save file"), std::string::npos)
+            << jllama_last_error();
+        const json after = complete();
+        EXPECT_EQ(after.at("timings").at("cache_n").get<int>(), 0) << "the cut state stayed: " << after.dump();
+    }
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "whole.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json whole = complete();
+    EXPECT_LE(whole.at("timings").at("prompt_n").get<int>(), 1) << whole.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
 TEST_F(CApi, SlotActionsAndLoraAdapters) {
     Owned response;
     ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_ERASE, 0, nullptr, &response.s), JLLAMA_STATUS_OK)
