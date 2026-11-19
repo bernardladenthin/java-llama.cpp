@@ -147,6 +147,9 @@ struct tiny_model_spec {
     // false writes <arch>.attention.causal = false: a decoder whose tokens see the whole batch (as
     // the diffusion models' do), which llama.cpp must evaluate one ubatch per call
     bool causal = true;
+    // > 0: a Mamba state that grows by exp(dt * ssm_a_growth) with every token instead of decaying,
+    // so a long enough prompt overflows it to inf
+    float ssm_a_growth = 0.0f;
     // arch "mamba" is a recurrent model: no attention and no KV cache, a state per layer that is
     // overwritten with every token (a convolution window and the state-space model's hidden state).
     // The server can only checkpoint such a model, and a slot file holds its state instead of rows.
@@ -530,7 +533,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             ggml_tensor *ssm_a = add_random_tensor(to, ctx, rng, p + "ssm_a", {SSM_STATE, ssm_inner}, 0.1f);
             auto *decay = (float *)ssm_a->data;
             for (int64_t i = 0; i < ggml_nelements(ssm_a); ++i) {
-                decay[i] = -std::fabs(decay[i]) - 0.1f;
+                decay[i] = spec.ssm_a_growth > 0.0f ? spec.ssm_a_growth : -std::fabs(decay[i]) - 0.1f;
             }
             add_random_tensor(to, ctx, rng, p + "ssm_d", {ssm_inner}, 1.0f);
             matrix(to, p + "ssm_out.weight", {ssm_inner, spec.n_embd});

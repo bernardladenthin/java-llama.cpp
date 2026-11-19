@@ -2839,6 +2839,53 @@ TEST(CApiFp8Cache, ACacheScaleOfZeroIsRefusedOnlyByTheEightBitFloatCache) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiRecurrent, AStateThatOverflowedDoesNotReachTheNextSequence) {
+    // llama.cpp cleared the recurrent cell of a new sequence by scaling it by 0, and an inf or NaN
+    // left in it stayed NaN (upstream #31913, b12529, fills it with zeros). A Mamba whose state grows
+    // with every token overflows on a long prompt; after the slot is erased, a short prompt must
+    // answer what the same model answers fresh.
+    tiny_model_spec spec = tiny_model_spec::recurrent("jllama-c-api-mamba-growth");
+    spec.ssm_a_growth = 2.0f;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    const auto ask = [](jllama_model *model, const std::string &prompt) {
+        const json request = {{"prompt", prompt}, {"n_predict", 4},        {"temperature", 0},
+                              {"n_probs", 3},     {"cache_prompt", false}, {"id_slot", 0}};
+        Owned response;
+        EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()) : json::object();
+    };
+    const std::string short_prompt = "Hi";
+    jllama_model *fresh = load_tiny(path, {"--cache-ram", "0", "-c", "256"});
+    ASSERT_NE(fresh, nullptr) << jllama_last_error();
+    const json reference = ask(fresh, short_prompt);
+    jllama_model_free(fresh);
+    ASSERT_FALSE(reference.at("content").get<std::string>().empty());
+    const json first = reference.at("completion_probabilities").at(0).at("top_logprobs").at(0);
+    ASSERT_TRUE(first.at("logprob").is_number()) << "the short prompt overflows already: " << reference.dump();
+
+    jllama_model *model = load_tiny(path, {"--cache-ram", "0", "-c", "256"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::string long_prompt;
+    for (int i = 0; i < 6; ++i) {
+        long_prompt += "a longer prompt ";
+    }
+    const json overflowed = ask(model, long_prompt);
+    const json overflowed_first = overflowed.at("completion_probabilities").at(0).at("top_logprobs").at(0);
+    ASSERT_FALSE(overflowed_first.at("logprob").is_number())
+        << "the long prompt did not overflow the state: " << overflowed.dump();
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json after = ask(model, short_prompt);
+    EXPECT_EQ(after.at("content"), reference.at("content")) << after.dump();
+    EXPECT_EQ(after.at("completion_probabilities"), reference.at("completion_probabilities")) << after.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiRecurrent, ARecurrentModelAnswersTheSameFromACachedPromptAndARestoredSlot) {
     // The second kind of memory llama.cpp has: Mamba keeps no rows per token but one state per
     // layer, which every token overwrites. A prefix cannot be cut out of that, so the server works
@@ -5708,6 +5755,88 @@ struct RealtimeSession {
     }
 };
 } // namespace
+
+TEST(CApiLfm3AudioSleep, ARealtimeSessionWakesASleepingModel) {
+    // The /v1/realtime handler read the model's projector and vocabulary before it woke the server
+    // (upstream #32567, b12528): on a model that had fallen asleep (--sleep-idle-seconds) those were
+    // freed, and a session -- a conversation or a live transcription -- touched freed memory. It wakes
+    // the model first now, holds it awake for the session, and the model sleeps again afterwards.
+    const std::string backbone = jllama_test::write_tiny_lfm3_gguf("jllama-lfm3-sleep", true, true);
+    const std::string mmproj = jllama_test::write_tiny_lfm3_mmproj_gguf("jllama-lfm3-sleep-mmproj", -10.0f, true, 0.0f);
+    ASSERT_FALSE(backbone.empty());
+    ASSERT_FALSE(mmproj.empty());
+    struct Lines {
+        std::mutex mutex;
+        int sleeps = 0;
+        int count() {
+            std::lock_guard<std::mutex> lock(mutex);
+            return sleeps;
+        }
+    } lines;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *user) {
+                      auto *sink = static_cast<Lines *>(user);
+                      std::lock_guard<std::mutex> lock(sink->mutex);
+                      sink->sleeps += std::string(text).find("server is entering sleeping state") != std::string::npos;
+                  },
+                  &lines),
+              JLLAMA_STATUS_OK);
+    struct LogCallbackReset {
+        ~LogCallbackReset() { jllama_set_log_callback(nullptr, nullptr); }
+    } log_callback_reset;
+    jllama_model *model = load_tiny(backbone, {"--mmproj", mmproj, "-c", "1024", "-b", "1024", "-ub", "1024", "--seed",
+                                               "5", "--sleep-idle-seconds", "1"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto asleep = [&lines](int n) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (lines.count() < n && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return lines.count() >= n;
+    };
+    {
+        AttachedServer attached(model);
+        ASSERT_NE(attached.server, nullptr);
+        ASSERT_TRUE(asleep(1)) << "the model did not fall asleep";
+        {
+            SCOPED_TRACE("live transcription");
+            RealtimeSession session(attached.port, "?intent=transcription");
+            ASSERT_TRUE(session.open());
+            const json created = session.next();
+            ASSERT_EQ(created.value("type", std::string()), "session.created") << created.dump();
+            EXPECT_EQ(created.at("session").at("audio").at("input").at("format").at("rate").get<int>(), 16000);
+            std::vector<uint8_t> pcm;
+            for (int i = 0; i < 16000; ++i) {
+                const auto v = static_cast<int16_t>(16000.0f * std::sin(2.0f * 3.14159265f * 440.0f * i / 16000.0f));
+                pcm.push_back(static_cast<uint8_t>(v & 0xff));
+                pcm.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
+            }
+            session.send({{"type", "input_audio_buffer.append"}, {"audio", base64_of(pcm)}});
+            session.send({{"type", "input_audio_buffer.commit"}, {"final", true}});
+            const json completed = session.await("conversation.item.input_audio_transcription.completed");
+            EXPECT_EQ(completed.value("type", std::string()), "conversation.item.input_audio_transcription.completed")
+                << completed.dump();
+            session.ws.close();
+        }
+        ASSERT_TRUE(asleep(2)) << "the model did not fall asleep again after the session";
+        {
+            SCOPED_TRACE("conversation");
+            RealtimeSession session(attached.port);
+            ASSERT_TRUE(session.open());
+            const json created = session.next();
+            ASSERT_EQ(created.value("type", std::string()), "session.created") << created.dump();
+            session.user_text("Hello there");
+            session.response_create("text", 4);
+            const auto answer = session.collect();
+            EXPECT_EQ(answer.done.value("type", std::string()), "response.done") << answer.done.dump();
+            session.ws.close();
+        }
+        ASSERT_TRUE(asleep(3)) << "the model did not fall asleep again after the conversation";
+    }
+    jllama_model_free(model);
+    std::remove(backbone.c_str());
+    std::remove(mmproj.c_str());
+}
 
 TEST_F(CApiLfm3Audio, AnIdleRealtimeSessionDoesNotHoldTheServerStop) {
     // A /v1/realtime client that connected and then sends nothing holds a WebSocket the server reads
