@@ -651,6 +651,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`LlamaModel` downloads its model files, and reads a draft's type from it.** The load parses its
+  argv as llama.cpp's server example, whose parse leaves the model files to `llama_server()`
+  (`common_models_handler_apply`), and the load is no `llama_server()`: `setModelUrl`, `setHfRepo`
+  and the draft and projector repositories downloaded nothing, and the load failed on a path nobody
+  had written; and a draft's type was never read from its file (an MTP head, a DFlash family draft)
+  or its repository's sidecars, so every draft without `--spec-type` ran as `draft-simple`. The load
+  runs the handler now, outside the log lock (`CApiDownload`, a model served by a loopback HTTP
+  server; `CApiMtp.ADraftWithAnMtpBlockIsReadAsDraftMtpWithoutASpecType`; both red without it).
+  `NativeServer` ran it all along.
 - **An EAGLE-3 draft without a speculative type drafts as EAGLE-3.** A draft model without
   `--spec-type` (`ModelParameters.setModelDraft` alone) is used as `draft-simple`, which ran an
   EAGLE-3 draft's decoder without the target's layer inputs it reads: it proposed tokens from a

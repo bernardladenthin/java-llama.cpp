@@ -9002,6 +9002,122 @@ TEST(CApiMtp, ASlotOfAModelDraftingWithItsMtpBlockIsSavedAndRestoredWhole) {
     std::filesystem::remove_all(dir, ignored);
 }
 
+TEST(CApiMtp, ADraftWithAnMtpBlockIsReadAsDraftMtpWithoutASpecType) {
+    // The load runs upstream's models handler (common_models_handler_apply), which reads a draft's type
+    // from its file: a draft with an MTP block is draft-mtp. Until 2026-11-19 the load skipped it --
+    // the server example's parse leaves it to llama_server() -- and the engine used every draft without
+    // a type as draft-simple, which it logs. Without a type the draft must draft exactly as with
+    // --spec-type draft-mtp (greedy, so the same tokens are drafted and accepted).
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::mtp("jllama-mtp-as-draft"));
+    ASSERT_FALSE(path.empty());
+    struct run {
+        std::string answer;
+        int drafted = -1;
+        int accepted = -1;
+        bool simple = false;
+    };
+    std::map<std::string, run> runs;
+    for (const char *type : {"", "draft-mtp", "draft-simple"}) {
+        SCOPED_TRACE(std::string("--spec-type ") + type);
+        std::vector<std::string> extra = {"--spec-draft-model", path, "--spec-draft-ngl", "0"};
+        if (*type != 0) {
+            extra.insert(extra.end(), {"--spec-type", type});
+        }
+        struct Sink {
+            std::mutex m;
+            std::string text;
+        } sink;
+        ASSERT_EQ(jllama_set_log_callback(
+                      [](int, const char *text, void *ud) {
+                          auto *s = static_cast<Sink *>(ud);
+                          std::lock_guard<std::mutex> lk(s->m);
+                          s->text += text;
+                      },
+                      &sink),
+                  JLLAMA_STATUS_OK);
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK); // flushes
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        run &r = runs[type];
+        r.simple = sink.text.find("using it as draft-simple") != std::string::npos;
+        r.answer = greedy_answer(model, 48);
+        Owned metrics;
+        ASSERT_EQ(jllama_metrics(model, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json m = json::parse(metrics.str());
+        r.drafted = m.at("n_draft_tokens_total").get<int>();
+        r.accepted = m.at("n_draft_accepted_total").get<int>();
+        jllama_model_free(model);
+    }
+    EXPECT_FALSE(runs[""].simple) << "the draft's MTP block was not read";
+    EXPECT_GT(runs["draft-mtp"].drafted, 0);
+    EXPECT_EQ(runs[""].drafted, runs["draft-mtp"].drafted);
+    EXPECT_EQ(runs[""].accepted, runs["draft-mtp"].accepted);
+    EXPECT_EQ(runs[""].answer, runs["draft-mtp"].answer);
+    EXPECT_EQ(runs["draft-simple"].answer, runs["draft-mtp"].answer);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiDownload, AModelUrlIsDownloadedToItsPathAndLoaded) {
+    // --model-url (ModelParameters.setModelUrl) with -m as the target: upstream's models handler
+    // downloads it before the load. The load skipped the handler until 2026-11-19 and failed on a path
+    // nobody had written. A loopback HTTP server serves the generator's model; a URL it answers with 404
+    // fails the load by the download's own message, and nothing is left at the target.
+    const std::string source = write_tiny_llama_gguf("jllama-c-api-download-source");
+    ASSERT_FALSE(source.empty());
+    std::string bytes;
+    {
+        std::ifstream in(source, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    ASSERT_GT(bytes.size(), 0u);
+    jllama_model *reference = load_tiny(source, {});
+    ASSERT_NE(reference, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(reference);
+    jllama_model_free(reference);
+
+    httplib::Server http;
+    http.Get("/model.gguf", [&bytes](const httplib::Request &, httplib::Response &res) {
+        res.set_content(bytes, "application/octet-stream");
+    });
+    const int port = http.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+    std::thread serving([&http]() { http.listen_after_bind(); });
+    struct stop_http {
+        httplib::Server &http;
+        std::thread &serving;
+        ~stop_http() {
+            http.stop();
+            serving.join();
+        }
+    } stop{http, serving};
+    http.wait_until_ready();
+
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-download-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/model.gguf";
+    jllama_model *downloaded = load_tiny(target, {"--model-url", url});
+    ASSERT_NE(downloaded, nullptr) << jllama_last_error();
+    EXPECT_EQ(std::filesystem::file_size(target), bytes.size());
+    EXPECT_EQ(greedy_answer(downloaded), expected);
+    jllama_model_free(downloaded);
+
+    const std::string missing = (dir / "missing.gguf").string();
+    EXPECT_EQ(load_tiny(missing, {"--model-url", "http://127.0.0.1:" + std::to_string(port) + "/no-such.gguf"}),
+              nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("failed to fetch the model files"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_FALSE(std::filesystem::exists(missing));
+
+    std::error_code ec;
+    std::filesystem::remove(source, ec);
+    std::filesystem::remove_all(dir, ec);
+}
+#endif // JLLAMA_HAS_NATIVE_SERVER
+
 // ---------------------------------------------------------------------------------------------------
 // EAGLE-3 (--spec-type draft-eagle3): a draft of one decoder layer that drafts from the inputs of three
 // layers of the target, which the target's context extracts for it (llama_set_embeddings_layer_inp) --

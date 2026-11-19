@@ -640,8 +640,21 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         throw std::runtime_error(refusal);
     }
 
-    // A draft model nobody asks: upstream's speculative types default to none, and the parse above
-    // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
+    // The server example's parse leaves the model files to the server: common_params_parse_ex skips
+    // common_models_handler_apply for LLAMA_EXAMPLE_SERVER, which llama_server() runs itself, and this
+    // load is no llama_server(). Without it --model-url, -hf and the draft and projector repositories
+    // were never downloaded (the load failed on a model path nobody had written), and a draft's type was
+    // never read from its file or its repository's sidecars. Outside the log lock: it may download.
+    try {
+        common_models_handler models = common_models_handler_init(params, LLAMA_EXAMPLE_SERVER);
+        common_models_handler_apply(models, params);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("failed to fetch the model files: ") + e.what());
+    }
+
+    // A draft model nobody asks: upstream's speculative types default to none, and the models handler
+    // above infers one only for an MTP head or a DFlash family draft (from the file) and for a
+    // repository's sidecars (MTP, DSpark, DFlash, EAGLE-3). A plain draft model
     // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the
     // type), so it is used as what it is. An EAGLE-3 draft is no plain draft: its decoder reads the
     // target's layer inputs, which only draft-eagle3 hands it -- as draft-simple it read a compute
