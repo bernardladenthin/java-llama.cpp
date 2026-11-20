@@ -240,7 +240,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12567** (from b12525, 42 upstream commits in sixteen steps; master, pinned by commit
+- **llama.cpp b12573** (from b12525, 48 upstream commits in seventeen steps; master, pinned by commit
   before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
   relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
   the way the plain one builds them, so these models reuse their compute graph with flash attention --
@@ -301,8 +301,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   against a reference from ggml-base's dequantization (`kquant_matmul.h`), on every library-jar build
   and on s390x under qemu, where ggml loads `z15`: locally green there, and with the kernel's block
   scale off by 0.1% all ten cases the kernel computes are red, the five one-column cases ggml computes
-  itself green. All 26
-  patches applied unchanged at every step, the 31 of today at the last eight; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
+  itself green. b12568 adds **Domyn Edge** (#32559, arch `domynedge`): sliding-window layers with RoPE
+  and narrower heads, full-attention layers without positions, a norm on the keys with a weight and
+  one on the queries without, and norms after attention and feed-forward; the load refuses a
+  sliding-window rotation wider than the head (`CApiDomynEdge`, a random three-layer model the
+  generator writes: it answers over the cached prompt and from a restored slot, which continues from
+  a checkpoint of the slot file; one batch and `-ub 1` agree; the window changes what a long prompt
+  sees and not a short one, red with the window left unbounded; the refusal, red without it, ends the
+  process in the CPU's ROPE). b12569 reserves graph nodes for the MoE cache (#32636), b12572 moves
+  the per-architecture node budget into the model classes and adds the nodes of LoRA adapters for
+  every architecture (#32648; every architecture keeps its factor), and b12570, b12571 and b12573
+  change the WebUI (a full-screen diagram preview, the reasoning effort in the model picker, icons
+  for vision and audio; no npm package changed). All 26
+  patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent

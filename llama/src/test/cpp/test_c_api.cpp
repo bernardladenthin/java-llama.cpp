@@ -4015,6 +4015,191 @@ TEST(CApiZaya1, TwoSlotsAtOnceAnswerAsEachAlone) {
     std::filesystem::remove(path, ignored);
 }
 
+// Domyn Edge (b12568, #32559): sliding-window layers with RoPE and heads half as wide, full-attention
+// layers without positions, sandwich norms (tiny_model_spec::domyn_edge).
+namespace {
+
+// The first token's top log-probabilities of a greedy answer to `prompt`, the whole prompt evaluated.
+std::vector<double> domyn_first_logprobs(jllama_model *model, const std::string &prompt) {
+    const json request = {{"prompt", prompt}, {"n_predict", 1},     {"temperature", 0},
+                          {"n_probs", 3},     {"ignore_eos", true}, {"cache_prompt", false}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::vector<double> out;
+    if (response.s == nullptr) {
+        return out;
+    }
+    const json parsed = json::parse(response.str()); // a range-for over a member of a temporary dangles
+    for (const json &top : parsed.at("completion_probabilities").at(0).at("top_logprobs")) {
+        out.push_back(top.at("logprob").get<double>());
+    }
+    EXPECT_EQ(out.size(), 3u) << response.str();
+    return out;
+}
+
+double max_difference(const std::vector<double> &a, const std::vector<double> &b) {
+    double d = a.size() == b.size() ? 0.0 : 1e9;
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        d = std::max(d, std::fabs(a[i] - b[i]));
+    }
+    return d;
+}
+
+} // namespace
+
+TEST(CApiDomynEdge, ADomynEdgeModelAnswersAndRestoresItsSlot) {
+    // A model of three layers with two head widths: the KV cache keeps rows of 4 per head for the
+    // sliding-window layers and of 8 for the full-attention one, and the server keeps context
+    // checkpoints for it (a sliding window cannot be rolled back). It has to load, answer the same over
+    // the cached prompt, and from a slot saved, erased and restored, whose sliding-window cache holds
+    // only the window: the slot file carries the checkpoints, and the request after the restore
+    // continues from one of them, evaluating at most the last two prompt tokens.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::domyn_edge(8, "jllama-c-api-domyn"));
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-domyn-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("architecture").get<std::string>(), "domynedge") << meta.str();
+
+    const auto answer = [model]() {
+        Owned completion;
+        const std::string request =
+            R"({"prompt":"Hello there, a prompt longer than the window","temperature":0,"n_predict":8})";
+        EXPECT_EQ(jllama_completions(model, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        return completion.s != nullptr ? json::parse(completion.str()) : json::object();
+    };
+    const auto timing = [](const json &response, const char *key) { return response.at("timings").at(key).get<int>(); };
+    const json first = answer();
+    EXPECT_FALSE(first.at("content").get<std::string>().empty());
+    const json second = answer();
+    const json third = answer();
+    EXPECT_GT(timing(second, "cache_n"), 0) << second.dump();
+    EXPECT_EQ(timing(third, "cache_n"), timing(second, "cache_n")) << third.dump();
+    EXPECT_EQ(second.at("content"), third.at("content")); // both over the cached prompt (F272)
+
+    LogCapture lines;
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "domyn.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json saved_json = json::parse(saved.str());
+    EXPECT_GT(saved_json.at("n_written").get<size_t>(), 0u);
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "domyn.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(restored.str()).at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>())
+        << restored.str();
+    const json after_restore = answer();
+    lines.stop();
+    EXPECT_EQ(lines.count("context checkpoint(s) ("), 1) << "the save appended no checkpoints: " << lines.text();
+    EXPECT_EQ(lines.count("context checkpoint(s) from '"), 1) << "the restore read none: " << lines.text();
+    const int prompt_tokens = after_restore.at("tokens_evaluated").get<int>();
+    EXPECT_GE(timing(after_restore, "prompt_n"), 1) << after_restore.dump();
+    EXPECT_LE(timing(after_restore, "prompt_n"), 2) << after_restore.dump();
+    EXPECT_EQ(timing(after_restore, "cache_n") + timing(after_restore, "prompt_n"), prompt_tokens)
+        << after_restore.dump();
+    EXPECT_EQ(after_restore.at("content"), third.at("content"));
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiDomynEdge, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
+    // Evaluated whole, the sliding-window layers mask the batch's own positions; one token at a time
+    // (-ub 1) they read the window from the cache, which by then has dropped what lies outside it. A
+    // prompt longer than the window of 8 takes both, and the answer and its first token's
+    // probabilities agree up to rounding.
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::domyn_edge(8, "jllama-c-api-domyn-ub"));
+    ASSERT_FALSE(path.empty());
+    const json request = {{"prompt", "Yellow paint on a long wall, how are you"},
+                          {"n_predict", 6},
+                          {"temperature", 0},
+                          {"n_probs", 3},
+                          {"ignore_eos", true},
+                          {"cache_prompt", false}};
+    std::vector<json> answers;
+    for (const std::vector<std::string> extra : {std::vector<std::string>{}, std::vector<std::string>{"-ub", "1"}}) {
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        answers.push_back(json::parse(response.str()));
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(answers[0].at("content"), answers[1].at("content"));
+    const json &batched = answers[0].at("completion_probabilities").at(0).at("top_logprobs");
+    const json &stepped = answers[1].at("completion_probabilities").at(0).at("top_logprobs");
+    ASSERT_EQ(batched.size(), stepped.size());
+    for (size_t i = 0; i < batched.size(); ++i) {
+        EXPECT_EQ(batched[i].at("id"), stepped[i].at("id")) << i;
+        EXPECT_NEAR(batched[i].at("logprob").get<double>(), stepped[i].at("logprob").get<double>(), 1e-3) << i;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiDomynEdge, TheSlidingWindowLimitsWhatItsLayersSee) {
+    // The same weights with a window of 4 and of 512 (only the metadata differs): a prompt shorter than
+    // 4 tokens fits both windows and gets the same probabilities, a longer one does not -- the
+    // sliding-window layers of the narrow model no longer see its beginning. Red with the window left
+    // unbounded at load (the second half), and a window that reached into a prompt shorter than it
+    // fails the first.
+    const std::string narrow = write_tiny_llama_gguf(tiny_model_spec::domyn_edge(4, "jllama-c-api-domyn-w4"));
+    const std::string wide = write_tiny_llama_gguf(tiny_model_spec::domyn_edge(512, "jllama-c-api-domyn-w512"));
+    ASSERT_FALSE(narrow.empty());
+    ASSERT_FALSE(wide.empty());
+    const std::string short_prompt = "Hi";
+    const std::string long_prompt = "Yellow paint on a long wall, how are you";
+    std::vector<std::vector<double>> got[2];
+    for (int w = 0; w < 2; ++w) {
+        jllama_model *model = load_tiny(w == 0 ? narrow : wide, {});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        got[w].push_back(domyn_first_logprobs(model, short_prompt));
+        got[w].push_back(domyn_first_logprobs(model, long_prompt));
+        jllama_model_free(model);
+    }
+    ASSERT_EQ(got[0][0].size(), 3u);
+    EXPECT_LT(max_difference(got[0][0], got[1][0]), 1e-5) << "a prompt inside both windows";
+    EXPECT_GT(max_difference(got[0][1], got[1][1]), 1e-3) << "a prompt longer than the narrow window";
+    std::error_code ignored;
+    std::filesystem::remove(narrow, ignored);
+    std::filesystem::remove(wide, ignored);
+}
+
+TEST(CApiDomynEdge, ARotationWiderThanTheSlidingWindowHeadIsRefusedAndTheProcessGoesOn) {
+    // RoPE cannot rotate more dimensions than a sliding-window head has (the CPU would abort, a GPU read
+    // past the row): llama.cpp refuses such a GGUF at load, naming both numbers, and the next model
+    // loads in the same process.
+    tiny_model_spec spec = tiny_model_spec::domyn_edge(8, "jllama-c-api-domyn-rot");
+    spec.n_rot_swa = spec.head_dim_swa + 2;
+    const std::string bad = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(bad.empty());
+    std::string text;
+    {
+        LogCapture log; // llama.cpp names the reason in its load log, the C API the failed load
+        EXPECT_EQ(load_tiny(bad, {}), nullptr);
+        log.stop();
+        text = log.text();
+    }
+    EXPECT_NE(text.find("invalid n_rot_swa: 6, max 4"), std::string::npos) << text;
+    const std::string good = write_tiny_llama_gguf(tiny_model_spec::domyn_edge(8, "jllama-c-api-domyn-rot-ok"));
+    jllama_model *model = load_tiny(good, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model, 4).empty());
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(bad, ignored);
+    std::filesystem::remove(good, ignored);
+}
+
 TEST(CApiThreads, ALongPromptsEmbeddingLookupGivesTheSameAnswerOnOneAndOnFourThreads) {
     // Since b12517 (#32514) the CPU backend splits a GET_ROWS of at least 262144 elements over every
     // thread (it was one). The token embedding lookup of 2100 tokens of width 128 in one batch is

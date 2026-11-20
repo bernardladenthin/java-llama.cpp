@@ -314,6 +314,10 @@ the log lock)
 **Not tested, for want of a model or a case**
 - **ZAYA1 with real weights** (b12521, #32071): the generator's model has the architecture's shapes
   at a hundredth of the width; the 8B checkpoint would be ~16 GB as F16.
+- **Domyn Edge with real weights** (b12568, #32559): `CApiDomynEdge` runs the generator's three-layer
+  model (two head widths, the window, the NoPE layer, the sandwich norms); on 2026-11-20 Hugging Face
+  had no GGUF of it, only `domyn/Domyn-Edge-*` as safetensors (4B, ~8 GB as BF16) and MLX / LiteRT
+  quantizations, so a real checkpoint means a conversion with upstream's `convert_hf_to_gguf.py`.
 - **The realtime transcription prompt for a model whose preset puts the audio first** (VibeVoice-ASR,
   `media_first`) goes in after the audio (b12515, #32507); no generated model has that preset, so
   only the LFM3 order is tested.

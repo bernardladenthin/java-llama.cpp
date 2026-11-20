@@ -195,6 +195,12 @@ struct tiny_model_spec {
     // ("rwkv": escaped tokens, no special ones of its own).
     enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE, SENTENCEPIECE_BYTES, UNIGRAM, RWKV };
     tokenizer_kind tokenizer = tokenizer_kind::BYTES;
+    // arch "domynedge" (Domyn Edge, b12568): per layer, 1 in swa_pattern is a sliding-window layer with
+    // RoPE and heads of head_dim_swa, 0 a full-attention layer without RoPE (NoPE) and heads of head_dim;
+    // n_rot_swa (-1: head_dim_swa) is how many dimensions of a sliding-window head RoPE rotates.
+    std::vector<uint32_t> swa_pattern = {};
+    int head_dim_swa = 0;
+    int n_rot_swa = -1;
 
     // Qwen3-VL's text decoder (arch "qwen3vl"): the llama decoder with a norm on the query and key
     // heads, as hy_v3 has, and interleaved M-RoPE over rope.dimension_sections, where a token of a
@@ -222,6 +228,21 @@ struct tiny_model_spec {
         spec.prefix = prefix;
         spec.arch = "cohere2";
         spec.n_swa = window;
+        return spec;
+    }
+
+    // Domyn Edge (b12568, #32559): a sliding-window layer, a full-attention one, another sliding-window
+    // one, the sliding-window heads half as wide and rotated by RoPE, the full-attention ones without
+    // positions; a norm on the keys with a weight and one on the queries without, and a norm after the
+    // attention and after the feed-forward (sandwich).
+    static tiny_model_spec domyn_edge(int window = 8, const std::string &prefix = "jllama-domyn-edge") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "domynedge";
+        spec.n_layer = 3;
+        spec.n_swa = window;
+        spec.swa_pattern = {1, 0, 1};
+        spec.head_dim_swa = spec.head_dim / 2;
         return spec;
     }
 
@@ -305,6 +326,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool mamba = spec.arch == "mamba";
     const bool qwen3next = spec.arch == "qwen3next";
     const bool zaya1 = spec.arch == "zaya1";
+    const bool domyn = spec.arch == "domynedge";
     constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
     constexpr int ZAYA_CONV = 2;         // the only kernel llama.cpp's CCA takes
     const int ZAYA_ROUTER = spec.n_embd; // the router's hidden width, as upstream's own arch test has it
@@ -356,6 +378,18 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
         gguf_set_val_f32(g, (a + ".attention.layer_norm_epsilon").c_str(), 1e-5f);
         gguf_set_val_f32(g, (a + ".logit_scale").c_str(), 1.0f);
+    }
+    if (domyn) {
+        gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
+        // the same list for both: the sliding-window layers are the ones with RoPE
+        gguf_set_arr_data(g, (a + ".attention.sliding_window_pattern").c_str(), GGUF_TYPE_UINT32,
+                          spec.swa_pattern.data(), spec.swa_pattern.size());
+        gguf_set_arr_data(g, (a + ".attention.rope_pattern").c_str(), GGUF_TYPE_UINT32, spec.swa_pattern.data(),
+                          spec.swa_pattern.size());
+        gguf_set_val_u32(g, (a + ".attention.key_length_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
+        gguf_set_val_u32(g, (a + ".attention.value_length_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
+        gguf_set_val_u32(g, (a + ".rope.dimension_count_swa").c_str(),
+                         static_cast<uint32_t>(spec.n_rot_swa >= 0 ? spec.n_rot_swa : spec.head_dim_swa));
     }
     if (spec.n_expert > 0) {
         gguf_set_val_u32(g, (a + ".expert_count").c_str(), static_cast<uint32_t>(spec.n_expert));
@@ -608,6 +642,22 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "ffn_res_scale_hs.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.bias", {spec.n_embd}, 0.1f);
+            continue;
+        }
+        if (domyn) {
+            const int hd = spec.swa_pattern.at(il) != 0 ? spec.head_dim_swa : spec.head_dim;
+            add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * hd});
+            matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * hd});
+            matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * hd});
+            matrix(to, p + "attn_output.weight", {spec.n_head * hd, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {hd}, 1.0f); // the query's has no weight
+            add_random_tensor(to, ctx, rng, p + "post_attention_norm.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_up.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_down.weight", {spec.n_ff, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "post_ffw_norm.weight", {spec.n_embd}, 1.0f);
             continue;
         }
         if (qwen3next) {
