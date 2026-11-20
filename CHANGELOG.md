@@ -240,7 +240,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12558** (from b12525, 33 upstream commits in thirteen steps; master, pinned by commit;
+- **llama.cpp b12559** (from b12525, 34 upstream commits in fourteen steps; master, pinned by commit;
   upstream has tagged it since). b12549 (#32429) gives Inkling 2 an attention input of its own for its
   relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
   the way the plain one builds them, so these models reuse their compute graph with flash attention --
@@ -284,8 +284,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   from the patched tree and upstream's `test-backend-ops -o ADD_RMS_NORM,RMS_NORM_MUL_ADD` passed
   139 of 139 on Mesa's lavapipe, a CPU Vulkan driver that reports subgroup arithmetic, so the fused
   path the commit turns off on Adreno ran there and was right; the Qualcomm branch itself needs an
-  Adreno GPU. All 26
-  patches applied unchanged at every step, the 31 of today at the last five; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
+  Adreno GPU. b12559 folds the query heads of a KV group into one tile of the OpenCL module's
+  decomposed f16 flash attention for short batches (#32631, Adreno; `GGML_OPENCL_FA_KQ_P8_FOLD=0`
+  turns it off): the changed kernel passes clang's OpenCL front end, the module's host part compiles,
+  and a model of the grid shows the folded and the unfolded one write the same cells once each over
+  1932 shapes; it runs only on an Adreno GPU. All 26
+  patches applied unchanged at every step, the 31 of today at the last six; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
