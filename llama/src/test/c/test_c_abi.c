@@ -9,7 +9,8 @@
 // ggml-backend.h are consumable as C from the shipped shared libraries (the symbols are exported,
 // the headers are C), that jllama_api.h compiles as C and its jllama_* symbols are exported from
 // the shipped libjllama, that ggml_backend_load_all_from_path() finds the CPU modules in the
-// natives directory it is given, and -- when JLLAMA_C_ABI_MODEL names a GGUF -- that a model loads
+// natives directory it is given, that the CPU module it chose multiplies K-quant weights as a
+// reference from ggml-base says (kquant_matmul.h), and -- when JLLAMA_C_ABI_MODEL names a GGUF -- that a model loads
 // and tokenizes through upstream's API and answers a completion through jllama_model_load /
 // jllama_completions. The ctest sets JLLAMA_C_ABI_MODEL to the C++ suite's random llama model,
 // which write_c_abi_model.cpp writes as a fixture (or to the file it named at configure time). Registered
@@ -30,6 +31,7 @@
 #include "ggml-backend.h"
 #include "llama.h"
 #include "jllama_api.h"
+#include "kquant_matmul.h"
 
 static int fail(const char * what) {
     fprintf(stderr, "c_abi: FAILED: %s\n", what);
@@ -150,6 +152,11 @@ int main(int argc, char ** argv) {
         return fail("no CPU device among the registered devices");
     }
     printf("c_abi: system info: %s\n", llama_print_system_info());
+    /* The CPU module ggml chose computes K-quant products as a reference from ggml-base says it should
+     * (kquant_matmul.h): on s390x under qemu that is the z15 module and llamafile's VXE kernel. */
+    if (jllama_check_kquant_matmul() != 0) {
+        return fail("MUL_MAT over K-quant weights on the CPU backend differs from the reference");
+    }
 
     const char * model_path = getenv("JLLAMA_C_ABI_MODEL");
     if (model_path != NULL && model_path[0] != '\0') {

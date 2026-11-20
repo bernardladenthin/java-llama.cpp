@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12560)
-set(JLLAMA_GIT_COMMIT "2d8d003937b4ad42c1ada09dcdb0236eb3290a8f")   # the commit the number b12560 names (tagged upstream; the commit stays the pin)
+set(JLLAMA_GIT_TAG    b12567)
+set(JLLAMA_GIT_COMMIT "bed8ec2f8d484520d4822c582a94424a03e172e7")   # the commit the number b12567 names (not tagged yet; the commit stays the pin)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -1304,6 +1304,9 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
     add_executable(jllama_c_abi src/test/c/test_c_abi.c)
     target_compile_features(jllama_c_abi PRIVATE c_std_11)
     target_link_libraries(jllama_c_abi PRIVATE jllama llama ggml-base)
+    if (UNIX)
+        target_link_libraries(jllama_c_abi PRIVATE m) # lrintf of kquant_matmul.h
+    endif()
     target_include_directories(jllama_c_abi PRIVATE src/main/cpp)
     # The executable lives in the build tree and must resolve libllama/libggml* from the natives
     # directory: a run path pointing there on ELF, PATH for the test on Windows (where the

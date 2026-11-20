@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b12560**
+Current llama.cpp pinned version: **b12567**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -315,7 +315,10 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling -- s390x excepted, which runs it under its toolchain's qemu) is `src/test/c/test_c_abi.c`
   -- plain C11, linked against the shared `llama` and `ggml-base` only, no JNI, no C++: it calls
   `ggml_backend_load_all_from_path` on the natives directory, `llama_backend_init`, requires at
-  least one device (the CPU module must have loaded), prints `llama_print_system_info`, then loads
+  least one device (the CPU module must have loaded), prints `llama_print_system_info`, multiplies
+  Q2_K to Q6_K weights through the CPU module ggml chose against a reference from ggml-base's
+  dequantization (`src/test/c/kquant_matmul.h`, since b12567: on s390x under qemu the `z15` module and
+  llamafile's `tinyBLAS_QK_VXE`, which nothing else in CI reaches), then loads
   and tokenizes a model through upstream's API and answers a completion through `jllama_model_load` /
   `jllama_completions` -- the C++ suite's random llama model (`tiny_llama_gguf.hpp`), which the helper
   `src/test/c/write_c_abi_model.cpp` (linked against the shipped `ggml-base` only) writes as the ctest
@@ -1286,7 +1289,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12560`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12567`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -3021,7 +3024,7 @@ the parameterized `CApiVocabOnly` case expands to 22 instances and `MoeRepack` t
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12560`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12567`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
