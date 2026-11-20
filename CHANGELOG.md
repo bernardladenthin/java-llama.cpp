@@ -240,8 +240,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   accumulation precision per GPU model through NVML, which it loads at run time when the driver has
   it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
   does. Nothing of the other natives changed.
-- **llama.cpp b12557** (from b12525, 32 upstream commits in twelve steps; master, pinned by commit
-  before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
+- **llama.cpp b12558** (from b12525, 33 upstream commits in thirteen steps; master, pinned by commit;
+  upstream has tagged it since). b12549 (#32429) gives Inkling 2 an attention input of its own for its
   relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
   the way the plain one builds them, so these models reuse their compute graph with flash attention --
   the reuse check failed on every step before (`CApiGraphReuse`: the generator's LFM3 backbone with
@@ -276,8 +276,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   longer gets the tensor loader past the layers (#32601, `CApiHrm`, red at b12555 with the
   assertion), and b12557 lets the CUDA module run an expert matmul whose token names one expert in
   several slots (#32505; ggml now documents duplicate expert ids as supported on every backend, and
-  `test_moe_repack` holds both CPU repack paths of `patches/0022` to them). All 26
-  patches applied unchanged at every step, the 31 of today at the last four; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
+  `test_moe_repack` holds both CPU repack paths of `patches/0022` to them), and b12558 turns subgroup
+  arithmetic off on Qualcomm's proprietary Vulkan driver, where `subgroupAdd()` after divergent code
+  returned wrong sums and the fused ADD+RMS_NORM gave a wrong norm in every decode step, so a model
+  wrote stray tokens after a long prompt (#30826) -- the case of the `vulkan-windows-aarch64` module on a
+  Snapdragon X laptop. No CI job runs a Vulkan module on a GPU; locally the b12558 module was built
+  from the patched tree and upstream's `test-backend-ops -o ADD_RMS_NORM,RMS_NORM_MUL_ADD` passed
+  139 of 139 on Mesa's lavapipe, a CPU Vulkan driver that reports subgroup arithmetic, so the fused
+  path the commit turns off on Adreno ran there and was right; the Qualcomm branch itself needs an
+  Adreno GPU. All 26
+  patches applied unchanged at every step, the 31 of today at the last five; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
