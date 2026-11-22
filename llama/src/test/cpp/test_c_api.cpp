@@ -6659,19 +6659,37 @@ TEST_F(CApiQwen3Tts, ASynthesisIsAWavOfWholeFramesAt24kHz) {
 TEST_F(CApiQwen3Tts, Code2wavDecodesAcrossItsSeventyTwoFrameWindow) {
     // code2wav decodes 72 frames at a time and carries its convolution and attention state into the
     // next window: 72 frames are one window, 73 and 150 cross it, and the first 72 frames of a longer
-    // synthesis are the same samples as a synthesis that stops there
+    // synthesis are the same samples as a synthesis that stops there. Over a backbone that cannot end
+    // its speech, so every synthesis runs to its frame cap on every platform.
+    const std::string endless = jllama_test::write_tiny_qwen3tts_gguf("jllama-qwen3tts-endless", false);
+    jllama_tts_model *tts = nullptr;
+    ASSERT_EQ(jllama_tts_load(endless.c_str(), mmproj().c_str(), 0, 2, &tts), JLLAMA_STATUS_OK) << jllama_last_error();
+    const auto synthesize = [&](int max_frames, std::vector<unsigned char> *wav) {
+        jllama_tts_options options;
+        jllama_tts_options_init(&options);
+        options.max_frames = max_frames;
+        options.seed = 7;
+        unsigned char *bytes = nullptr;
+        size_t length = 0;
+        ASSERT_EQ(jllama_tts_synthesize_options(tts, "hello world", &options, &bytes, &length), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        wav->assign(bytes, bytes + length);
+        jllama_bytes_free(bytes);
+    };
     std::vector<unsigned char> one;
     std::vector<unsigned char> two;
     std::vector<unsigned char> three;
-    ASSERT_EQ(speak("hello world", &one, 72), JLLAMA_STATUS_OK) << jllama_last_error();
-    ASSERT_EQ(speak("hello world", &two, 73), JLLAMA_STATUS_OK) << jllama_last_error();
-    ASSERT_EQ(speak("hello world", &three, 150), JLLAMA_STATUS_OK) << jllama_last_error();
+    synthesize(72, &one);
+    synthesize(73, &two);
+    synthesize(150, &three);
     EXPECT_EQ(frames_of(one), 72);
     EXPECT_EQ(frames_of(two), 73);
     EXPECT_EQ(frames_of(three), 150);
     ASSERT_GE(three.size(), one.size());
     EXPECT_TRUE(std::equal(one.begin() + 44, one.end(), three.begin() + 44))
         << "the window boundary must not change the samples before it";
+    jllama_tts_free(tts);
+    std::remove(endless.c_str());
 }
 
 TEST_F(CApiQwen3Tts, TheLanguageIsATokenOfThePromptAndAnUnknownOneFails) {
@@ -7119,6 +7137,11 @@ class CApiLfm3Audio : public ::testing::Test {
             {"n_predict", n_predict},
             {"temperature", 0},
             {"n_probs", 5},
+            // the server reports a token's probabilities only with its text, which an end of generation or
+            // a byte of an unfinished UTF-8 character has none of (on Windows arm64 the greedy answer to
+            // one clip was such a token); the grammar keeps the answer an ASCII letter, and the probabilities
+            // stay the model's own softmax (post_sampling_probs is off)
+            {"grammar", "root ::= [a-z]"},
             {"cache_prompt", false}};
         Owned response;
         EXPECT_EQ(jllama_completions(model(), request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
@@ -8489,10 +8512,21 @@ TEST_F(CApiYuE2, GuidanceAndSolverStepsAreTakenAndChangeTheSong) {
     std::vector<unsigned char> stronger;
     ASSERT_EQ(sing(LYRICS, guided, &stronger), JLLAMA_STATUS_OK) << jllama_last_error();
     EXPECT_NE(own, stronger);
-    guided.cfg_scale = 1.0f; // no unconditioned sequence at all
+    // cfg_scale 1 runs no unconditioned sequence at all, so its negative prompt -- the instruction up to
+    // the prompt's first line break -- is never built: a raw prompt without a line break sings with 1
+    // and is refused with the model's own 1.01. Whether 1.01 and 1 give other audio is up to rounding
+    // (the guidance moves the code logits by 1 % of their difference; the same WAV on aarch64 and macOS)
+    const char *no_line_break = "<|endoftext|>Generate music la la la<abc></abc><|music_start|>";
+    song unguided_raw;
+    unguided_raw.raw_prompt = 1;
+    unguided_raw.cfg_scale = 1.0f;
     std::vector<unsigned char> unguided;
-    ASSERT_EQ(sing(LYRICS, guided, &unguided), JLLAMA_STATUS_OK) << jllama_last_error();
-    EXPECT_NE(own, unguided);
+    ASSERT_EQ(sing(no_line_break, unguided_raw, &unguided), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(unguided.size(), 44u);
+    song own_raw;
+    own_raw.raw_prompt = 1;
+    EXPECT_EQ(sing(no_line_break, own_raw, nullptr), JLLAMA_STATUS_ERROR)
+        << "the model's own 1.01 builds the negative prompt, which needs the line break";
     song steps;
     steps.flow_steps = 5;
     std::vector<unsigned char> more_steps;

@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**34 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**35 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -56,6 +56,7 @@ match a binary to this page.
 | 0042 | [`0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch`](#0042-common-a-json-schema-whose-bounds-admit-no-value-is-refusedpatch) | common : a JSON schema whose bounds admit no value is refused | 1 | 3 |
 | 0043 | [`0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-it.patch`](#0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-itpatch) | llama : the scales of a skipped weight are skipped with it | 2 | 3 |
 | 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
+| 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1453,4 +1454,31 @@ Qwen3-VL's text model).
 Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
 once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
 llama_opt_epoch reports), drop the patch and read upstream's way of reporting it in train_engine.cpp.
+```
+
+## 0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch
+
+**Files (1):** `common/arg.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : a scaled file's path is split from its scale at the last colon
+
+--lora-scaled and --control-vector-scaled read FNAME:SCALE,... and split each item with
+string_split(item, ':'), demanding exactly two parts. Every absolute Windows path has a colon after its
+drive letter, so C:\models\a.gguf:0.5 gave three parts and the parse failed ("control-vector-scaled
+format: FNAME:SCALE") -- for an embedding host, which passes absolute paths, the option did not work on
+Windows at all. Found by CI: the C API's control-vector test failed on Windows arm64 with a temp path.
+
+Both options split at the last colon now (split_fname_scale); the scale holds none. An item without a
+colon, or with nothing after the last one, is refused as before.
+
+The guard is ScaledFiles.APathWithAColonIsSplitFromItsScaleAtTheLastColon in
+src/test/cpp/test_model_flags.cpp (the server parser over Windows paths and a POSIX name with a colon,
+on every platform; red without the patch); CApiControlVector holds the load with a real file on a
+Windows job.
+
+Drop-check on every bump: read the two handlers in common/arg.cpp -- once neither splits FNAME:SCALE at
+every colon, drop the patch.
 ```

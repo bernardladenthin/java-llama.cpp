@@ -1536,6 +1536,13 @@ if(BUILD_TESTING)
         endif()
     endif()
 
+    # test_c_api.cpp holds more than the 65,279 sections a regular COFF object can (MSVC: "C1128: number of
+    # sections exceeded object file format limit", build-windows-x86_64-msvc, 2026-11-22); clang-cl takes the
+    # flag too, plain clang and LLVM switch to the big format by themselves
+    if(MSVC)
+        target_compile_options(jllama_test PRIVATE /bigobj)
+    endif()
+
     target_compile_definitions(jllama_test PRIVATE
         SERVER_VERBOSE=$<BOOL:${LLAMA_VERBOSE}>
         # test_c_api.cpp drives the C API compiled into this binary (jllama_api.cpp above), so the

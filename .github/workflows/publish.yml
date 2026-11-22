@@ -1775,8 +1775,8 @@ jobs:
   # Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll per
   # instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
   # start-up, and the directory every Windows x86-64 GPU module jar is loaded next to (CLAUDE.md
-  # "Modular natives"). The compiler is plain clang (the GNU driver, the LLVM on
-  # the runner image's PATH), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
+  # "Modular natives"). The compiler is plain clang (the GNU driver, the clang Visual Studio ships
+  # in VC\Tools\Llvm\x64), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
   # cl.exe, and ggml's `if (NOT MSVC)` then drops 5 of the 14 variants, so llama/CMakeLists.txt
   # refuses both. It needs the MSVC headers, libraries and linker from the developer environment
   # all the same (clang targets the MSVC ABI), and it ships the same hybrid CRT as every Windows
@@ -1822,11 +1822,15 @@ jobs:
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
         uses: ./.github/actions/install-sccache-windows
-      # `clang --version` first: which LLVM the image put on PATH decides whether patches/0017's
-      # compiler half is exercised as a warning (clang 20) or as the error it fixes (clang 22+).
+      # The clang Visual Studio ships (VC\Tools\Llvm\x64), not the LLVM the image puts on PATH: the
+      # STL of MSVC 14.52 refuses any clang below 22 (STL1000), and the image's C:\Program Files\LLVM
+      # was 20.1.8 when it moved to 14.52 (run 45047172519); Visual Studio keeps its own clang in step
+      # with its STL. `clang --version` first: clang 22+ makes patches/0017's compiler half an error.
       - name: Build libraries
         shell: cmd
         run: |
+          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
+          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
@@ -2837,9 +2841,12 @@ jobs:
           arch: x64
       - name: Display CPU Info
         uses: bernardladenthin/actions/common/print-host-info@379fb9448915b8ce7153f6ec5fa65544205196db # v1.2.2
+      # Visual Studio's clang, as build-windows-x86_64 (the image's LLVM 20 fails MSVC 14.52's STL1000 check)
       - name: Build libraries
         shell: cmd
         run: |
+          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
+          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Verify llama.cpp patches are applied

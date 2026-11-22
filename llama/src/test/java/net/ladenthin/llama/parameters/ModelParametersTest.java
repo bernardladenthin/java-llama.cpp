@@ -299,30 +299,28 @@ public class ModelParametersTest {
     }
 
     /**
-     * The colon is the field separator and upstream splits on every one of them, demanding exactly
-     * two parts -- so an absolute Windows path cannot be expressed at all. Refusing it here names the
-     * cause instead of letting the load fail with "Failed to parse model parameters".
+     * The colon is the field separator, and upstream splits at every one of them, demanding exactly
+     * two parts -- so no absolute Windows path could be expressed, and this builder refused a path
+     * with a colon. patches/0045 splits at the last colon (the scale has none); the path is written
+     * as it is, and the parser's half is held by {@code ScaledFiles} in {@code test_model_flags.cpp}.
      */
     @Test
-    public void aScaledPathContainingAColonIsRefusedWithTheReason() {
-        IllegalArgumentException lora = assertThrows(
-                IllegalArgumentException.class,
-                () -> new ModelParameters().addLoraScaledAdapter("X:\\models\\a.gguf", 1f));
-        assertThat(lora.getMessage(), containsString("--lora-scaled"));
-        assertThat(lora.getMessage(), containsString("FNAME:SCALE"));
-        assertThat(lora.getMessage(), containsString("X:\\models\\a.gguf"));
-
-        IllegalArgumentException vector = assertThrows(
-                IllegalArgumentException.class, () -> new ModelParameters().addControlVectorScaled("C:/vec.gguf", 1f));
-        assertThat(vector.getMessage(), containsString("--control-vector-scaled"));
-
-        // a relative path is what works, and is what the message points at
+    public void aScaledPathContainingAColonIsWrittenAsItIs() {
         assertThat(
                 new ModelParameters()
-                        .addLoraScaledAdapter("../models/a.gguf", 1f)
+                        .addLoraScaledAdapter("X:\\models\\a.gguf", 1f)
                         .parameters
                         .get("--lora-scaled"),
-                is("../models/a.gguf:1.0"));
+                is("X:\\models\\a.gguf:1.0"));
+        assertThat(
+                new ModelParameters()
+                        .addControlVectorScaled("C:/vec.gguf", 0.5f)
+                        .parameters
+                        .get("--control-vector-scaled"),
+                is("C:/vec.gguf:0.5"));
+        IllegalArgumentException empty =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().addLoraScaledAdapter("", 1f));
+        assertThat(empty.getMessage(), is("--lora-scaled needs a non-empty file path"));
     }
 
     // -------------------------------------------------------------------------

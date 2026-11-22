@@ -1,0 +1,59 @@
+common : a scaled file's path is split from its scale at the last colon
+
+--lora-scaled and --control-vector-scaled read FNAME:SCALE,... and split each item with
+string_split(item, ':'), demanding exactly two parts. Every absolute Windows path has a colon after its
+drive letter, so C:\models\a.gguf:0.5 gave three parts and the parse failed ("control-vector-scaled
+format: FNAME:SCALE") -- for an embedding host, which passes absolute paths, the option did not work on
+Windows at all. Found by CI: the C API's control-vector test failed on Windows arm64 with a temp path.
+
+Both options split at the last colon now (split_fname_scale); the scale holds none. An item without a
+colon, or with nothing after the last one, is refused as before.
+
+The guard is ScaledFiles.APathWithAColonIsSplitFromItsScaleAtTheLastColon in
+src/test/cpp/test_model_flags.cpp (the server parser over Windows paths and a POSIX name with a colon,
+on every platform; red without the patch); CApiControlVector holds the load with a real file on a
+Windows job.
+
+Drop-check on every bump: read the two handlers in common/arg.cpp -- once neither splits FNAME:SCALE at
+every colon, drop the patch.
+
+diff --git a/common/arg.cpp b/common/arg.cpp
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -1411,6 +1411,16 @@
+     return fields;
+ }
+ 
++// jllama: FNAME:SCALE split at the last colon. The scale holds none, while a path may: every absolute
++// Windows path has one after its drive letter, and splitting at each colon refused them all.
++static std::vector<std::string> split_fname_scale(const std::string & item) {
++    const size_t colon = item.rfind(':');
++    if (colon == std::string::npos) {
++        return { item };
++    }
++    return { item.substr(0, colon), item.substr(colon + 1) };
++}
++
+ common_params_context common_params_parser_init(common_params & params, llama_example ex, void(*print_usage)(int, char **)) {
+     // per-example default params
+     // we define here to make sure it's included in llama-gen-docs
+@@ -3000,7 +3010,8 @@
+         "note: use comma-separated values",
+         [](common_params & params, const std::string & value) {
+             for (const auto & item : parse_csv_row(value)) {
+-                auto parts = string_split<std::string>(item, ':');
++                // jllama: split at the last colon, the scale has none -- a Windows path has one after its drive
++                const auto parts = split_fname_scale(item);
+                 if (parts.size() != 2) {
+                     throw std::invalid_argument("lora-scaled format: FNAME:SCALE");
+                 }
+@@ -3024,7 +3035,8 @@
+         "note: use comma-separated values (format: FNAME:SCALE,...)",
+         [](common_params & params, const std::string & value) {
+             for (const auto & item : parse_csv_row(value)) {
+-                auto parts = string_split<std::string>(item, ':');
++                // jllama: split at the last colon, the scale has none -- a Windows path has one after its drive
++                const auto parts = split_fname_scale(item);
+                 if (parts.size() != 2) {
+                     throw std::invalid_argument("control-vector-scaled format: FNAME:SCALE");
+                 }

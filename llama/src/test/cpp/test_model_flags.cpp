@@ -264,3 +264,27 @@ TEST(DeviceLists, AFitTargetForEveryDeviceIsAcceptedAndOneMoreIsRefused) {
     common_params refused;
     EXPECT_FALSE(server_parser_accepts("--fit-target", one_value_per_device(max_devices + 1), refused));
 }
+
+TEST(ScaledFiles, APathWithAColonIsSplitFromItsScaleAtTheLastColon) {
+    // --lora-scaled and --control-vector-scaled read FNAME:SCALE and split it at every colon upstream, so
+    // every absolute Windows path -- a colon after its drive letter -- failed the parse ("control-vector-scaled
+    // format: FNAME:SCALE"), and ModelParameters refused such a path itself. patches/0045 splits at the last
+    // colon; the scale has none. A drive letter here is only text: the parse does not open the files.
+    common_params lora;
+    ASSERT_TRUE(server_parser_accepts("--lora-scaled", "C:\\models\\a.gguf:0.5,b:c.gguf:2", lora));
+    ASSERT_EQ(lora.lora_adapters.size(), 2u);
+    EXPECT_EQ(lora.lora_adapters[0].path, "C:\\models\\a.gguf");
+    EXPECT_EQ(lora.lora_adapters[0].scale, 0.5f);
+    EXPECT_EQ(lora.lora_adapters[1].path, "b:c.gguf");
+    EXPECT_EQ(lora.lora_adapters[1].scale, 2.0f);
+    common_params cvec;
+    ASSERT_TRUE(server_parser_accepts("--control-vector-scaled", "D:\\vectors\\happy.gguf:-0.25", cvec));
+    ASSERT_EQ(cvec.control_vectors.size(), 1u);
+    EXPECT_EQ(cvec.control_vectors[0].fname, "D:\\vectors\\happy.gguf");
+    EXPECT_EQ(cvec.control_vectors[0].strength, -0.25f);
+    // without a colon, or without a scale after it, the value is still refused
+    common_params no_scale;
+    EXPECT_FALSE(server_parser_accepts("--lora-scaled", "a.gguf", no_scale));
+    common_params empty_scale;
+    EXPECT_FALSE(server_parser_accepts("--control-vector-scaled", "C:\\v.gguf:", empty_scale));
+}

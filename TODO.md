@@ -681,8 +681,9 @@ bump checklist once the pin is bumped past it.
   absolute Windows path.** `common/arg.cpp` splits each `FNAME:SCALE` item with `string_split(item, ':')`
   and demands exactly two parts, so `X:\models\a.gguf:1.0` is rejected as three. Measured against the
   real parser in `BUGHUNT-MEASUREMENTS.md` M6 (of four argv forms only a relative path and plain
-  `--lora` were accepted). The obvious fix is to split on the **last** colon; small enough for a PR,
-  so draft it then. Downstream `ModelParameters` refuses such a path with the reason meanwhile.
+  `--lora` were accepted). `patches/0045` splits at the **last** colon since 2026-11-22 (found again by
+  CI: the C API's control-vector test failed on Windows arm64 with a temp path), and `ModelParameters`
+  writes such a path instead of refusing it; still small enough for an upstream PR, so draft it then.
 
 - **From the branch review of 2026-10-20 (F221): upstream's Anthropic answer names a matched stop
   word in `stop_sequence` but says `stop_reason` `end_turn`**, where the Messages API specifies

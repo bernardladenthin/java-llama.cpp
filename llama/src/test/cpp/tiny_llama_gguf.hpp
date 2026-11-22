@@ -2213,10 +2213,13 @@ inline std::string write_tiny_pockettts_mmproj_gguf(const std::string &prefix = 
 // tokens), the chat and <tts_*> control tokens, then CODEC codec tokens whose first CODEBOOK are the
 // codes of the first codebook and whose rest holds what the pipeline looks up by text (languages,
 // pad, bos, eos, think). suppress_tokens names the codec ids above the codebook but the end of
-// speech, as the real file does, so the backbone samples a code or ends.
+// speech, as the real file does, so the backbone samples a code or ends. With ends false the end of
+// speech is suppressed as well and every synthesis runs to its frame cap: the end scores 0 against
+// random codes, so whether a long synthesis samples it depends on the platform's rounding (86 of 150
+// frames on Windows arm64 and macOS, none on x86-64 and Linux aarch64).
 inline constexpr int TINY_QWEN3TTS_CODEC = 32;
 inline constexpr int TINY_QWEN3TTS_CODEBOOK = 16;
-inline std::string write_tiny_qwen3tts_gguf(const std::string &prefix = "jllama-qwen3tts") {
+inline std::string write_tiny_qwen3tts_gguf(const std::string &prefix = "jllama-qwen3tts", bool ends = true) {
     constexpr int EMBD = 32, N_HEAD = 2, N_HEAD_KV = 1, HEAD = 16, FF = 64, N_LAYER = 2;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -2270,7 +2273,7 @@ inline std::string write_tiny_qwen3tts_gguf(const std::string &prefix = "jllama-
     const int codec_eos = codec_0 + TINY_QWEN3TTS_CODEBOOK + 2 + 4;
     std::vector<int32_t> suppress;
     for (int id = codec_0 + TINY_QWEN3TTS_CODEBOOK; id < n_vocab; ++id) {
-        if (id != codec_eos) {
+        if (id != codec_eos || !ends) {
             suppress.push_back(id);
         }
     }

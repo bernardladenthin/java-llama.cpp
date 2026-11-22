@@ -815,6 +815,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A scaled LoRA adapter or control vector could not be named by an absolute Windows path.**
+  llama.cpp reads `--lora-scaled` and `--control-vector-scaled` as `FNAME:SCALE,...` and split each
+  item at every colon, so the colon after a drive letter made `C:\models\a.gguf:0.5` three parts and
+  the load failed; `ModelParameters.addLoraScaledAdapter` / `addControlVectorScaled` refused such a path
+  for that reason. `patches/0045` splits at the last colon (the scale has none), and the two setters
+  write a path with colons as it is. Found by the first CI run of the C API's control-vector test on
+  Windows arm64; `ScaledFiles` in `test_model_flags.cpp` holds the parser's half on every platform.
 - **Fine-tuning a model ggml cannot differentiate ended the process.** `LlamaTrainer` and
   `jllama_finetune` run llama.cpp's training loop, whose backward graph is built by
   `ggml_build_backward_expand`; that function ends the process (`GGML_ABORT`) on a graph op it has no
