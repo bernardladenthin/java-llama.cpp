@@ -11612,6 +11612,287 @@ TEST(CApiDownload, AModelUrlIsDownloadedToItsPathAndLoaded) {
     std::filesystem::remove(source, ec);
     std::filesystem::remove_all(dir, ec);
 }
+
+namespace {
+// a loopback HTTP server that serves `bytes` at /model.gguf and holds the body after its first half
+// until release(): a download the test can watch while it runs
+struct HeldModelServer {
+    httplib::Server http;
+    std::thread serving;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool released = false;
+    int port = 0;
+    explicit HeldModelServer(const std::string &bytes) {
+        http.Get("/model.gguf", [this, &bytes](const httplib::Request &, httplib::Response &res) {
+            res.set_content_provider(bytes.size(), "application/octet-stream",
+                                     [this, &bytes](size_t offset, size_t, httplib::DataSink &sink) {
+                                         const size_t half = bytes.size() / 2;
+                                         if (offset < half) {
+                                             return sink.write(bytes.data() + offset, half - offset);
+                                         }
+                                         std::unique_lock<std::mutex> lock(mutex);
+                                         cv.wait_for(lock, std::chrono::seconds(60), [this] { return released; });
+                                         return sink.write(bytes.data() + offset, bytes.size() - offset);
+                                     });
+        });
+        port = http.bind_to_any_port("127.0.0.1");
+        serving = std::thread([this]() { http.listen_after_bind(); });
+        http.wait_until_ready();
+    }
+    void release() {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        cv.notify_all();
+    }
+    ~HeldModelServer() {
+        release();
+        http.stop();
+        serving.join();
+    }
+};
+
+// the events of GET /models/sse, read on a thread of their own from the moment the server listens
+// until it ends the stream
+struct ModelsSseReader {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::vector<json> events;
+    bool ended = false;
+    int status = 0;
+    std::string content_type;
+    std::thread reading;
+    explicit ModelsSseReader(int port) {
+        reading = std::thread([this, port]() {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            std::string pending;
+            while (std::chrono::steady_clock::now() < deadline) {
+                httplib::Client client("127.0.0.1", port);
+                client.set_read_timeout(std::chrono::seconds(60));
+                bool connected = false;
+                const auto res = client.Get(
+                    "/models/sse",
+                    [&](const httplib::Response &r) {
+                        connected = true;
+                        std::lock_guard<std::mutex> lock(mutex);
+                        status = r.status;
+                        content_type = r.get_header_value("Content-Type");
+                        return true;
+                    },
+                    [&](const char *data, size_t length) {
+                        pending.append(data, length);
+                        size_t end;
+                        while ((end = pending.find("\n\n")) != std::string::npos) {
+                            const std::string line = pending.substr(0, end);
+                            pending.erase(0, end + 2);
+                            if (line.rfind("data: ", 0) == 0) {
+                                std::lock_guard<std::mutex> lock(mutex);
+                                events.push_back(json::parse(line.substr(6)));
+                                cv.notify_all();
+                            }
+                        }
+                        return true;
+                    });
+                if (connected) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::lock_guard<std::mutex> lock(mutex);
+            ended = true;
+            cv.notify_all();
+        });
+    }
+    // the first event that matches, waiting for it up to `seconds`
+    json await(const std::function<bool(const json &)> &match, int seconds = 30) {
+        std::unique_lock<std::mutex> lock(mutex);
+        json found;
+        cv.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            for (const auto &e : events) {
+                if (match(e)) {
+                    found = e;
+                    return true;
+                }
+            }
+            return ended;
+        });
+        return found;
+    }
+    bool await_end(int seconds) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(seconds), [&] { return ended; });
+    }
+    std::vector<json> snapshot() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return events;
+    }
+    ~ModelsSseReader() {
+        if (reading.joinable()) {
+            reading.join();
+        }
+    }
+};
+
+int free_loopback_port() {
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    listener.join();
+    return port;
+}
+
+bool is_status(const json &e, const char *status) {
+    return e.value("event", std::string()) == "status_change" && e.contains("data") &&
+           e.at("data").value("status", std::string()) == status;
+}
+
+// the position of the first event that matches, or the number of events
+size_t index_of(const std::vector<json> &events, const std::function<bool(const json &)> &match) {
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (match(events[i])) {
+            return i;
+        }
+    }
+    return events.size();
+}
+} // namespace
+
+TEST(CApiServer, ASingleModelServerReportsItsDownloadAndLoadOverModelsSse) {
+    // Since b12637 (#32398) a single-model server listens before it downloads and loads its model, and
+    // serves GET /models/sse meanwhile: /health is 503 while the model is on its way, and the stream
+    // carries the download's progress, its end, the load and the loaded model. The loopback server
+    // holds the download at half the file, so the client sees it in progress whatever the timing.
+    const std::string source = write_tiny_llama_gguf("jllama-c-api-sse-source");
+    ASSERT_FALSE(source.empty());
+    std::string bytes;
+    {
+        std::ifstream in(source, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    ASSERT_GT(bytes.size(), 2u);
+    HeldModelServer model_server(bytes);
+    ASSERT_GT(model_server.port, 0);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-sse-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(model_server.port) + "/model.gguf";
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "-m",     target.c_str(),   "--model-url", url.c_str(),
+                          "-c",           "64",     "-ngl",           "0",           "--host",
+                          "127.0.0.1",    "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        const json progress =
+            sse.await([](const json &e) { return e.value("event", std::string()) == "download_progress"; });
+        ASSERT_FALSE(progress.is_null()) << "no download progress before the model arrived";
+        EXPECT_EQ(sse.status, 200);
+        EXPECT_EQ(sse.content_type.rfind("text/event-stream", 0), 0u) << sse.content_type;
+        EXPECT_EQ(progress.value("model", std::string()), target) << progress.dump();
+        const json file = progress.at("data").at("progress").at(url);
+        EXPECT_EQ(file.at("total").get<size_t>(), bytes.size()) << progress.dump();
+        EXPECT_LE(file.at("done").get<size_t>(), bytes.size() / 2) << progress.dump();
+        {
+            httplib::Client client("127.0.0.1", port);
+            const auto health = client.Get("/health");
+            ASSERT_TRUE(health) << httplib::to_string(health.error());
+            EXPECT_EQ(health->status, 503) << "the server is ready before its model arrived: " << health->body;
+        }
+        model_server.release();
+        const json loaded = sse.await([](const json &e) { return is_status(e, "loaded"); });
+        ASSERT_FALSE(loaded.is_null()) << "the model was not reported loaded";
+        const auto events = sse.snapshot();
+        const size_t finished =
+            index_of(events, [](const json &e) { return e.value("event", std::string()) == "download_finished"; });
+        const size_t loading = index_of(events, [](const json &e) { return is_status(e, "loading"); });
+        const size_t done = index_of(events, [](const json &e) { return is_status(e, "loaded"); });
+        EXPECT_LT(finished, loading) << json(events).dump();
+        EXPECT_LT(loading, done) << json(events).dump();
+        EXPECT_EQ(index_of(events, [](const json &e) { return e.value("event", std::string()) == "download_failed"; }),
+                  events.size());
+        EXPECT_TRUE(loaded.at("data").contains("info")) << loaded.dump();
+        EXPECT_EQ(std::filesystem::file_size(target), bytes.size());
+        httplib::Client client("127.0.0.1", port);
+        const auto health = client.Get("/health");
+        ASSERT_TRUE(health) << httplib::to_string(health.error());
+        EXPECT_EQ(health->status, 200) << health->body;
+        // a client that comes after the load gets the last event replayed: the loaded model, by the
+        // id GET /models lists
+        {
+            ModelsSseReader late(port);
+            const json replayed = late.await([](const json &) { return true; });
+            ASSERT_FALSE(replayed.is_null());
+            EXPECT_TRUE(is_status(replayed, "loaded")) << replayed.dump();
+            const auto models = client.Get("/models");
+            ASSERT_TRUE(models) << httplib::to_string(models.error());
+            const std::string id = json::parse(models->body).at("data").at(0).at("id").get<std::string>();
+            EXPECT_EQ(replayed.value("model", std::string()), id);
+            EXPECT_EQ(replayed.at("data").at("info").value("id", std::string()), id) << replayed.dump();
+            // the stop ends both streams: the SSE clients do not hold it (the shutdown handler of
+            // patches/0006 stops them, as upstream's does)
+            auto stopped = std::make_shared<std::atomic<int>>(-1);
+            std::thread([server, stopped]() { stopped->store(jllama_server_stop(server)); }).detach();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            while (stopped->load() == -1 && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            ASSERT_EQ(stopped->load(), JLLAMA_STATUS_OK) << "the stop waited for the SSE clients";
+            EXPECT_TRUE(late.await_end(10)) << "the late SSE stream outlived the server";
+        }
+        EXPECT_TRUE(sse.await_end(10)) << "the SSE stream outlived the server";
+    }
+    std::error_code ec;
+    std::filesystem::remove(source, ec);
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(CApiServer, ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEnds) {
+    // The same flow over bytes that are no GGUF: the download finishes, the load fails, and the
+    // stream's last event is the model unloaded with the exit code before the server ends -- what
+    // upstream's README promises for a failed download or load. The server no longer runs afterwards.
+    const std::string bytes(4096, 'x');
+    HeldModelServer model_server(bytes);
+    ASSERT_GT(model_server.port, 0);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-sse-bad-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(model_server.port) + "/model.gguf";
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "-m",     target.c_str(),   "--model-url", url.c_str(),
+                          "-c",           "64",     "-ngl",           "0",           "--host",
+                          "127.0.0.1",    "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        ASSERT_FALSE(
+            sse.await([](const json &e) { return e.value("event", std::string()) == "download_progress"; }).is_null());
+        model_server.release();
+        const json unloaded = sse.await([](const json &e) { return is_status(e, "unloaded"); });
+        ASSERT_FALSE(unloaded.is_null()) << json(sse.snapshot()).dump();
+        EXPECT_EQ(unloaded.at("data").value("exit_code", 0), 1) << unloaded.dump();
+        const auto events = sse.snapshot();
+        EXPECT_EQ(index_of(events, [](const json &e) { return is_status(e, "loaded"); }), events.size());
+        EXPECT_LT(index_of(events, [](const json &e) { return is_status(e, "loading"); }),
+                  index_of(events, [](const json &e) { return is_status(e, "unloaded"); }));
+        EXPECT_TRUE(sse.await_end(15)) << "the SSE stream outlived the failed server";
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (jllama_server_is_running(server) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_FALSE(jllama_server_is_running(server)) << "a server whose model failed to load still runs";
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
 #endif // JLLAMA_HAS_NATIVE_SERVER
 
 // ---------------------------------------------------------------------------------------------------

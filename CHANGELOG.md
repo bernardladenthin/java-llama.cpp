@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12636** (from b12573, 63 upstream commits in fourteen steps; master, pinned by commit
+- **llama.cpp b12637** (from b12573, 64 upstream commits in fifteen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -422,7 +422,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   so the op numbers stay and the RPC protocol only moves to 10.0.2), and the GGUF reader keeping a
   tensor or value type read from the file an integer until it is range-checked (#32641; a type id outside
   its enum fails the load by name and the process goes on, which a new C API case holds). All patches
-  apply unchanged.
+  apply unchanged up to there. b12637 lets a single-model server serve `GET /models/sse` (#32398): it
+  starts listening before it downloads and loads its model, answers `/health` with 503 meanwhile, and
+  streams the download's progress, the load and the loaded model (the last event replayed to a client
+  that connects later, `unloaded` with the exit code when the download or the load fails). That holds
+  for `NativeServer` with its own model; attach mode, whose model is loaded already, does not serve the
+  route. `patches/0006` was refreshed for it (the instance's shutdown handler also ends the SSE
+  clients), and two C API cases follow a held download from its first half to the loaded model and a
+  load that fails to its end.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
