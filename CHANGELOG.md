@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12638** (from b12573, 65 upstream commits in sixteen steps; master, pinned by commit
+- **llama.cpp b12640** (from b12573, 67 upstream commits in seventeen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -438,7 +438,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   of token sets and ranges and one whose `[a-c]` no longer takes the token it names elsewhere (`bbb`
   before); a Qwen3-Coder-style template whose reasoning ends at the token `</think>` but not at the same
   characters spelled out; and a tool call of that format opened at the token `<tool_call>` and parsed
-  into the call. All patches apply unchanged.
+  into the call. All patches apply unchanged. b12639 changes a skill document only; b12640 pages the
+  built-in `grep_search` tool of a full server (`NativeServer` with `--tools`, `POST /tools`, #32792): an
+  `offset` skips that many matching lines, the files of a directory are searched in the order of their
+  paths, and a full page of 100 matches ends with the offset to continue at instead of "limit reached". A
+  C API case pages 150 matches over two files (red against b12639's tool, which ignored the offset).
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

@@ -14926,3 +14926,94 @@ TEST(CApiChatTokens, AQwen3CoderToolCallStartsAtItsTokenAndIsParsedIntoTheCall) 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiServerTools, GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles) {
+    // The embedded server's built-in tools (--tools, POST /tools): since b12640 (#32792) grep_search
+    // takes an offset, the number of matching lines to skip, searches the files of a directory in the
+    // order of their paths, and ends a full page of 100 matches with the offset to continue at. Two
+    // files give 150 matches: a.txt 90 (every second of its lines), b.txt 60. The first page is a.txt's
+    // 90 and b.txt's first 10, the second the other 50 of b.txt and no continuation. At b12639 the
+    // offset was ignored and the second call answered the first page again.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-grep-" + std::to_string(std::random_device{}()));
+    const std::filesystem::path data = dir / "data";
+    std::filesystem::create_directories(data);
+    {
+        std::ofstream b(data / "b.txt");
+        for (int i = 0; i < 60; ++i) {
+            b << "match b " << i << "\n";
+        }
+        std::ofstream a(data / "a.txt");
+        for (int i = 0; i < 90; ++i) {
+            a << "match a " << i << "\nother line\n";
+        }
+    }
+    const std::filesystem::path models = dir / "models";
+    std::filesystem::create_directories(models);
+    const std::string models_dir = models.string();
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "--host",           "127.0.0.1", "--port",     port_text.c_str(),
+                          "--models-dir", models_dir.c_str(), "--tools",   "grep_search"};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ASSERT_TRUE(health && health->status == 200);
+    const auto search = [&](const json &offset) {
+        json params = {{"path", data.string()}, {"pattern", "^match"}};
+        if (!offset.is_null()) {
+            params["offset"] = offset;
+        }
+        const json body = {{"tool", "grep_search"}, {"params", params}};
+        const auto res = client.Post("/tools", body.dump(), "application/json");
+        EXPECT_TRUE(res) << httplib::to_string(res.error());
+        if (!res) {
+            return std::string();
+        }
+        EXPECT_EQ(res->status, 200) << res->body;
+        const json answer = json::parse(res->body, nullptr, false);
+        return answer.is_object() ? answer.value("plain_text_response", std::string()) : res->body;
+    };
+    const auto count = [](const std::string &text, const std::string &what) {
+        size_t n = 0;
+        for (size_t pos = text.find(what); pos != std::string::npos; pos = text.find(what, pos + 1)) {
+            ++n;
+        }
+        return n;
+    };
+    const std::string first = search(nullptr);
+    EXPECT_NE(first.find("Total matches: 100"), std::string::npos) << first;
+    EXPECT_EQ(count(first, "match a "), 90u) << first;
+    EXPECT_EQ(count(first, "match b "), 10u) << first;
+    EXPECT_NE(first.find("match b 9\n"), std::string::npos) << first;
+    EXPECT_NE(first.find("Continue with offset=100"), std::string::npos) << first;
+    EXPECT_LT(first.find("match a 89"), first.find("match b 0")) << "the files are not in the order of their paths";
+
+    const std::string second = search(100);
+    EXPECT_NE(second.find("Total matches: 50"), std::string::npos) << second;
+    EXPECT_EQ(count(second, "match a "), 0u) << second;
+    EXPECT_EQ(count(second, "match b "), 50u) << second;
+    EXPECT_NE(second.find("match b 10\n"), std::string::npos) << second;
+    EXPECT_EQ(second.find("Continue with offset="), std::string::npos) << second;
+
+    // an offset past the last match finds none, and a negative one counts as 0
+    EXPECT_NE(search(150).find("Total matches: 0"), std::string::npos);
+    EXPECT_NE(search(-5).find("Total matches: 100"), std::string::npos);
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+}
+#endif // JLLAMA_HAS_NATIVE_SERVER
