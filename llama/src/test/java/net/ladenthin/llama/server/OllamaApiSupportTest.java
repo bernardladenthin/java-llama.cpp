@@ -83,16 +83,17 @@ public class OllamaApiSupportTest {
     @Test
     public void toOpenAiChatRequestHonoursThinkLikeOllama() throws IOException {
         // Ollama clients switch a model's thinking off with "think": false and pick a level with a
-        // string (gpt-oss); the chat mapper turns reasoning_effort into the template switch upstream reads.
+        // string (gpt-oss); the chat mapper forwards reasoning_effort to upstream's chat parser, which
+        // turns "none" into the template switch and a level into the template variable.
         OpenAiRequestMapper mapper = new OpenAiRequestMapper();
         JsonNode off = read(mapper.toInferenceParameters(OllamaApiSupport.toOpenAiChatRequest(
                         read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"think\":false}")))
                 .toJson());
-        assertThat(off.path("chat_template_kwargs").path("enable_thinking").asBoolean(true), is(false));
+        assertThat(off.path("reasoning_effort").asText(), is("none"));
         JsonNode low = read(mapper.toInferenceParameters(OllamaApiSupport.toOpenAiChatRequest(
                         read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"think\":\"low\"}")))
                 .toJson());
-        assertThat(low.path("chat_template_kwargs").path("reasoning_effort").asText(), is("low"));
+        assertThat(low.path("reasoning_effort").asText(), is("low"));
     }
 
     @Test

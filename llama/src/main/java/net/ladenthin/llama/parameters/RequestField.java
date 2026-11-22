@@ -148,6 +148,12 @@ enum RequestField {
     /** Request key {@code reasoning_budget_tokens}. */
     REASONING_BUDGET_TOKENS("reasoning_budget_tokens"),
 
+    /**
+     * Request key {@code reasoning_effort}, consumed by the OAI/task layer: upstream's chat parser reads
+     * it, refuses a level the chat template raises on and passes the others to the template.
+     */
+    REASONING_EFFORT("reasoning_effort", RequestContract.OAI_LAYER),
+
     /** Request key {@code reasoning_format}. */
     REASONING_FORMAT("reasoning_format"),
 

@@ -878,6 +878,21 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request with the reasoning effort replaced, the OpenAI {@code reasoning_effort} of a
+     * chat request. llama.cpp's chat parser applies it on the chat paths: {@code "none"} turns thinking
+     * off and, since b12624, also reaches a template that renders it as a level of its own; another
+     * level becomes the template variable {@code reasoning_effort}, and a level the template raises on
+     * is refused as an {@code InvalidRequestException} naming the levels it supports (b12431).
+     * {@code ModelMeta.getReasoningEffortLevels()} lists the levels a template renders differently.
+     *
+     * @param effort the level, e.g. {@code "none"}, {@code "low"} or {@code "high"}
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withReasoningEffort(String effort) {
+        return withRaw(RequestField.REASONING_EFFORT, toJsonString(effort));
+    }
+
+    /**
      * Returns a new request with the reasoning-format choice replaced.
      *
      * @param reasoningFormat the format used to handle thinking tokens

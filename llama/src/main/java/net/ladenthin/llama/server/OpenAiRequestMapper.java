@@ -441,12 +441,16 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * Apply the reasoning controls that upstream's chat parser ({@code oaicompat_chat_params_parse},
-     * b11639) reads from a chat request: the request's {@code chat_template_kwargs}, {@code
-     * reasoning_effort} ({@code "none"} switches thinking off, any other value becomes the template
-     * variable {@code reasoning_effort}) and the reasoning budget ({@code reasoning_budget_tokens},
-     * else {@code thinking_budget_tokens}). The Anthropic and Responses translations produce the
-     * latter two.
+     * Forward the reasoning controls that upstream's chat parser ({@code oaicompat_chat_params_parse})
+     * reads from a chat request: the request's {@code chat_template_kwargs}, {@code reasoning_effort} and
+     * the reasoning budget ({@code reasoning_budget_tokens}, else {@code thinking_budget_tokens}). The
+     * Anthropic, Responses and Ollama translations produce the latter two. {@code reasoning_effort}
+     * travels as the field itself, so the parser applies its own rules to it: {@code "none"} turns
+     * thinking off and reaches a template that renders it (b12624), a level the template raises on is
+     * refused (b12431). Until 2026-11-22 this method translated it into {@code chat_template_kwargs}
+     * itself, after the parser's rule of b11639, so neither of the two later rules applied to this server:
+     * {@code "none"} never reached a template, and a level the template raises on was refused with the
+     * template's own exception instead of the supported levels.
      *
      * @param params the parameters built so far
      * @param request the parsed chat request
@@ -460,17 +464,12 @@ final class OpenAiRequestMapper {
                 kwargs.put(entry.getKey(), entry.getValue().toString());
             }
         }
-        JsonNode effort = request.path("reasoning_effort");
-        if (effort.isTextual()) {
-            if ("none".equals(effort.asText())) {
-                kwargs.remove("reasoning_effort");
-                kwargs.put("enable_thinking", "false");
-            } else if (!effort.asText().isEmpty()) {
-                kwargs.put("reasoning_effort", effort.toString());
-            }
-        }
         if (!kwargs.isEmpty()) {
             params = params.withChatTemplateKwargs(kwargs);
+        }
+        JsonNode effort = request.path("reasoning_effort");
+        if (effort.isTextual() && !effort.asText().isEmpty()) {
+            params = params.withReasoningEffort(effort.asText());
         }
         JsonNode budget = optionalNumber(request, "reasoning_budget_tokens");
         if (budget == null) {

@@ -474,6 +474,21 @@ public class InferenceParametersTest {
     // -------------------------------------------------------------------------
 
     @Test
+    public void testSetReasoningEffortWritesTheOpenAiField() {
+        InferenceParameters params = new InferenceParameters("").withReasoningEffort("none");
+        assertThat(params.parameters.get("reasoning_effort"), is("\"none\""));
+        assertThat(params.parameters.containsKey("chat_template_kwargs"), is(false));
+    }
+
+    @Test
+    public void testSetReasoningEffortReplacesTheLevelAndKeepsTheOriginal() {
+        InferenceParameters low = new InferenceParameters("").withReasoningEffort("low");
+        InferenceParameters high = low.withReasoningEffort("high");
+        assertThat(high.parameters.get("reasoning_effort"), is("\"high\""));
+        assertThat(low.parameters.get("reasoning_effort"), is("\"low\""));
+    }
+
+    @Test
     public void testSetReasoningFormatNone() {
         InferenceParameters params = new InferenceParameters("").withReasoningFormat(ReasoningFormat.NONE);
         assertThat(params.parameters.get("reasoning_format"), is("\"none\""));

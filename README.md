@@ -802,6 +802,9 @@ template `supportsReasoningEffort()` and `getReasoningEffortLevels()`: the `reas
 template renders differently (llama.cpp b11954), so a client offers only the settings that change
 something. Since b12624 `none` is one of them when the template renders it, and a request with
 `reasoning_effort: none` then passes it to the template; otherwise `none` only turns thinking off.
+`InferenceParameters.withReasoningEffort(String)` sets the level of a request, and `OpenAiCompatServer`
+forwards an OpenAI request's `reasoning_effort` the same way; a level the template raises on is refused
+as an `InvalidRequestException` naming the levels it supports.
 
 ### Tool Calling
 

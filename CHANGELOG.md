@@ -806,6 +806,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`OpenAiCompatServer` handled `reasoning_effort` itself, after llama.cpp's rule of b11639, and
+  `LlamaModel` had no way to set it.** The chat mapping turned the field into `chat_template_kwargs`
+  (`none` into `enable_thinking: false`), so two later rules of llama.cpp's chat parser never applied
+  to this server: since b12624 a template that renders `none` as a level of its own gets it, and since
+  b12431 a level the template raises on is refused naming the levels it supports -- here it was
+  refused with the template's own exception (`Jinja Exception: max is not supported`). The mapping
+  forwards the field now, through the new `InferenceParameters.withReasoningEffort(String)`
+  (`RequestField.REASONING_EFFORT`, held to upstream's readers by the C++ wire contract), so the
+  Ollama `think`, Anthropic `output_config.effort` and Responses `reasoning.effort` translations take
+  the same way. `ReasoningEffortIntegrationTest` (CI's draft model with a template that prints the
+  level and raises on `max`): `none` and `high` reach the template from the builder and the mapping,
+  `max` is refused naming `high`; red against the old mapping on both counts.
 - **`TextToSpeech`'s thread count reached the backbone only.** The projector -- the speech pipeline's
   own computation, and the llama contexts it builds itself (tiny-voca's stacks, VoxCPM2's residual LM,
   YuE2's NAR layers) -- ran on the 4 threads `mtmd_context_params_default()` fixes, whatever
