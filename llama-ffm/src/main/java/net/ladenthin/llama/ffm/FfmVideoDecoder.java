@@ -89,9 +89,11 @@ final class FfmVideoDecoder implements AutoCloseable {
         if (struct.equals(MemorySegment.NULL)) {
             Linker linker = Linker.nativeLinker();
             MemorySegment segment = arena.allocate(DECODER);
+            // user_data and path are dropped: the struct's user_data is null, and path is null today (the
+            // bytes come in data), see jllama_api.h
             segment.set(ADDRESS, DECODER.byteOffset(path("open")), linker.upcallStub(target("onOpen",
-                    MethodType.methodType(MemorySegment.class, MemorySegment.class, MemorySegment.class,
-                            MemorySegment.class, long.class, MemorySegment.class)), OPEN_FN, arena));
+                    MethodType.methodType(MemorySegment.class, MemorySegment.class, long.class,
+                            MemorySegment.class), MemorySegment.class, MemorySegment.class), OPEN_FN, arena));
             segment.set(ADDRESS, DECODER.byteOffset(path("start")), linker.upcallStub(target("onStart",
                     MethodType.methodType(boolean.class, MemorySegment.class, int.class, int.class, float.class,
                             MemorySegment.class)), START_FN, arena));
@@ -102,7 +104,7 @@ final class FfmVideoDecoder implements AutoCloseable {
             segment.set(ADDRESS, DECODER.byteOffset(path("close")), linker.upcallStub(target("onClose",
                     MethodType.methodType(void.class, MemorySegment.class)), POINTER_FN, arena));
             segment.set(ADDRESS, DECODER.byteOffset(path("release")), linker.upcallStub(target("onRelease",
-                    MethodType.methodType(void.class, MemorySegment.class)), POINTER_FN, arena));
+                    MethodType.methodType(void.class), MemorySegment.class), POINTER_FN, arena));
             segment.set(ADDRESS, DECODER.byteOffset(path("user_data")), MemorySegment.NULL);
             struct = segment;
         }
@@ -113,17 +115,21 @@ final class FfmVideoDecoder implements AutoCloseable {
         return MemoryLayout.PathElement.groupElement(name);
     }
 
-    private MethodHandle target(String name, MethodType type) {
+    /**
+     * The method {@code name} of {@code type} bound to this object, taking the leading arguments
+     * {@code ignored} of the C signature first and dropping them.
+     */
+    private MethodHandle target(String name, MethodType type, Class<?>... ignored) {
         try {
-            return MethodHandles.lookup().findVirtual(FfmVideoDecoder.class, name, type).bindTo(this);
+            MethodHandle handle = MethodHandles.lookup().findVirtual(FfmVideoDecoder.class, name, type).bindTo(this);
+            return MethodHandles.dropArguments(handle, 0, ignored);
         } catch (NoSuchMethodException | IllegalAccessException e) {
             throw new IllegalStateException(e);
         }
     }
 
-    /** The upcall target of {@code open}; also called directly by the tests. */
-    MemorySegment onOpen(MemorySegment userData, MemorySegment path, MemorySegment data, long size,
-            MemorySegment info) {
+    /** The upcall target of {@code open}, without its user_data and path; also called directly by the tests. */
+    MemorySegment onOpen(MemorySegment data, long size, MemorySegment info) {
         VideoStream stream = null;
         try {
             byte[] bytes = size == 0 ? new byte[0] : data.reinterpret(size).toArray(JAVA_BYTE);
@@ -190,8 +196,8 @@ final class FfmVideoDecoder implements AutoCloseable {
         closeQuietly(streams.remove(state.address()));
     }
 
-    /** The upcall target of {@code release}: llama.cpp no longer uses the decoder. */
-    void onRelease(MemorySegment userData) {
+    /** The upcall target of {@code release}, without its user_data: llama.cpp no longer uses the decoder. */
+    void onRelease() {
         released.set(true);
     }
 

@@ -149,7 +149,7 @@ class FfmVideoDecoderTest {
                     return stream;
                 })) {
             MemorySegment info = arena.allocate(FfmVideoDecoder.VIDEO_INFO);
-            MemorySegment state = video.onOpen(MemorySegment.NULL, MemorySegment.NULL, bytes(arena, (byte) 1, (byte) 2,
+            MemorySegment state = video.onOpen(bytes(arena, (byte) 1, (byte) 2,
                     (byte) 3), 3, info);
             assertNotEquals(MemorySegment.NULL, state);
             assertArrayEquals(new byte[] {1, 2, 3}, seen[0], "the bytes of the request, copied");
@@ -204,7 +204,7 @@ class FfmVideoDecoderTest {
         try (Arena arena = Arena.ofConfined()) {
             for (VideoDecoder decoder : decoders) {
                 try (FfmVideoDecoder video = new FfmVideoDecoder(decoder)) {
-                    MemorySegment state = video.onOpen(MemorySegment.NULL, MemorySegment.NULL, bytes(arena, (byte) 7),
+                    MemorySegment state = video.onOpen(bytes(arena, (byte) 7),
                             1, arena.allocate(FfmVideoDecoder.VIDEO_INFO));
                     assertEquals(MemorySegment.NULL, state);
                     assertEquals(0, video.openStreams());
@@ -220,13 +220,13 @@ class FfmVideoDecoderTest {
         stream.throwOnStart = true;
         FfmVideoDecoder video = new FfmVideoDecoder(data -> stream);
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment state = video.onOpen(MemorySegment.NULL, MemorySegment.NULL, bytes(arena), 0,
+            MemorySegment state = video.onOpen(bytes(arena), 0,
                     arena.allocate(FfmVideoDecoder.VIDEO_INFO));
             assertNotEquals(MemorySegment.NULL, state, "an empty file is the decoder's to judge");
             assertFalse(video.onStart(state, 4, 2, 0.0f, arena.allocate(JAVA_BOOLEAN)));
         }
         assertFalse(video.isReleased());
-        video.onRelease(MemorySegment.NULL);
+        video.onRelease();
         assertTrue(video.isReleased());
         video.close();
         assertEquals(1, stream.closed.get(), "the model's free closes a stream llama.cpp left open");
