@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12641** (from b12573, 68 upstream commits in eighteen steps; master, pinned by commit
+- **llama.cpp b12642** (from b12573, 69 upstream commits in nineteen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -447,7 +447,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (#32799): a pre-tokenized word that is a token of the vocabulary is taken whole, whether or not a
   merge builds it, where it was spelled out from the merges before. A C API case tokenizes with a
   vocabulary whose words no merge builds (red at b12640), next to `gpt-4o`, the same regex without the
-  flag.
+  flag. b12642 copies every expert of a host weight to the device for Inkling 2 Mini (`inkling2_loop`,
+  #32807): its looped layers share one weight, and with `--n-cpu-moe` a later pass could pick experts
+  the first pass had not copied. That path needs a GPU backend that runs the expert products of host
+  weights, which no CI job has (the RPC backend offloads no op), so nothing here tests it.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
