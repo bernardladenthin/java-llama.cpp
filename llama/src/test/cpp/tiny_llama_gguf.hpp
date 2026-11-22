@@ -1319,6 +1319,82 @@ inline std::string write_tiny_audio_mmproj_gguf(const std::string &prefix = "jll
     return ok ? path : std::string();
 }
 
+// A random Qwen3-Omni / Qwen3-ASR audio projector (projector type qwen3a) for the model above, in
+// the layout llama.cpp loads: three stride-2 convolutions over every 100-frame chunk of a 16-bin mel
+// spectrogram (100 -> 50 -> 25 -> 13 frames, 16 -> 8 -> 4 -> 2 bins), the projection of the flattened
+// channels and bins to the encoder width, per-chunk position embeddings, one transformer layer and the
+// two-layer projector to the model's N_EMBD. The mel spectrogram is llama.cpp's own, at 16 kHz with a
+// hop of 160 samples: a clip of n samples is n / 160 frames (at least one), cut into windows of 800.
+inline std::string write_tiny_qwen3a_mmproj_gguf(const std::string &prefix = "jllama-mmproj-qwen3a") {
+    constexpr int A_EMBD = 16, A_HEAD = 2, A_FF = 32, A_LAYER = 1, A_MEL = 16, CONV = 4, A_POS = 100;
+    constexpr int OUT_BINS = 2; // 16 mel bins after three stride-2 convolutions
+    constexpr int HIDDEN = 32;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(13);
+    gguf_context *g = gguf_init_empty();
+    gguf_set_val_str(g, "general.architecture", "clip");
+    gguf_set_val_str(g, "clip.projector_type", "qwen3a");
+    gguf_set_val_bool(g, "clip.has_audio_encoder", true);
+    gguf_set_val_u32(g, "clip.audio.num_mel_bins", A_MEL);
+    gguf_set_val_u32(g, "clip.audio.embedding_length", A_EMBD);
+    gguf_set_val_u32(g, "clip.audio.feed_forward_length", A_FF);
+    gguf_set_val_u32(g, "clip.audio.block_count", A_LAYER);
+    gguf_set_val_u32(g, "clip.audio.projection_dim", N_EMBD);
+    gguf_set_val_u32(g, "clip.audio.attention.head_count", A_HEAD);
+    gguf_set_val_f32(g, "clip.audio.attention.layer_norm_epsilon", 1e-5f);
+
+    ggml_init_params ip = {4u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // value < 0: small noise (weights, biases); otherwise every element is value (norms).
+    auto add = [&](const std::string &name, std::vector<int64_t> ne, float value) {
+        ggml_tensor *t = ggml_new_tensor(ctx, GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+        std::normal_distribution<float> dist(0.0f, 0.1f);
+        auto *data = (float *)t->data;
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            data[i] = value < 0 ? dist(rng) : value;
+        }
+        ggml_set_name(t, name.c_str());
+        gguf_add_tensor(g, t);
+    };
+    add("a.conv2d.1.weight", {3, 3, 1, CONV}, -1);
+    add("a.conv2d.1.bias", {CONV}, -1);
+    add("a.conv2d.2.weight", {3, 3, CONV, CONV}, -1);
+    add("a.conv2d.2.bias", {CONV}, -1);
+    add("a.conv2d.3.weight", {3, 3, CONV, CONV}, -1);
+    add("a.conv2d.3.bias", {CONV}, -1);
+    add("a.conv_out.weight", {OUT_BINS * CONV, A_EMBD}, -1);
+    add("a.position_embd.weight", {A_EMBD, A_POS}, -1);
+    for (int il = 0; il < A_LAYER; ++il) {
+        const std::string p = "a.blk." + std::to_string(il) + ".";
+        for (const char *n : {"attn_q", "attn_k", "attn_v", "attn_out"}) {
+            add(p + n + ".weight", {A_EMBD, A_EMBD}, -1);
+            add(p + n + ".bias", {A_EMBD}, -1);
+        }
+        for (const char *n : {"ln1", "ln2"}) {
+            add(p + n + ".weight", {A_EMBD}, 1.0f);
+            add(p + n + ".bias", {A_EMBD}, 0.0f);
+        }
+        add(p + "ffn_up.weight", {A_EMBD, A_FF}, -1);
+        add(p + "ffn_up.bias", {A_FF}, -1);
+        add(p + "ffn_down.weight", {A_FF, A_EMBD}, -1);
+        add(p + "ffn_down.bias", {A_EMBD}, -1);
+    }
+    add("a.post_ln.weight", {A_EMBD}, 1.0f);
+    add("a.post_ln.bias", {A_EMBD}, 0.0f);
+    add("mm.a.mlp.1.weight", {A_EMBD, HIDDEN}, -1);
+    add("mm.a.mlp.1.bias", {HIDDEN}, -1);
+    add("mm.a.mlp.2.weight", {HIDDEN, N_EMBD}, -1);
+    add("mm.a.mlp.2.bias", {N_EMBD}, -1);
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // The pair of a random ZONOS3 (llama.cpp b12431, #32020): the one speech pipeline with delivery
 // control, whose prompt carries a loudness and a speaking-rate condition token picked by the
 // request's loudness and speed. Small enough to synthesize in a unit test, written in the layout

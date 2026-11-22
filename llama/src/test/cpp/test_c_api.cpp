@@ -3754,6 +3754,70 @@ TEST(CApiAudio, AClipOfThirtySecondsIsOneChunkAndOneSampleMoreIsTwo) {
     std::filesystem::remove(mmproj, ignored);
 }
 
+TEST(CApiQwen3Audio, AClipCostsTheEmbeddingsOfItsFramesWithoutThePaddingOfItsLastChunk) {
+    // Upstream #32697 (b12643): the qwen3a encoder (Qwen3-Omni, Qwen3-ASR) counts 13 embeddings for
+    // every 100-frame chunk and, for a shorter last chunk, its frames halved three times (rounded up),
+    // instead of padding that chunk to 100 frames and counting 13; and a clip is n / 160 frames
+    // (WhisperFeatureExtractor drops the last STFT frame), at least one, where it was one more.
+    // Before, 0.25 s was 13 embeddings instead of 4, and 1 s 26 instead of 13.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-qwen3a";
+    spec.n_ctx_train = 1024;
+    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string mmproj = write_tiny_qwen3a_mmproj_gguf();
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(mmproj.empty());
+    jllama_model *model = load_tiny(path, {"--mmproj", mmproj, "-c", "1024", "-b", "1024", "-ub", "1024"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json m = json::parse(meta.str());
+    EXPECT_TRUE(m.at("modalities").value("audio", false)) << meta.str();
+    const std::string marker = m.value("media_marker", std::string());
+    ASSERT_FALSE(marker.empty());
+    const auto evaluated = [&](size_t samples) {
+        std::vector<float> tone(samples);
+        for (size_t i = 0; i < tone.size(); ++i) {
+            tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+        }
+        const json request = {
+            {"prompt",
+             {{"prompt_string", "hear " + marker + " now"},
+              {"multimodal_data", json::array({base64_of(jllama_tts::pcm_to_wav16_bytes(tone, 16000))})}}},
+            {"n_predict", 1},
+            {"temperature", 0},
+            {"cache_prompt", false}};
+        Owned completion;
+        if (jllama_completions(model, request.dump().c_str(), &completion.s) != JLLAMA_STATUS_OK) {
+            ADD_FAILURE() << samples << " samples: " << jllama_last_error();
+            return -1;
+        }
+        return json::parse(completion.str()).at("tokens_evaluated").get<int>();
+    };
+    // the embeddings of n frames, as upstream counts them: 13 per full chunk, ceil^3 of the rest
+    const auto tokens_of_frames = [](int frames) {
+        const int tail = frames % 100;
+        return frames / 100 * 13 + (tail == 0 ? 0 : (((tail + 1) / 2 + 1) / 2 + 1) / 2);
+    };
+    // 99 frames are 13 embeddings in both counts (the old one padded them to 100), which calibrates the
+    // text tokens around the clip, the audio start and end markers included
+    const int base = evaluated(15999) - 13;
+    // 1, 25, 100, 101, 800 (one window) and 850 frames (a full window and a tail of 50)
+    for (const size_t samples :
+         {size_t{100}, size_t{4000}, size_t{16000}, size_t{16160}, size_t{128000}, size_t{136000}}) {
+        const int frames = std::max(1, static_cast<int>(samples / 160));
+        const int expected = frames <= 800 ? tokens_of_frames(frames) : 104 + tokens_of_frames(frames - 800);
+        EXPECT_EQ(evaluated(samples), base + expected) << samples << " samples, " << frames << " frames";
+    }
+    EXPECT_EQ(tokens_of_frames(1), 1);
+    EXPECT_EQ(tokens_of_frames(25), 4);
+    EXPECT_EQ(tokens_of_frames(101), 14);
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(mmproj, ignored);
+}
+
 namespace {
 // The embeddings a 30 s tone adds to a raw prompt, for a projector of the given encoder width and
 // stack factor; -1 when the request failed.
