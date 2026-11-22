@@ -12042,6 +12042,47 @@ TEST(CApiTokenizers, ABpeVocabularyAppliesItsMergesAndTheByteVocabularyHasNone) 
     std::filesystem::remove(bytes_path, ec);
 }
 
+TEST(CApiTokenizers, AnInkling2VocabularyTakesAWholeWordItHasAsOneTokenWithoutMerges) {
+    // b12641 (#32799) gives the "inkling2" pre-tokenizer ignore_merges, as Inkling 2's tokenizer.json
+    // says: a pre-tokenized word that is a token of the vocabulary is that token, whether or not a merge
+    // builds it. Here no merge does -- the bytes, then "hello" and "Ġworld" -- so "gpt-4o", the same
+    // regex without the flag, spells both words out byte by byte, as inkling2 did before.
+    const auto load_with_pre = [](const char *pre, const char *prefix) {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.pre_tokenizer = pre;
+        spec.unmerged_tokens = {"hello", "\xC4\xA0world"}; // Ġ: GPT-2's byte-level space
+        return write_tiny_llama_gguf(spec);
+    };
+    const std::string inkling_path = load_with_pre("inkling2", "jllama-bpe-inkling2");
+    const std::string gpt4o_path = load_with_pre("gpt-4o", "jllama-bpe-gpt4o");
+    jllama_model *inkling = load_tiny(inkling_path, {});
+    jllama_model *gpt4o = load_tiny(gpt4o_path, {});
+    ASSERT_NE(inkling, nullptr) << jllama_last_error();
+    ASSERT_NE(gpt4o, nullptr) << jllama_last_error();
+
+    const int hello = 256;
+    const int world = 257;
+    const std::string text = "hello world";
+    EXPECT_EQ(token_ids(inkling, text), (std::vector<int>{hello, world}));
+    EXPECT_EQ(token_ids(gpt4o, text).size(), text.size()) << "without the flag a word no merge builds is bytes";
+    // a word the vocabulary does not have stays bytes; " there" is one pre-tokenized word of six bytes
+    EXPECT_EQ(token_ids(inkling, "hello there"), (std::vector<int>{hello, ' ', 't', 'h', 'e', 'r', 'e'}));
+    // "helloworld" is one word, not "hello" + "world": the whole word is looked up, not its parts
+    EXPECT_EQ(token_ids(inkling, "helloworld").size(), 10u);
+    for (jllama_model *model : {inkling, gpt4o}) {
+        for (const std::string &round_trip : {text, std::string("hello there"), std::string("Hello, World!")}) {
+            EXPECT_EQ(detokenized(model, token_ids(model, round_trip)), round_trip);
+        }
+        EXPECT_FALSE(greedy_answer(model, 4).empty());
+    }
+    jllama_model_free(inkling);
+    jllama_model_free(gpt4o);
+    std::error_code ec;
+    std::filesystem::remove(inkling_path, ec);
+    std::filesystem::remove(gpt4o_path, ec);
+}
+
 TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
     tiny_model_spec spec;
     spec.prefix = "jllama-spm";

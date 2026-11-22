@@ -1073,3 +1073,5 @@ Used during `llama.cpp` version bumps: when upgrading, scan this file from the r
 | b12637–b12638 | patches | All 35 apply unchanged. |
 | b12638–b12640 | `skills/add-new-model/SKILL.md` (#32819, not compiled), `tools/server/server-tools.cpp` (#32792: `grep_search` takes an `offset` of matching lines to skip, searches a directory's files in the order of their paths and ends a full page with the offset to continue at) | No source change. `CApiServerTools` pages 150 matches over two files through a router with `--tools grep_search`, red with b12639's `server-tools.cpp`. Full ctest and the Java pin tests at b12640. |
 | b12638–b12640 | patches | All 35 apply unchanged. |
+| b12640–b12641 | `src/llama-vocab.cpp` (#32799: the `inkling2` pre-tokenizer sets `ignore_merges`, so a pre-tokenized word that is a token is taken whole) | No source change. `CApiTokenizers.AnInkling2VocabularyTakesAWholeWordItHasAsOneTokenWithoutMerges` (the generator's new `pre_tokenizer` and `unmerged_tokens`: "hello world" is two tokens under `inkling2` and eleven bytes under `gpt-4o`; red at b12640). |
+| b12640–b12641 | patches | All 35 apply unchanged. |
