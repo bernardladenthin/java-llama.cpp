@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12605** (from b12573, 32 upstream commits in eight steps; master, pinned by commit
+- **llama.cpp b12616** (from b12573, 43 upstream commits in nine steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -377,7 +377,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`CApi.AGrammarWhoseRepetitionEndsBeforeItBeginsIsRefusedWithItsReason`: refused on every request
   path, the reason on stderr, `{2,3}` still constrains the answer; red against b12603 under a 4 GB
   address-space limit, each parse a `std::bad_alloc` after 10 s), and b12605 changes upstream's server
-  CI. All 31 patches apply unchanged.
+  CI. b12606 always uses the fused lightning indexer and drops its switch (#32650; DeepSeek V3.2/V4,
+  GLM-DSA, Kimi K3.1 and the other sparse-attention models; nothing here named it), b12607 and b12608
+  are ppc64le CI and tinyBLAS (#32659), b12609 fixes a load race in zDNN (#32279), b12610 adds bound
+  checks to hrm_text's cycle counts (#32720; with the slot count equal to the block count they cannot
+  be exceeded, so `CApiHrm` sees the same refusals), b12611 shares Inkling 2 Mini's loop slots after
+  the scale pass (#32704), b12612 and b12613 tune Vulkan for RDNA4 and work around an AMD Windows
+  driver in flash attention (#31804, #32466), b12614 makes CUDA's fastdiv abort instead of shifting by
+  32 (#32698), b12615 fuses `ADD`/`RMS_NORM`/`MUL` in SYCL (#31753), and b12616 opens the WebUI's
+  context gauge as a popover (#32685; 291 assets, the license texts unchanged). All 31 patches apply
+  unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
