@@ -70,13 +70,14 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
 // ---------------------------------------------------------------------------
 // Whether a pipeline clones a voice from a reference clip, which the projector's audio encoder
 // encodes (encode_speaker in tools/mtmd/mtmd-helper-gen.cpp). Read from the pipelines at b12541:
-// Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a clip; Kokoro and
-// tiny-voca take only a predefined voice and refuse a clip ("use one of its voices"), LFM3-Audio names
-// its voice in the prompt and ignores a clip, Soprano refuses any reference, Drama-3 ignores one
-// ("voice cloning is not supported yet"), YuE2 and MiniMax Music 3 do not read it. llama.cpp's
+// Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a clip, and Drama-3 since
+// b12590 (#32586: the clip's codes from the codec encoder, its transcript in the prompt; until then
+// "voice cloning is not supported yet"); Kokoro and tiny-voca take only a predefined voice and refuse a
+// clip ("use one of its voices"), LFM3-Audio names its voice in the prompt and ignores a clip, Soprano
+// refuses any reference, YuE2 and MiniMax Music 3 do not read it. llama.cpp's
 // mtmd_helper_cap::audio_gen_spk_ref still names only the first two
-// (#31183, b11901; unchanged at b12541), while its own /tts route asks only whether the projector
-// has an audio encoder -- so the capability refused cloning for four pipelines that clone.
+// (#31183, b11901; unchanged at b12593), while its own /tts route asks only whether the projector
+// has an audio encoder -- so the capability refused cloning for five pipelines that clone.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline bool pipeline_clones_voice_from_clip(mtmd_gen_audio_type type) {
     switch (type) {
@@ -86,6 +87,7 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
     case MTMD_GEN_AUDIO_TYPE_FISH_S2:
     case MTMD_GEN_AUDIO_TYPE_ZONOS3:
     case MTMD_GEN_AUDIO_TYPE_VOXCPM2:
+    case MTMD_GEN_AUDIO_TYPE_DRAMA3:
         return true;
     default:
         return false;

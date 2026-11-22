@@ -4853,6 +4853,37 @@ TEST(CApiSystemOne, ADecisionModelAnswersEveryQuestionType) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiSystemOne, SpokenInstructionsAreRefusedByEveryModelButLfm3D1OmniWithAudioInput) {
+    // b12592 (#32578): a question whose instructions are an input_audio part is answered by an
+    // lfm3-d1-omni model with audio input only. Every other decision model refuses it with that
+    // reason, as the caller's fault; until then only lfm3-d1 did, and on the generator's openjev
+    // model, which has no projector, the request failed as a server error ("Failed to load image or
+    // audio file", JLLAMA_STATUS_ERROR -- red-checked against the old condition).
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::decision("jllama-c-api-decision-spoken"));
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"-c", "1024"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const char *const spoken = R"({"state": "a call",
+      "questions": {"angry": {"type": "noul",
+        "instructions": {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}}}})";
+    Owned refused;
+    EXPECT_EQ(jllama_systemone(model, spoken, &refused.s), JLLAMA_STATUS_INVALID_REQUEST);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("questions.angry: spoken instructions are only supported by lfm3-d1-omni with audio input"),
+              std::string::npos)
+        << error;
+    // a written question still answers
+    Owned answered;
+    EXPECT_EQ(jllama_systemone(model, R"({"state": "a call",
+      "questions": {"angry": {"type": "noul", "instructions": "Is the caller angry?"}}})",
+                               &answered.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiSlotFiles, ASlidingWindowModelsSlotFileCarriesItsContextCheckpoints) {
     // The checkpoint half of the slot file's appendix (patches/0025 shares its two sites with the
     // draft half). The server keeps context checkpoints only for a model that cannot roll its memory

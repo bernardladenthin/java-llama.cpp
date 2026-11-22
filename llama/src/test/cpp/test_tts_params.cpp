@@ -98,10 +98,12 @@ TEST(TtsSpeakerReference, APairWithoutAVoiceEncoderRefusesTheReferenceByName) {
 // Which pipelines clone a voice from a clip (read from mtmd-helper-gen.cpp at b12541): the six that
 // call encode_speaker on a reference, and none of the others. llama.cpp's audio_gen_spk_ref names
 // only Qwen3-TTS and Pocket TTS, so the rule must not depend on it for the other four.
-TEST(TtsSpeakerReference, TheSixPipelinesThatEncodeAClipCloneAVoice) {
+TEST(TtsSpeakerReference, TheSevenPipelinesThatEncodeAClipCloneAVoice) {
+    // Drama-3 since b12590 (#32586)
     for (const mtmd_gen_audio_type type :
          {MTMD_GEN_AUDIO_TYPE_QWEN3TTS, MTMD_GEN_AUDIO_TYPE_POCKETTTS, MTMD_GEN_AUDIO_TYPE_CHATTERBOX,
-          MTMD_GEN_AUDIO_TYPE_FISH_S2, MTMD_GEN_AUDIO_TYPE_ZONOS3, MTMD_GEN_AUDIO_TYPE_VOXCPM2}) {
+          MTMD_GEN_AUDIO_TYPE_FISH_S2, MTMD_GEN_AUDIO_TYPE_ZONOS3, MTMD_GEN_AUDIO_TYPE_VOXCPM2,
+          MTMD_GEN_AUDIO_TYPE_DRAMA3}) {
         EXPECT_TRUE(jllama_tts::pipeline_clones_voice_from_clip(type)) << type;
         EXPECT_TRUE(jllama_tts::pair_takes_speaker_reference(false, type, true)) << type;
     }
@@ -109,9 +111,8 @@ TEST(TtsSpeakerReference, TheSixPipelinesThatEncodeAClipCloneAVoice) {
 
 TEST(TtsSpeakerReference, ThePipelinesWithoutAClipEncoderDoNotClone) {
     for (const mtmd_gen_audio_type type :
-         {MTMD_GEN_AUDIO_TYPE_NONE, MTMD_GEN_AUDIO_TYPE_SOPRANO, MTMD_GEN_AUDIO_TYPE_LFM3A, MTMD_GEN_AUDIO_TYPE_DRAMA3,
-          MTMD_GEN_AUDIO_TYPE_YUE2, MTMD_GEN_AUDIO_TYPE_MINIMAX_MUSIC3, MTMD_GEN_AUDIO_TYPE_KOKORO,
-          MTMD_GEN_AUDIO_TYPE_TINY_VOCA}) {
+         {MTMD_GEN_AUDIO_TYPE_NONE, MTMD_GEN_AUDIO_TYPE_SOPRANO, MTMD_GEN_AUDIO_TYPE_LFM3A, MTMD_GEN_AUDIO_TYPE_YUE2,
+          MTMD_GEN_AUDIO_TYPE_MINIMAX_MUSIC3, MTMD_GEN_AUDIO_TYPE_KOKORO, MTMD_GEN_AUDIO_TYPE_TINY_VOCA}) {
         EXPECT_FALSE(jllama_tts::pipeline_clones_voice_from_clip(type)) << type;
         EXPECT_FALSE(jllama_tts::pair_takes_speaker_reference(false, type, true)) << type;
     }

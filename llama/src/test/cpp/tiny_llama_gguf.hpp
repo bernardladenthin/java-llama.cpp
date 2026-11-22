@@ -201,6 +201,9 @@ struct tiny_model_spec {
     std::vector<uint32_t> swa_pattern = {};
     int head_dim_swa = 0;
     int n_rot_swa = -1;
+    // arch "gemma4": the last n_kv_shared layers keep no KV of their own and read the KV of the last
+    // layer before them with the same attention type (a sliding-window one or a full one).
+    int n_kv_shared = 0;
 
     // Qwen3-VL's text decoder (arch "qwen3vl"): the llama decoder with a norm on the query and key
     // heads, as hy_v3 has, and interleaved M-RoPE over rope.dimension_sections, where a token of a
@@ -243,6 +246,22 @@ struct tiny_model_spec {
         spec.n_swa = window;
         spec.swa_pattern = {1, 0, 1};
         spec.head_dim_swa = spec.head_dim / 2;
+        return spec;
+    }
+
+    // Gemma 4, dense and without per-layer embeddings: sliding, full, sliding, full layer, the last two
+    // sharing the KV of the first two (layer 2 reads layer 0's, layer 3 layer 1's), the sliding-window
+    // heads half as wide; norms on the queries and keys, sandwich norms, a GELU feed-forward, the
+    // output tied to the token embedding.
+    static tiny_model_spec gemma4(int window = 8, const std::string &prefix = "jllama-gemma4") {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "gemma4";
+        spec.n_layer = 4;
+        spec.n_swa = window;
+        spec.swa_pattern = {1, 0, 1, 0};
+        spec.head_dim_swa = spec.head_dim / 2;
+        spec.n_kv_shared = 2;
         return spec;
     }
 
@@ -327,6 +346,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool qwen3next = spec.arch == "qwen3next";
     const bool zaya1 = spec.arch == "zaya1";
     const bool domyn = spec.arch == "domynedge";
+    const bool gemma4 = spec.arch == "gemma4";
     constexpr int SSM_CONV = 4, SSM_STATE = 8, SSM_DT_RANK = 4;
     constexpr int ZAYA_CONV = 2;         // the only kernel llama.cpp's CCA takes
     const int ZAYA_ROUTER = spec.n_embd; // the router's hidden width, as upstream's own arch test has it
@@ -390,6 +410,16 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".attention.value_length_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
         gguf_set_val_u32(g, (a + ".rope.dimension_count_swa").c_str(),
                          static_cast<uint32_t>(spec.n_rot_swa >= 0 ? spec.n_rot_swa : spec.head_dim_swa));
+    }
+    if (gemma4) {
+        gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(spec.n_swa));
+        gguf_set_arr_data(g, (a + ".attention.sliding_window_pattern").c_str(), GGUF_TYPE_UINT32,
+                          spec.swa_pattern.data(), spec.swa_pattern.size());
+        gguf_set_val_u32(g, (a + ".attention.shared_kv_layers").c_str(), static_cast<uint32_t>(spec.n_kv_shared));
+        gguf_set_val_u32(g, (a + ".attention.key_length_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
+        gguf_set_val_u32(g, (a + ".attention.value_length_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
+        gguf_set_val_u32(g, (a + ".rope.dimension_count_swa").c_str(), static_cast<uint32_t>(spec.head_dim_swa));
+        gguf_set_val_u32(g, (a + ".embedding_length_per_layer_input").c_str(), 0); // no per-layer embeddings
     }
     if (spec.n_expert > 0) {
         gguf_set_val_u32(g, (a + ".expert_count").c_str(), static_cast<uint32_t>(spec.n_expert));
@@ -558,9 +588,18 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     };
     ggml_tensor *token_embd = add_random_tensor(g, ctx, rng, "token_embd.weight", {spec.n_embd, n_vocab}, 0.1f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {spec.n_embd}, 1.0f);
-    // cohere2 has no output layer of its own: the token embedding is the output
+    // cohere2 and gemma4 have no output layer of their own: the token embedding is the output
     ggml_tensor *output =
-        cohere2 ? token_embd : add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f);
+        cohere2 || gemma4 ? token_embd : add_random_tensor(g, ctx, rng, "output.weight", {spec.n_embd, n_vocab}, 0.1f);
+    if (gemma4) {
+        // the frequency factors of the full-attention layers' RoPE, one tensor for all: plain RoPE
+        ggml_tensor *freqs = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, spec.head_dim / 2);
+        for (int64_t i = 0; i < ggml_nelements(freqs); ++i) {
+            static_cast<float *>(freqs->data)[i] = 1.0f;
+        }
+        ggml_set_name(freqs, "rope_freqs.weight");
+        gguf_add_tensor(g, freqs);
+    }
     if (!sentencepiece) {
         confine_output_to_ascii(output); // token ids are bytes there; every SentencePiece piece is printable
     }
@@ -642,6 +681,26 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "ffn_res_scale_hs.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "ffn_resid_scale.bias", {spec.n_embd}, 0.1f);
+            continue;
+        }
+        if (gemma4) {
+            const int hd = spec.swa_pattern.at(il) != 0 ? spec.head_dim_swa : spec.head_dim;
+            const bool has_kv = il < spec.n_layer - spec.n_kv_shared;
+            add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * hd});
+            if (has_kv) {
+                matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * hd});
+                matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * hd});
+                add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {hd}, 1.0f);
+            }
+            matrix(to, p + "attn_output.weight", {spec.n_head * hd, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {hd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "post_attention_norm.weight", {spec.n_embd}, 1.0f);
+            add_random_tensor(to, ctx, rng, p + "ffn_norm.weight", {spec.n_embd}, 1.0f);
+            matrix(to, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_up.weight", {spec.n_embd, spec.n_ff});
+            matrix(to, p + "ffn_down.weight", {spec.n_ff, spec.n_embd});
+            add_random_tensor(to, ctx, rng, p + "post_ffw_norm.weight", {spec.n_embd}, 1.0f);
             continue;
         }
         if (domyn) {

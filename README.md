@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12587](https://img.shields.io/badge/llama.cpp-%23b12587-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12587)  
+[![llama.cpp b12593](https://img.shields.io/badge/llama.cpp-%23b12593-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12593)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -973,7 +973,7 @@ Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
 voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
-clone a voice (Qwen3-TTS, Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 can, as can Pocket TTS, each
+clone a voice (Qwen3-TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2 and Drama-3 can, as can Pocket TTS, each
 when its projector carries the voice encoder -- CI's Chatterbox and ZONOS3 projectors do, its Pocket TTS
 projector does not; a pair that cannot refuses a reference clip with an `InvalidRequestException`, as it does a voice it does not have). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
 without voice cloning, LFM3-Audio); such a model speaks with the one named as `voice`, or with the

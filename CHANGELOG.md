@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12587** (from b12573, 14 upstream commits in four steps; master, pinned by commit
+- **llama.cpp b12593** (from b12573, 20 upstream commits in five steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -337,8 +337,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   the server's `/v1/audio/transcriptions` and `/v1/realtime`): the chat app compiles a new library,
   Llama Voice (`ui/lib/voice`), from source, so `build-webui` and `webui-licenses.yml` check it out too
   and the license check scans its imports (it has none; without the folder vite fails with "Could not
-  load ../../lib/voice/src/index.ts"). The embedded WebUI keeps 291 assets (8.2 MB). All 31 patches
-  apply unchanged.
+  load ../../lib/voice/src/index.ts"). The embedded WebUI keeps 291 assets (8.2 MB). b12588 prunes
+  the rows without an output before Gemma 4's KV-shared layers in a batch of several sequences too
+  (#32342; until then only in a context of one), slice by slice of the attention mask
+  (`Gemma4.ThreeSequencesInOneBatchOf*`: three prompts of a generated Gemma 4 decoded as three
+  sequences of one batch, with a split and a unified KV cache, get the logits each gets alone, 2.3e-5
+  apart at most; red-checked against the patched tree, an output taken back by its place in the batch
+  instead of in its slice is 2.45 apart and wrong mask rows 1.15 and 1.72). b12589 extends Vulkan's
+  `COL2IM_1D` (#32673). b12590 gives Drama-3 voice cloning through Fish Audio S2's codec encoder
+  (#32586): `TextToSpeech.supportsSpeakerReference()` is true for a Drama-3 pair whose projector
+  carries the encoder, as for the other six pipelines that encode a clip
+  (`TtsParams.TheSevenPipelinesThatEncodeAClipCloneAVoice`). b12591 marks ggml's version for the next
+  major bump and deprecates `ggml_ftype` (#32647; nothing here uses it). b12592 refuses spoken
+  decision instructions on every model but lfm3-d1-omni with audio input (#32578): on another decision
+  model they are an invalid request with that reason, where they failed as a server error ("Failed to
+  load image or audio file") before
+  (`CApiSystemOne.SpokenInstructionsAreRefusedByEveryModelButLfm3D1OmniWithAudioInput`, red against the
+  old condition). b12593 changes upstream's Docker CI only. All 31 patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

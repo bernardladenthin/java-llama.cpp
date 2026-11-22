@@ -674,7 +674,7 @@ JLLAMA_API jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, co
 
 /**
  * Whether the loaded pair clones a voice from a speaker reference (*supported): a pipeline that
- * encodes a reference clip (Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2) with a
+ * encodes a reference clip (Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2, Drama-3) with a
  * projector that takes audio in -- one converted without its voice encoder does not, and reports
  * false. jllama_tts_synthesize refuses a `speaker_reference_path` for a pair that does not.
  */

@@ -210,8 +210,8 @@ public final class TextToSpeech implements AutoCloseable {
      * Whether this model pair clones a voice from a speaker reference clip, i.e. whether
      * {@link #synthesize(String, String, String, int, int, int)} accepts a
      * {@code speakerReferenceAudioPath}. It depends on the pipeline: Qwen3-TTS, Pocket TTS,
-     * Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a reference clip, the others (Soprano,
-     * Kokoro, tiny-voca, LFM3-Audio, Drama-3) do not. A projector of such a pipeline that was
+     * Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2 and Drama-3 encode a reference clip, the others
+     * (Soprano, Kokoro, tiny-voca, LFM3-Audio) do not. A projector of such a pipeline that was
      * converted without the encoder (Pocket TTS "without voice cloning", which ships predefined
      * voices instead) takes no audio in and reports {@code false} as well.
      *

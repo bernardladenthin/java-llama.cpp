@@ -157,7 +157,7 @@ public final class FfmTextToSpeech implements AutoCloseable {
     /**
      * Whether this pair clones a voice from a speaker reference, i.e. whether {@link #synthesize}
      * accepts a {@code speakerReferencePath}: a pipeline that encodes a reference clip (Qwen3-TTS,
-     * Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2) with a projector that carries the
+     * Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2, Drama-3) with a projector that carries the
      * encoder; Soprano does not.
      *
      * @return {@code true} if a speaker reference is accepted
