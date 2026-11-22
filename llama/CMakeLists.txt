@@ -475,6 +475,11 @@ jllama_check_aligned_free_pairing(${llama.cpp_SOURCE_DIR})
 include(cmake/check-prefetch-byte-offset.cmake)
 jllama_check_prefetch_byte_offset(${llama.cpp_SOURCE_DIR})
 
+# The ops fine-tuning may differentiate (patches/0044, which refuses a model whose graph holds any other op
+# instead of letting ggml_build_backward_expand end the process) are the case labels of ggml_compute_backward.
+include(cmake/check-backward-ops.cmake)
+jllama_check_backward_ops(${llama.cpp_SOURCE_DIR})
+
 # nlohmann/json comes from upstream's vendored copy and from nowhere else (see the json block above).
 # Asserted here rather than left to the compiler: a missing header fails every TU that includes it
 # with a message about the header, while this one says where the file is expected and what to do.

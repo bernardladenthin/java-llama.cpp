@@ -13198,6 +13198,83 @@ TEST(CApiTrainer, AnOutputThatCannotBeWrittenAndAConfigItWouldChangeAreRefused) 
     std::filesystem::remove(path, ec);
 }
 
+namespace {
+// a fine-tuning run of one epoch over the generator's model spec, into out
+jllama_status finetune_spec(const tiny_model_spec &spec, const std::filesystem::path &out) {
+    const std::string path = write_tiny_llama_gguf(spec);
+    if (path.empty()) {
+        return JLLAMA_STATUS_ERROR;
+    }
+    const json cfg = {{"model_path", path},          {"training_text", training_corpus(24)},
+                      {"output_path", out.string()}, {"epochs", 1},
+                      {"learning_rate", 1e-4},       {"n_ctx", 64},
+                      {"n_gpu_layers", 0},           {"val_split", 0.0}};
+    const jllama_status status = jllama_finetune(cfg.dump().c_str());
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return status;
+}
+} // namespace
+
+TEST(CApiTrainer, AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn) {
+    // ggml_build_backward_expand ended the process (GGML_ABORT) on an op ggml_compute_backward has no case
+    // for, so fine-tuning a mixture of experts, a recurrent model, Gemma 4 or Cohere2 ended the JVM;
+    // patches/0044 refuses the model before the backward graph is built and names the op
+    tiny_model_spec moe;
+    moe.prefix = "jllama-c-api-train-moe";
+    moe.n_expert = 4;
+    moe.n_expert_used = 2;
+    const struct {
+        const char *name;
+        tiny_model_spec spec;
+        const char *op;
+    } rows[] = {
+        {"moe", moe, "MUL_MAT_ID"},
+        {"mamba", tiny_model_spec::recurrent("jllama-c-api-train-mamba"), "SSM_SCAN"},
+        {"gemma4", tiny_model_spec::gemma4(8, "jllama-c-api-train-gemma4"), "TANH"},
+        {"qwen3next", tiny_model_spec::qwen3next("jllama-c-api-train-qwen3next"), "MUL_MAT_ID"},
+        {"zaya1", tiny_model_spec::zaya1("jllama-c-api-train-zaya1"), "MUL_MAT_ID"},
+        {"cohere2", tiny_model_spec::swa(16, "jllama-c-api-train-cohere2"), "NORM"},
+    };
+    const std::filesystem::path dir = fresh_dir("jllama-c-api-train-refused");
+    for (const auto &row : rows) {
+        const auto out = dir / (std::string(row.name) + ".gguf");
+        EXPECT_EQ(finetune_spec(row.spec, out), JLLAMA_STATUS_ERROR) << row.name;
+        const std::string error = jllama_last_error();
+        EXPECT_NE(error.find(std::string("cannot train this model: ggml has no backward pass for ") + row.op + " "),
+                  std::string::npos)
+            << row.name << ": " << error;
+        EXPECT_FALSE(std::filesystem::exists(out)) << row.name;
+    }
+    // and the process trains the next model
+    const auto out = dir / "llama.gguf";
+    ASSERT_EQ(finetune_spec(tiny_model_spec(), out), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(std::filesystem::file_size(out), 0u);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(CApiTrainer, TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain) {
+    // the check of patches/0044 refuses no graph the backward pass can be built for: sliding-window and
+    // full attention with norms on the heads (Domyn Edge), an MTP block (HY-V3) and Qwen3-VL's text model
+    const struct {
+        const char *name;
+        tiny_model_spec spec;
+    } rows[] = {
+        {"domyn", tiny_model_spec::domyn_edge(8, "jllama-c-api-train-domyn")},
+        {"hy_v3", tiny_model_spec::mtp("jllama-c-api-train-hy")},
+        {"qwen3vl", tiny_model_spec::qwen3vl("jllama-c-api-train-qwen3vl")},
+    };
+    const std::filesystem::path dir = fresh_dir("jllama-c-api-train-trains");
+    for (const auto &row : rows) {
+        const auto out = dir / (std::string(row.name) + ".gguf");
+        EXPECT_EQ(finetune_spec(row.spec, out), JLLAMA_STATUS_OK) << row.name << ": " << jllama_last_error();
+        EXPECT_TRUE(std::filesystem::exists(out)) << row.name;
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST_F(CApiEnumSweep, ALongImatrixNameIsRecordedAsValidUtf8) {
     // quantize.imatrix.file is a 127-byte field of llama_model_kv_override; a longer name was cut at a
     // byte, and inside a character it wrote invalid UTF-8 into the GGUF (60 CJK characters are 180 bytes)

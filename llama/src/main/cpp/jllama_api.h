@@ -701,6 +701,9 @@ JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);
  * `weight_decay`, `optimizer`, `n_ctx`, `n_gpu_layers`, `val_split`, `n_batch`, `n_ubatch`; the
  * keys of LlamaTrainer's TrainingParameters) and writes the fine-tuned GGUF. Blocks for the whole
  * run; needs no model handle. A configuration that does not parse is "invalid training config".
+ * A model whose graph holds an op ggml has no backward pass for (MUL_MAT_ID, SSM_SCAN, NORM, TANH,
+ * ...) is JLLAMA_STATUS_ERROR with "cannot train this model: ggml has no backward pass for <op>
+ * (tensor '<name>')", before the first training step and without an output.
  */
 JLLAMA_API jllama_status jllama_finetune(const char *config_json);
 

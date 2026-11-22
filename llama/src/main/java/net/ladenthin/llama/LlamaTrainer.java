@@ -19,6 +19,12 @@ import org.jspecify.annotations.Nullable;
  * <p>Configure a run with {@link TrainingParameters} and pass it to {@link #finetune(TrainingParameters)}.
  * Full-model fine-tuning is compute- and memory-intensive and blocks for the whole run; upstream
  * training support is itself experimental.
+ *
+ * <p>Only a model whose graph ggml can differentiate trains: ggml has no backward pass for the expert
+ * matmul of a mixture of experts ({@code MUL_MAT_ID}), the scan of a recurrent model ({@code SSM_SCAN}),
+ * {@code NORM} or the unary {@code TANH} (Gemma 4's soft-capping), among others. Such a model is refused
+ * with a {@link LlamaException} naming the op, before its first training step and without writing an
+ * output.
  */
 public final class LlamaTrainer {
 

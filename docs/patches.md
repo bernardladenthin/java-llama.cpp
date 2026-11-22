@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**33 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**34 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -55,6 +55,7 @@ match a binary to this page.
 | 0041 | [`0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch`](#0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threadspatch) | common : the log scope of the fit is safe for loads on several threads | 1 | 2 |
 | 0042 | [`0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch`](#0042-common-a-json-schema-whose-bounds-admit-no-value-is-refusedpatch) | common : a JSON schema whose bounds admit no value is refused | 1 | 3 |
 | 0043 | [`0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-it.patch`](#0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-itpatch) | llama : the scales of a skipped weight are skipped with it | 2 | 3 |
+| 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1408,4 +1409,48 @@ it drafts.
 Drop-check on every bump: read the generic scale pass of llama_model_base::load_tensors in
 src/llama-model.cpp and the skip branch of llama_model_loader::create_tensor in
 src/llama-model-loader.cpp -- once a skipped weight's scales are skipped with it, drop the patch.
+```
+
+## 0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch
+
+**Files (3):** `include/llama.h`, `src/llama-context.h`, `src/llama-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : fine-tuning refuses a graph op without a backward pass
+
+ggml_build_backward_expand (ggml/src/ggml.c) ends the process when the graph needs a gradient it cannot
+compute: GGML_ABORT for an op ggml_compute_backward has no case for, GGML_ASSERT for a source of a
+supported op it does not differentiate (the softmax mask, ROPE's frequency factors, the loss's labels).
+llama_opt_epoch builds that graph for every training step and returns nothing, so fine-tuning a model
+whose graph holds such an op ended the process that ran it -- measured over the test generator's
+architectures: a mixture of experts (MUL_MAT_ID; Qwen3-Next and ZAYA1 too), a recurrent model
+(SSM_SCAN), Gemma 4 (the unary TANH of its soft-capping) and Cohere2 (NORM). For an embedding host that
+is the JVM.
+
+llama_context::opt_epoch_iter now walks the forward graph with the backward pass's own rules before it
+hands the graph to ggml_opt: which nodes need a gradient (ggml_build_backward_expand's first loop, its
+ignored sources, its type and in-place assertions), which of them get one from the loss (the logits) or
+as parameters, and whether ggml_compute_backward has a case for each of those, in its order. The first
+node it would fail on stops the epoch before its first batch, with "cannot train this model: ggml has
+no backward pass for <op> (tensor '<name>')" in the log and in llama_opt_error(), a new function of
+llama.h, since llama_opt_epoch has no return value. The evaluation part of an epoch builds no backward
+graph and is not checked; the shape assertions of the supported cases are not mirrored, except
+MUL_MAT's broadcast over the fourth dimension.
+
+The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
+and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
+ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's)
+would otherwise be refused here although ggml could train it.
+
+The guards are in src/test/cpp/test_c_api.cpp:
+CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six
+architectures refused by their op, then a llama model trains; an abort of the test process without the
+check) and CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
+Qwen3-VL's text model).
+
+Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
+once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
+llama_opt_epoch reports), drop the patch and read upstream's way of reporting it in train_engine.cpp.
 ```

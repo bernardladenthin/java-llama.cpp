@@ -815,6 +815,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Fine-tuning a model ggml cannot differentiate ended the process.** `LlamaTrainer` and
+  `jllama_finetune` run llama.cpp's training loop, whose backward graph is built by
+  `ggml_build_backward_expand`; that function ends the process (`GGML_ABORT`) on a graph op it has no
+  backward pass for, and `llama_opt_epoch` reports nothing. Measured over the test generator's
+  architectures: a mixture of experts (`MUL_MAT_ID`, also Qwen3-Next and ZAYA1), a recurrent model
+  (`SSM_SCAN`), Gemma 4 (the unary `TANH` of its soft-capping) and Cohere2 (`NORM`) each ended the JVM,
+  while llama, Domyn Edge, HY-V3 and Qwen3-VL train. `patches/0044` walks the forward graph with the
+  backward pass's own rules before the first training step and stops the epoch at the first node it
+  would fail on; the reason reaches `llama_opt_error()`, a new function of `llama.h`, and the engine
+  answers `JLLAMA_STATUS_ERROR` / `LlamaException` with "cannot train this model: ggml has no backward
+  pass for MUL_MAT_ID (tensor 'ffn_moe_down-1')" and writes no output. `llama/cmake/check-backward-ops.cmake`
+  holds the patch's op lists to the case labels of `ggml_compute_backward` at configure time, so an op
+  upstream learns to differentiate (b12635 added `SIGMOID`'s) is not refused here afterwards. Two
+  `CApiTrainer` cases hold it: six architectures refused by their op and the process training the next
+  model (an abort of the test process without the check), and the four that still train.
 - **A model with weight scales and an MTP block did not load without MTP drafting.** llama.cpp loads
   the weight scales of NVFP4 and FP8 conversions (`<matrix>.scale`, `<matrix>.input_scale`) next to the
   weights an architecture has, and skips the weights of an MTP block unless the model drafts with it
