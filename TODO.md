@@ -187,6 +187,15 @@ Kept as a list because each entry names the machine it needs -- the harness is
   refuses; `--log-prompts-dir` (not exposed in Java) opens its files through a narrow path, the class
   of `0024`-`0030`.
 
+- **A GGUF whose `block_count` is 0 or above 512 ends the process** (found at the b12616 bump,
+  measured at b12631 with a death test over a hand-written llama GGUF with 0 and with 600 blocks): the
+  generic loader checks `hparams.n_layer_all` with a `GGML_ASSERT` (`src/llama-model.cpp`, after
+  reading `LLM_KV_BLOCK_COUNT`), not with an exception, so `LlamaModel` on such a file takes the JVM
+  down instead of throwing. The same block asserts `n_layer_nextn <= n_layer_all` and a known
+  classifier activation. The class of `patches/0035` and `0038` (a file the caller names ends the
+  process); a patch would turn the three into `std::runtime_error`, which the load already reports.
+  Not filed upstream (policy).
+
 What the bumps brought that this library does not use yet, or that changed under it and is not
 verified. Done items are not listed (CHANGELOG, `docs/history/llama-cpp-breaking-changes.md`).
 
