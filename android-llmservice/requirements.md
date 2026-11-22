@@ -34,7 +34,7 @@ by hand only (no automated test); `build` = enforced at build/resource-compile t
 |---|---|---|---|
 | R1.1 | The app label is **"LLM Service"** (not translated — same in every locale). | `values/strings.xml` `app_name`; `AndroidManifest.xml` | manual |
 | R1.2 | applicationId / namespace / Kotlin package is **`net.ladenthin.android.llmservice`**. | `app/build.gradle.kts` | build |
-| R1.3 | Minimum SDK is **28** (Android 9 Pie — the AAR floor); target/compile SDK **35**. | `app/build.gradle.kts` | build |
+| R1.3 | Minimum SDK is **28** (Android 9 Pie — the AAR floor); target SDK **36** (Google Play's floor for app updates since 2026-08-31); compile SDK **37.1** (Compose 1.13). | `app/build.gradle.kts` | build |
 | R1.4 | Native ABIs shipped: **`arm64-v8a`** (phones) and **`x86_64`** (emulators / x86 Android). | `app/build.gradle.kts` | build |
 | R1.5 | Depends on `net.ladenthin:llama-android` (AAR) + `net.ladenthin:llama-kotlin` (façade), version selectable via `-PjllamaVersion`. | `app/build.gradle.kts` | build |
 | R1.6 | It is a standalone plain-Gradle/AGP build (NOT a Maven reactor module) and is **not** published to Maven Central. | repo layout | manual |

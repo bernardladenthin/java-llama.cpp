@@ -36,8 +36,10 @@ android {
     // androidx.core 1.18.0 / navigationevent 1.0.0 require compileSdk >= 36,
     // lifecycle-{viewmodel,runtime}-compose 2.11.1 require compileSdk >= 37, and Compose 1.13
     // (BOM 2026.11.01) requires the minor API level 37.1, which only the compileSdk block can
-    // name. targetSdk is left at 35 on purpose (compileSdk widens the compile-time API surface;
-    // targetSdk opts into new runtime behavior and is bumped independently).
+    // name. targetSdk is 36, what Google Play requires of every app update since 2026-08-31
+    // (it is bumped independently: compileSdk widens the compile-time API surface, targetSdk opts
+    // into new runtime behavior -- for 36 the predictive back gesture and ignored orientation and
+    // resizability limits on large screens, neither of which the app's code touches).
     compileSdk {
         version = release(37) { minorApiLevel = 1 }
     }
@@ -45,7 +47,7 @@ android {
     defaultConfig {
         applicationId = "net.ladenthin.android.llmservice"
         minSdk = 28 // AAR floor (bionic weak-symbol gate for posix_spawn); AGP enforces it.
-        targetSdk = 35
+        targetSdk = 36
         // Monotonic versionCode so Android accepts IN-PLACE UPGRADES: a new APK must advertise a
         // strictly higher code than the installed one, or the install is rejected. CI passes the
         // workflow run number (GITHUB_RUN_NUMBER, strictly increasing per run); `-PappVersionCode`

@@ -38,7 +38,8 @@ Structure (mirrors the consumer-test's plumbing):
 - **`app/build.gradle.kts`** — `namespace`/`applicationId` `net.ladenthin.android.llmservice`,
   `minSdk 28` (AAR floor), `compileSdk 37.1` (raised from 35 — Compose/lifecycle/activity AAR
   metadata requires it; Compose 1.13 the minor level 37.1, set with the `compileSdk { version =
-  release(37) { minorApiLevel = 1 } }` block), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for
+  release(37) { minorApiLevel = 1 } }` block), `targetSdk 36` (Google Play's floor for app updates since
+  2026-08-31), Jetpack Compose, `androidx.appcompat` (only for
   the per-app language API), ABIs `arm64-v8a` + `x86_64`. Depends on `net.ladenthin:llama-android` +
   `net.ladenthin:llama-kotlin` at `-PjllamaVersion=<reactor version>` (defaults to the last release
   when built by hand). The release `signingConfig` reads an **upload keystore** (env vars

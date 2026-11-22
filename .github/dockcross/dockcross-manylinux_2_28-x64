@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Pinned by digest (tag 20261028-1173e18, the manifest Docker Hub served for it on 2026-11-09);
+# Pinned by digest (tag 20261117-2eda373, the manifest Docker Hub served for it on 2026-11-22);
 # the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
-DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64@sha256:f934e36381959654952480bbcec3e54c246288ba997a32132116c6b3beeea4f0
+DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64@sha256:dde8eec8c4d164fa0e134b771e3af9c9292f5bfa09ca6785e70611233d30469d
 
 #------------------------------------------------------------------------------
 # Helpers

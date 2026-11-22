@@ -148,6 +148,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **The LLM Service app targets API 36** (`targetSdk`, from 35), the level Google Play requires of
+  every app update since 2026-08-31 (the extension ran to 2026-11-01), so the app can be updated in
+  the Play Store again; the AAR consumer fixture follows. Of what API 36 changes for an app that
+  targets it -- the predictive back gesture, orientation and resizability limits ignored on large
+  screens, edge-to-edge without an opt-out -- the app's code meets none: it has no back handler of
+  its own, no orientation lock, and enables edge-to-edge itself. Both projects build locally with it
+  (AAB, release APK with R8, androidTest APK); the emulator jobs still boot API 30, where the
+  targetSdk changes nothing at run time. `app_name`, translated on purpose into no language, is
+  marked `translatable="false"`, the one error the app's full lint reported.
+- **Build images, pinned by digest as before:** dockcross `android-arm64`, `android-x86_64` and
+  `manylinux_2_28-x64` from `20261028-1173e18` to `20261117-2eda373`. Between the two, dockcross
+  changed only its own CI (`actions/checkout` v7), so the images are the same toolchains (NDK r30,
+  gcc-toolset-14, glibc 2.28) rebuilt on refreshed base packages.
 - **The plain-C test of every modular build job runs a model.** `c_abi` loads and tokenizes the C++
   suite's random llama model through upstream's C API and answers a completion through
   `jllama_model_load` / `jllama_completions`, so each library jar is proven to load and generate from
