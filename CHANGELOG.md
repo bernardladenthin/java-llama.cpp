@@ -153,6 +153,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `jllama_model_load` / `jllama_completions`, so each library jar is proven to load and generate from
   plain C before any Java runs; the model is written by a small helper against the shipped `ggml-base`
   (ctest fixture `c_abi_model`), no download.
+- **logback-classic 1.6.8 (test scope), Project Reactor 3.9.0 (test scope, `ReactorIntegrationTest`),
+  spotless-maven-plugin 3.12.0 (the core and the standalone `llama-atmosphere-agent`), Gradle 9.9.2
+  (`GRADLE_VERSION`), the Android Gradle Plugin 9.5.2 (`android-llmservice` and the AAR consumer
+  fixture), the Compose BOM 2026.11.01 and lifecycle 2.11.1 in `android-llmservice`,
+  `ossf/scorecard-action` v2.6.0, `github/codeql-action` v4.39.4 and `anthropics/claude-code-action`
+  v1.0.286**, in step with the sibling repositories. The BOM brings Compose UI 1.13.0 and Material 3
+  1.5.0, which need compileSdk 37 and AGP 9.1 or newer, both already the case.
 - **`anthropics/claude-code-action` v1.0.278**, in step with the sibling repositories.
 - **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
   change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
