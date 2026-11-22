@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12631** (from b12573, 58 upstream commits in thirteen steps; master, pinned by commit
+- **llama.cpp b12636** (from b12573, 63 upstream commits in fourteen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -414,7 +414,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   seven kernels more in the embedded set the Android and Windows OpenCL modules carry; built here as CI's
   Android job configures it, module-only with the Adreno kernels embedded, all seven are in
   `libggml-opencl.so`), and b12630 and
-  b12631 move WebGPU to a recent Dawn (#32779, #32782; no WebGPU module is built here). All 31 patches
+  b12631 move WebGPU to a recent Dawn (#32779, #32782; no WebGPU module is built here). b12632 to
+  b12636: a HIP fix for NVFP4 scales on CDNA3 (#32790), a Vulkan/WebGPU clear on non-UMA devices
+  (#32727), the backward pass of `SIGMOID` (#32126, `GGML_OP_SIGMOID_BACK` appended after the last op,
+  so the op numbers stay and the RPC protocol only moves to 10.0.2), and the GGUF reader keeping a
+  tensor or value type read from the file an integer until it is range-checked (#32641). All patches
   apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent

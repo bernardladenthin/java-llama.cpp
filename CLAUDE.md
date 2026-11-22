@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b12631**
+Current llama.cpp pinned version: **b12636**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -1291,7 +1291,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12631`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12636`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -3029,7 +3029,7 @@ the parameterized `CApiVocabOnly` case expands to 22 instances and `MoeRepack` t
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12631`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12636`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
