@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12616** (from b12573, 43 upstream commits in nine steps; master, pinned by commit
+- **llama.cpp b12618** (from b12573, 45 upstream commits in ten steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -385,8 +385,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   the scale pass (#32704), b12612 and b12613 tune Vulkan for RDNA4 and work around an AMD Windows
   driver in flash attention (#31804, #32466), b12614 makes CUDA's fastdiv abort instead of shifting by
   32 (#32698), b12615 fuses `ADD`/`RMS_NORM`/`MUL` in SYCL (#31753), and b12616 opens the WebUI's
-  context gauge as a popover (#32685; 291 assets, the license texts unchanged). All 31 patches apply
-  unchanged.
+  context gauge as a popover (#32685; 291 assets, the license texts unchanged). b12617 and b12618 give
+  SYCL a column-blocked `GATED_DELTA_NET` kernel and an IQ4_NL/IQ4_XS weight reorder (#32456, #31998;
+  built by the CI SYCL jobs only). All 31 patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
