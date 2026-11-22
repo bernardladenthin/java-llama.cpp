@@ -126,6 +126,23 @@ class WebuiLicensesTest(unittest.TestCase):
         names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
         self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
 
+    def test_the_llama_voice_sources_next_to_the_app_are_imports_too(self):
+        # b12587: ui/apps/chat compiles ui/lib/voice/src through two vite aliases; its imports resolve
+        # from the app's node_modules as Llama UI's do.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        voice = Path(self.temp.name) / "ui" / "lib" / "voice" / "src"
+        (app / "src").mkdir(parents=True)
+        (voice / "svelte").mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (voice / "index.ts").write_text("export { capture } from './capture';\n")
+        (voice / "svelte" / "recorder.svelte.ts").write_text("import { t } from 'testonly';\n")
+        (voice / "capture.test.ts").write_text("import { x } from 'typesonly';\n")
+        self.assertEqual(webuilicenses.source_dirs(app), [app / "src", voice])
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
     def test_check_reports_a_listed_file_without_its_section(self):
         self.generated()
         path = self.out / "THIRD-PARTY-LICENSES.txt"
