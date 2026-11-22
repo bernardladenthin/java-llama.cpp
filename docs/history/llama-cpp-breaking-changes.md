@@ -1075,3 +1075,5 @@ Used during `llama.cpp` version bumps: when upgrading, scan this file from the r
 | b12638–b12640 | patches | All 35 apply unchanged. |
 | b12640–b12641 | `src/llama-vocab.cpp` (#32799: the `inkling2` pre-tokenizer sets `ignore_merges`, so a pre-tokenized word that is a token is taken whole) | No source change. `CApiTokenizers.AnInkling2VocabularyTakesAWholeWordItHasAsOneTokenWithoutMerges` (the generator's new `pre_tokenizer` and `unmerged_tokens`: "hello world" is two tokens under `inkling2` and eleven bytes under `gpt-4o`; red at b12640). |
 | b12640–b12641 | patches | All 35 apply unchanged. |
+| b12641–b12642 | `src/llama-context.cpp` (#32807: `sched_copy_experts` copies every expert of a host weight for `inkling2_loop`, whose looped layers share one device copy) | No source change. Not tested: only a GPU backend running `MUL_MAT_ID` over host weights (`--n-cpu-moe`) reaches the copy callback, which no CI job and no local build here has; the RPC backend has no `offload_op`. |
+| b12641–b12642 | patches | All 35 apply unchanged. |
