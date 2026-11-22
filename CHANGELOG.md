@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12586** (from b12573, 13 upstream commits in three steps; master, pinned by commit
+- **llama.cpp b12587** (from b12573, 14 upstream commits in four steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -332,8 +332,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   highlight.js's languages on demand, so the embedded WebUI carries 291 assets instead of 96
   (#32661; dist 8.1 MB instead of 7.6), b12584 passes `llama-tts`'s thread count to its projector
   (#32664, the gap `TextToSpeech` had too, see "Fixed"), b12585 publishes Llama UI under a second npm
-  name (#32667) and b12586 searches message contents from the WebUI's search dialog (#32670). All 31
-  patches apply unchanged.
+  name (#32667) and b12586 searches message contents from the WebUI's search dialog (#32670). b12587
+  gives the WebUI voice messages and dictation with live waveforms and transcripts (#32531, through
+  the server's `/v1/audio/transcriptions` and `/v1/realtime`): the chat app compiles a new library,
+  Llama Voice (`ui/lib/voice`), from source, so `build-webui` and `webui-licenses.yml` check it out too
+  and the license check scans its imports (it has none; without the folder vite fails with "Could not
+  load ../../lib/voice/src/index.ts"). The embedded WebUI keeps 291 assets (8.2 MB). All 31 patches
+  apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
@@ -732,7 +737,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `TextToSpeech(model, mmproj, gpuLayers, threads)`, `jllama_tts_load` or `FfmTextToSpeech.load` was
   given; upstream's own `llama-tts` had the same gap until b12584 (#32664). The projector takes the
   engine's count now (`jllama_tts::build_tts_mtmd_params`; `TtsParams.TheProjectorComputesWithTheEngineThreadCount`,
-  red with the default left in place).
+  red with the default left in place). It matters most next to other work: ggml's threads spin at
+  every barrier, so four of them per synthesis on fewer free cores wait for each other. Measured on a
+  4-core machine with `CApiQwen3Tts.Code2wavDecodesAcrossItsSeventyTwoFrameWindow` (the generator's
+  Qwen3-TTS pair, 2 engine threads): alone 0.71 s before and 0.76 s after, three at a time 525-537 s
+  before and 1.5-1.9 s after; the full C++ suite (`ctest -j3`) went from 32 to 3 minutes.
 - **Found by the fourth review round of 2026-11-19 (two reviews and a test-gap hunt), each red before
   its fix:**
   - **Two models loaded at the same time on two threads crashed the process** (a segmentation fault
