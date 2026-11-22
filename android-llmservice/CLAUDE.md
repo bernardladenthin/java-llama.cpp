@@ -36,8 +36,9 @@ Structure (mirrors the consumer-test's plumbing):
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
   separately and its 2.4.21 pin exceeds AGP's 2.2.10 floor, so no other version changed.
 - **`app/build.gradle.kts`** — `namespace`/`applicationId` `net.ladenthin.android.llmservice`,
-  `minSdk 28` (AAR floor), `compileSdk 37` (raised from 35 — Compose/lifecycle/activity AAR
-  metadata now requires it), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for
+  `minSdk 28` (AAR floor), `compileSdk 37.1` (raised from 35 — Compose/lifecycle/activity AAR
+  metadata requires it; Compose 1.13 the minor level 37.1, set with the `compileSdk { version =
+  release(37) { minorApiLevel = 1 } }` block), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for
   the per-app language API), ABIs `arm64-v8a` + `x86_64`. Depends on `net.ladenthin:llama-android` +
   `net.ladenthin:llama-kotlin` at `-PjllamaVersion=<reactor version>` (defaults to the last release
   when built by hand). The release `signingConfig` reads an **upload keystore** (env vars

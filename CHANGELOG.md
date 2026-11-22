@@ -159,7 +159,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   fixture), the Compose BOM 2026.11.01 and lifecycle 2.11.1 in `android-llmservice`,
   `ossf/scorecard-action` v2.6.0, `github/codeql-action` v4.39.4 and `anthropics/claude-code-action`
   v1.0.286**, in step with the sibling repositories. The BOM brings Compose UI 1.13.0 and Material 3
-  1.5.0, which need compileSdk 37 and AGP 9.1 or newer, both already the case.
+  1.5.0, which need AGP 9.1 or newer and compile against the minor API level 37.1: `android-llmservice`
+  (and, to stay in step, the AAR consumer fixture) compile against 37.1 now, set with AGP's
+  `compileSdk { version = release(37) { minorApiLevel = 1 } }` block. That requirement was missed at
+  first, and the app's two CI jobs failed their AAR-metadata check against 37.0 (run 45073054816).
 - **`anthropics/claude-code-action` v1.0.278**, in step with the sibling repositories.
 - **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
   change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
@@ -860,6 +863,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A single-model server whose download or load failed could end its `/models/sse` stream without
+  the last event.** llama.cpp promises a `status_change` to `unloaded` (with the exit code) before the
+  server exits, and notified it -- then stopped the HTTP server at once, and cpp-httplib asks a stream
+  for its next chunk only while the server is not stopping, so a client whose stream had not asked
+  yet saw `loading` and the end. The load of a broken file fails within a millisecond; macOS CI lost
+  the event (run 45073054816). `patches/0046` sets the streams' stop flag and waits, at most 5 s,
+  until every SSE client has sent what is queued and ended, before the HTTP server stops; a failed
+  start with a client connected takes up to a second longer (the stream's poll interval).
+  `CApiServer.ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEnds` and the new
+  `...WhoseDownloadFailsSaysSoOverModelsSseAndEnds` (a model URL answering 404) hold it; with a 30 ms
+  pause after every chunk both are red without the patch.
+- **The `llama-android` AAR build found no platform installed under a minor API level.** It picked the
+  newest `android.jar` by reading the platform directory's name as a number, so `android-37.0`,
+  `android-37.1` or `android-36.1` -- the names `sdkmanager` installs them under -- were skipped, and
+  an SDK holding only such platforms failed with "No platform of API 28 or newer". The name is read as
+  a major and an optional minor level now; found while building the app against a fresh SDK.
+- **`CApiServerTools.GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles` failed on every Windows
+  job.** It wrote its files in text mode, so their lines ended in `\r\n` on Windows, and upstream's
+  `grep_search`, which reads a file as bytes, answers a line with its `\r` -- the test looked for
+  `"match b 9\n"`. The files are written in binary mode now; the tool's answer was right.
 - **A scaled LoRA adapter or control vector could not be named by an absolute Windows path.**
   llama.cpp reads `--lora-scaled` and `--control-vector-scaled` as `FNAME:SCALE,...` and split each
   item at every colon, so the colon after a drive letter made `C:\models\a.gguf:0.5` three parts and

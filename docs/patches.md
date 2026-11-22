@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**35 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**36 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -57,6 +57,7 @@ match a binary to this page.
 | 0043 | [`0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-it.patch`](#0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-itpatch) | llama : the scales of a skipped weight are skipped with it | 2 | 3 |
 | 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
 | 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
+| 0046 | [`0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch`](#0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-eventpatch) | server : a failed download or load lets /models/sse send its last event | 3 | 7 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1485,4 +1486,36 @@ Windows job.
 
 Drop-check on every bump: read the two handlers in common/arg.cpp -- once neither splits FNAME:SCALE at
 every colon, drop the patch.
+```
+
+## 0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch
+
+**Files (3):** `tools/server/server-models.h`, `tools/server/server-models.cpp`, `tools/server/server.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server : a failed download or load lets /models/sse send its last event
+
+A single-model server (b12637, #32398) serves GET /models/sse while it downloads and loads its model,
+and the README promises: "If the download or the loading fails, a status_change event with status
+unloaded is sent before the server exits." server_run_instance() notifies that event and calls
+clean_up() right after it, which stops the HTTP server. cpp-httplib asks a chunked stream for its next
+chunk only while the server is not stopping (write_content_chunked), so an event still queued for a
+client was dropped whenever the stream had not asked for it yet: the client saw "loading" and then the
+end of the stream. A failed load or download takes a millisecond, so this is a real race; macOS CI hit
+it (run 45073054816), and a 30 ms pause after every chunk makes it happen every time.
+
+Both failure paths now set sse_stopping and wait, at most 5 s, until every SSE client has ended its
+stream (server_models_sse::wait_for_clients, a count of the streams the handler started): a client
+sends what is queued and ends at its next poll of should_stop(), at most a second later. Only then
+does clean_up() stop the HTTP server. Without an SSE client nothing waits.
+
+The guards are CApiServer.ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEnds and
+CApiServer.ASingleModelServerWhoseDownloadFailsSaysSoOverModelsSseAndEnds in src/test/cpp/test_c_api.cpp
+(the last event is the model unloaded with exit code 1); with the 30 ms pause both are red without the
+patch and green with it.
+
+Drop-check on every bump: read the two failure paths of server_run_instance() in tools/server/server.cpp
+-- once the HTTP server is stopped only after the SSE clients have their last event, drop the patch.
 ```
