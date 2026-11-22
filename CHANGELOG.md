@@ -315,6 +315,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12574** (from b12573, 1 upstream commit; master, pinned by commit before upstream
+  tags it). b12574 slims the WebUI's design tokens and sets its text through type roles (#32615; only
+  `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds from CI's
+  sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets, as at
+  b12573. All 31 patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
