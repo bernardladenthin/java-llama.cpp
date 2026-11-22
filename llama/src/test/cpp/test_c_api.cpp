@@ -2005,6 +2005,67 @@ TEST(CApiTemplate, AReasoningEffortTheTemplateRejectsIsTheCallersFaultAndNamesTh
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiTemplate, AReasoningEffortOfNoneReachesATemplateThatRendersIt) {
+    // Since b12624 (#32763) "none" is a reasoning_effort level of its own: a template that renders it
+    // lists it among its levels and is rendered with it, where the chat parser dropped the level and
+    // only turned thinking off. A template that raises on "none" does not list it, and a request with
+    // it is still answered, without the level.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-effort-none");
+    ASSERT_FALSE(path.empty());
+    const auto load = [&](const std::string &tmpl) {
+        const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                               tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+        std::vector<const char *> argv;
+        for (const auto &a : args) {
+            argv.push_back(a.c_str());
+        }
+        jllama_model *model = nullptr;
+        EXPECT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return model;
+    };
+    const auto levels = [](jllama_model *model) {
+        Owned meta;
+        EXPECT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        return json::parse(meta.str()).at("chat_template_caps").at("reasoning_effort_levels");
+    };
+    const auto render = [](jllama_model *model, const char *effort) {
+        const json request = {{"messages", json::array({{{"role", "user"}, {"content", "Hi"}}})},
+                              {"reasoning_effort", effort}};
+        Owned prompt;
+        EXPECT_EQ(jllama_apply_template(model, request.dump().c_str(), &prompt.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return prompt.s != nullptr ? prompt.str() : std::string();
+    };
+    const std::string body = "{%- for message in messages -%}"
+                             "<{{ message.role }}>{{ message.content }}</{{ message.role }}>"
+                             "{%- endfor -%}"
+                             "[{{ reasoning_effort if reasoning_effort is defined else 'unset' }}]"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+
+    jllama_model *renders = load(body);
+    ASSERT_NE(renders, nullptr);
+    const json renders_levels = levels(renders);
+    ASSERT_TRUE(renders_levels.is_array()) << renders_levels.dump();
+    EXPECT_EQ(renders_levels.at(0), "none") << renders_levels.dump();
+    EXPECT_NE(render(renders, "none").find("[none]"), std::string::npos);
+    EXPECT_NE(render(renders, "high").find("[high]"), std::string::npos);
+    jllama_model_free(renders);
+
+    jllama_model *raises = load("{%- if reasoning_effort is defined and reasoning_effort == 'none' -%}"
+                                "{{ raise_exception('none is not supported') }}{%- endif -%}" +
+                                body);
+    ASSERT_NE(raises, nullptr);
+    const json raises_levels = levels(raises);
+    EXPECT_EQ(std::find(raises_levels.begin(), raises_levels.end(), json("none")), raises_levels.end())
+        << raises_levels.dump();
+    EXPECT_NE(render(raises, "none").find("[unset]"), std::string::npos);
+    jllama_model_free(raises);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesStopsAtTheStopWordsOfTheChatTemplate) {
     // A chat template can add stop strings of its own (upstream's Laguna workaround adds
     // "</assistant>", which the model may spell out as text); the chat paths stop at them. The raw
@@ -2723,6 +2784,14 @@ TEST(CApiWeightScales, QwenNextScalesEveryProjectionOfItsDeltaNet) {
     // loaded without a word. The generator's qwen3next has a delta net and an attention layer, both
     // with experts and a shared expert, and every matrix of them carries a scale.
     expect_weight_scales_applied(tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next"));
+}
+
+TEST(CApiWeightScales, Zaya1ScalesItsExperts) {
+    // llama.cpp has loaded ffn_gate_up_exps.scale since b12577, but ZAYA1's graph passed no expert
+    // scale on, so a scaled ZAYA1 computed its experts unscaled. Since b12622 (#32669) build_lora_mm
+    // and build_lora_mm_id apply the scale a weight has, whatever the architecture's graph passes. The
+    // generator's ZAYA1 writes a scale per expert next to both expert matrices.
+    expect_weight_scales_applied(tiny_model_spec::zaya1("jllama-c-api-scales-zaya1"));
 }
 
 TEST(CApiControlVector, AControlVectorChangesTheAnswerOnlyOnTheLayersOfItsRange) {

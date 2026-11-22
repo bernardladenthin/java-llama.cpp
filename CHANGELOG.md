@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12619** (from b12573, 46 upstream commits in eleven steps; master, pinned by commit
+- **llama.cpp b12628** (from b12573, 55 upstream commits in twelve steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -393,7 +393,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   refuses a text prompt and a speaker reference, so `TextToSpeech` cannot drive it (README). The same
   commit moves Pocket TTS's Mimi decoder into a shared SEANet module and changes the Qwen3-TTS pipeline;
   the generated Pocket TTS and Qwen3-TTS pairs (`CApiPocketTts`, `CApiQwen3Tts*`) keep every exact
-  length and the LFM3 realtime cases pass. No generator for Hibiki yet (TODO.md). All 31 patches apply
+  length and the LFM3 realtime cases pass. No generator for Hibiki yet (TODO.md). b12620 improves the
+  memory access of the CPU's `mul_mat` chunks (#30846), b12621 bounds SYCL's `CONV_TRANSPOSE_1D` input
+  (#31109), and b12622 applies a weight's `.scale` tensor wherever its matrix is multiplied (#32669;
+  `build_lora_mm` / `build_lora_mm_id` look it up by name): ZAYA1, whose graph passed no expert scale
+  on although its `ffn_gate_up_exps.scale` has loaded since b12577, now computes its experts scaled
+  (`CApiWeightScales.Zaya1ScalesItsExperts`: the generator's ZAYA1 with scales answers what the same
+  model with folded weights answers; red at b12619, where it answered like the unscaled model).
+  b12623 merges Parakeet's relative-position views (#32722), b12624 makes `reasoning_effort: none` a
+  level of its own (#32763): a template that renders it lists it in `getReasoningEffortLevels()` and is
+  rendered with it, one that raises on it does not list it and the request goes on without the level
+  (`CApiTemplate.AReasoningEffortOfNoneReachesATemplateThatRendersIt`, red against b12623's probe).
+  b12625 fixes `no_realloc` for two decision models (#32754), b12626 and b12628 fix Vulkan's memset of
+  unaligned ranges and `SCALE` of a non-contiguous source (#32725, #32735), and b12627 fits the
+  server's non-causal batches into one ubatch (#32713) -- which `patches/0036` already does for
+  every caller (a non-causal context's batch is its ubatch), so it stays. All 31 patches apply
   unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
