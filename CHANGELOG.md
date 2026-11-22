@@ -322,7 +322,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12642** (from b12573, 69 upstream commits in nineteen steps; master, pinned by commit
+- **llama.cpp b12643** (from b12573, 70 upstream commits in twenty steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -458,6 +458,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   #32807): its looped layers share one weight, and with `--n-cpu-moe` a later pass could pick experts
   the first pass had not copied. That path needs a GPU backend that runs the expert products of host
   weights, which no CI job has (the RPC backend offloads no op), so nothing here tests it.
+  b12643 counts the audio embeddings of the Qwen3-Omni / Qwen3-ASR encoder (`qwen3a`) from the frames
+  a clip has (#32697): 13 for every 100-frame chunk and, for a shorter last chunk, its frames halved
+  three times, where the last chunk was padded to 100 frames and counted 13; and a clip is n / 160
+  frames, one fewer than before (the last STFT frame is dropped, as WhisperFeatureExtractor does), so
+  0.25 s of audio is 4 embeddings instead of 13 and 1 s 13 instead of 26. A C API case over a new
+  generated `qwen3a` projector counts the embeddings of clips from 1 to 850 frames (red at b12642).
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
