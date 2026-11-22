@@ -416,9 +416,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `libggml-opencl.so`), and b12630 and
   b12631 move WebGPU to a recent Dawn (#32779, #32782; no WebGPU module is built here). b12632 to
   b12636: a HIP fix for NVFP4 scales on CDNA3 (#32790), a Vulkan/WebGPU clear on non-UMA devices
-  (#32727), the backward pass of `SIGMOID` (#32126, `GGML_OP_SIGMOID_BACK` appended after the last op,
+  (#32727), a lazy grammar for tool calls a template writes as bare JSON without a start marker (#32497:
+  Llama 3.x under `tool_choice` `auto` had no grammar at all; `LazyToolGrammar` holds it, red before it),
+  the backward pass of `SIGMOID` (#32126, `GGML_OP_SIGMOID_BACK` appended after the last op,
   so the op numbers stay and the RPC protocol only moves to 10.0.2), and the GGUF reader keeping a
-  tensor or value type read from the file an integer until it is range-checked (#32641). All patches
+  tensor or value type read from the file an integer until it is range-checked (#32641; a type id outside
+  its enum fails the load by name and the process goes on, which a new C API case holds). All patches
   apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent

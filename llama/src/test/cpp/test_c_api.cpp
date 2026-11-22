@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <atomic>
 #include <chrono>
@@ -2905,6 +2906,82 @@ TEST(CApiWeightScales, AnMtpBlockDraftsWithTheScaleOfItsProjection) {
     std::error_code ignored;
     std::filesystem::remove(scaled, ignored);
     std::filesystem::remove(folded, ignored);
+}
+
+namespace {
+
+// Overwrites the 4 bytes that follow `marker` + `skip` bytes in the file at `path`.
+bool overwrite_after(const std::string &path, const std::string &marker, size_t skip, int32_t value) {
+    std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const size_t at = bytes.find(marker);
+    if (at == std::string::npos) {
+        return false;
+    }
+    f.clear();
+    f.seekp(static_cast<std::streamoff>(at + marker.size() + skip));
+    f.write(reinterpret_cast<const char *>(&value), sizeof(value));
+    return static_cast<bool>(f);
+}
+
+// A GGUF string as the file stores it: its length as a little-endian u64, then the bytes.
+std::string gguf_string(const std::string &s) {
+    std::string out(8, '\0');
+    uint64_t n = s.size();
+    for (int i = 0; i < 8; ++i) {
+        out[i] = static_cast<char>((n >> (8 * i)) & 0xff);
+    }
+    return out + s;
+}
+
+} // namespace
+
+TEST(CApiStatic, AGgufWithATypeIdOutsideItsEnumIsRefusedAndTheProcessGoesOn) {
+    // A tensor type and a key/value type are read from the file as plain integers. Until b12636
+    // (#32641) the reader cast them to ggml_type / gguf_type before checking the range -- a value
+    // outside the enum, undefined behaviour in C++. A file that carries one is refused by name.
+    const std::string good = write_tiny_llama_gguf("jllama-c-api-gguf-types-good");
+    ASSERT_FALSE(good.empty());
+    std::ifstream in(good, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    const auto copy = [&](const char *name) {
+        const std::string path = good + "." + name + ".gguf";
+        std::ofstream(path, std::ios::binary) << bytes;
+        return path;
+    };
+
+    // the tensor info: name, n_dims (u32 2), two u64 dims, then the type
+    const std::string tensor_type = copy("tensor-type");
+    ASSERT_TRUE(overwrite_after(tensor_type, gguf_string("token_embd.weight"), 4 + 2 * 8, 1000));
+    // the key/value: key, then the value type
+    const std::string kv_type = copy("kv-type");
+    ASSERT_TRUE(overwrite_after(kv_type, gguf_string("general.architecture"), 0, 99));
+
+    const struct {
+        const std::string &path;
+        const char *reason;
+    } refused[] = {{tensor_type, "'token_embd.weight' has invalid ggml type 1000"},
+                   {kv_type, "'general.architecture' has invalid GGUF type 99"}};
+    for (const auto &r : refused) {
+        LogCapture log;
+        jllama_model *model = load_tiny(r.path, {});
+        log.stop();
+        EXPECT_EQ(model, nullptr) << r.path;
+        if (model != nullptr) {
+            jllama_model_free(model);
+        }
+        // the refusal is the type, not some other damage the overwrite did
+        EXPECT_NE(log.text().find(r.reason), std::string::npos) << log.text();
+    }
+    jllama_model *model = load_tiny(good, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(model, 4).empty());
+    jllama_model_free(model);
+    std::error_code ec;
+    for (const std::string &path : {good, tensor_type, kv_type}) {
+        std::filesystem::remove(path, ec);
+    }
 }
 
 TEST(CApiControlVector, AControlVectorChangesTheAnswerOnlyOnTheLayersOfItsRange) {
