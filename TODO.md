@@ -342,6 +342,14 @@ the log lock)
   predictor and text width at 512 (`KOKORO_N_HIDDEN`), 9 harmonics, an ISTFT of 20/5 and 300 samples
   per F0 step, so a random pair could not be small, and the host reads its LSTMs itself (about 120
   coupled tensors). The real pair covers the pipeline in CI.
+- **Hibiki has no generator** (b12619, #32491): Kyutai's full-duplex speech translation, a Moshi
+  backbone (`moshi`) with a depformer over the Mimi codes and a Mimi encoder for the audio it listens
+  to, served on `NativeServer`'s `/v1/realtime` only (its pipeline refuses a text prompt and a speaker
+  reference, so `TextToSpeech` cannot drive it). What a generated pair would let a test hold: the
+  duplex conversation through the attached server (the first audio opens a response that runs until
+  it is cancelled), and `TextToSpeech` refusing the pair by name.
+  The Pocket TTS generator already writes a Mimi decoder; the encoder, the depformer's acoustic delay
+  of two frames and the backbone are new. No Hibiki conversion is in `models.csv`.
 - VibeVoice-ASR and higgs v3 STT have no model in `models.csv`; Nemotron 3.5 Transcribe (b12087),
   MageVL-Cowork (b12192), Qwen3-VL's video prompt format (b12098), Gemma 4's audio stream (b12237) and
   Inkling 2 (#32217) are reached through the existing multimodal paths and exercised by no test here.

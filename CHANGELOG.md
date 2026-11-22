@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12618** (from b12573, 45 upstream commits in ten steps; master, pinned by commit
+- **llama.cpp b12619** (from b12573, 46 upstream commits in eleven steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -387,7 +387,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   32 (#32698), b12615 fuses `ADD`/`RMS_NORM`/`MUL` in SYCL (#31753), and b12616 opens the WebUI's
   context gauge as a popover (#32685; 291 assets, the license texts unchanged). b12617 and b12618 give
   SYCL a column-blocked `GATED_DELTA_NET` kernel and an IQ4_NL/IQ4_XS weight reorder (#32456, #31998;
-  built by the CI SYCL jobs only). All 31 patches apply unchanged.
+  built by the CI SYCL jobs only). b12619 adds Kyutai's Hibiki, full-duplex speech translation over a
+  Moshi backbone (#32491, architecture `moshi`, `MTMD_GEN_AUDIO_TYPE_MOSHI`): the model speaks while it
+  listens, on the embedded server's `/v1/realtime` (`mtmd_helper_cap::audio_duplex`); its pipeline
+  refuses a text prompt and a speaker reference, so `TextToSpeech` cannot drive it (README). The same
+  commit moves Pocket TTS's Mimi decoder into a shared SEANet module and changes the Qwen3-TTS pipeline;
+  the generated Pocket TTS and Qwen3-TTS pairs (`CApiPocketTts`, `CApiQwen3Tts*`) keep every exact
+  length and the LFM3 realtime cases pass. No generator for Hibiki yet (TODO.md). All 31 patches apply
+  unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
