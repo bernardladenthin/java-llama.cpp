@@ -2924,13 +2924,12 @@ bool overwrite_after(const std::string &path, const std::string &marker, size_t 
     return static_cast<bool>(f);
 }
 
-// A GGUF string as the file stores it: its length as a little-endian u64, then the bytes.
+// A GGUF string as the file stores it: its length as a u64, then the bytes. gguf writes a file in the
+// byte order of the host that writes it (a big-endian GGUF on s390x), and so does overwrite_after.
 std::string gguf_string(const std::string &s) {
     std::string out(8, '\0');
-    uint64_t n = s.size();
-    for (int i = 0; i < 8; ++i) {
-        out[i] = static_cast<char>((n >> (8 * i)) & 0xff);
-    }
+    const uint64_t n = s.size();
+    std::memcpy(&out[0], &n, sizeof(n));
     return out + s;
 }
 
@@ -8733,11 +8732,14 @@ TEST_F(CApiVoxCpm2, ASynthesisIsAMonoWavOfWholeFramesAt48kHz) {
     EXPECT_EQ(le32(wav, 40), wav.size() - 44) << "the data chunk holds every sample";
     // a stop at the first frame is held back to 4 frames (n_frames > min_len + 1), 0.64 s
     EXPECT_EQ(frames_of(wav), 4) << wav.size();
-    const auto *pcm = reinterpret_cast<const int16_t *>(wav.data() + 44);
     // the generator keeps the decoder inside tanh's range (measured: RMS 5114, peak 30080 of 32767), so the
-    // comparisons below are made on samples, not on silence or on the clamp of the 16-bit conversion
-    const int peak = std::accumulate(pcm, pcm + (wav.size() - 44) / 2, 0,
-                                     [](int m, int16_t s) { return std::max(m, std::abs(static_cast<int>(s))); });
+    // comparisons below are made on samples, not on silence or on the clamp of the 16-bit conversion. The
+    // samples are little-endian whatever the host (read as host int16 on s390x they reached 32768).
+    int peak = 0;
+    for (size_t i = 44; i + 1 < wav.size(); i += 2) {
+        const auto sample = static_cast<int16_t>(static_cast<uint16_t>(wav[i] | wav[i + 1] << 8));
+        peak = std::max(peak, std::abs(static_cast<int>(sample)));
+    }
     EXPECT_GT(peak, 1000);
     EXPECT_LT(peak, 32767);
     std::vector<unsigned char> again;
@@ -13622,17 +13624,20 @@ TEST(CApiSystemOne, AnInterruptedDecisionIsReportedAsInterrupted) {
     // upstream's handler returns its response untouched when the results are terminated -- status 200
     // and no body -- and the engine handed that out as an empty answer: jllama_model_interrupt (and
     // LlamaModel.close()) during jllama_systemone gave JLLAMA_STATUS_OK with "". A decision over a long
-    // state, one token per batch on one thread, takes long enough to be interrupted.
+    // state, one token per batch on one thread, takes long enough to be interrupted: upstream's wait
+    // looks at the stop flag once a second, so the decision has to outlast that first look. 40
+    // sentences (2837 tokens) took 2.3 s here and 0.68 s on a GitHub runner, which then answered before
+    // the look (main, run 45052971364); 160 take several seconds on either, and the test about one.
     tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-c-api-decision-interrupt");
     spec.decision_type = "openjev";
-    spec.n_ctx_train = 4096;
+    spec.n_ctx_train = 16384;
     spec.n_layer = 2;
     const std::string path = write_tiny_llama_gguf(spec);
     ASSERT_FALSE(path.empty());
-    jllama_model *model = load_tiny(path, {"-c", "4096", "-t", "1", "-tb", "1", "-b", "1", "-ub", "1"});
+    jllama_model *model = load_tiny(path, {"-c", "16384", "-t", "1", "-tb", "1", "-b", "1", "-ub", "1"});
     ASSERT_NE(model, nullptr) << jllama_last_error();
     std::string state;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 160; ++i) {
         state += "I was charged twice for my order last week and nobody has replied. ";
     }
     const json request = {
