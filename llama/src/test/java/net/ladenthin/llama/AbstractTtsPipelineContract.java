@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.parameters.SpeechParameters;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -28,8 +29,9 @@ import org.junit.jupiter.api.Timeout;
 /**
  * What every speech pipeline of llama.cpp has to do through {@link TextToSpeech}, whichever it is:
  * Pocket TTS, Chatterbox (b12097), Drama-3 (b12116), Soprano. {@link TextToSpeech} drives
- * {@code mtmd_helper::gen_audio} without knowing the pipeline, so the assertions are the ones that
- * hold for all of them and read the rest from the model: its sample rate from the WAV header, its
+ * {@code mtmd_helper::gen_audio} the same way for every pipeline (only whether one clones a voice from a
+ * clip is decided by its type), so the assertions are the ones that hold for all of them and read the
+ * rest from the model: its sample rate from the WAV header, its
  * voices from {@link TextToSpeech#getVoices()}, voice cloning from
  * {@link TextToSpeech#supportsSpeakerReference()}.
  *
@@ -59,6 +61,16 @@ public abstract class AbstractTtsPipelineContract {
      * @return its path, or {@code null} when none is configured
      */
     protected abstract String mmprojPath();
+
+    /**
+     * Whether the pair under test clones a voice from a reference clip, as far as the test knows it:
+     * CI's pairs say so, a pair named by properties does not.
+     *
+     * @return the expected {@link TextToSpeech#supportsSpeakerReference()}, or {@code null} when unknown
+     */
+    protected @Nullable Boolean clonesVoice() {
+        return null;
+    }
 
     @BeforeAll
     public void setup() {
@@ -118,6 +130,15 @@ public abstract class AbstractTtsPipelineContract {
     }
 
     @Test
+    @DisplayName("the pair clones a voice exactly when its pipeline and projector can")
+    public void theVoiceCloningCapabilityIsThePairs() {
+        // the cloning case below takes whatever the pair reports, so a wrong report passes it
+        Boolean expected = clonesVoice();
+        Assumptions.assumeTrue(expected != null, "the pair under test is not one of CI's");
+        assertEquals(expected, tts.supportsSpeakerReference());
+    }
+
+    @Test
     @Timeout(value = 10, unit = TimeUnit.MINUTES)
     @DisplayName("a speaker reference is cloned or refused, as the pipeline says it can")
     public void aSpeakerReferenceIsTakenOrRefusedAsThePipelineReports() {
@@ -167,9 +188,36 @@ public abstract class AbstractTtsPipelineContract {
                 .loudness(-20.0f)
                 .build();
         try {
-            assertWellFormedAudibleWav(tts.synthesize("Hello.", delivery));
+            // not "Hello.": ZONOS3 ends that within its codebook delay at a faster speed (measured: at 1.25
+            // the 40 frames are silence, at 2.0 there is no audio at all), which says nothing about delivery
+            assertWellFormedAudibleWav(tts.synthesize("Hello, this is a longer sentence to speak.", delivery));
         } catch (InvalidRequestException e) {
             assertTrue(e.getMessage().contains("does not support speed or loudness"), e.getMessage());
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("a guidance scale and solver steps are spoken by a model that has them, else the request's fault")
+    public void aGuidanceIsSpokenOrRefusedAsTheRequestsFault() {
+        // b12459 (#32369): YuE2, MiniMax Music 3 and VoxCPM2 read them; llama.cpp offers no capability to ask
+        for (SpeechParameters guidance : new SpeechParameters[] {
+            SpeechParameters.builder()
+                    .maxFrames(MAX_FRAMES)
+                    .seed(1)
+                    .cfgScale(2.0f)
+                    .build(),
+            SpeechParameters.builder()
+                    .maxFrames(MAX_FRAMES)
+                    .seed(1)
+                    .flowSteps(4)
+                    .build()
+        }) {
+            try {
+                assertWellFormedAudibleWav(tts.synthesize("Hello, this is a longer sentence to speak.", guidance));
+            } catch (InvalidRequestException e) {
+                assertTrue(e.getMessage().contains("does not support cfg_scale or flow_steps"), e.getMessage());
+            }
         }
     }
 

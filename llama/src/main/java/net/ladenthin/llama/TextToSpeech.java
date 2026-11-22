@@ -49,7 +49,7 @@ public final class TextToSpeech implements AutoCloseable {
          * @param modelPath  path to the backbone GGUF
          * @param mmprojPath path to the mmproj GGUF
          * @param gpuLayers  layers to offload to the GPU
-         * @param threads    CPU threads for the backbone
+         * @param threads    CPU threads for the backbone and the projector
          * @return the native handle
          */
         long load(String modelPath, String mmprojPath, int gpuLayers, int threads);
@@ -114,7 +114,8 @@ public final class TextToSpeech implements AutoCloseable {
                     parameters.getLoudness(),
                     parameters.getSpeakerReferenceText(),
                     parameters.getCfgScale(),
-                    parameters.getFlowSteps());
+                    parameters.getFlowSteps(),
+                    parameters.isRawPrompt());
         }
 
         @Override
@@ -161,7 +162,7 @@ public final class TextToSpeech implements AutoCloseable {
      * @param modelPath path to the backbone (text) GGUF
      * @param mmprojPath path to the mmproj GGUF (speaker encoder + code predictor + code2wav)
      * @param gpuLayers number of layers to offload to the GPU (0 = CPU only)
-     * @param threads CPU threads for the backbone (0 = a small default)
+     * @param threads CPU threads for the backbone and the projector (0 = a small default)
      */
     public TextToSpeech(String modelPath, String mmprojPath, int gpuLayers, int threads) {
         this(NATIVE_BACKEND, modelPath, mmprojPath, gpuLayers, threads);
@@ -174,7 +175,7 @@ public final class TextToSpeech implements AutoCloseable {
      * @param modelPath  path to the backbone (text) GGUF
      * @param mmprojPath path to the mmproj GGUF
      * @param gpuLayers  number of layers to offload to the GPU
-     * @param threads    CPU threads for the backbone
+     * @param threads    CPU threads for the backbone and the projector
      */
     TextToSpeech(Backend backend, String modelPath, String mmprojPath, int gpuLayers, int threads) {
         this.backend = backend;
@@ -208,9 +209,9 @@ public final class TextToSpeech implements AutoCloseable {
     /**
      * Whether this model pair clones a voice from a speaker reference clip, i.e. whether
      * {@link #synthesize(String, String, String, int, int, int)} accepts a
-     * {@code speakerReferenceAudioPath}. llama.cpp decides it per pipeline
-     * ({@code mtmd_helper_cap::audio_gen_spk_ref}, b11901): Qwen3-TTS and Pocket TTS do, a pipeline
-     * without a voice encoder such as Soprano does not. A projector of such a pipeline that was
+     * {@code speakerReferenceAudioPath}. It depends on the pipeline: Qwen3-TTS, Pocket TTS,
+     * Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2 and Drama-3 encode a reference clip, the others
+     * (Soprano, Kokoro, tiny-voca, LFM3-Audio) do not. A projector of such a pipeline that was
      * converted without the encoder (Pocket TTS "without voice cloning", which ships predefined
      * voices instead) takes no audio in and reports {@code false} as well.
      *
@@ -422,7 +423,8 @@ public final class TextToSpeech implements AutoCloseable {
             float loudness,
             @Nullable String speakerReferenceText,
             float cfgScale,
-            int flowSteps);
+            int flowSteps,
+            boolean rawPrompt);
 
     private static native boolean supportsSpeakerReferenceNative(long handle);
 

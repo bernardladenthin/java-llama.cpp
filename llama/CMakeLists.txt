@@ -356,8 +356,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12463)
-set(JLLAMA_GIT_COMMIT "9581154a2250cc9e6948e4c2a2fc4b4e19d1a57e")   # the commit the number b12463 names (not tagged yet on 2026-11-16; the newest tag is b12447)
+set(JLLAMA_GIT_TAG    b12636)
+set(JLLAMA_GIT_COMMIT "8d60873dfb8619f2b5ed31adfbab07cccb40db5c")   # the commit the number b12636 names (not tagged yet; the commit stays the pin)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -469,6 +469,16 @@ endif()
 # because no machine without AMX can notice the defect at run time.
 include(cmake/check-aligned-free-pairing.cmake)
 jllama_check_aligned_free_pairing(${llama.cpp_SOURCE_DIR})
+
+# The four _mm_prefetch calls of the x86 Q4_0 dot product take a byte offset (patches/0017): their call
+# sites are checked here, because test_prefetch.cpp holds only the helper they call.
+include(cmake/check-prefetch-byte-offset.cmake)
+jllama_check_prefetch_byte_offset(${llama.cpp_SOURCE_DIR})
+
+# The ops fine-tuning may differentiate (patches/0044, which refuses a model whose graph holds any other op
+# instead of letting ggml_build_backward_expand end the process) are the case labels of ggml_compute_backward.
+include(cmake/check-backward-ops.cmake)
+jllama_check_backward_ops(${llama.cpp_SOURCE_DIR})
 
 # nlohmann/json comes from upstream's vendored copy and from nowhere else (see the json block above).
 # Asserted here rather than left to the compiler: a missing header fails every TU that includes it
@@ -894,6 +904,7 @@ add_library(jllama SHARED
     src/main/cpp/jllama.cpp
     src/main/cpp/jllama_engine.cpp
     src/main/cpp/jllama_api.cpp
+    src/main/cpp/backend_modules.cpp
     src/main/cpp/tts_engine.cpp
     src/main/cpp/imatrix_engine.cpp
     src/main/cpp/train_engine.cpp
@@ -1298,6 +1309,9 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
     add_executable(jllama_c_abi src/test/c/test_c_abi.c)
     target_compile_features(jllama_c_abi PRIVATE c_std_11)
     target_link_libraries(jllama_c_abi PRIVATE jllama llama ggml-base)
+    if (UNIX)
+        target_link_libraries(jllama_c_abi PRIVATE m) # lrintf of kquant_matmul.h
+    endif()
     target_include_directories(jllama_c_abi PRIVATE src/main/cpp)
     # The executable lives in the build tree and must resolve libllama/libggml* from the natives
     # directory: a run path pointing there on ELF, PATH for the test on Windows (where the
@@ -1312,9 +1326,42 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST
         SKIP_BUILD_RPATH FALSE)
     enable_testing()
     add_test(NAME c_abi COMMAND jllama_c_abi "${JLLAMA_DIR}")
+    # The same program without its own module load: the C API loads the modules next to libjllama
+    # itself (backend_modules.hpp). Neither the executable (build/c-abi) nor ctest's working directory
+    # is the natives directory, so ggml's own search finds nothing there.
+    add_test(NAME c_abi_implicit COMMAND jllama_c_abi "${JLLAMA_DIR}" implicit)
     if(WIN32)
-        set_tests_properties(c_abi PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
+        set_tests_properties(c_abi c_abi_implicit PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
     endif()
+    # The model-backed half: JLLAMA_C_ABI_MODEL from the configure environment, else the C++ suite's
+    # random llama model, written by a helper linked against the shipped ggml-base only (ctest runs a
+    # fixture's setup with `ctest -R '^c_abi$'` too, which is how build.sh / build.bat run it).
+    if(DEFINED ENV{JLLAMA_C_ABI_MODEL} AND NOT "$ENV{JLLAMA_C_ABI_MODEL}" STREQUAL "")
+        set(JLLAMA_C_ABI_MODEL_FILE "$ENV{JLLAMA_C_ABI_MODEL}")
+    else()
+        set(JLLAMA_C_ABI_MODEL_FILE "${CMAKE_BINARY_DIR}/c-abi/jllama-c-abi-model.gguf")
+        add_executable(jllama_c_abi_model src/test/c/write_c_abi_model.cpp)
+        target_compile_features(jllama_c_abi_model PRIVATE cxx_std_17)
+        target_link_libraries(jllama_c_abi_model PRIVATE ggml-base)
+        target_include_directories(jllama_c_abi_model PRIVATE src/test/cpp)
+        set_target_properties(jllama_c_abi_model PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/c-abi
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/c-abi
+            BUILD_RPATH "${JLLAMA_DIR}"
+            BUILD_WITH_INSTALL_RPATH FALSE
+            SKIP_BUILD_RPATH FALSE)
+        add_test(NAME c_abi_model COMMAND jllama_c_abi_model "${JLLAMA_C_ABI_MODEL_FILE}")
+        set_tests_properties(c_abi_model PROPERTIES FIXTURES_SETUP c_abi_model)
+        set_tests_properties(c_abi c_abi_implicit PROPERTIES FIXTURES_REQUIRED c_abi_model)
+        if(WIN32)
+            set_tests_properties(c_abi_model PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
+        endif()
+    endif()
+    set_tests_properties(c_abi c_abi_implicit PROPERTIES ENVIRONMENT "JLLAMA_C_ABI_MODEL=${JLLAMA_C_ABI_MODEL_FILE}")
 endif()
 
 # BUILD_TESTING is declared at the top of this file, before any subproject (see there).
@@ -1405,6 +1452,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_c_api.cpp
         src/main/cpp/jllama_engine.cpp
         src/main/cpp/jllama_api.cpp
+        src/main/cpp/backend_modules.cpp
         # The engines behind the C API's TTS and trainer functions (test_c_api.cpp drives them).
         src/main/cpp/tts_engine.cpp
         src/main/cpp/imatrix_engine.cpp
@@ -1419,12 +1467,14 @@ if(BUILD_TESTING)
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_prefetch.cpp
         src/test/cpp/test_kolibri1.cpp
+        src/test/cpp/test_gemma4.cpp
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
         src/test/cpp/test_rpc.cpp
         src/test/cpp/test_rpc_comm.cpp
         src/test/cpp/test_gallocr_leafs.cpp
         src/test/cpp/test_lora_cache.cpp
+        src/test/cpp/test_engine_tuning.cpp
         src/test/cpp/test_moe_repack.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
@@ -1484,6 +1534,13 @@ if(BUILD_TESTING)
         if(WIN32 AND NOT MSVC)
             target_link_libraries(jllama_test PRIVATE ws2_32)
         endif()
+    endif()
+
+    # test_c_api.cpp holds more than the 65,279 sections a regular COFF object can (MSVC: "C1128: number of
+    # sections exceeded object file format limit", build-windows-x86_64-msvc, 2026-11-22); clang-cl takes the
+    # flag too, plain clang and LLVM switch to the big format by themselves
+    if(MSVC)
+        target_compile_options(jllama_test PRIVATE /bigobj)
     endif()
 
     target_compile_definitions(jllama_test PRIVATE

@@ -375,7 +375,7 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/fetch-models
         with:
-          features: draft tts
+          features: draft tts vision
           hf-token: ${{ secrets.HF_TOKEN }}
       # Build with the shared JDK; llama-ffm retains its Java 22 bytecode target.
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -384,14 +384,14 @@ jobs:
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         uses: ./.github/actions/build-core
-      - name: Build, test and document llama-ffm (the model-backed tests run on the draft model and the Qwen3-TTS pair)
+      - name: Build, test and document llama-ffm (the model-backed tests run on the draft model, the Qwen3-TTS and the vision pair)
         run: >
           mvn -B --no-transfer-progress -f llama-ffm/pom.xml verify -Dgpg.skip=true
           -Dnet.ladenthin.llama.ffm.model=models/${DRAFT_MODEL_NAME}
           -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
       - name: Require the native-backed tests to have run (a self-skip would hide a broken binding)
         run: |
-          for test in FfmLlamaModelIntegrationTest FfmTextToSpeechIntegrationTest JllamaNativeTest; do
+          for test in FfmLlamaModelIntegrationTest FfmTextToSpeechIntegrationTest FfmVideoDecoderIntegrationTest JllamaNativeTest; do
             report="llama-ffm/target/surefire-reports/TEST-net.ladenthin.llama.ffm.$test.xml"
             test -f "$report" || { echo "::error::no report for $test"; exit 1; }
             if grep -q 'skipped="[1-9]' "$report" || grep -q 'tests="0"' "$report"; then
@@ -570,10 +570,14 @@ jobs:
           path: llamacpp-ui
           # ui/apps/chat (tools/ui until b12453, #32032) holds the npm project AND the
           # ui.cpp.in / ui.h.in templates;
-          # scripts/ holds ui-assets.cmake, which consumes them. Both are needed
+          # ui/lib/ui holds Llama UI, whose sources the app compiles since b12480 (#32468),
+          # and ui/lib/voice Llama Voice, which it compiles since b12587 (#32531, vite aliases);
+          # scripts/ holds ui-assets.cmake, which consumes them. All are needed
           # since upstream #28445 replaced the embed.cpp host tool.
           sparse-checkout: |
             ui/apps/chat
+            ui/lib/ui
+            ui/lib/voice
             scripts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -1771,8 +1775,8 @@ jobs:
   # Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll per
   # instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
   # start-up, and the directory every Windows x86-64 GPU module jar is loaded next to (CLAUDE.md
-  # "Modular natives"). The compiler is plain clang (the GNU driver, the LLVM on
-  # the runner image's PATH), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
+  # "Modular natives"). The compiler is plain clang (the GNU driver, the clang Visual Studio ships
+  # in VC\Tools\Llvm\x64), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
   # cl.exe, and ggml's `if (NOT MSVC)` then drops 5 of the 14 variants, so llama/CMakeLists.txt
   # refuses both. It needs the MSVC headers, libraries and linker from the developer environment
   # all the same (clang targets the MSVC ABI), and it ships the same hybrid CRT as every Windows
@@ -1818,11 +1822,15 @@ jobs:
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
         uses: ./.github/actions/install-sccache-windows
-      # `clang --version` first: which LLVM the image put on PATH decides whether patches/0017's
-      # compiler half is exercised as a warning (clang 20) or as the error it fixes (clang 22+).
+      # The clang Visual Studio ships (VC\Tools\Llvm\x64), not the LLVM the image puts on PATH: the
+      # STL of MSVC 14.52 refuses any clang below 22 (STL1000), and the image's C:\Program Files\LLVM
+      # was 20.1.8 when it moved to 14.52 (run 45047172519); Visual Studio keeps its own clang in step
+      # with its STL. `clang --version` first: clang 22+ makes patches/0017's compiler half an error.
       - name: Build libraries
         shell: cmd
         run: |
+          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
+          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
@@ -1938,6 +1946,8 @@ jobs:
         # which is also how upstream builds its own Windows CUDA release. cuda_crt is listed
         # explicitly: since 13.x the nvcc crt headers (crt/host_config.h) ship in their own
         # archive, and without them CMake's CUDA compiler detection fails at configure.
+        # cuda_nvml_dev since b12522 (#30672): ggml-cuda.cu includes <nvml.h> (it loads NVML at run
+        # time to pick the accumulation precision per GPU SKU, and links nothing of it).
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -1957,7 +1967,8 @@ jobs:
             "cuda_nvtx",
             "cuda_profiler_api",
             "visual_studio_integration",
-            "cccl"
+            "cccl",
+            "cuda_nvml_dev"
           )
           New-Item -ItemType Directory -Force -Path $cuda | Out-Null
           # Every archive is checked against the SHA-256 NVIDIA publishes for it in the redist
@@ -2720,9 +2731,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
+      # llama.cpp's option parser reads numbers with std::stof, which follows LC_NUMERIC; the engine
+      # parses under the "C" numeric locale. CApiLocale proves it under a locale with a decimal
+      # comma, which the runner image does not have -- generated here, and required by the variable.
+      - name: Generate a locale with a decimal comma
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -i '^de_DE'
       - name: Run C++ unit tests
         env:
           JLLAMA_REQUIRE_FFMPEG: "1"
+          JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE: "1"
         run: ctest --test-dir llama/build --no-tests=error --output-on-failure
 
   test-cpp-linux-aarch64:
@@ -2822,9 +2841,12 @@ jobs:
           arch: x64
       - name: Display CPU Info
         uses: bernardladenthin/actions/common/print-host-info@379fb9448915b8ce7153f6ec5fa65544205196db # v1.2.2
+      # Visual Studio's clang, as build-windows-x86_64 (the image's LLVM 20 fails MSVC 14.52's STL1000 check)
       - name: Build libraries
         shell: cmd
         run: |
+          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
+          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Verify llama.cpp patches are applied
@@ -2935,9 +2957,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
+      # DecimalCommaLocaleIntegrationTest starts a JVM under de_DE.UTF-8, which takes its C numeric
+      # locale from the environment; the runner image has no such locale, and the variable turns the
+      # test's skip into a failure here.
+      - name: Generate a locale with a decimal comma
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -i '^de_DE'
       - name: Run tests
         env:
           JLLAMA_REQUIRE_FFMPEG: "1"
+          JLLAMA_REQUIRE_DECIMAL_COMMA_LOCALE: "1"
         run: |
           mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that

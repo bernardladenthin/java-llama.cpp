@@ -22,16 +22,21 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.callback.LoadProgressCallback;
+import net.ladenthin.llama.callback.VideoDecoder;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.ModelParameters;
 
 /**
  * A model loaded through the C API: the operations of {@code LlamaModel}, one C function each, with
- * JSON text in and out. A handle may be used from several threads; {@link #close()} waits for the calls
- * in flight and must not race a new one (the caller owns the lifetime, as with {@code LlamaModel}).
+ * JSON text in and out. A handle may be used from several threads; {@link #close()} interrupts the calls
+ * in flight (a blocking completion throws {@link LlamaException} within about a second) and waits for
+ * them, and a call that starts after it throws {@link IllegalStateException} -- a call never reaches a
+ * freed handle, as with {@code LlamaModel}.
  *
  * <p>Requests are the bodies llama.cpp's own HTTP server reads ({@code InferenceParameters.toJson()},
  * or an OpenAI chat body written by hand) and responses the objects it writes. A request llama.cpp
@@ -41,9 +46,21 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     private final MemorySegment handle;
     private final AtomicBoolean closed = new AtomicBoolean();
+    /**
+     * Every native call on the handle holds the read lock, {@link #close()} the write lock: a close
+     * waits for the calls in flight, and a call checks {@link #closed} under the lock, so it never
+     * reaches the handle after {@code jllama_model_free}. Without it a call that passed the check
+     * while another thread closed the model used the freed handle.
+     */
+    private final ReentrantReadWriteLock lifecycle = new ReentrantReadWriteLock();
+    /** Counted down once the first {@link #close()} has freed the handle; a second close waits for it. */
+    private final CountDownLatch freed = new CountDownLatch(1);
+    /** The video decoder's stubs, freed after the model; null for a model loaded without one. */
+    private final FfmVideoDecoder video;
 
-    private FfmLlamaModel(MemorySegment handle) {
+    private FfmLlamaModel(MemorySegment handle, FfmVideoDecoder video) {
         this.handle = handle;
+        this.video = video;
     }
 
     /**
@@ -87,7 +104,49 @@ public final class FfmLlamaModel implements AutoCloseable {
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(JllamaNative.MODEL_LOAD, argv.length, cStrings(arena, argv), stub, MemorySegment.NULL,
                     out);
-            return new FfmLlamaModel(out.get(ADDRESS, 0));
+            return new FfmLlamaModel(out.get(ADDRESS, 0), null);
+        }
+    }
+
+    /**
+     * Loads a model whose requests read their videos through {@code decoder}, as
+     * {@code new LlamaModel(parameters, progress, decoder)} does: a video in a request is handed to the
+     * decoder instead of the {@code ffmpeg} program. The decoder is called on a thread of the library,
+     * not on the caller's.
+     *
+     * @param parameters the model parameters (a vision {@code --mmproj} for the video to be seen)
+     * @param progress the progress callback, or {@code null}
+     * @param decoder the video decoder
+     * @return the loaded model
+     * @throws LlamaException when the model does not load, or the callback aborted it
+     */
+    public static FfmLlamaModel load(ModelParameters parameters, LoadProgressCallback progress, VideoDecoder decoder) {
+        Objects.requireNonNull(parameters, "parameters");
+        return load(parameters.toArray(), progress, decoder);
+    }
+
+    /**
+     * {@link #load(ModelParameters, LoadProgressCallback, VideoDecoder)} from a raw argv.
+     *
+     * @param argv the argv, program name first
+     * @param progress the progress callback, or {@code null}
+     * @param decoder the video decoder
+     * @return the loaded model
+     * @throws LlamaException when the model does not load, or the callback aborted it
+     */
+    public static FfmLlamaModel load(String[] argv, LoadProgressCallback progress, VideoDecoder decoder) {
+        Objects.requireNonNull(argv, "argv");
+        FfmVideoDecoder video = new FfmVideoDecoder(Objects.requireNonNull(decoder, "decoder"));
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment stub = progressStub(arena, progress);
+            MemorySegment out = pointerSlot(arena);
+            JllamaNative.call(JllamaNative.MODEL_LOAD_VIDEO, argv.length, cStrings(arena, argv), stub,
+                    MemorySegment.NULL, video.struct(), out);
+            return new FfmLlamaModel(out.get(ADDRESS, 0), video);
+        } catch (RuntimeException | Error e) {
+            // a failed load has released the decoder already (jllama_model_load_video calls release)
+            video.close();
+            throw e;
         }
     }
 
@@ -118,22 +177,89 @@ public final class FfmLlamaModel implements AutoCloseable {
         }
     }
 
-    /** The raw handle for the attach mode of {@link FfmNativeServer}. */
+    /**
+     * Run by {@link #handle()} after its check, before the native call: lets a test hold a call in
+     * exactly the window a racing {@link #close()} used to free the handle in. Null outside tests.
+     */
+    static volatile Runnable afterCheckForTesting;
+
+    /** The raw handle for the attach mode of {@link FfmNativeServer}, and for every call here. */
     MemorySegment handle() {
         if (closed.get()) {
             throw new IllegalStateException("the model is closed");
+        }
+        Runnable hook = afterCheckForTesting;
+        if (hook != null) {
+            hook.run();
         }
         return handle;
     }
 
     /**
      * Frees the model: cancels its streaming tasks, waits for the calls in flight, stops its inference
-     * loop and releases the weights. A second call is a no-op.
+     * loop and releases the weights. A second call frees nothing and returns once the first has: after
+     * any {@code close()} returns, the weights are released.
      */
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
+        if (!closed.compareAndSet(false, true)) {
+            awaitFreed();
+            return;
+        }
+        // A new call is refused from here on (handle() checks the flag under the read lock). The calls
+        // in flight hold the read lock for their whole native duration, so they are interrupted first
+        // -- a blocking completion returns within about a second instead of finishing its generation --
+        // and the write lock then waits only for them to unwind. Only this close frees the handle, so
+        // the interrupt needs no lock of its own.
+        invoke(JllamaNative.MODEL_INTERRUPT, handle);
+        lifecycle.writeLock().lock();
+        try {
             invoke(JllamaNative.MODEL_FREE, handle);
+            if (video != null) {
+                video.close();
+            }
+        } finally {
+            lifecycle.writeLock().unlock();
+            freed.countDown();
+        }
+    }
+
+    /** Waits for the first close to free the handle; an interrupt is kept for the caller. */
+    private void awaitFreed() {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                freed.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Runs {@code body} on the live handle under the read lock, for a native call made outside this
+     * class ({@link FfmNativeServer#startAttached}): a concurrent {@link #close()} waits for it, and
+     * after the close it throws {@link IllegalStateException} instead of reaching the freed handle.
+     */
+    <T> T withHandle(java.util.function.Function<MemorySegment, T> body) {
+        try (InUse _ = new InUse()) {
+            return body.apply(handle());
+        }
+    }
+
+    /** The read lock of one native call on the handle, released by try-with-resources. */
+    private final class InUse implements AutoCloseable {
+        InUse() {
+            lifecycle.readLock().lock();
+        }
+
+        @Override
+        public void close() {
+            lifecycle.readLock().unlock();
         }
     }
 
@@ -265,14 +391,17 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * The embedding of one prompt (a model loaded with {@code --embedding}).
+     * The embedding of one prompt (a model loaded with {@code --embedding}). A model loaded with
+     * {@code --pooling none} has one vector per token, of which this is the first; {@link #embeddings}
+     * answers all of them.
      *
      * @param prompt the text
      * @return the vector
      */
     public float[] embed(String prompt) {
         requireNonNull(prompt, "prompt");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment values = pointerSlot(arena);
             MemorySegment count = longSlot(arena);
             JllamaNative.call(JllamaNative.EMBED, handle(), cString(arena, prompt), values, count);
@@ -301,7 +430,8 @@ public final class FfmLlamaModel implements AutoCloseable {
     public String rerank(String query, String... documents) {
         requireNonNull(query, "query");
         requireNonNull(documents, "documents");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(JllamaNative.RERANK, handle(), cString(arena, query), documents.length,
                     cStrings(arena, documents), out);
@@ -318,7 +448,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      */
     public int[] tokenize(String text, boolean addSpecial) {
         requireNonNull(text, "text");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment tokens = pointerSlot(arena);
             MemorySegment count = longSlot(arena);
             JllamaNative.call(JllamaNative.TOKENIZE, handle(), cString(arena, text), addSpecial, tokens, count);
@@ -346,7 +477,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      */
     public String detokenize(int[] tokens) {
         requireNonNull(tokens, "tokens");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment text = pointerSlot(arena);
             MemorySegment length = longSlot(arena);
             JllamaNative.call(JllamaNative.DETOKENIZE, handle(), arena.allocateFrom(JAVA_INT, tokens),
@@ -363,7 +495,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      */
     public String detokenizeJson(int[] tokens) {
         requireNonNull(tokens, "tokens");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(JllamaNative.DETOKENIZE_JSON, handle(), arena.allocateFrom(JAVA_INT, tokens),
                     (long) tokens.length, out);
@@ -408,10 +541,11 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
-     * Sets the LoRA adapter scales.
+     * Sets the LoRA adapter scales; an adapter the array does not name gets scale 0, as upstream's
+     * {@code POST /lora-adapters}. {@link #loraAdapters()} reads the scales back.
      *
      * @param adaptersJson a JSON array of {@code {"id": n, "scale": f}}
-     * @return the resulting adapter list
+     * @return {@code {"success": true}}, the server's answer
      */
     public String setLoraAdapters(String adaptersJson) {
         return stringOut(JllamaNative.SET_LORA_ADAPTERS, requireNonNull(adaptersJson, "adaptersJson"));
@@ -425,7 +559,8 @@ public final class FfmLlamaModel implements AutoCloseable {
      */
     public void configure(String configJson) {
         requireNonNull(configJson, "configJson");
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             JllamaNative.call(JllamaNative.CONFIGURE, handle(), cString(arena, configJson));
         }
     }
@@ -444,7 +579,8 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /** One envelope of a streaming task: the JSON text, with {@code stop} set when it was the last. */
     String receive(MethodHandle receive, int taskId, boolean[] stop) {
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment out = pointerSlot(arena);
             MemorySegment stopSlot = arena.allocate(JAVA_BOOLEAN);
             JllamaNative.call(receive, handle(), taskId, out, stopSlot);
@@ -455,8 +591,10 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /** Cancels or releases a streaming task; an unknown id is ignored. */
     void releaseTask(int taskId) {
-        if (!closed.get()) {
-            JllamaNative.call(JllamaNative.TASK_RELEASE, handle, taskId);
+        try (InUse _ = new InUse()) {
+            if (!closed.get()) {
+                JllamaNative.call(JllamaNative.TASK_RELEASE, handle, taskId);
+            }
         }
     }
 
@@ -468,7 +606,8 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /** A call {@code (model, <string args...>, char **out)} whose strings are marshalled in a confined arena. */
     private String stringOut(MethodHandle handle, Object... arguments) {
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             Object[] all = new Object[arguments.length + 2];
             all[0] = handle();
             for (int i = 0; i < arguments.length; i++) {
@@ -483,7 +622,8 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /** As {@link #stringOut} for the slot action, whose arguments are two ints and a string. */
     private String stringOutRaw(MethodHandle handle, int a, int b, String s) {
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment out = pointerSlot(arena);
             JllamaNative.call(handle, handle(), a, b, cString(arena, s), out);
             return takeString(out);
@@ -492,7 +632,8 @@ public final class FfmLlamaModel implements AutoCloseable {
 
     /** A call {@code (model, const char *request, int *task_id)}: the task id. */
     private int taskOut(MethodHandle handle, String requestJson) {
-        try (Arena arena = Arena.ofConfined()) {
+        try (InUse _ = new InUse();
+                Arena arena = Arena.ofConfined()) {
             MemorySegment task = arena.allocate(JAVA_INT);
             JllamaNative.call(handle, handle(), cString(arena, requestJson), task);
             return task.get(JAVA_INT, 0);

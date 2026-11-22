@@ -48,9 +48,13 @@ public class BackendLoadTest {
     private static final String TMPDIR_PROP = LlamaSystemProperties.PREFIX + ".tmpdir";
     private static final String BACKEND_PROP = LlamaSystemProperties.PREFIX + ".backend";
 
+    /** A natives directory the loader tries before the jars; cleared, or no fixture is ever reached. */
+    private static final String LIB_PATH_PROP = LlamaSystemProperties.PREFIX + ".lib.path";
+
     private String previousArch;
     private String previousTmpDir;
     private String previousBackend;
+    private String previousLibPath;
 
     /** What {@link LlamaLoader#getBuildInfo()} reported before the first test of this class. */
     private static Map<String, String> buildInfoBeforeThisClass;
@@ -78,9 +82,11 @@ public class BackendLoadTest {
         previousArch = System.getProperty(ARCH_PROP);
         previousTmpDir = System.getProperty(TMPDIR_PROP);
         previousBackend = System.getProperty(BACKEND_PROP);
+        previousLibPath = System.getProperty(LIB_PATH_PROP);
         System.setProperty(ARCH_PROP, FIXTURE_ARCH);
         System.setProperty(TMPDIR_PROP, tempDir.toString());
         System.clearProperty(BACKEND_PROP);
+        System.clearProperty(LIB_PATH_PROP);
     }
 
     @AfterEach
@@ -89,6 +95,7 @@ public class BackendLoadTest {
         restore(ARCH_PROP, previousArch);
         restore(TMPDIR_PROP, previousTmpDir);
         restore(BACKEND_PROP, previousBackend);
+        restore(LIB_PATH_PROP, previousLibPath);
     }
 
     private static void restore(String key, String value) {
@@ -215,6 +222,52 @@ public class BackendLoadTest {
         UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
         assertTrue(error.getMessage().contains("names 'opencl', but no natives jar"), error.getMessage());
         assertTrue(extractionDirs().isEmpty(), extractionDirs().toString());
+    }
+
+    /**
+     * Every natives directory lands in one extraction directory, so a library jar and a module jar
+     * that ship a file of the same name would overwrite each other. {@code backendtest-clash/} has
+     * {@code libggml-base.so} in the jllama-files.txt of both {@code cpu/} and {@code vulkan/}.
+     */
+    @Test
+    public void aModuleShippingAFileOfTheLibraryJarIsRefusedBeforeAnythingIsExtracted() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(ARCH_PROP, "backendtest-clash");
+        System.setProperty(BACKEND_PROP, "vulkan");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertEquals(
+                "The natives jars of the backends 'cpu' and 'vulkan' both ship a file named 'libggml-base.so';"
+                        + " they cannot share one classpath",
+                error.getMessage());
+        assertTrue(extractionDirs().isEmpty(), "nothing may be extracted: " + extractionDirs());
+        assertEquals(buildInfoBeforeThisTest, LlamaLoader.getBuildInfo(), "a refused start touched the build info");
+    }
+
+    /** The library's own file name is claimed too: a module may not ship a {@code libjllama.so}. */
+    @Test
+    public void aModuleShippingAFileNamedLikeTheLibraryIsRefused() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(ARCH_PROP, "backendtest-clash");
+        System.setProperty(BACKEND_PROP, "cuda13");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertEquals(
+                "The natives jars of the backends 'cpu' and 'cuda13' both ship a file named 'libjllama.so';"
+                        + " they cannot share one classpath",
+                error.getMessage());
+        assertTrue(extractionDirs().isEmpty(), "nothing may be extracted: " + extractionDirs());
+    }
+
+    /** Without the clashing module, the same library directory goes on to its (failing) load. */
+    @Test
+    public void theClashFixtureWithoutAModuleReachesTheLibraryLoad() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(ARCH_PROP, "backendtest-clash");
+        System.setProperty(BACKEND_PROP, "cpu");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertTrue(error.getMessage().contains("backend 'cpu' could not be loaded"), error.getMessage());
+        assertEquals(
+                new java.util.HashSet<>(java.util.Arrays.asList("libggml-base.so", "libjllama.so")),
+                names(theExtractionDir()));
     }
 
     @Test

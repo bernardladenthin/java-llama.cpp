@@ -9,6 +9,12 @@ runs a second time on wake from the sleeping state (--sleep-idle-seconds), and a
 would then leave user_data pointing at the dead stack frame of the first call (segfault on the
 first request after an idle window). Standalone llama-server is unaffected.
 
+Drop-check on every bump: read the load-progress assignments in server_context_impl::load_model()
+(tools/server/server-context.cpp) -- once upstream keeps a callback the caller set and still
+re-points its own reporter's user data at the current frame on every load (a second load runs when
+the server wakes from the idle sleep), drop the patch; until then it is needed, and the guard is
+LoadProgressCallbackTest plus CApiSleep.AWakeDoesNotCallTheLoadProgressCallbackAgain.
+
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 index 39b7eb2..bc73429 100644
 --- a/tools/server/server-context.cpp

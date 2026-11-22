@@ -4,11 +4,14 @@
 
 package net.ladenthin.llama;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.parameters.SpeechParameters;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,5 +71,40 @@ public class ZonosTtsIntegrationTest extends AbstractTtsPipelineContract {
         byte[] quiet = speak(SpeechParameters.MODEL_DEFAULT_SPEED, -30.0f);
         assertFalse(Arrays.equals(modelsOwn, quiet), "a loudness of -30 LUFS must change the audio");
         assertTrue(Arrays.equals(quiet, speak(SpeechParameters.MODEL_DEFAULT_SPEED, -30.0f)), "reproducible");
+    }
+
+    /**
+     * ZONOS3 has no classifier-free guidance and no flow-matching solver (llama.cpp b12459 reads
+     * {@code cfg_scale} and {@code flow_steps} for YuE2, MiniMax Music 3 and VoxCPM2 only), so
+     * {@code set_input} refuses either: the request's fault, named in the message, and the same
+     * request without them still speaks as before. The values travel through
+     * {@link TextToSpeech#synthesize(String, SpeechParameters)} and JNI into {@code jllama_tts_options};
+     * a field lost on the way would make the request succeed.
+     */
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.MINUTES)
+    @DisplayName("a guidance scale or solver steps are refused by name: ZONOS3 has neither")
+    public void aGuidanceScaleOrSolverStepsAreRefusedByName() {
+        // 60 frames are enough to speak the start of the sentence; the refusal comes before the first
+        SpeechParameters plain =
+                SpeechParameters.builder().maxFrames(60).seed(7).build();
+        byte[] before = tts().synthesize(TEXT, plain);
+
+        InvalidRequestException cfgScale = assertThrows(
+                InvalidRequestException.class,
+                () -> tts().synthesize(TEXT, plain.toBuilder().cfgScale(2.0f).build()));
+        InvalidRequestException flowSteps = assertThrows(
+                InvalidRequestException.class,
+                () -> tts().synthesize(TEXT, plain.toBuilder().flowSteps(4).build()));
+
+        assertTrue(cfgScale.getMessage().contains("cfg_scale"), cfgScale.getMessage());
+        assertTrue(flowSteps.getMessage().contains("flow_steps"), flowSteps.getMessage());
+        assertArrayEquals(before, tts().synthesize(TEXT, plain), "the same request without them is unchanged");
+    }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // its projector carries the speaker encoder (clip.has_audio_encoder, zonos3_spkenc)
+        return true;
     }
 }

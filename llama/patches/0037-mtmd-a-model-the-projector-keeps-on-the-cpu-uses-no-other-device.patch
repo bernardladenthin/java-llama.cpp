@@ -1,0 +1,38 @@
+mtmd : a model the projector keeps on the CPU uses no other device
+
+Several speech pipelines build llama models of their own from tensors of the mmproj
+(mtmd_owned_llama_load: tiny-voca's prosody and acoustic stacks, VoxCPM2's residual LM, YuE2's NAR
+layers). On a GPU the model gets that one device; kept on the CPU it got no device list, so
+llama.cpp gave it every registered device, and its context initialised a backend for each of them
+although no layer was on one. An RPC server a load registered stays a registered device for the life
+of the process (ggml's registry has no unregister), so once that server was gone the context failed
+("failed to initialize RPC0 backend") and every synthesis with such a pipeline failed with it -- in
+a JVM that had used RpcServer or --rpc before, with CI's tiny-voca pair among them.
+
+The CPU branch now passes an empty device list, as --device none does: the model and its context use
+the CPU alone. Nothing changes for a projector on a GPU, or for a process without other devices. On a
+host with a GPU and the projector kept on the CPU (TextToSpeech with no GPU layers, --no-mmproj-offload)
+these models used to offload their large products to the GPU (op offload, on by default), and now run
+on the CPU like the rest of the projector.
+
+The guard is CApiTinyVoca.APipelineWithAModelOfItsOwnSpeaksAfterAnRpcServerWentAway in
+src/test/cpp/test_c_api.cpp: a model loaded with --rpc against a loopback server, the server stopped,
+then the generator's tiny-voca and VoxCPM2 pairs synthesize (both failed before).
+
+Drop-check on every bump: read the else branch of mtmd_owned_llama_load() in tools/mtmd/mtmd.cpp --
+once it sets mparams.devices itself (to an empty list or the CPU), drop the patch.
+
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -697,6 +697,10 @@ static llama_model * mtmd_owned_llama_load(const char * fname, ggml_backend_dev_
+         mparams.devices      = devs.data();
+         mparams.n_gpu_layers = -1;
+     } else {
++        // an empty list, as --device none: without one the model takes every registered device,
++        // whose backends its context initialises although no layer is on them
++        devs = { nullptr };
++        mparams.devices      = devs.data();
+         mparams.n_gpu_layers = 0;
+     }
+     llama_model * model = llama_model_init_from_user(gdst, mtmd_owned_llama_set_tensor_data, &src, mparams);

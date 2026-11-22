@@ -71,7 +71,9 @@ The remaining items retain the numbering of the 2026-10-15 roadmap referenced by
 Done and therefore deleted here, while comments in the code still name them by number: **1** the
 provenance record (`jllama-build.txt` keys, `jllama-sbom.json`, `docs/patches.md`; CLAUDE.md,
 "Modular natives"), **2** the natives directory as a tested contract (`lib.path`; CLAUDE.md, "Native
-Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Natives jars"), **6** the
+Library Resolution"), **4** export hygiene (the export lists; CLAUDE.md, "Natives jars"), **5** the
+model-backed plain-C smoke (`c_abi` loads, tokenizes and completes a generated model in every modular
+build job; CLAUDE.md, "Modular natives"), **6** the
 signed source archive of a release (CLAUDE.md, "Source archive"; the push of the pinned commit to a
 fork was removed again on 2026-10-25, the owner maintains that fork), **7** layer B, the `jllama_*`
 C API (CLAUDE.md, "The C API"; `docs/c-api.md`), **9** the decision for 6.0.0
@@ -96,12 +98,6 @@ measurements below remain open hardening/coverage work; they do not establish a 
       `pip install --require-hashes`.
 - [ ] BoringSSL's tag pin (`BORINGSSL_VERSION` in upstream's
       `vendor/cpp-httplib/CMakeLists.txt`) remains an upstream follow-up; no downstream override.
-
-### 5. Layer A: model-backed plain-C smoke (B.A)
-
-- [ ] Set `JLLAMA_C_ABI_MODEL` in a suitable CI job and exercise the model-backed half of
-      `c_abi`. The existing plain-C compile/smoke runs without a model; Java/C++/FFM inference
-      coverage does not exercise this particular consumer. macOS remains a static build.
 
 ### 8. Cached/uncached reproducibility measurement (C.3)
 
@@ -145,13 +141,13 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### Deferred API features from the b11800–b11827 range
 
-- **Server-side TTS through `LlamaModel` / the Java transport.** `POST /tts` (b11781, #26603) runs
+- **Server-side TTS through `LlamaModel`.** `POST /tts` (b11781, #26603) runs
   `SERVER_TASK_TYPE_TTS` on a chat model loaded with a TTS mmproj and streams `server_task_result_tts` chunks
   (`audio`, `sample_rate`, `final`; WAV or PCM per `out_type`). `NativeServer` serves it already (classic and
-  attach mode, the route is in upstream's `server_register_routes()`, which `0007` registers). A `LlamaModel.tts(...)` over the C API and a
-  `/v1/audio/speech`-shaped route on `OpenAiCompatServer` would make it reachable without the native
-  frontend; `TextToSpeech` (its own context over `mtmd_helper::gen_audio`) stays the one-shot path. Not before
-  the release.
+  attach mode, the route is in upstream's `server_register_routes()`, which `0007` registers), and
+  `OpenAiCompatServer` serves `/tts` and `/v1/audio/speech` over a `TextToSpeech` (its own context over
+  `mtmd_helper::gen_audio`, one shot). Missing is a streamed `LlamaModel.tts(...)` over the C API on the
+  model's own server context. Not before the release.
 - **Multimodal rerank through `LlamaModel` / the Java transport.** Since b11820 (#29625) upstream's rerank
   route takes `{"text": ..., "image": ...}` items and splices the images through `process_mtmd_prompt`
   (`format_prompt_rerank(..., query_files, doc_files, ...)`, `handle_media()` for the decoding); `NativeServer`
@@ -181,364 +177,263 @@ Kept as a list because each entry names the machine it needs -- the harness is
   configure time), `tools/server/server-connect.cpp` is compiled because `server.cpp` references it, and the
   flag answers with upstream's "not available" message. No plan to bundle a binary.
 
-### From the b11968–b12242 bumps (2026-11-09/10) -- to implement, to decide, to measure
+### Open from the llama.cpp bumps (b11968 onward) -- to implement, to decide, to measure
 
-What the range brought that this library does not use yet, or that changed under it. Done at the bump
-and therefore not listed: predefined TTS voices (`TextToSpeech.getVoices()`, `jllama_tts_voices`, the
-`voice` of a synthesis handed over as upstream now wants it), `ModelParameters.addShard`
-(`--shard`), `setMoeCacheCpuShare` (`--moe-cache-cpu-share`).
+- **Smaller findings of the patch review of 2026-11-19, not fixed:** the engine sets the slot-prompt
+  similarity (`patches/0003`'s accessor) from the caller's thread, which the accessor's comment rules
+  out -- a formal data race with the worker's slot selection over one float, benign in practice;
+  `patches/0008` replaces only `args[0]`, so an `LLAMA_APP_CMD` in the JVM's environment (a JVM
+  started below `llama serve`) leaves the subcommand in a worker's argv, which `NativeServer` then
+  refuses; `--log-prompts-dir` (not exposed in Java) opens its files through a narrow path, the class
+  of `0024`-`0030`.
 
-**Windows, non-ASCII paths: measured, the slot files fixed, the download paths open.** Since b12131 /
-b12132 (#31682, #31681) upstream builds its `std::filesystem::path` and `std::fstream` objects in
-`common/` and `tools/server/` from a plain `std::string`, which Windows reads in the process's
-active code page; its own executables are UTF-8 there through an app manifest (#31329), a library
-inside `java.exe` is not. Measured on 2026-11-10 on Windows 11, code page 1252, through
-`jllama_test.exe` and the C API
-([`docs/handover/local-agent-report-windows-non-ascii-paths.md`](docs/handover/local-agent-report-windows-non-ascii-paths.md)):
-  - **Fixed:** the slot directory (`fs_is_directory`, "not a directory" at load; `patches/0024`) and
-    the checkpoint / draft-state appendix of a slot file (`patches/0025`). Without `0025` an ASCII
-    directory with a non-ASCII file name put the appendix into a second, mis-named file: the save
-    and the restore both reported success and the draft state was gone. An earlier version of this
-    entry said that file could not occur; it could, through the file name. Also fixed, in this
-    library's own streams: the calibration text of `jllama_imatrix`, the legacy output of
-    `jllama_imatrix_merge` and the trainer's `training_file`. `CApiSlotFiles` and
-    `CApiNonAsciiPaths` hold all of it, and the paths that worked before (`-m`, `--mmproj`,
-    `--lora`, `--shard`, the model and matrix the quantizer reads, the GGUF outputs of the imatrix
-    run and the trainer).
-    `patches/0026` adds the last reader: a legacy imatrix file under such a path
-    (`common_imatrix_load_legacy`, a narrow `std::ifstream`), `patches/0027` `--log-file`
-    (`common/log.cpp`, a narrow `fopen`) and `patches/0028` the quantizer's output
-    (`src/llama-quant.cpp`, a narrow `std::ofstream`), and `patches/0029` a `file://` media URL
-    below `--media-path` (`handle_media`, found by the review of PR #612). **Measured on 2026-11-11 on the same machine
-    ([`docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md`](docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md)):** each of `0025`-`0030` turns exactly its own test red when
-    it is removed, and all are green with the 20 patches.
-  - **Open, narrow sites in llama.cpp, a non-ASCII path fails or lands under a mangled name:** the
-    download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
-    `common/`). README names them. A patch, or upstream: not decided.
-  - **Fixed, not a file site:** a value llama.cpp takes from an environment variable
-    (`LLAMA_ARG_SLOT_SAVE_PATH`, `LLAMA_ARG_LOG_FILE`, ...) was what `getenv` returns, the ANSI code
-    page inside `java.exe`, and failed the load before any argument could override it;
-    `patches/0030` reads it as UTF-16 and converts. Measured with the others (without it: "No mapping for the Unicode
-    character exists in the target multi-byte code page").
-  - **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the
-    built-in file tools. The Java layer was measured on 2026-11-11 with
-    Temurin 25 (model, `--log-file`, slots in both shapes, quantizer, imatrix, legacy merge: all work;
-    `NonAsciiPathIntegrationTest` holds them on the Windows Java jobs).
-  - **Open, found by that measurement: an extraction directory with a character outside the ANSI code
-    page cannot be loaded from.** `java.io.tmpdir` / `net.ladenthin.llama.tmpdir` under `tmp-日` on code
-    page 1252: Java extracts the files, `System.load` then names `tmp-?` and fails with "Can't find
-    dependent libraries" (the JVM passes the path in `sun.jnu.encoding`; read from the message, not
-    from the JDK source). Within the code page (`ü` on 1252) it works. The 8.3 short name is no way around it (measured: `System.load` of
-    `C:\Temp\PRFUNG~1\TMP-~1\...\jllama.dll` fails with the long path and the `?` in its message, and a
-    volume may have no short names at all). What is left for `LlamaLoader` is a fallback to a
-    directory inside the encoding; not implemented. The error names the cause since 2026-11-11
-    (`LlamaLoader.unencodablePathHint`: the path is checked against `sun.jnu.encoding` when a load
-    fails) -- measured on the same machine: the hint appears for `tmp-日` with `Cp1252`, and not for
-    a directory with only `ü`, which loads.
-  - **Open, found by that measurement: a model's `--log-file` stays attached after `close()`.**
-    `common_log_main()` is process-wide, so later models of the same JVM keep writing into the file
-    and Windows cannot delete it while the JVM lives. Not a path defect. The C API test detaches it
-    with `common_log_set_file(..., nullptr)`; Java has no call for that.
-  - **A second build directory rewrites the shared natives directory's provenance.** A configure of
-    another build tree (the counter-checks' `build-no00NN`) writes `jllama-build.txt` and
-    `jllama-sbom.json` into `src/main/natives/...` too, so they then name that tree's patch set;
-    reconfigure the main build directory afterwards.
-  - Options if it reproduces: (a) a patch that restores `u8path()` at the affected sites (about 30
-    lines over `common/{common,download,hf-cache,preset}.cpp` and
-    `tools/server/server-{context,mcp,models,tools}.cpp`; upstream removed exactly these, so it has
-    to be refreshed whenever they move); (b) refuse such a path in the Java layer on Windows with a
-    message; (c) report it upstream as the embedding-host half of #31329 -- a library cannot carry a
-    manifest. `setlocale(LC_ALL, ".UTF-8")` would switch MSVC's narrow file APIs to UTF-8 but changes
-    the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently.
+- **A GGUF whose `block_count` is 0 or above 512 ends the process** (found at the b12616 bump,
+  measured at b12631 with a death test over a hand-written llama GGUF with 0 and with 600 blocks): the
+  generic loader checks `hparams.n_layer_all` with a `GGML_ASSERT` (`src/llama-model.cpp`, after
+  reading `LLM_KV_BLOCK_COUNT`), not with an exception, so `LlamaModel` on such a file takes the JVM
+  down instead of throwing. The same block asserts `n_layer_nextn <= n_layer_all` and a known
+  classifier activation. The class of `patches/0035` and `0038` (a file the caller names ends the
+  process); a patch would turn the three into `std::runtime_error`, which the load already reports.
+  Not filed upstream (policy).
 
-**Found while writing tests for the bump (2026-11-10), older than it; fixed the same day**
-- A draft model alone did not speculate (upstream's types default to `none`): the engine now uses a
-  draft model as `draft-simple` when no type is given, and `ModelParameters.setSpecTypes` writes
-  `--spec-type`. `LlamaModelTest#testSpeculativeDecoding` asserts `getDraftTokensTotal() > 0`
-  (model-backed, so its first run is CI's: should CodeLlama and AMD-Llama-135m not draft together,
-  that is the finding).
-- Enum constants no receiver accepts are removed: `PoolingType.UNSPECIFIED`,
-  `RopeScalingType.UNSPECIFIED` / `LONGROPE` / `MAX_VALUE`, `QuantizationType.NVFP4`.
-- The quantizer takes an importance matrix (`jllama_quantize_imatrix`, `LlamaQuantizer`, `Jllama`),
-  nine types need one (`QuantizationType.requiresImportanceMatrix()`), and
-  `LlamaQuantizer.computeImportanceMatrix` / `jllama_imatrix` compute it, with a progress callback
-  that can cancel. Left out of the port of upstream's `tools/imatrix`: the activation sums
-  (`.in_sum`, statistics only), `--process-output`, the perplexity report, intermediate saves, and the tool's
-  `--include-weights` / `--exclude-weights` on the quantizer side. **Compared with upstream's
-  `llama-imatrix`** (b12242, built standalone, the dense and the mixture-of-experts random model,
-  the same text and chunk size): the same tensor names, every `.in_sum2` and `.counts` value
-  identical (worst relative difference 0.0), the same `imatrix.datasets` / `chunk_count` /
-  `chunk_size`. Upstream's file additionally holds an `.in_sum` and a `.stats` tensor per weight and
-  `imatrix.stats_schema`, which the quantizer does not read. The comparison was done by hand; it is
-  not a test, because no CI job builds upstream's tools. **Merging and the legacy format are in**:
-  `jllama_imatrix_merge` / `LlamaQuantizer.mergeImportanceMatrices` add up matrices of one model
-  (GGUF or legacy in, GGUF or legacy out; one input converts). Different chunk sizes are refused
+What the bumps brought that this library does not use yet, or that changed under it and is not
+verified. Done items are not listed (CHANGELOG, `docs/history/llama-cpp-breaking-changes.md`).
+
+**Windows, non-ASCII paths** (since b12131 / b12132, #31682, #31681, upstream builds its
+`std::filesystem::path` and `std::fstream` objects in `common/` and `tools/server/` from a plain
+`std::string`, which Windows reads in the active code page inside `java.exe`; patches `0024`-`0030`
+fix every site measured, [`docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md`](docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md)):
+- **Open, narrow sites in llama.cpp where a non-ASCII path fails or lands under a mangled name:** the
+  download paths (`-m` as the target of `--model-url`, `LLAMA_CACHE`; several files under
+  `common/`). README names them. Options: (a) a patch that restores `u8path()` at the affected sites
+  (about 30 lines over `common/{common,download,hf-cache,preset}.cpp` and
+  `tools/server/server-{context,mcp,models,tools}.cpp`; upstream removed exactly these, so it has to
+  be refreshed whenever they move); (b) refuse such a path in the Java layer on Windows with a
+  message; (c) report it upstream as the embedding-host half of #31329 -- a library cannot carry a
+  manifest. `setlocale(LC_ALL, ".UTF-8")` would switch MSVC's narrow file APIs to UTF-8 but changes
+  the C locale of the whole JVM (the UCRT is shared), so it is not an option to take silently. Not
+  decided.
+- **Not measured:** `--models-dir` in router mode, `-hf`, the MCP configuration file and the built-in
+  file tools. Since 2026-11-19 the load runs llama.cpp's models handler, so `-hf` and `--model-url`
+  without `-m` reach the default Hugging Face cache of `LlamaModel` too: `hf-cache.cpp` builds its paths
+  from `USERPROFILE` / `LOCALAPPDATA` and turns them back into strings with `.string()` (the code
+  page), which `ggml_fopen` then reads as UTF-8 -- under a Windows user name outside ASCII the download
+  is likely to succeed and the load to fail (the review of 2026-11-19, from reading). The same review
+  found BoringSSL's file BIO (`crypto/bio/file.cc`, a narrow `fopen`) behind `--ssl-key-file` /
+  `--ssl-cert-file`; BoringSSL is no llama.cpp source, so `llama/patches/` cannot reach it. (`0039`
+  covers the argument files and the lookup caches.)
+- **An extraction directory with a character outside the ANSI code page cannot be loaded from.**
+  `java.io.tmpdir` / `net.ladenthin.llama.tmpdir` under `tmp-日` on code page 1252: Java extracts the
+  files, `System.load` then names `tmp-?` and fails (the JVM passes the path in `sun.jnu.encoding`).
+  The 8.3 short name is no way around it (measured). The error names the cause
+  (`LlamaLoader.unencodablePathHint`); what is left is a fallback to a directory inside the encoding,
+  not implemented.
+- **A second build directory rewrites the shared natives directory's provenance.** A configure of
+  another build tree (the counter-checks' `build-no00NN`) writes `jllama-build.txt` and
+  `jllama-sbom.json` into `src/main/natives/...` too, so they then name that tree's patch set;
+  reconfigure the main build directory afterwards.
+
+**Deliberately left out or deferred**
+- Of upstream's `tools/imatrix`, `jllama_imatrix` does not port the activation sums (`.in_sum`,
+  statistics only), `--process-output`, the perplexity report, intermediate saves, and the tool's
+  `--include-weights` / `--exclude-weights` on the quantizer side. Different chunk sizes are refused
   where upstream warns and goes on.
-- Rank pooling on a model without a classification head is refused at load (upstream answers the
-  first value of the pooled embedding as the score). The check reads the tensor list of the model
-  file and gives a split model the benefit of the doubt.
-- The random test models cover a decoder (`llama`), a mixture of experts, an encoder with an optional
-  classification head (`bert`), a decoder with an MTP block (`hy_v3`), and six vocabularies: bytes,
-  BPE with merges, SentencePiece without and with byte pieces, Unigram (`t5`) and RWKV. Not built:
-  the PLaMo vocabularies, an encoder-decoder (T5 itself: the Unigram vocabulary sits on the `llama`
-  decoder here), RWKV as an architecture, the hybrid architectures.
-- **A SentencePiece vocabulary without byte pieces cannot tokenize a character it has no piece
-  for**: llama.cpp's lookup of the byte piece throws and the message is the map's
-  (`unordered_map::at`). An error and not a crash, pinned by `CApiTokenizers`; a converted
-  SentencePiece model always has the byte pieces, so this is a trap of hand-made vocabularies. The
-  message could name the cause (catch `std::out_of_range` around the tokenization in the engine).
-- **A SentencePiece round trip comes back behind a space** when the tokens carry no `<s>`
-  (`detokenize(tokenize("cat"))` is `" cat"`): upstream's behaviour, pinned by `CApiTokenizers`.
-  Decided: `LlamaModel.decode` says so in its Javadoc and stays what upstream answers; a caller who
-  needs the text back strips the one leading space.
-- **A model with MTP layers does not draft unless `--spec-type draft-mtp` is given.** Decided: it
-  stays explicit (`ModelParameters.setSpecTypes(SpecType.DRAFT_MTP)`, said in its Javadoc). A draft
-  model is a file the caller names, so using it is what was asked for; MTP layers come with the
-  model, and turning them on by default would change the speed and memory of every load of such a
-  model without a request for it -- upstream's own default is `none` for the same model.
-- **A grammar aborts the process when the model's end-of-generation byte is part of the generation
-  prompt** (`GGML_ABORT`, `llama-grammar.cpp:1527`), met while writing `CApiStructured`: the random
-  model's default EOS is the byte `>`, which the chat template's prompt contains. The fixture uses
-  another EOS (4, a control token). A real tokenizer does not have a printable EOS, so this is a
-  trap of the test models, not a defect to report.
-- **The quantization sweep takes 9 s on x86-64, and the model is not why.** Measured per type:
-  IQ1_S 2.8 s, IQ3_XXS 1.6 s, IQ2_XS 1.1 s, every other type below 0.7 s -- the one-time
-  construction of ggml's IQ codebook tables, which no smaller model avoids. Under qemu
-  (`test-cpp-linux-s390x`) that will be minutes; watch its first run.
-- `setMoeCacheMib` on a host without a GPU fails the load ("MoE cache requires a GPU backend"); its
-  Javadoc is corrected.
-
-**Build and CI**
-- **CUDA 13.5: built, not measured on a GPU.** Both CUDA jobs install 13.5 and no longer pass
-  `-DGGML_CUDA_CCCL_VERSION` (13.5 bundles CCCL 3.5), as upstream's release builds since b12169
-  (#31788). Run 42783058488 (2026-11-10) built both modules: Linux `cuda-toolkit-13-5-13.5.0-1`,
-  Windows `redistrib_13.5.0.json`, which `CUDA_REDIST_MANIFEST` pins now. The Linux job's nvcc
-  passes went through sccache without an error or a retry on a cold cache (2622 misses, the C/C++
-  TUs 100 % hits, 100 minutes); the next run's table says whether the warm cache pays. Open:
-  - whether `option(BUILD_TESTING ... OFF)` before the first `FetchContent_MakeAvailable()` is still
-    needed now that ggml no longer fetches CCCL (it stays; removing it is a change of its own);
-  - `jllama-sbom.json` names the bundled CCCL from the toolkit's `cuda/std/__cccl/version.h`
-    (`CCCL_VERSION`, one number). The probe is tested with CCCL's real header in a stand-in
-    directory, not against an installed toolkit; `merge-native-artifacts.sh` fails `package` when
-    a CUDA artifact's BOM names no CCCL version, so the first run says whether the path is right.
-  The driver floor moves with the toolkit for GPUs newer than Blackwell only (`121-virtual`, the one
-  PTX-only target); README says 13.5.
-- **The SYCL modules build the XMX (DPAS) code paths now** (`GGML_SYCL_SUPPORT_XMX`, default ON,
-  b11980 #31125). Nothing to change; read the first Publish run's two SYCL jobs for a compiler that
-  rejects the new kernels, and the module's dependency list for a new import.
-- **`ggml-base` is compiled with `-fp-model=precise` under `icx`/`icpx`** (upstream's own change in
-  `ggml/src/CMakeLists.txt`). A module-only SYCL build links the ggml-base of its own configure but
-  ships only the module, so nothing changes in a jar.
-- **mtmd is a unity build** (#31760, batches of 16 model sources). Follows by itself; if a
-  Windows/sccache job shows a miss rate for `mtmd` it did not have, that is why.
+- The random test models do not build the PLaMo vocabularies, an encoder-decoder (T5 itself: the
+  Unigram vocabulary sits on the `llama` decoder here) or RWKV as an architecture.
+- **`LLAMA_MOE_RANDOM_ROUTING`** (b12515, #29539) is an environment variable of the process and
+  reaches every model the JVM loads; it is for throughput measurements only (the answers are not
+  valid) and has no setter here on purpose.
 - **RPC over more than two ranks / NCCL** (b12079 #28967): the CUDA module would link NCCL only if
-  the toolkit image has it (`find_package(NCCL)`, unchanged). Nothing ships it; `RpcServer` serves
-  the pairwise path. Only relevant if someone wants multi-node tensor parallelism from Java.
+  the toolkit image has it; nothing ships it, `RpcServer` serves the pairwise path. Only relevant if
+  someone wants multi-node tensor parallelism from Java.
+- **`mtmd_helper_resampler`** (b12236 #31964), a streaming resampler for mono F32 PCM: a use here
+  would be a speaker reference handed in as PCM at another rate, which only a PCM overload of
+  `TextToSpeech.synthesize` would need.
+- **`/tts` on `OpenAiCompatServer`** leaves out `stream` (refused: `TextToSpeech` has no streaming
+  entry point, the audio is answered in one piece) and a multipart `speaker_ref` upload.
 
-**API surface not exposed yet**
-- **New audio generation pipelines: Chatterbox (b12097 #30993) and Drama-3 (b12116 #31613)**,
-  `MTMD_GEN_AUDIO_TYPE_CHATTERBOX` / `DRAMA3`. `TextToSpeech` drives `mtmd_helper::gen_audio`
-  generically, so they are expected to work; neither was loaded. `TtsPipelineIntegrationTest` is
-  the test (see "Tests that exist and have not run" below).
-- **Nemotron 3.5 Transcribe (b12087), MageVL-Cowork (b12192), Qwen3-VL's video prompt format
-  (b12098, `MTMD_VIDEO_TEMPLATE_QWEN3VL`)**: upstream-side model support, reached through the
-  existing multimodal paths. No code here; candidates for `AudioInputIntegrationTest` /
-  `MultimodalIntegrationTest` models.
-- **Reference-counted prompt checkpoints** (b12141 #30137) and **the MoE expert cache's CPU share**
-  (b12191): both internal. Whether upstream exports a hit rate
-  for the cache that `ServerMetrics` could carry was not looked at.
-- **Speculative decoding state** (b12091 #30141): covered. `CApiSlotFiles` saves and restores a slot
-  with a draft model, `CApiMtp` one of a model drafting with its MTP block (the restored slot
-  answers the same request the same way).
+**Left open by the review of 2026-11-18** (two review agents over the branch; the defects they
+found are fixed, these are what is left)
+- **A command line can still end the process.** `--help`, `--usage`, `--version`, `--list-devices`,
+  `--cache-list` and `--completion-bash` call `exit(0)` inside the parse (`patches/0031` keeps them
+  on purpose). No `ModelParameters` setter writes one, but the raw argv of `jllama_model_load`,
+  `FfmLlamaModel.load(String[])` and a `NativeServer` reaches them; refusing them in the engine (or
+  making them answer without exiting) is undecided.
+- **A refused parse does not undo its log side effects.** `--log-disable` pauses the process-wide
+  log for good and `--log-colors` stays switched; `patches/0031` restores the parameters, not
+  `common_log`.
+- **Keys of `/etc/llama.cpp/config.ini`** (`common_params_apply_system_config`, applied inside every
+  parse): the log keys bypass the log-file owner record and the scan for `--log-disable`; an `rpc` key
+  connects to its server inside the parse, under the log lock (the argv and `LLAMA_ARG_RPC` no longer
+  do, see "RPC backend"), and `prepare_argv`, which does not know that server, counts it stale on the
+  next load; a `version` or `list-devices` key would `exit(0)`. A file an administrator writes for the
+  host, not one the caller hands in; not handled (the review of 2026-11-19).
+- **`jllama_configure` sets the thread counts on the caller's thread** (`llama_set_n_threads`), while
+  the worker reads them in `llama_decode`: a data race on two ints, formally undefined and in practice a
+  decode that runs with the old or the new count. A fix would post the change to the worker as upstream
+  posts every other change of the context; not done (the test-gap review of 2026-11-19, from reading;
+  no TSAN run). `patches/0003`'s similarity accessor has the same shape and is recorded there.
+- **The models handler honours its environment** (since the load runs it, 2026-11-19):
+  `LLAMA_ARG_HF_REPO`, `LLAMA_ARG_MODEL_URL` and `LLAMA_ARG_DOCKER_REPO` in the JVM's environment
+  reach every `LlamaModel` load as llama-server takes them -- `-hf` replaces an explicit `-m`, and a
+  `--model-url` downloads onto the `-m` file when no `.etag` matches. Upstream's semantics, the same
+  as for every other `LLAMA_ARG_*` variable the parse reads; not changed, named in the README.
+- **A vocabulary gap in the server's own `--reasoning-budget-message`** is answered as
+  `JLLAMA_STATUS_INVALID_REQUEST` (the completion wrapper takes every error of the task's setup for
+  the request's).
+- **The `--log-file` scan reads by name, not by position**: a value of another option that is
+  literally `--log-file` is taken for the option.
+- **The vocabulary-gap message** does not reach the string fields the request schema tokenizes
+  (stop strings, `preserved_tokens`, a string `logit_bias`): those still answer `unordered_map::at`.
+- **That a freed model's teardown lines reach its log file** has no test: the random models and the
+  draft model log nothing at teardown, even at `-lv 4`.
 
-**From b12453 to b12463 (2026-11-16)** -- 10 upstream commits, pinned by commit (not tagged yet);
-every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
-- **YuE2-3B** (#32369): stereo WAV output, `cfgScale` / `flowSteps` and the model's own frame cap are
-  passed through every layer and tested with the generator's ZONOS3 pair (mono, both fields refused)
-  and the WAV writer (stereo); no YuE2 pair in `models.csv` and no generator for one, so a stereo
-  synthesis and the two fields' effect are not tested end to end.
+**Left open by the changes of 2026-11-19** (small batches, the slot file's LoRA section, RPC outside
+the log lock)
+- **Two slots drafting into a small batch have no deterministic guard.** `patches/0033` gives each
+  slot at most its share of the batch; `CApiBatchSize` holds it with one slot (`-b 3` next to the
+  default draft of three tokens aborts without the patch), while two slots on a batch of four reach
+  the abort only when both draft long at the same step, which the random model does not do on
+  demand.
+- **The slow-server test of the log lock is POSIX only**
+  (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`): its delaying proxy uses BSD
+  sockets and `poll`; the code it guards is the same on Windows.
+- **The RPC registry mutex covers this library's reads and writes, not llama.cpp's.** ggml's backend
+  registry has no lock; `rpc_support.hpp` serialises every registration and every read it makes
+  (and the engine's parse takes the mutex before the log lock), but a model load running at the same
+  time on another thread enumerates the devices inside llama.cpp without it. A first registration of
+  a new RPC server next to such a load can still race on the registry's vectors.
+- **A second load of a dead RPC server whose first model is still open ends the process.**
+  `ggml_backend_rpc_get_device_count`, with which `register_server` re-checks a known endpoint,
+  reuses the dispatcher the open model keeps alive, and a failed send there is upstream's
+  `RPC_STATUS_ASSERT` -- the same class as a server lost mid-inference (upstream has no error path).
+- **`LLAMA_ARG_RPC` is read with `std::getenv` by `prepare_argv`**, ANSI on Windows, while the parse
+  reads it as UTF-8 (`patches/0030`); only a non-ASCII host name would read differently.
+- **`patches/0033`'s share assumes one row per slot that does not draft**: a slot that streams audio
+  (a realtime transcription) adds its embedding rows, so on a very small batch the others' drafts
+  can still overflow it.
+- **`set_slot_prompt_similarity` from a caller thread** (`patches/0003`, used by `wake_server` and
+  `configure`) writes the scheduler's float while the server loop reads it: a benign data race that
+  ThreadSanitizer would report.
+- **A slot file's LoRA section matches adapters by the path the server was given.** The same adapter
+  file loaded under another spelling of its path (relative against absolute, a symbolic link) is
+  another adapter to the restore, which then refuses a state computed with it at a scale other
+  than 0.
 
-**From b12445 to b12453 (2026-11-16)** -- 8 upstream commits, pinned by commit (not tagged yet);
-every patch applies unchanged, every drop-check read: all still needed. Open, none of it blocking:
-- **Fish Audio S2** (#32330): the transcript of the speaker reference is passed through every layer
-  (`SpeechParameters.speakerReferenceText`, `jllama_tts_options`, `FfmTextToSpeech`, `/tts`'s
-  `speaker_ref_text`); no Fish S2 pair in `models.csv` and no generator for one, so only the
-  pass-through and an older header's struct are tested (`CApiZonos3`), not a Fish S2 prompt.
-
-**From b12431 to b12445 (2026-11-16)** -- 14 upstream commits, pinned by commit (not tagged yet);
-every patch applies unchanged, every drop-check read: all still needed. Nothing open.
-
-**From b12416 to b12431 (2026-11-16)** -- 15 upstream commits, pinned by commit (upstream has
-tagged the number); every patch applies unchanged, every drop-check read: all still needed. Open, none
-of it blocking:
-- **TTS `speed` and `loudness`** (#32020): done -- `SpeechParameters` / `jllama_tts_options` carry
-  them with top-p and the repetition penalty through `TextToSpeech`, the C API, `FfmTextToSpeech` and
-  both speech routes of `OpenAiCompatServer`; ZONOS3 Mini is in `models.csv`
-  (`ZonosTtsIntegrationTest`), and the C++ suite generates a random ZONOS3 pair (`CApiZonos3`: speed
-  and loudness spoken and changing the audio, verified red without the engine passing them on). Not
-  measured locally with the real model (the sandbox could not download it): the first CI run is the
-  check that a slower speed speaks longer and a loudness changes the real audio.
-- VibeVoice-ASR and higgs v3 STT have no model in `models.csv`.
-
-**From b12408 to b12416 (2026-11-15)** -- 8 upstream commits, pinned by commit (two past the tag
-b12414). `0021` cut to its `init()` hunk (upstream #30367 took the other), `0003` pointed at the moved
-member, `server-slot-sched.cpp` and `vendor::hash` added to the build, `output_config.effort` mapped in
-the Java Anthropic route. Open, none of it blocking: nothing.
-
-**From b12387 to b12408 (2026-11-15)** -- 21 upstream commits, pinned by commit (one past the tag
-b12407); every patch applies unchanged, every drop-check read: all still needed. No source change
-here; a grammar trigger of an unknown type no longer ends the process, and a streamed response keeps the connection (two `CApi` tests). Open, none of
-it blocking: Inkling 2 (#32217, text and vision) is not exercised by any test here.
-
-**From b12316 to b12387 (2026-11-14)** -- 71 upstream commits, pinned by commit (no tag yet);
-`0003` and `0015` refreshed (context), the other 18 patches unchanged, every drop-check read: all
-still needed. Done with it: the engine gives its wake back (`CApiSleep`), RPC fixture on protocol
-10, `localhost` as same-origin in `OriginGuard`, `allowPrivateMediaUrls()`, `setDefragThold`
-removed, `allowUnauthenticatedTools()`, two `SpecType` constants, `103-real` in both CUDA lists.
-Open, none of it blocking:
-- **Video input: done over llama.cpp's own decoder** (the `ffmpeg` / `ffprobe` programs):
-  `ContentPart.videoFile` / `videoBytes` / `videoUrl`, `LlamaModel.supportsVideo()`,
-  `modalities.video` in `OpenAiCompatServer`'s `/props`, LangChain4j's `VideoContent`; `CApiVideo`
-  and `VideoInputIntegrationTest` hold it, with ffmpeg installed in the two Linux test jobs.
-  **Decided 2026-11-14: this project builds no decoder of its own; frames come from an existing
-  library.** For that, llama.cpp b12387's host decoder (`server_context::set_video_decoder`) is
-  passed through: `jllama_model_load_video` in the C API, `callback.VideoDecoder` / `VideoStream`
-  and `LlamaModel(parameters, progress, decoder)` in Java (`CApiVideoDecoder`,
-  `VideoDecoderIntegrationTest`, both with a stand-in decoder and without ffmpeg). On Android the
-  `llama-android` AAR brings `MediaRetrieverVideoDecoder` over the platform's
-  `MediaMetadataRetriever`, and the example app attaches videos with it. Open:
-  - **No device run with a model.** `OnDeviceVideoDecoderTest` reads the clip on the CI emulator;
-    no job has a vision model on a device, so "a video answered on a phone" is unmeasured -- as is
-    the time `getFrameAtIndex` takes per frame on real hardware.
-  - **The soundtrack** (`read_audio` of the C decoder, for LFM3-Omni) is not in the Java interface.
-  - **`llama-ffm`** has no binding for `jllama_model_load_video`.
-  - **The whole video is one `byte[]`** (base64 in the request, a copy for the decoder): fine for
-    clips, not for long recordings.
-  - Not measured: the answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI
-    checks that the frames arrive, with SmolVLM.
+**Not tested, for want of a model or a case**
+- **ZAYA1 with real weights** (b12521, #32071): the generator's model has the architecture's shapes
+  at a hundredth of the width; the 8B checkpoint would be ~16 GB as F16.
+- **Domyn Edge with real weights** (b12568, #32559): `CApiDomynEdge` runs the generator's three-layer
+  model (two head widths, the window, the NoPE layer, the sandwich norms); on 2026-11-20 Hugging Face
+  had no GGUF of it, only `domyn/Domyn-Edge-*` as safetensors (4B, ~8 GB as BF16) and MLX / LiteRT
+  quantizations, so a real checkpoint means a conversion with upstream's `convert_hf_to_gguf.py`.
+- **The realtime transcription prompt for a model whose preset puts the audio first** (VibeVoice-ASR,
+  `media_first`) goes in after the audio (b12515, #32507); no generated model has that preset, so
+  only the LFM3 order is tested.
+- **Speech pipelines without real weights in CI** (all reach `TextToSpeech` through upstream's
+  helper): Qwen3-TTS's ICL mode (#32438: CI's mmproj, `ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF` at
+  `ca27d74`, predates it and `TtsIntegrationTest` holds the fallback; a reconverted mmproj carries the
+  reference encoder as `a.gen.enc.*` tensors -- none in llama.cpp's format on 2026-11-17; moving the
+  pair flips that test, which then has to assert that the transcript changes the audio); MiniMax
+  Music 3 (#32435, `MiniMax-Music3-GGUF` 9.1 GB + 6.6 GB, licence "other") and Kokoro's `tts_dict`
+  (#32397), YuE2-3B (#32369, 5.4 GB, CC-BY-NC-4.0) and Fish Audio S2 (#32330, `s2-pro-GGUF` 6.3 GB,
+  licence "other") -- each covered by the generator (`CApiMusic3`, `CApiTtsDict`, `CApiZonos3`) on
+  random weights only; **VoxCPM2** (b12531, #32443; `CApiVoxCpm2` on a random pair): upstream's
+  `docs/multimodal/tts.md` converts `openbmb/VoxCPM2` (2B) itself, ggml-org published no pair, and the
+  third-party `*VoxCPM2-GGUF` repositories on Hugging Face were not checked against llama.cpp's
+  format on 2026-11-19 -- a pair in CI's set would also exercise the real cloning path; and **Drama-3** (b12116 #31613): the smallest pair is 14.6 GB
+  (`mradermacher/drama-3-GGUF`, research licence), so `TtsPipelineIntegrationTest` runs the contract
+  on it by property only. Its rows, should a runner for it exist: `drama-3.Q2_K.gguf` sha256
+  `10c87623811b8948806801c8263b3d896f3cd751067d14eeddf5ba6c6732fc75`, `drama-3.mmproj-Q8_0.gguf`
+  sha256 `dc7fe995f67a68f375d86b8f0ad6fe2d8b4761210a73dca9bc49768761edcc2f`, both at commit
+  `690a670e47fb6bdd3ff5683b9f7dca9338aad448`.
+- **Kokoro has no generator**, decided against for now: `tools/mtmd/models/kokoro.cpp` fixes the
+  predictor and text width at 512 (`KOKORO_N_HIDDEN`), 9 harmonics, an ISTFT of 20/5 and 300 samples
+  per F0 step, so a random pair could not be small, and the host reads its LSTMs itself (about 120
+  coupled tensors). The real pair covers the pipeline in CI.
+- **Hibiki has no generator** (b12619, #32491): Kyutai's full-duplex speech translation, a Moshi
+  backbone (`moshi`) with a depformer over the Mimi codes and a Mimi encoder for the audio it listens
+  to, served on `NativeServer`'s `/v1/realtime` only (its pipeline refuses a text prompt and a speaker
+  reference, so `TextToSpeech` cannot drive it). What a generated pair would let a test hold: the
+  duplex conversation through the attached server (the first audio opens a response that runs until
+  it is cancelled), and `TextToSpeech` refusing the pair by name.
+  The Pocket TTS generator already writes a Mimi decoder; the encoder, the depformer's acoustic delay
+  of two frames and the backbone are new. No Hibiki conversion is in `models.csv`.
+- **Parakeet has no generator** (b12628, #32722): llama.cpp fixed an out-of-bounds read in the
+  relative-position scores of the Parakeet encoder (`tools/mtmd/models/parakeet.cpp`, two views over
+  the scores merged into one with the diagonal stride), which nothing here exercises -- no Parakeet
+  conversion is in `models.csv`, and the generator writes no FastConformer (subsampling convolutions,
+  relative-position attention, the convolution module). A generated projector would let a test hold
+  that the encoder's embeddings of a clip do not depend on what lies past its last frame.
+- VibeVoice-ASR and higgs v3 STT have no model in `models.csv`; Nemotron 3.5 Transcribe (b12087),
+  MageVL-Cowork (b12192), Qwen3-VL's video prompt format (b12098), Gemma 4's audio stream (b12237) and
+  Inkling 2 (#32217) are reached through the existing multimodal paths and exercised by no test here.
 - **`draft-dflash2` / `draft-lilicorr`** load on the random test model like `draft-simple`
   (`CApiEnumSweep`); what they draft with a real draft model of their architecture is unmeasured,
   and the generator writes no such model.
-- **Not measured, and not planned:** the CUDA changes (SM103 kernels, few-row MMQ, NVFP4 prefill;
-  decided 2026-11-14). Not measured: the Vulkan flash attention for Intel on hardware; the NEON 4x4 `sgemm` tile on aarch64 (CI builds and runs
-  it, no benchmark).
+- **The `lfm3-d1` decision packing** (b12525, #32553): up to 16 questions of a `/v1/systemone` request
+  in one pass, kept apart in the full-attention mask. No model in `models.csv` has the type, and the
+  generator writes only `openjev` decision models. The test that would mean something: a generated
+  LFM3 with `lfm3.attention.causal = false` (llama.cpp gives it no memory, the only case the
+  decision groups reach the mask) and full-attention layers only (the mask is not applied to the
+  sliding-window and convolution layers), a `systemone` template in the D1 layout
+  (`<|startoftext|><|im_start|>user\n`, then `QUESTION:\n` per packed question), labels A..Z --
+  and the assertion that a question's distribution does not change when another question of the
+  set changes its text at the same token length (the positions stay, only the mask can keep them
+  apart). Checked 2026-11-18 and left for its own session: the generator needs the non-causal,
+  full-attention LFM3 variant and the template first.
+- **Upstream's Windows release builds with LLVM 22.1.8** (b12525, #32548, from Chocolatey); the
+  Windows CPU job here takes the image's clang. `patches/0017` keeps either building; following
+  upstream's version would be a decision of its own (sccache, the image's VS-bundled clang 22).
+- **The F32 accumulation** (b12309) needs a context long enough to overflow F16; not tested.
+- **`OriginGuard`** has no browser test (the rules are tested over a socket), and unlike upstream it
+  has no page of its own to let a cross-site navigation through.
+- **The 8-bit float KV cache** (`CacheType.F8_E4M3`, #31922): memory and quality against `q8_0` on
+  a real model, and any GPU backend, are unmeasured; the CPU path is tested on a generated model.
 
-**From b12309 to b12316 (2026-11-12)** -- 7 upstream commits, pinned by commit; `0006` refreshed
-(one hunk less), the other 19 patches unchanged. The WebUI bundles `llama-brand`'s logo and favicons
-now (CC BY-NC 4.0 plus the grant in its `BRAND-USAGE.md`); upstream's `package.json` follows that
-repository's `master`, so the lockfile's commit, and with it the license texts, can move at any
-bump. Not measured: the OpenCL module's decomposed flash attention on an Adreno GPU (#32046) and the
-CUDA change (#32067).
+**Video input** (b12387, decoded by llama.cpp's ffmpeg or a host decoder)
+- **No device run with a model.** `OnDeviceVideoDecoderTest` reads the clip on the CI emulator; no
+  job has a vision model on a device, so "a video answered on a phone" is unmeasured -- as is the
+  time `getFrameAtIndex` takes per frame on real hardware.
+- **The soundtrack** (`read_audio` of the C decoder, for LFM3-Omni) is not in the Java interface.
+- **The whole video is one `byte[]`** (base64 in the request, a copy for the decoder): fine for
+  clips, not for long recordings.
+- Not measured: the answer quality of a real video model (Qwen3-VL, LFM3) on a real clip; CI checks
+  that the frames arrive, with SmolVLM.
 
-**From b12292 to b12309 (2026-11-11)** -- 17 upstream commits, pinned by commit (no tag yet); 20
-patches unchanged. Done with it: the quantizer records the file name of the importance matrix, not
-its path (as upstream's tool since #32000); `NativeServerCors` holds `--cors-origins` on the
-embedded server (#32098) and `OpenAiCompatServer` applies the same rules (`OriginGuard`); a chat
-template with the Jinja additions (#32072) renders. Open: `OriginGuard` has no browser test (the
-rules are tested over a socket), and unlike upstream it has no page of its own to let a cross-site
-navigation through. Not testable here: the `tts` template normalizer (no generated speech model)
-and the F32 accumulation (needs a context long enough to overflow F16). Not measured: the CUDA,
-ROCm, Vulkan and Metal changes on a GPU.
+**Upstream's, not patched here**
+- **Audio stacking** (measured at b12493 against the real Ultravox pair): llama.cpp stacks the 1500
+  encoder frames of a chunk with `build_stack` (`mtmd-graph.cpp`), which pads with `GGML_PAD` -- a
+  bit-mask rounding that is right only for a power of two -- and counts the embeddings first as
+  `align(3000, stack) / stack / 2`. Ultravox v0.5 (stack 8, stride 10240) gets 187 per chunk from
+  both and drops the last 4 frames (80 ms) Python's `StackAudioFrames` keeps (188). A projector whose
+  stride is a power of two (a Whisper encoder 512 or 1024 wide, stack 8) gets 188 from the graph and
+  aborts the process with "Invalid number of output tokens". Guards:
+  `CApiAudio.AStackFactorThatDoesNotDivideTheFramesKeepsUpstreamsCount` and
+  `AStackStrideThatIsAPowerOfTwoAbortsTheProcess`, the second a death test that turns red once
+  upstream fixes it. A local patch (count and pad both `ceil(1500 / stack)`) would add one embedding
+  per chunk for Ultravox v0.5 and was not made.
 
-**From b12289 to b12292 (2026-11-11)** -- 3 upstream commits (Vulkan, WebGPU, upstream's
-`test-backend-ops`); 20 patches unchanged, nothing in this library's sources. Not measured: the
-Vulkan module on a GPU with `VK_NV_cooperative_matrix2` (the dequantized KV cache in flash
-attention, #31526), which no runner has.
-
-**From b12283 to b12289 (2026-11-11)** -- 6 upstream commits (CUDA kernels, upstream's tests, two
-WebUI components); 20 patches unchanged, nothing in this library's sources. Not measured: the CUDA
-module on a GPU (FP8 KV cache #28413, the new flash-attention cases, MMVF for BF16; on the CPU
-`CApiFp8Cache` runs the cache on a generated model with cache scales), and its import
-list with `cublasLt` linked directly, which the package job of the first run prints.
-
-**From b12242 to b12283 (2026-11-11)** -- 41 upstream commits; 15 patches unchanged, `0015`
-reduced, `0027` and `0028` new.
-- **8-bit float KV cache** (`--cache-type-k/-v f8_e4m3`, #31922): `CacheType.F8_E4M3`; the enum
-  sweep loads the random model with it and answers on the CPU. Not measured: memory and quality
-  against `q8_0` on a real model, and any GPU backend.
-- **`--tts-lang` / `--tts-voice`** (#32022, the server's defaults for `/tts` and
-  `/v1/audio/speech`): `ModelParameters.setTtsLanguage` / `setTtsVoice` for `NativeServer`, and
-  `OpenAiServerConfig.speechLanguage` / `speechVoice` for `OpenAiCompatServer`
-  (`OpenAiCompatServerSpeechTest`, model-free). The standalone launcher has them as
-  `--tts-lang` / `--tts-voice` next to `--tts-model` + `--tts-mmproj`, which load a `TextToSpeech`
-  beside the model (`OpenAiServerCliTest`); that the launcher then really speaks was not run with
-  a speech model here -- no test starts `main` with one.
-- **Realtime output voice and language** (`session.update` `audio.output.voice/language`, refused
-  once the conversation started): `RealtimeNativeServerIntegrationTest` has the case, **written
-  without the model**; its first run is this bump's Publish run.
-- **ggml-rpc client half of `patches/0015` is upstream's** (#30415). A device lost during a
-  computation still aborts the process; the server half (stop, COMM_INIT bind address) stays ours.
-- **SYCL toolchain 2026.2** (Deep Learning Essentials 2026.2.0, oneDNN 2026.1.0, Level Zero
-  1.34.0, as upstream's release jobs). The run-time DLL names of the Windows module (README names
-  `sycl9.dll`, `mkl_sycl_blas.6.dll`) are read off the package job's import list after the first
-  run, not known before it.
-- **WebUI**: 22 more npm packages (CodeMirror / Lezer, MIT), license texts regenerated.
-
-**Generated models for paths no CI model reaches (2026-11-11)** -- four additions to
-`tiny_llama_gguf.hpp`, each with a C API test that runs in every `C++ Tests` job:
-- a sliding-window decoder (`cohere2`), whose slot file carries context checkpoints -- the
-  checkpoint half of `patches/0025`, unmeasured until now;
-- a recurrent model (`mamba`): cached prompt and slot save / erase / restore;
-- a decision model (`openjev`) for `/v1/systemone`;
-- an ultravox-style audio projector: a WAV clip in a raw prompt and in a chat message.
-`SystemOneIntegrationTest`'s decision half runs in CI since upstream's `tinylaya-for-testing-Q8_0.gguf`
-joined `models.csv` (feature `decision`, 97 MB, Apache-2.0, decision type `laya`; **not run locally**:
-Hugging Face was not reachable from the sandbox it was added in, so the first Publish run is its
-measurement). Open: `AudioInputIntegrationTest` still skips itself everywhere -- an audio pair is
-~1 GB, or the generator's files are written by a build step the Java tests can read. Not decided.
-And one finding for upstream, not
-filed: an ultravox projector whose stack factor does not divide 1500 aborts the process on the first
-clip ("Invalid number of output tokens", expected 187, got 188) -- whether a real ultravox GGUF
-(stack factor 8) reaches that was not checked.
-
-**From b12233 to b12242 (2026-11-10)** -- nine upstream commits, all 13 patches unchanged, no change
-in the request fields, their limits or the response keys.
-- **`POST /tts` and `/v1/audio/speech` on `OpenAiCompatServer`**: served (`SpeechBackend`, over a
-  `TextToSpeech` of its own; `/tts` with `speaker_ref_b64`, `n_predict`, `top_k`, `seed`,
-  `temperature`, `pcm` as float and `pcm16`). Left out: `stream` (refused -- `TextToSpeech` has no
-  streaming entry point, the audio is answered in one piece), a multipart `speaker_ref` upload, and
-  `top_p` / `repeat_penalty`, which `TextToSpeech` does not take.
-- **`mtmd_helper_resampler`** (b12236 #31964), a streaming resampler for mono F32 PCM. Upstream uses
-  it for realtime input at another rate than the model's. A use here: `TextToSpeech` takes a
-  speaker reference only as a file upstream decodes; a caller holding PCM at another rate has no
-  entry point. Only worth it with a PCM overload of `synthesize`.
-- **Gemma 4 audio input as a stream** (b12237 #31965): upstream-side, through the realtime route of
-  `NativeServer`. A candidate model for `AudioInputIntegrationTest`; nothing to change here.
-- **`response_format` next to `tools`** (b12242 #31956): `CApiStructured` pins the whole answer
-  being constrained, hermetically, and `ToolCallingIntegrationTest` with the tool model (first run:
-  CI's). Whether the hermetic test is red before b12242 was not measured (the build tree was already
-  at the new tag).
-- **The realtime route's `instructions`, `output_modalities` and `max_output_tokens`** in
-  `session.update` (b12239 #31978): `RealtimeNativeServerIntegrationTest` has the cases (the
-  session reports them back, a response without its own settings is text only; an unknown modality
-  and a bad limit are error events). **Written without the model**: the class is property-gated
-  (LFM3-Audio, in CI's set since 2026-11-10); they ran green in Publish run 42853242881.
-- **Speech and realtime tests whose models joined the CI set on 2026-11-10** (written in a sandbox
-  that cannot reach huggingface.co; their first run was Publish run 42853242881, green on all six
-  Java test jobs):
-  `PocketTtsIntegrationTest` and `ChatterboxIntegrationTest` (the pipeline contract of
-  `AbstractTtsPipelineContract`: sample rate from the header, every listed voice, a speaker
-  reference cloned or refused as the pipeline reports, the temperature accepted),
-  `TtsChatTemplateIntegrationTest` and `RealtimeNativeServerIntegrationTest` (LFM3-Audio). The
-  rows are `pockettts`, `chatterbox` and `realtime` in `.github/models.csv`, 2.7 GB more for every
-  job that fetches the whole set; the GGUF headers were checked against b12242's loaders, no model
-  was run. Pocket TTS comes from a community repository (`macolomb/pocket-tts-without-voice-cloning`,
-  cc-by-4.0: neither ggml-org nor Kyutai publishes a GGUF pair with predefined voices).
-  **Drama-3 stays out**: the smallest pair is 14.6 GB (`mradermacher/drama-3-GGUF`, Q2_K backbone
-  12.9 GB + Q8_0 mmproj 1.7 GB, research licence), more than a hosted runner should download in
-  six jobs; `TtsPipelineIntegrationTest` runs the same contract on it by property
-  (`-Dnet.ladenthin.llama.tts.pipeline.model/.mmproj`). The rows, should a runner for it exist:
-  `drama-3.Q2_K.gguf` sha256 `10c87623811b8948806801c8263b3d896f3cd751067d14eeddf5ba6c6732fc75`,
-  `drama-3.mmproj-Q8_0.gguf` sha256 `dc7fe995f67a68f375d86b8f0ad6fe2d8b4761210a73dca9bc49768761edcc2f`,
-  both at commit `690a670e47fb6bdd3ff5683b9f7dca9338aad448`.
+**Not measured on a GPU or accelerator** (no runner has one): CUDA 13.5 on a GPU (built and cached:
+the warm Linux job of run 43687582684 hit 2170 of 3141, 60 min against 100 cold); the bf16 Vulkan
+operators (b12506, #32202); the OpenVINO changes (b12504, #32172; the module stays opt-in); HIP
+stream-K tuning (b12496); the CUDA module's FP8 KV cache (#28413), flash-attention cases and BF16 MMVF
+(b12289) and its SM103 kernels, few-row MMQ and NVFP4 prefill (b12387; decided 2026-11-14 not to
+measure); the Vulkan flash attention for Intel; Vulkan with `VK_NV_cooperative_matrix2` (#31526); the
+OpenCL module's decomposed flash attention on an Adreno GPU (#32046) and the CUDA change #32067;
+the SYCL XMX (DPAS) code paths (b11980, #31125). Not benchmarked: the NEON 4x4 `sgemm` tile on
+aarch64 (CI builds and runs it).
 
 **Compatibility notes to carry into the release notes**
-- **RPC protocol 9** (b12217): `RpcServer` and a `--rpc` client must run the same version of this
-  library.
+- **RPC protocol 10** (b12387; 9 since b12217; 10.0.1 since b12550, `GGML_OP_SLEEP`): `RpcServer` and
+  a `--rpc` client must run the same version of this library.
 - **`TextToSpeech` voice handling** changed for models with predefined voices (first voice by
   default, voice + speaker reference refused).
 - **`HF_TOKEN` is sent to `huggingface.co` hosts only** (b12166 #31730): a mirror on another host
   that needs the token no longer receives it.
+- **A refused load parameter's message** carries llama.cpp's reason after "Failed to parse model
+  parameters: " (patch `0031`), and an unparseable chat template fails the load instead of ending
+  the process.
 
 ### Modular natives -- follow-ups
 
@@ -581,6 +476,19 @@ in the request fields, their limits or the response keys.
   and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
 
 ### RPC backend — follow-ups
+
+- **A protocol skew under one version number (b12543, #32542).** Metal's `get_alloc_size` adds the
+  split-K scratch of `CONV_2D`, and `ggml_op_alloc_size_may_expand` gained `CONV_2D`, which the RPC
+  client asks before it sizes a tensor; `RPC_PROTO` stayed 10.0.0. A client of b12387..b12542 (an
+  earlier 6.x jar) next to a Metal `RpcServer` of b12543 on sizes a `CONV_2D` tensor with
+  `ggml_nbytes`, and the server's scratch overruns its neighbour -- silently. Projector and codec graphs
+  only (an LLM graph has no `CONV_2D`). The docs say "both ends need the same llama.cpp" for a major
+  protocol step; it holds for every step (the patch review of 2026-11-19, from reading).
+
+- **Old Windows and COMM_INIT's retries** (`patches/0015`): the stoppable non-blocking connect waits
+  through `WSAPoll`, which does not report a refused connect before Windows 10 2004 / Server 2022 (its
+  documentation; not reproduced). A rank > 0 would wait for the stop there instead of retrying.
+  Multi-node COMM_INIT on such a host only.
 
 - **A server lost mid-inference still aborts the JVM.** Patch `0015` makes *registration* fail
   softly; every call after it (`get_dispatcher()`, `RPC_STATUS_ASSERT` in the dispatcher's `work()`)
@@ -653,12 +561,11 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   `text_completion` chunks to NDJSON, mirroring the chat→Ollama translator) and Continue's native
   `POST /completion` route in the llama.cpp-native
   streaming shape (`{"content":…,"stop":…}` per chunk). Java-only server wiring.
-- **Future *output* modalities (audio / image) — design note, not yet actionable.** The Java
-  transport's integration points are isolated (a new `OpenAiBackend.stream*` primitive +
-  `OpenAiSseFormatter.*Chunk` per modality). Two future hooks:
-  the existing `TextToSpeech` (Qwen3-TTS since llama.cpp b10270 — OuteTTS no longer exists upstream)
-  behind an `/v1/audio/speech`-style route; proxying image/audio generation to an external model.
-  Keep chunk formatters modality-neutral.
+- **Future *output* modalities (image) — design note, not yet actionable.** Speech is served
+  (`/v1/audio/speech`, `/tts` over a `SpeechBackend`); what is left is proxying image generation to
+  an external model. The Java transport's integration points are isolated (a new
+  `OpenAiBackend.stream*` primitive + `OpenAiSseFormatter.*Chunk` per modality); keep chunk
+  formatters modality-neutral.
 - **Incremental tool-call streaming on the alternative surfaces.** Ollama/Anthropic/Responses emit each
   tool call whole at end-of-stream (`ToolCallDeltaAccumulator`); revisit only if a client needs
   incremental `input_json_delta` / `function_call_arguments.delta` fidelity.
@@ -704,9 +611,9 @@ because each is a design decision in code this project does not own. And say pla
 downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
 maintainer can see what a merged change would let this project delete.
 
-There are **thirteen** patches today (`0002`, `0003`, `0006`–`0008`, `0014`, `0015`,
-`0017`, `0018`, `0020`–`0023`). Each
-accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
+There are **21** patches today (`0002`, `0003`, `0006`–`0008`, `0014`, `0015`, `0017`, `0018`,
+`0020`–`0031`; `docs/patches.md` lists them). Each accepted upstream change deletes a patch from the
+bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0002` (preserve the caller's load-progress callback), `0006` (embeddable
   `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0014` (`common_log_set_callback`), `0015`
@@ -715,13 +622,16 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
   the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
   copies the line `ggml-backend.cpp` already has), `0020` (validate leaf allocations before
-  reusing a graph allocation), `0021` (start every slot with the server's LoRA adapters; its other half,
-  clearing the cache when the server's adapters change, went upstream as #30367 at b12416), `0022` (batch an expert's tokens
+  reusing a graph allocation), `0021` (a restored slot counts as computed under the server's LoRA adapters; its earlier halves
+  went upstream as #30367 at b12416 and #32434 at b12498), `0022` (batch an expert's tokens
   through gemm in the repack `MUL_MAT_ID` and hand its work out dynamically -- submitted **without**
   its switch, which exists for measurements here; the evidence is
   `docs/benchmarks/moe-mxfp4-cpu-alderlake.md`), `0023` (IBM Z: drop the duplicate `<vecintrin.h>`
   include that breaks clang, and a scalar `z13` variant below upstream's `z15` -- two questions,
-  since upstream documents GCC for s390x and may prefer its own baseline name).
+  since upstream documents GCC for s390x and may prefer its own baseline name), `0024`-`0030` (the
+  file and environment sites that read a narrow path in the active code page on Windows, as one
+  submission: the embedding-host half of #31329), `0031` (`common_params_parse` answers false with
+  its reason instead of `exit(1)`).
 - **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
 - **Two upstream-only defects worth an issue on that day, no patch here:** a lost RPC server
   mid-inference still aborts the process (the ggml backend interface has no error return for a lost
@@ -771,8 +681,9 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   absolute Windows path.** `common/arg.cpp` splits each `FNAME:SCALE` item with `string_split(item, ':')`
   and demands exactly two parts, so `X:\models\a.gguf:1.0` is rejected as three. Measured against the
   real parser in `BUGHUNT-MEASUREMENTS.md` M6 (of four argv forms only a relative path and plain
-  `--lora` were accepted). The obvious fix is to split on the **last** colon; small enough for a PR,
-  so draft it then. Downstream `ModelParameters` refuses such a path with the reason meanwhile.
+  `--lora` were accepted). `patches/0045` splits at the **last** colon since 2026-11-22 (found again by
+  CI: the C API's control-vector test failed on Windows arm64 with a temp path), and `ModelParameters`
+  writes such a path instead of refusing it; still small enough for an upstream PR, so draft it then.
 
 - **From the branch review of 2026-10-20 (F221): upstream's Anthropic answer names a matched stop
   word in `stop_sequence` but says `stop_reason` `end_turn`**, where the Messages API specifies
@@ -790,26 +701,23 @@ upstream options; absence of a Java builder method alone does not make a release
 
 - **JSONL logging:** decide whether the process-wide upstream logger or Java's `args.LogFormat`
   owns the format before exposing `--log-jsonl` / `--no-log-jsonl`; the callback sink is shared.
-- **Request-key coverage:** re-derive remaining gaps by comparing `RequestField.values()` and
-  the current upstream schema walked by `test_wire_contracts.cpp`. The old b10883 counts are not
-  a current API inventory; expose additional fields on demand.
+- **Request keys of upstream's schema with no `RequestField`** (compared at b12521; everything else
+  has a builder method): `grammar_lazy` + `grammar_triggers` (the lazy grammar the chat templates
+  arm for tool calls; a typed trigger API would need the trigger types), `echo` (continued assistant
+  message in the output), `n_cmpl` (several completions: the engine refuses them, one request each),
+  `reasoning_control` (see below), `return_progress` (prompt-progress chunks, which the streaming
+  iterators would have to skip or surface), and the TTS fields `speed` / `loudness` / `cfg_scale` /
+  `flow_steps`, which `TextToSpeech` carries. Expose on demand.
 - **`--spec-synth-len` / `--spec-synth-rates`: deliberately not exposed.** They synthesize fake
   acceptance probabilities for upstream benchmarks. Keep them out of application builder API;
   they remain reachable through raw `NativeServer` argv.
-- **Draft backend sampling:** consider
-  `ModelParameters.setSpecDraftBackendSampling(boolean)` for speculative-decoding users who
-  need to disable `--spec-draft-backend-sampling` explicitly.
 - **Runtime reasoning control:** `InferenceParameters.setReasoningControl(boolean)` and a
   corresponding `LlamaModel.endReasoning(...)` action must land together. The flag only arms the
   sampler; the action needs access to the running slot/task. The existing reasoning budget/tag
   fields do not implement this runtime control (F252).
-- **Output-slot allocation:** consider a `ModelParameters.setMaxOutputs(int)` mapping for
-  `llama_context_params::n_outputs_max` when a consumer needs the memory limit.
-- **Multi-Token Prediction:** consider `ModelParameters.setMtp(boolean)` for MTP-trained models,
-  following upstream's current speculative-decoding configuration.
-- **Suppressed-token inspection:** consider `LlamaModel.getSuppressTokens()` as a read-only
-  view of the model's `tokenizer.ggml.suppress_tokens`. Upstream already applies the bias;
-  this would expose diagnostics, not fix inference behaviour.
+- **Output-slot allocation:** `common_params::n_outputs_max` (`llama_context_params::n_outputs_max`)
+  has no command-line option upstream, so a `ModelParameters` setter would need a project
+  pseudo-flag the engine applies; only when a consumer needs the memory limit.
 
 ### ROCm Windows — real Radeon runtime verification
 
@@ -847,14 +755,17 @@ CLAUDE.md, "Linux s390x".
 - **Kolibri-1 on GPU:** CPU inference and both published GGUF dialects were measured on the real
   78B model; GPU inference remains unmeasured. `0016` was dropped when upstream added Kolibri-1;
   see the retained history and numerical guard, not the former patch, for the current contract.
-- **Structural test-constant wiring:** `TestConstantsTest.theShippedModelConstantsGoThroughTheResolver`
-  now skips explicitly when the fixture layout cannot distinguish a missing resolver wrapper.
-  The `src/test/resources/...` constants are indistinguishable by value even in CI. Consider a
-  structural check of the wrapper calls; the resolver itself already has a hermetic fixture test.
 - **Windows module measurements:** see "Modular natives -- follow-ups"; the remaining Intel
   GPU/NPU and Linux SME measurements are in "What still has to be measured".
 - **Interactive agent:** real console/terminal behaviour needs a person at a terminal; model-backed
   headless integration coverage does not replace that check.
+- **Test gaps the review of 2026-11-19 named and that no hermetic test reaches yet** (the others got
+  tests in the same round): lfm3-d1 decision packing (b12525, #32553; the generator would need the
+  LFM3 backbone non-causal with `lfm3.decision.type = lfm3-d1`), video beyond the llava projector
+  (LFM3-Omni's soundtrack through `jllama_video_decoder.read_audio`, the LFM3 and Qwen3-VL video
+  templates; needs their vision towers), Qwen3-TTS's ICL mode, Fish Audio S2 in the generator,
+  and the RPC server's `cache_dir` hash path (only weights above 10 MB are hashed). The PIT gate leaves
+  the `server` package and the `json` stream parsers out (`llama/pom.xml`).
 
 ## Open — cross-cutting (slice for this repo)
 
@@ -905,15 +816,10 @@ measurements and is not evidence that GPU testing is currently blocked.
   subsequently passed, but that does not identify or explain the finding; the sandbox proxy
   previously blocked access to sonarcloud.io.
 - **SonarCloud quality gate red: Reliability E on new code** (not a release gate). Checked and false
-  positives: S2095 `BatchDispatch.java:126` and S2142 `BatchDispatch.java:146`. Not yet looked at:
-  S3077 `LlamaLoader.java:262` and the two S8786 findings. Fix them or mark them in SonarCloud with
-  the reason.
-- **Three buildcheck unit tests fail on Windows** (green on the Linux runners, also on `main`):
-  `test_smokelib.NativesDirectoryTest.test_absolute_set_directory` and `test_relative_set_directory`
-  compare a path with `/` against one with `\` (the expectation is built with the OS separator), and
-  `test_patches.RenderTest.test_doc_is_current_compares_the_committed_page_with_the_render` fails
-  with a bare `False is not true` (cause not found; `docs/patches.md` is LF in the work tree). Fix
-  them, or document that the suite is Linux-only.
+  positives: S2095 `BatchDispatch.java:126` and S2142 `BatchDispatch.java:146`; S3077 (`LlamaLoader`'s
+  volatile map of the loaded build) is fixed with an `AtomicReference`. Not yet looked at: the two
+  S8786 findings (sonarcloud.io is blocked from the sandbox). Fix them or mark them in SonarCloud
+  with the reason.
 - **REUSE attribution review:** check the remaining Java/documentation attribution to the original
   fork author with `git blame`, file by file. Attribution is not removed without an explicit owner
   decision. The generated dockcross wrappers already carry dockcross's own copyright attribution.

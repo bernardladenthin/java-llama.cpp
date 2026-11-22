@@ -22,4 +22,10 @@ public class PocketTtsIntegrationTest extends AbstractTtsPipelineContract {
         return TestConstants.resolveModelProperty(
                 TestConstants.PROP_POCKET_TTS_MMPROJ, TestConstants.DEFAULT_POCKET_TTS_MMPROJ_PATH);
     }
+
+    @Override
+    protected Boolean clonesVoice() {
+        // converted without the voice encoder: no audio in, predefined voices instead
+        return false;
+    }
 }

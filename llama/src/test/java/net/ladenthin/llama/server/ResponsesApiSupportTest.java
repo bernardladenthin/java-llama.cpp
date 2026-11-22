@@ -725,4 +725,122 @@ public class ResponsesApiSupportTest {
             assertThat(e.getMessage(), is("Field '" + field[0] + "': type must be number, but is string"));
         }
     }
+
+    /**
+     * An assistant message item with an image after an assistant text message: the item joins the
+     * preceding assistant message (upstream's {@code merge_prev}), whose text becomes the first part
+     * of the joined content array, followed by the item's parts in order.
+     *
+     * <p>Upstream's {@code convert_responses_to_chatcmpl} refuses an {@code input_image} in an
+     * assistant message ("'type' must be one of 'output_text' or 'refusal'"); this translation keeps
+     * it, and the chat parser loads media from every message. The shape of the merge is upstream's.
+     */
+    @Test
+    public void anAssistantImageItemJoinsThePrecedingAssistantTextAsParts() throws IOException {
+        // arrange
+        JsonNode request = read("{\"input\":["
+                + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"a\"}]},"
+                + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                + "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AA==\"},"
+                + "{\"type\":\"output_text\",\"text\":\"b\"}]}]}");
+
+        // act
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"text\",\"text\":\"a\"},"
+                        + "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}},"
+                        + "{\"type\":\"text\",\"text\":\"b\"}]}]")));
+    }
+
+    /**
+     * The other order: an assistant text item after an assistant message whose content is already a
+     * part array appends its text as one more part.
+     */
+    @Test
+    public void anAssistantTextItemJoinsThePrecedingAssistantPartsAsOneMorePart() throws IOException {
+        // arrange
+        JsonNode request = read(
+                "{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"input_image\",\"image_url\":{\"url\":\"https://example.com/a.png\"}}]},"
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"b\"}]}]}");
+
+        // act
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/a.png\"}},"
+                        + "{\"type\":\"text\",\"text\":\"b\"}]}]")));
+    }
+
+    /** An assistant item without text adds no empty text part to a preceding part array. */
+    @Test
+    public void anEmptyAssistantItemAddsNoPartToAPrecedingPartArray() throws IOException {
+        // arrange
+        JsonNode request = read("{\"input\":["
+                + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                + "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AA==\"}]},"
+                + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}]}");
+
+        // act
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}}]}]")));
+    }
+
+    /**
+     * A reasoning item after an assistant message becomes that message's {@code reasoning_content},
+     * as upstream's {@code merge_prev} sets it on the preceding assistant message, rather than a new
+     * assistant turn.
+     */
+    @Test
+    public void aReasoningItemAfterAnAssistantMessageJoinsItLikeUpstream() throws IOException {
+        // arrange
+        JsonNode request = read("{\"input\":["
+                + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"42\"}]},"
+                + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"plan\"}]},"
+                + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"and?\"}]}");
+
+        // act
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"plan\"},"
+                        + "{\"role\":\"user\",\"content\":\"and?\"}]")));
+    }
+
+    /** As upstream, a second reasoning item on the same assistant message replaces the first. */
+    @Test
+    public void aSecondReasoningItemOnTheSameAssistantMessageReplacesTheFirstLikeUpstream() throws IOException {
+        // arrange
+        JsonNode request = read(
+                "{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"42\"},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"first\"}]},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"second\"}]}]}");
+
+        // act
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages, is(read("[{\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"second\"}]")));
+    }
 }

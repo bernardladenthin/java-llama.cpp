@@ -15,6 +15,8 @@
 #include "server-chat.h"
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
+#include "backend_modules.hpp"
+#include "numeric_locale.hpp"
 #include "rpc_support.hpp"
 #include "tts_engine.h"
 #include "imatrix_engine.h"
@@ -59,6 +61,8 @@ jllama_status run_guarded(jllama_model *model, const char *operation, bool needs
     if (jctx == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model is null");
     }
+    // a request renders the chat template on the calling thread (numeric_locale.hpp)
+    const jllama::c_numeric_locale numbers;
     jllama_context_guard guard{acquire_jllama_context(jctx)};
     try {
         if (needs_server) {
@@ -114,6 +118,10 @@ char *copy_out(const std::string &s) {
 // line queued for the previous callback from reaching the new one.
 jllama_log_fn g_log_fn = nullptr;
 void *g_log_user_data = nullptr;
+// Serialises jllama_set_log_callback callers: LlamaModel.setLogger (JNI, its own mutex) and the FFM
+// Jllama.setLogCallback (synchronized) both call it, and two swaps interleaved could hand one
+// caller's function the other's user data.
+std::mutex g_set_log_callback_mutex;
 
 void log_adapter(enum ggml_log_level level, const char *text, void * /*user_data*/) {
     jllama_log_fn fn = g_log_fn;
@@ -248,6 +256,7 @@ struct api_video_decoder {
 jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_load_progress_fn progress,
                                       void *progress_user_data, const jllama_video_decoder *decoder,
                                       jllama_model **out) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     // The decoder's release callback is owed from here on, whatever fails below.
     jllama::engine::video_decoder engine_decoder;
     if (decoder != nullptr) {
@@ -288,7 +297,20 @@ jllama_status jllama_model_load_video(int argc, const char *const *argv, jllama_
     }
 }
 
-void jllama_model_free(jllama_model *model) { jllama::engine::free(reinterpret_cast<jllama_context *>(model)); }
+void jllama_model_free(jllama_model *model) {
+    // Nothing may unwind into a C caller; free() fails only on a mutex or thread error of the platform.
+    try {
+        jllama::engine::free(reinterpret_cast<jllama_context *>(model));
+    } catch (const std::exception &e) {
+        fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        fail(JLLAMA_STATUS_ERROR, "jllama_model_free: an exception that is no std::exception");
+    }
+}
+
+void jllama_model_interrupt(jllama_model *model) {
+    jllama::engine::interrupt(reinterpret_cast<jllama_context *>(model));
+}
 
 jllama_status jllama_chat_completions(jllama_model *model, const char *request_json, char **response_json) {
     if (request_json == nullptr || response_json == nullptr) {
@@ -599,6 +621,7 @@ jllama_status jllama_systemone(jllama_model *model, const char *request_json, ch
 }
 
 jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (schema_json == nullptr || grammar == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "schema_json and grammar must not be null");
     }
@@ -621,6 +644,8 @@ jllama_status jllama_quantize(const char *input_path, const char *output_path, i
 
 jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype, int nthread,
                                       bool allow_requantize, const char *imatrix_path) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (input_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
     }
@@ -639,6 +664,8 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
 jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
                              int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
                              void *progress_user_data, int *n_chunks) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || text_path == nullptr || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, text_path and output_path must not be null");
     }
@@ -667,6 +694,7 @@ jllama_status jllama_imatrix(const char *model_path, const char *text_path, cons
 
 jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inputs, const char *output_path,
                                    bool legacy_format, int *n_chunks) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (input_paths == nullptr || n_inputs == 0 || output_path == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_paths and output_path must not be null or empty");
     }
@@ -698,6 +726,8 @@ jllama_status jllama_imatrix_merge(const char *const *input_paths, size_t n_inpu
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 
 jllama_status jllama_server_start(int argc, const char *const *argv, jllama_server **out) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
     }
@@ -718,6 +748,7 @@ jllama_status jllama_server_start(int argc, const char *const *argv, jllama_serv
 
 jllama_status jllama_server_start_attached(jllama_model *model, int argc, const char *const *argv,
                                            jllama_server **out) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
     }
@@ -737,6 +768,8 @@ jllama_status jllama_server_stop(jllama_server *server) {
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "jllama_server_stop: an exception that is no std::exception");
     }
 }
 
@@ -771,6 +804,7 @@ void jllama_strings_free(char **strings, size_t count) {
 
 jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
                                       const char *devices) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (host == nullptr || devices == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "host and devices must not be null");
     }
@@ -845,6 +879,8 @@ jllama_status jllama_rpc_server_stop(void) {
         }
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "jllama_rpc_server_stop: an exception that is no std::exception");
     }
 }
 
@@ -858,6 +894,7 @@ bool jllama_rpc_server_listening(void) {
 }
 
 jllama_status jllama_rpc_server_devices(const char *devices, char ***names, size_t *count) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (devices == nullptr || names == nullptr || count == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "devices, names and count must not be null");
     }
@@ -891,6 +928,8 @@ void jllama_bytes_free(unsigned char *bytes) { std::free(bytes); }
 
 jllama_status jllama_tts_load(const char *model_path, const char *mmproj_path, int n_gpu_layers, int n_threads,
                               jllama_tts_model **out) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (model_path == nullptr || mmproj_path == nullptr || out == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, mmproj_path and out must not be null");
     }
@@ -941,30 +980,35 @@ jllama_status jllama_tts_synthesize_temperature(jllama_tts_model *tts, const cha
     return jllama_tts_synthesize_options(tts, text, &options, wav, length);
 }
 
-void jllama_tts_options_init(jllama_tts_options *options) {
-    if (options == nullptr) {
+void jllama_tts_options_init_size(jllama_tts_options *options, size_t size) {
+    if (options == nullptr || size < sizeof(size_t)) {
         return;
     }
     const jllama_tts::synthesis_options defaults;
-    options->struct_size = sizeof(jllama_tts_options);
-    options->speaker_reference_path = nullptr;
-    options->lang = nullptr;
-    options->voice = nullptr;
-    options->max_frames = defaults.max_frames;
-    options->top_k = defaults.top_k;
-    options->seed = defaults.seed;
-    options->temperature = defaults.temperature;
-    options->top_p = defaults.top_p;
-    options->repeat_penalty = defaults.repeat_penalty;
-    options->speed = defaults.speed;
-    options->loudness = defaults.loudness;
-    options->speaker_reference_text = nullptr;
-    options->cfg_scale = defaults.cfg_scale;
-    options->flow_steps = defaults.flow_steps;
+    jllama_tts_options full;
+    full.struct_size = std::min(size, sizeof(jllama_tts_options));
+    full.speaker_reference_path = nullptr;
+    full.lang = nullptr;
+    full.voice = nullptr;
+    full.max_frames = defaults.max_frames;
+    full.top_k = defaults.top_k;
+    full.seed = defaults.seed;
+    full.temperature = defaults.temperature;
+    full.top_p = defaults.top_p;
+    full.repeat_penalty = defaults.repeat_penalty;
+    full.speed = defaults.speed;
+    full.loudness = defaults.loudness;
+    full.speaker_reference_text = nullptr;
+    full.cfg_scale = defaults.cfg_scale;
+    full.flow_steps = defaults.flow_steps;
+    full.raw_prompt = defaults.raw_prompt ? 1 : 0;
+    // an older caller's struct is shorter: its bytes only
+    std::memcpy(options, &full, full.struct_size);
 }
 
 jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *text, const jllama_tts_options *options,
                                             unsigned char **wav, size_t *length) {
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (tts == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
     }
@@ -976,9 +1020,17 @@ jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *t
     jllama_tts_options given;
     jllama_tts_options_init(&given);
     if (options != nullptr) {
-        if (options->struct_size < sizeof(size_t)) {
+        // the size of some version of the header: up to loudness (6.1.0's first), speaker_reference_text,
+        // cfg_scale and flow_steps, raw_prompt -- or a later, longer one. Another size would cut a field
+        // (half a pointer read as one).
+        const size_t size = options->struct_size;
+        const bool known = size == offsetof(jllama_tts_options, speaker_reference_text) ||
+                           size == offsetof(jllama_tts_options, cfg_scale) ||
+                           size == offsetof(jllama_tts_options, raw_prompt) || size >= sizeof(jllama_tts_options);
+        if (!known) {
             return fail(JLLAMA_STATUS_INVALID_ARGUMENT,
-                        "options->struct_size must be sizeof(jllama_tts_options), see jllama_tts_options_init");
+                        "options->struct_size must be sizeof(jllama_tts_options) of some version of jllama_api.h, "
+                        "see jllama_tts_options_init");
         }
         std::memcpy(&given, options, std::min(options->struct_size, sizeof(jllama_tts_options)));
     }
@@ -1000,6 +1052,7 @@ jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, const char *t
         synthesis.speaker_reference_text = given.speaker_reference_text != nullptr ? given.speaker_reference_text : "";
         synthesis.cfg_scale = given.cfg_scale;
         synthesis.flow_steps = given.flow_steps;
+        synthesis.raw_prompt = given.raw_prompt != 0;
         std::vector<uint8_t> bytes;
         std::string err;
         bool request_fault = false;
@@ -1073,6 +1126,8 @@ void jllama_tts_free(jllama_tts_model *tts) {
 // ------------------------------------------------------------------------------------------------
 
 jllama_status jllama_finetune(const char *config_json) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
     if (config_json == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
     }
@@ -1091,6 +1146,7 @@ jllama_status jllama_finetune(const char *config_json) {
 }
 
 jllama_status jllama_set_cpu_moe_batched(bool batched) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     try {
         jllama::engine::set_cpu_moe_batched(batched);
         t_last_error.clear();
@@ -1103,6 +1159,7 @@ jllama_status jllama_set_cpu_moe_batched(bool batched) {
 }
 
 jllama_status jllama_get_cpu_moe_batched(bool *batched) {
+    jllama::load_backend_modules(); // backend_modules.hpp: a host without a JVM
     if (batched == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "batched must not be null");
     }
@@ -1119,6 +1176,7 @@ jllama_status jllama_get_cpu_moe_batched(bool *batched) {
 
 jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {
     try {
+        std::lock_guard<std::mutex> lk(g_set_log_callback_mutex);
         if (callback == nullptr) {
             // Detach (and drain to the old callback) BEFORE forgetting it.
             jllama::engine::set_log_sink(nullptr, nullptr);
@@ -1135,6 +1193,8 @@ jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {
         return JLLAMA_STATUS_OK;
     } catch (const std::exception &e) {
         return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
     }
 }
 

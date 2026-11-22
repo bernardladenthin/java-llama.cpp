@@ -189,6 +189,18 @@ JLLAMA_API jllama_status jllama_model_load_video(int argc, const char *const *ar
 JLLAMA_API void jllama_model_free(jllama_model *model);
 
 /**
+ * The first half of jllama_model_free, which it runs itself: cancels the model's streaming tasks and
+ * makes every call that waits for its inference loop -- in flight or later -- return within about a
+ * second with JLLAMA_STATUS_INTERRUPTED, unless its answer arrives first -- a stream's receive
+ * included, and a stream asked for afterwards is refused with it; calls that do not wait (metadata,
+ * tokenization) still answer. Nothing is released, and there is no way back: the model must still be
+ * freed. For a host whose own lock keeps a call from reaching a freed handle and therefore waits for
+ * the calls in flight before it frees (llama-ffm): interrupt first, so that the wait ends. Null is
+ * ignored.
+ */
+JLLAMA_API void jllama_model_interrupt(jllama_model *model);
+
+/**
  * An OpenAI chat completion, blocking: `request_json` is the request body
  * (`{"messages":[...], "max_tokens": ..., ...}`), *response_json the chat.completion object
  * (jllama_string_free). JLLAMA_STATUS_INVALID_REQUEST for a body the server refuses, including
@@ -329,7 +341,8 @@ JLLAMA_API jllama_status jllama_apply_template(jllama_model *model, const char *
 
 /**
  * The embedding of one prompt (a model loaded with `--embedding`): *values holds *count floats
- * (jllama_floats_free).
+ * (jllama_floats_free). A model loaded with `--pooling none` has one vector per token, of which this
+ * is the first; jllama_embeddings answers all of them.
  */
 JLLAMA_API jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count);
 
@@ -392,7 +405,11 @@ JLLAMA_API jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op 
 /** The LoRA adapters of the model (the GET /lora-adapters array). */
 JLLAMA_API jllama_status jllama_lora_adapters(jllama_model *model, char **response_json);
 
-/** Sets the LoRA adapter scales from a JSON array of `{"id": n, "scale": f}`; the resulting list. */
+/**
+ * Sets the LoRA adapter scales from a JSON array of `{"id": n, "scale": f}` (an adapter the array does
+ * not name gets scale 0, as upstream's POST /lora-adapters); *response_json is `{"success": true}`,
+ * and jllama_lora_adapters() reads the scales back.
+ */
 JLLAMA_API jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters_json, char **response_json);
 
 /**
@@ -452,7 +469,9 @@ JLLAMA_API jllama_status jllama_imatrix_merge(const char *const *input_paths, si
 /* ------------------------------------------------------------------------------------------------
  * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
  * worker thread inside this library. Not available on Android (server.cpp does not build there);
- * these functions are absent from the Android library. ONE server per process.
+ * these functions are absent from the Android library. ONE server per process: a start while another
+ * server runs (classic or attached) is JLLAMA_STATUS_ERROR; a server that returned (stopped, or its
+ * model failed to load) gives the slot back. The server sets the "C" numeric locale for the process.
  * ---------------------------------------------------------------------------------------------- */
 
 /** A running embedded server; opaque. */
@@ -608,19 +627,37 @@ typedef struct jllama_tts_options {
     float repeat_penalty;               /**< repetition penalty of the backbone over the generation, 1 = off */
     float speed;    /**< speaking speed relative to the model's pace, > 0 (1 = its own; Zonos3 only) */
     float loudness; /**< target loudness in LUFS, < 0 (0 = the model's own; Zonos3 only) */
-    /** the transcript of the speaker reference, or null: a model that puts it into the prompt (Fish
-     *  Audio S2, b12453) speaks with the reference's voice more closely; the others ignore it */
+    /** the transcript of the speaker reference, or null: Fish Audio S2 (b12453) and Qwen3-TTS (b12491,
+     *  with an mmproj that carries the reference encoder) speak with the reference's voice more
+     *  closely; the others ignore it */
     const char *speaker_reference_text;
     /** classifier-free guidance scale of the audio codes, > 0 (1 = no guidance); 0 = the model's own.
-     *  Only a model that supports it (YuE2, b12459); another refuses any other value */
+     *  Only a model that supports it (YuE2, b12459; MiniMax Music 3, b12480; VoxCPM2, b12531); another
+     *  refuses any other value */
     float cfg_scale;
     /** steps of the flow-matching ODE solver, 1 to 1024 (fewer is faster, less accurate); 0 = the
-     *  model's own. Only a model that supports it (YuE2, b12459); another refuses any other value */
+     *  model's own. Only a model that supports it (YuE2, b12459; MiniMax Music 3, b12480; VoxCPM2,
+     *  b12531, which takes 2 to 32 only); another refuses any other value */
     int flow_steps;
+    /** nonzero: the text goes to the model as it is (phonemes, a whole prompt), the model's "tts" chat
+     *  template is skipped -- llama.cpp b12494's raw_prompt; 0: a model with such a template speaks
+     *  the prompt rendered from it. Since b12494 */
+    int raw_prompt;
 } jllama_tts_options;
 
-/** Fills *options with the defaults (struct_size included); null is ignored. Since 6.1.0. */
-JLLAMA_API void jllama_tts_options_init(jllama_tts_options *options);
+/**
+ * Fills the first `size` bytes of *options with the defaults -- at most the library's own
+ * sizeof(jllama_tts_options) -- and sets struct_size to the bytes written; null, or a size that does
+ * not hold struct_size, is ignored. Call it through jllama_tts_options_init(), which passes the
+ * size of the caller's header: a later library never writes past an older caller's struct.
+ * Since 6.1.0.
+ */
+JLLAMA_API void jllama_tts_options_init_size(jllama_tts_options *options, size_t size);
+
+/** Fills *options with the defaults (struct_size included) for this header's struct; null is ignored. */
+static inline void jllama_tts_options_init(jllama_tts_options *options) {
+    jllama_tts_options_init_size(options, sizeof(jllama_tts_options));
+}
 
 /**
  * jllama_tts_synthesize_temperature with every option of llama.cpp's /tts route (b12431): top-p and
@@ -636,10 +673,10 @@ JLLAMA_API jllama_status jllama_tts_synthesize_options(jllama_tts_model *tts, co
                                                        size_t *length);
 
 /**
- * Whether the loaded pair clones a voice from a speaker reference (*supported): llama.cpp's
- * mtmd_helper_cap::audio_gen_spk_ref (Qwen3-TTS, Pocket TTS) for a projector that takes audio in --
- * one converted without its voice encoder does not, and reports false. jllama_tts_synthesize
- * refuses a `speaker_reference_path` for a pair that does not.
+ * Whether the loaded pair clones a voice from a speaker reference (*supported): a pipeline that
+ * encodes a reference clip (Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2, Drama-3) with a
+ * projector that takes audio in -- one converted without its voice encoder does not, and reports
+ * false. jllama_tts_synthesize refuses a `speaker_reference_path` for a pair that does not.
  */
 JLLAMA_API jllama_status jllama_tts_supports_speaker_reference(const jllama_tts_model *tts, bool *supported);
 
@@ -664,6 +701,9 @@ JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);
  * `weight_decay`, `optimizer`, `n_ctx`, `n_gpu_layers`, `val_split`, `n_batch`, `n_ubatch`; the
  * keys of LlamaTrainer's TrainingParameters) and writes the fine-tuned GGUF. Blocks for the whole
  * run; needs no model handle. A configuration that does not parse is "invalid training config".
+ * A model whose graph holds an op ggml has no backward pass for (MUL_MAT_ID, SSM_SCAN, NORM, TANH,
+ * ...) is JLLAMA_STATUS_ERROR with "cannot train this model: ggml has no backward pass for <op>
+ * (tensor '<name>')", before the first training step and without an output.
  */
 JLLAMA_API jllama_status jllama_finetune(const char *config_json);
 

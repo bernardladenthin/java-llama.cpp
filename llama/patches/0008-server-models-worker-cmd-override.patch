@@ -8,6 +8,10 @@ leading binary-path token of the rendered worker command, so a host relaunches w
 own bootstrap -- here `java -cp app.jar net.ladenthin.llama.server.NativeServer`, set from Java by
 NativeServer.setWorkerCommand(). Also useful for containerised or wrapped deployments.
 
+Drop-check on every bump: read server_model_meta::update_args in tools/server/server-models.cpp --
+once the worker command can be replaced without re-executing the router's own binary (an option or
+an environment variable of upstream's), use that and drop the patch.
+
 diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
 index 35d21c876..e8ecb539f 100644
 --- a/tools/server/server-models.cpp

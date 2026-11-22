@@ -1,0 +1,335 @@
+llama : fine-tuning refuses a graph op without a backward pass
+
+ggml_build_backward_expand (ggml/src/ggml.c) ends the process when the graph needs a gradient it cannot
+compute: GGML_ABORT for an op ggml_compute_backward has no case for, GGML_ASSERT for a source of a
+supported op it does not differentiate (the softmax mask, ROPE's frequency factors, the loss's labels).
+llama_opt_epoch builds that graph for every training step and returns nothing, so fine-tuning a model
+whose graph holds such an op ended the process that ran it -- measured over the test generator's
+architectures: a mixture of experts (MUL_MAT_ID; Qwen3-Next and ZAYA1 too), a recurrent model
+(SSM_SCAN), Gemma 4 (the unary TANH of its soft-capping) and Cohere2 (NORM). For an embedding host that
+is the JVM.
+
+llama_context::opt_epoch_iter now walks the forward graph with the backward pass's own rules before it
+hands the graph to ggml_opt: which nodes need a gradient (ggml_build_backward_expand's first loop, its
+ignored sources, its type and in-place assertions), which of them get one from the loss (the logits) or
+as parameters, and whether ggml_compute_backward has a case for each of those, in its order. The first
+node it would fail on stops the epoch before its first batch, with "cannot train this model: ggml has
+no backward pass for <op> (tensor '<name>')" in the log and in llama_opt_error(), a new function of
+llama.h, since llama_opt_epoch has no return value. The evaluation part of an epoch builds no backward
+graph and is not checked; the shape assertions of the supported cases are not mirrored, except
+MUL_MAT's broadcast over the fourth dimension.
+
+The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
+and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
+ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's)
+would otherwise be refused here although ggml could train it.
+
+The guards are in src/test/cpp/test_c_api.cpp:
+CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six
+architectures refused by their op, then a llama model trains; an abort of the test process without the
+check) and CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
+Qwen3-VL's text model).
+
+Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
+once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
+llama_opt_epoch reports), drop the patch and read upstream's way of reporting it in train_engine.cpp.
+
+diff --git a/include/llama.h b/include/llama.h
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -1759,6 +1759,11 @@
+             ggml_opt_epoch_callback   callback_train,
+             ggml_opt_epoch_callback   callback_eval);
+ 
++    // jllama: why the last llama_opt_epoch trained nothing, or NULL. Set when the model's graph needs a
++    // gradient ggml cannot compute (an op without a backward pass, such as MUL_MAT_ID or SSM_SCAN); the
++    // epoch then stops before its first batch instead of ending the process in ggml_build_backward_expand.
++    LLAMA_API const char * llama_opt_error(const struct llama_context * lctx);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/llama-context.h b/src/llama-context.h
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -240,6 +240,9 @@
+             int64_t                          ndata_in_loop,
+             int64_t                          t_loop_start);
+ 
++    // jllama: why the last opt_epoch trained nothing, or nullptr
++    const char * opt_get_error() const;
++
+ private:
+     //
+     // output
+@@ -436,6 +439,7 @@
+ 
+     // training
+     ggml_opt_context_t opt_ctx = nullptr;
++    std::string        opt_error; // jllama: set by opt_epoch_iter when the backward pass cannot be built
+ 
+     ggml_threadpool_t threadpool       = nullptr;
+     ggml_threadpool_t threadpool_batch = nullptr;
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -22,6 +22,7 @@
+ #include <stdexcept>
+ #include <string>
+ #include <unordered_map>
++#include <unordered_set>
+ 
+ //
+ // llama_context
+@@ -4235,6 +4236,200 @@
+     }
+ }
+ 
++// jllama: ggml_build_backward_expand (ggml/src/ggml.c) ends the process (GGML_ABORT, GGML_ASSERT) when the
++// graph needs a gradient it cannot compute: an op ggml_compute_backward has no case for (MUL_MAT_ID, SSM_SCAN,
++// NORM, the unary TANH, ...), or a source of a supported op it does not differentiate (the softmax mask). Fine-tuning
++// a mixture of experts, a recurrent model or Gemma 4 therefore ended the process that ran it. The two functions
++// below walk the forward graph with the backward pass's own rules -- which nodes need a gradient, which of them get
++// one from the loss -- and name the first node it would fail on, so that opt_epoch can refuse the model instead.
++// The op lists are held to ggml_compute_backward's switch at configure time (java-llama.cpp,
++// llama/cmake/check-backward-ops.cmake); its shape assertions are not mirrored, except MUL_MAT's broadcast.
++
++// whether ggml_compute_backward has a case for the op of t
++static bool llama_opt_backward_op_supported(const ggml_tensor * t) {
++    switch (t->op) {
++        // jllama-backward-ops-begin
++        case GGML_OP_DUP:
++        case GGML_OP_ADD:
++        case GGML_OP_ACC:
++        case GGML_OP_SUB:
++        case GGML_OP_MUL:
++        case GGML_OP_DIV:
++        case GGML_OP_SQR:
++        case GGML_OP_SQRT:
++        case GGML_OP_LOG:
++        case GGML_OP_SIN:
++        case GGML_OP_COS:
++        case GGML_OP_SUM:
++        case GGML_OP_SUM_ROWS:
++        case GGML_OP_MEAN:
++        case GGML_OP_REPEAT:
++        case GGML_OP_REPEAT_BACK:
++        case GGML_OP_RMS_NORM:
++        case GGML_OP_MUL_MAT:
++        case GGML_OP_SCALE:
++        case GGML_OP_SET:
++        case GGML_OP_CPY:
++        case GGML_OP_CONT:
++        case GGML_OP_RESHAPE:
++        case GGML_OP_VIEW:
++        case GGML_OP_PERMUTE:
++        case GGML_OP_TRANSPOSE:
++        case GGML_OP_GET_ROWS:
++        case GGML_OP_TRI:
++        case GGML_OP_SOFT_MAX:
++        case GGML_OP_ROPE:
++        case GGML_OP_IM2COL:
++        case GGML_OP_POOL_2D:
++        case GGML_OP_CROSS_ENTROPY_LOSS:
++        case GGML_OP_NONE:
++        // jllama-backward-ops-end
++            return true;
++        case GGML_OP_UNARY:
++            switch (ggml_get_unary_op(t)) {
++                // jllama-backward-unary-ops-begin
++                case GGML_UNARY_OP_ABS:
++                case GGML_UNARY_OP_SGN:
++                case GGML_UNARY_OP_NEG:
++                case GGML_UNARY_OP_STEP:
++                case GGML_UNARY_OP_RELU:
++                case GGML_UNARY_OP_SILU:
++                case GGML_UNARY_OP_SIGMOID:
++                case GGML_UNARY_OP_EXP:
++                case GGML_UNARY_OP_EXPM1:
++                case GGML_UNARY_OP_SOFTPLUS:
++                // jllama-backward-unary-ops-end
++                    return true;
++                default:
++                    return false;
++            }
++        case GGML_OP_GLU:
++            switch (ggml_get_glu_op(t)) {
++                // jllama-backward-glu-ops-begin
++                case GGML_GLU_OP_SWIGLU:
++                // jllama-backward-glu-ops-end
++                    return true;
++                default:
++                    return false;
++            }
++        default:
++            // WIN_PART and WIN_UNPART share UNARY's case upstream, whose ggml_get_unary_op asserts that the op is UNARY
++            return false;
++    }
++}
++
++// the first node of gf the backward pass from output (the logits the loss is computed from) cannot be built for,
++// with the reason in reason -- or nullptr
++static const ggml_tensor * llama_opt_find_unsupported_backward(
++        ggml_cgraph * gf, const ggml_tensor * output, std::string & reason) {
++    const int n_nodes = ggml_graph_n_nodes(gf);
++
++    // a source whose gradient has no effect on the output's: ggml_build_backward_expand does not mark a node through
++    // it, and ggml_compute_backward computes no gradient for it
++    const auto ignored = [](const ggml_tensor * node, int j) {
++        switch (node->op) {
++            case GGML_OP_IM2COL:
++            case GGML_OP_IM2COL_BACK:
++                return j == 0;
++            case GGML_OP_UNARY: {
++                const ggml_unary_op uop = ggml_get_unary_op(node);
++                return j == 0 && (uop == GGML_UNARY_OP_SGN || uop == GGML_UNARY_OP_STEP);
++            }
++            case GGML_OP_CPY:
++            case GGML_OP_GET_ROWS:
++            case GGML_OP_GET_ROWS_BACK:
++            case GGML_OP_ROPE:
++                return j == 1;
++            default:
++                return false;
++        }
++    };
++
++    // the nodes that need a gradient: ggml_build_backward_expand's first loop
++    std::unordered_set<const ggml_tensor *> needs;
++    for (int i = 0; i < n_nodes; ++i) {
++        const ggml_tensor * node = ggml_graph_node(gf, i);
++        if (node->type == GGML_TYPE_I32) {
++            continue;
++        }
++        bool node_needs = (node->flags & GGML_TENSOR_FLAG_PARAM) || (node->flags & GGML_TENSOR_FLAG_LOSS);
++        for (int j = 0; j < GGML_MAX_SRC; ++j) {
++            const ggml_tensor * src = node->src[j];
++            if (src == nullptr || ignored(node, j) || needs.count(src) == 0) {
++                continue;
++            }
++            if (src->type != GGML_TYPE_F32 && src->type != GGML_TYPE_F16) {
++                reason = format("the gradient of '%s' (%s) is needed and its type is %s", src->name,
++                        ggml_op_desc(src), ggml_type_name(src->type));
++                return node;
++            }
++            node_needs = true;
++            break;
++        }
++        if (!node_needs) {
++            continue;
++        }
++        if (node->view_src != nullptr && node->op != GGML_OP_CPY && node->op != GGML_OP_SET_ROWS &&
++                node->op != GGML_OP_VIEW && node->op != GGML_OP_RESHAPE && node->op != GGML_OP_PERMUTE &&
++                node->op != GGML_OP_TRANSPOSE) {
++            reason = format("'%s' (%s) is an in-place operation, which ggml cannot differentiate", node->name,
++                    ggml_op_desc(node));
++            return node;
++        }
++        needs.insert(node);
++    }
++
++    // the nodes that get a gradient: the output, through the loss, and the parameters, which have accumulators;
++    // ggml_compute_backward visits them in reverse order and differentiates src[0..2]
++    std::unordered_set<const ggml_tensor *> has;
++    if (needs.count(output) != 0) {
++        has.insert(output);
++    }
++    for (const ggml_tensor * node : needs) {
++        if ((node->flags & GGML_TENSOR_FLAG_PARAM) || (node->flags & GGML_TENSOR_FLAG_LOSS)) {
++            has.insert(node);
++        }
++    }
++    for (int i = n_nodes - 1; i >= 0; --i) {
++        const ggml_tensor * node = ggml_graph_node(gf, i);
++        if (has.count(node) == 0) {
++            continue;
++        }
++        if (!llama_opt_backward_op_supported(node)) {
++            reason = format("ggml has no backward pass for %s (tensor '%s')", ggml_op_desc(node), node->name);
++            return node;
++        }
++        for (int j = 0; j < 3; ++j) {
++            const ggml_tensor * src = node->src[j];
++            if (src == nullptr || needs.count(src) == 0) {
++                continue;
++            }
++            const bool asserted = (node->op == GGML_OP_SOFT_MAX && j == 1) || (node->op == GGML_OP_ROPE && j == 2) ||
++                                  (node->op == GGML_OP_CROSS_ENTROPY_LOSS && j == 1) ||
++                                  (node->op == GGML_OP_GLU && j == 0 && node->src[1] == nullptr) ||
++                                  (node->op == GGML_OP_MUL_MAT && j == 0 &&
++                                   (src->ne[2] != node->src[1]->ne[2] || src->ne[3] != node->src[1]->ne[3]) &&
++                                   node->src[1]->ne[3] != 1);
++            if (asserted) {
++                reason = format("ggml has no backward pass for source %d of %s (tensor '%s')", j, ggml_op_desc(node),
++                        node->name);
++                return node;
++            }
++            if (ignored(node, j) || (node->op == GGML_OP_SOFT_MAX && j == 2)) {
++                // no gradient for this source here; ggml_compute_backward asserts that it has one already
++                if (has.count(src) == 0) {
++                    reason = format("ggml computes no gradient for source %d of %s (tensor '%s')", j,
++                            ggml_op_desc(node), node->name);
++                    return node;
++                }
++                continue;
++            }
++            has.insert(src);
++        }
++    }
++    return nullptr;
++}
++
+ void llama_context::opt_epoch_iter(
+         ggml_opt_dataset_t               dataset,
+         ggml_opt_result_t                result,
+@@ -4312,6 +4507,16 @@
+ 
+             auto * gf = model.build_graph(gparams);
+ 
++            if (train) {
++                // jllama: refuse a graph the backward pass cannot be built for, before ggml aborts on it
++                std::string reason;
++                if (llama_opt_find_unsupported_backward(gf, res->get_logits(), reason) != nullptr) {
++                    opt_error = "cannot train this model: " + reason;
++                    LLAMA_LOG_ERROR("%s: %s\n", __func__, opt_error.c_str());
++                    return;
++                }
++            }
++
+             struct ggml_context * ctx_compute_opt;
+             {
+                 const size_t size_gf = ggml_graph_size(gf);
+@@ -4373,6 +4578,8 @@
+ 
+     int64_t idata = 0;
+ 
++    opt_error.clear();
++
+     int64_t t_loop_start = ggml_time_us();
+     int64_t ndata_in_loop = idata_split*ubatch_per_ctx;
+     for (; idata < idata_split; ++idata) {
+@@ -4382,6 +4589,9 @@
+         ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
+         opt_epoch_iter(dataset, result_train, tokens, labels_sparse, batch,
+             callback_train, train, idata_in_loop, ndata_in_loop, t_loop_start);
++        if (!opt_error.empty()) {
++            return;
++        }
+     }
+ 
+     t_loop_start = ggml_time_us();
+@@ -5152,6 +5362,14 @@
+         callback_eval);
+ }
+ 
++const char * llama_context::opt_get_error() const {
++    return opt_error.empty() ? nullptr : opt_error.c_str();
++}
++
++const char * llama_opt_error(const struct llama_context * ctx) {
++    return ctx->opt_get_error();
++}
++
+ int32_t llama_process(llama_context * ctx, llama_process_type type, llama_batch_ext * batch) {
+     switch (type) {
+         case LLAMA_PROCESS_TYPE_ENCODE: return ctx->encode(*batch);

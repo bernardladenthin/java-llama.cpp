@@ -35,6 +35,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
 | `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |
 | `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`, which loads the tokenizer only: such a model answers the meta, tokenize and detokenize calls and refuses every other with `JLLAMA_STATUS_ERROR`), with an optional load-progress callback |
+| `jllama_model_interrupt()` | the first half of `jllama_model_free`, on its own: every call that waits for the model's inference loop, in flight or later, returns within about a second with `JLLAMA_STATUS_INTERRUPTED` unless its answer arrives first -- a stream's receive included, and a stream asked for afterwards is refused with it; nothing is released and the model must still be freed. For a host that waits for its calls in flight before it frees (`llama-ffm`'s `close()`) |
 | `jllama_model_load_video()` | `jllama_model_load()` with a `jllama_video_decoder` of the application: the videos of the model's requests are then decoded by its functions (`open`, `read_frame`, `close`; optional `start`, `read_audio`, `release`) and not by the `ffmpeg` program -- for hosts that cannot run one. Called on a thread of the library, not the caller's |
 | `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, the `capabilities` `chat` / `audio_gen` / `audio_stream` llama.cpp derives from the loaded projector, the `media_marker` a raw multimodal prompt places, chat template, the GGUF key/value map) |
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
@@ -49,7 +50,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_tokenize()`, `jllama_tokenize_json()`, `jllama_detokenize()`, `jllama_detokenize_json()` | ids or the `/tokenize` response (with pieces on request); bytes with their length, or the `/detokenize` response |
 | `jllama_metrics()` | the counters plus the `slots` array (`LlamaModel.getMetrics()`) |
 | `jllama_slot_action()` | save, restore or erase a slot's KV cache; the file of a save or restore is a file name inside the `--slot-save-path` directory, as upstream's `/slots` route takes it (a name with a directory part or `..` is `JLLAMA_STATUS_INVALID_REQUEST`, a model without the directory `JLLAMA_STATUS_ERROR`) |
-| `jllama_lora_adapters()`, `jllama_set_lora_adapters()` | the LoRA list; the scales from `[{"id", "scale"}]` |
+| `jllama_lora_adapters()`, `jllama_set_lora_adapters()` | the LoRA list; the scales from `[{"id", "scale"}]` (an adapter not named gets 0; the answer is `{"success": true}`) |
 | `jllama_configure()` | `n_threads`, `n_threads_batch`, `slot_prompt_similarity` at run time |
 | `jllama_systemone()` | a `/v1/systemone` request to a decision model |
 | `jllama_json_schema_to_grammar()` | a JSON schema as GBNF (no model needed) |
@@ -60,7 +61,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_set_cpu_moe_batched()`, `jllama_get_cpu_moe_batched()` | how the CPU backend runs the expert matmuls of a MoE model over repacked weights: batched per expert with the work handed out dynamically (the default), or upstream's one gemv per token over a static split (`llama/patches/0022`); process-wide, `GGML_CPU_REPACK_MMID_BATCHED=0` in the environment starts it off |
 | `jllama_server_start()`, `jllama_server_start_attached()`, `jllama_server_stop()`, `jllama_server_is_running()`, `jllama_server_set_worker_command()` | the embedded llama-server (`NativeServer`): the full upstream server from an argv, WebUI included, or the HTTP frontend attached to a loaded model; router mode's worker command. Not on Android (server.cpp does not build there) |
 | `jllama_rpc_server_serve()`, `jllama_rpc_server_stop()`, `jllama_rpc_server_listening()`, `jllama_rpc_server_devices()`, `jllama_strings_free()` | the RPC server (`RpcServer`): this process's devices served to llama.cpp RPC clients, one per process |
-| `jllama_tts_load()`, `jllama_tts_synthesize()`, `jllama_tts_synthesize_voice()`, `jllama_tts_synthesize_temperature()`, `jllama_tts_options_init()`, `jllama_tts_synthesize_options()`, `jllama_tts_supports_speaker_reference()`, `jllama_tts_voices()`, `jllama_tts_free()`, `jllama_bytes_free()` | text to speech (`TextToSpeech`): a Qwen3-TTS backbone and mmproj, a WAV per call; every option of llama.cpp's `/tts` in a `jllama_tts_options` (top-p, repetition penalty, `speed` / `loudness` for a model with delivery control, ZONOS3, since b12453 the speaker reference's transcript for Fish Audio S2, and since b12459 `cfg_scale` / `flow_steps` for YuE2, which is stereo -- the WAV header then says two channels); whether the pair clones a voice from a speaker reference (a pair that does not refuses one) |
+| `jllama_tts_load()`, `jllama_tts_synthesize()`, `jllama_tts_synthesize_voice()`, `jllama_tts_synthesize_temperature()`, `jllama_tts_options_init()` (a static inline over `jllama_tts_options_init_size()`, which writes no more than the caller's struct holds), `jllama_tts_synthesize_options()`, `jllama_tts_supports_speaker_reference()`, `jllama_tts_voices()`, `jllama_tts_free()`, `jllama_bytes_free()` | text to speech (`TextToSpeech`): a Qwen3-TTS backbone and mmproj, a WAV per call; every option of llama.cpp's `/tts` in a `jllama_tts_options` (top-p, repetition penalty, `speed` / `loudness` for a model with delivery control, ZONOS3, since b12453 the speaker reference's transcript for Fish Audio S2, and since b12459 `cfg_scale` / `flow_steps` for YuE2, which is stereo -- the WAV header then says two channels; `raw_prompt`, the text without the `tts` template); whether the pair clones a voice from a speaker reference (a pair that does not refuses one) |
 | `jllama_finetune()` | fine-tuning (`LlamaTrainer`): one training run from its JSON configuration |
 
 That is every native entry point of the Java API: `LlamaModel`, `LlamaQuantizer`, `NativeServer`,
@@ -130,6 +131,17 @@ cc -I<natives dir> example.c -L<natives dir> -ljllama -Wl,-rpath,<natives dir> -
 On Windows the import library `jllama.lib` ships next to `jllama.dll` in the same directory (named
 in `jllama-files.txt`, extracted and never loaded), so `cl example.c /I<natives dir> <natives
 dir>\jllama.lib` links the entry points directly; `LoadLibrary` + `GetProcAddress` works as well.
+
+The library jars of Linux, Android and Windows are modular: the CPU variants, `ggml-rpc` and every GPU
+module lie as files next to `libjllama`. The first C API call that needs a backend (`jllama_model_load`,
+the quantizer, `jllama_imatrix`, `jllama_finetune`, `jllama_tts_load`, the RPC and embedded servers)
+loads them from that directory, once per process; a program need not call
+`ggml_backend_load_all_from_path()` itself (it may, before). Until 2026-11-19 only the JVM's
+`JNI_OnLoad` did, and a C program found no backend.
+
+One embedded server runs at a time: `jllama_server_start()` / `_attached()` while another server runs
+is `JLLAMA_STATUS_ERROR`. The server sets the "C" numeric locale for the whole process, as
+`llama-server` does; every other call sets it for its own thread only.
 Streaming:
 
 ```c

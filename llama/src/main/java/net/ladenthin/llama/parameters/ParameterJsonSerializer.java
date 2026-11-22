@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.ContentPart;
@@ -197,6 +198,30 @@ public class ParameterJsonSerializer {
     // ------------------------------------------------------------------
     // Simple array builders
     // ------------------------------------------------------------------
+
+    /**
+     * Build the {@code lora} array of one request: {@code {"id": <index>, "scale": <float>}} per
+     * adapter, in id order.
+     *
+     * @param scales adapter id to scale
+     * @return a Jackson {@link ArrayNode} of the adapters
+     * @throws IllegalArgumentException if an id is negative or a scale is not finite
+     */
+    public ArrayNode buildLoraAdapterArray(Map<Integer, Float> scales) {
+        ArrayNode adapters = OBJECT_MAPPER.createArrayNode();
+        for (Map.Entry<Integer, Float> adapter : new TreeMap<>(scales).entrySet()) {
+            int id = adapter.getKey();
+            float scale = adapter.getValue();
+            if (id < 0) {
+                throw new IllegalArgumentException("a LoRA adapter id is its index, got " + id);
+            }
+            if (Float.isNaN(scale) || Float.isInfinite(scale)) {
+                throw new IllegalArgumentException("the scale of LoRA adapter " + id + " is not finite: " + scale);
+            }
+            adapters.addObject().put("id", id).put("scale", scale);
+        }
+        return adapters;
+    }
 
     /**
      * Build a JSON array of strings.

@@ -113,19 +113,41 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
-    public void reasoningEffortNoneSwitchesThinkingOffLikeUpstream() throws IOException {
+    public void reasoningEffortNoneIsForwardedToUpstreamsChatParser() throws IOException {
+        // The parser turns thinking off for "none" and, since llama.cpp b12624, passes it to a template
+        // that renders it; until 2026-11-22 the mapper translated it into enable_thinking itself, and a
+        // template that renders "none" never saw it.
         JsonNode out = mapAndSerialize(
                 "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}");
-        assertThat(out.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
-        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(), is(false));
-        assertThat(out.path("chat_template_kwargs").has("reasoning_effort"), is(false));
+        assertThat(out.path("reasoning_effort").asText(), is("none"));
+        assertThat(out.has("chat_template_kwargs"), is(false));
     }
 
     @Test
-    public void reasoningEffortLevelBecomesATemplateVariableLikeUpstream() throws IOException {
+    public void reasoningEffortLevelIsForwardedToUpstreamsChatParser() throws IOException {
+        // The parser refuses a level the template raises on (b12431), which it can only do with the field
+        // itself: as a template variable the level reached the template unchecked.
         JsonNode out =
                 mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}");
-        assertThat(out.path("chat_template_kwargs").path("reasoning_effort").asText(), is("low"));
+        assertThat(out.path("reasoning_effort").asText(), is("low"));
+        assertThat(out.has("chat_template_kwargs"), is(false));
+    }
+
+    @Test
+    public void anEmptyReasoningEffortIsNotForwarded() throws IOException {
+        JsonNode out =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"\"}");
+        assertThat(out.has("reasoning_effort"), is(false));
+    }
+
+    @Test
+    public void reasoningEffortAndTemplateKwargsAreForwardedSideBySide() throws IOException {
+        // upstream merges the kwargs first and sets the level from the field after them
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"chat_template_kwargs\":{\"enable_thinking\":true},\"reasoning_effort\":\"high\"}");
+        assertThat(out.path("reasoning_effort").asText(), is("high"));
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(false), is(true));
+        assertThat(out.path("chat_template_kwargs").has("reasoning_effort"), is(false));
     }
 
     @Test
@@ -152,12 +174,7 @@ public class OpenAiRequestMapperTest {
                 is(1024));
         InferenceParameters responses = mapper.toInferenceParameters(ResponsesApiSupport.toOpenAiChatRequest(
                 MAPPER.readTree("{\"input\":\"hi\",\"reasoning\":{\"effort\":\"none\"}}")));
-        assertThat(
-                MAPPER.readTree(responses.toJson())
-                        .path("chat_template_kwargs")
-                        .path("enable_thinking")
-                        .asBoolean(true),
-                is(false));
+        assertThat(MAPPER.readTree(responses.toJson()).path("reasoning_effort").asText(), is("none"));
     }
 
     @Test

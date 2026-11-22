@@ -19,6 +19,15 @@ package net.ladenthin.llama.parameters;
  */
 enum RequestField {
 
+    /** Request key {@code adaptive_decay} (the adaptive-p sampler's decay). */
+    ADAPTIVE_DECAY("adaptive_decay"),
+
+    /** Request key {@code adaptive_target} (the adaptive-p sampler's target probability). */
+    ADAPTIVE_TARGET("adaptive_target"),
+
+    /** Request key {@code backend_sampling}. */
+    BACKEND_SAMPLING("backend_sampling"),
+
     /** Request key {@code cache_prompt}. */
     CACHE_PROMPT("cache_prompt"),
 
@@ -73,6 +82,9 @@ enum RequestField {
     /** Request key {@code logit_bias}. */
     LOGIT_BIAS("logit_bias"),
 
+    /** Request key {@code lora}: the adapters of one request. */
+    LORA("lora"),
+
     /** Request key {@code messages}, consumed by the OAI/task layer. */
     MESSAGES("messages", RequestContract.OAI_LAYER),
 
@@ -118,6 +130,9 @@ enum RequestField {
     /** Request key {@code presence_penalty}. */
     PRESENCE_PENALTY("presence_penalty"),
 
+    /** Request key {@code preserved_tokens}. */
+    PRESERVED_TOKENS("preserved_tokens"),
+
     /** Request key {@code prompt}, consumed by the OAI/task layer. */
     PROMPT("prompt", RequestContract.OAI_LAYER),
 
@@ -132,6 +147,12 @@ enum RequestField {
 
     /** Request key {@code reasoning_budget_tokens}. */
     REASONING_BUDGET_TOKENS("reasoning_budget_tokens"),
+
+    /**
+     * Request key {@code reasoning_effort}, consumed by the OAI/task layer: upstream's chat parser reads
+     * it, refuses a level the chat template raises on and passes the others to the template.
+     */
+    REASONING_EFFORT("reasoning_effort", RequestContract.OAI_LAYER),
 
     /** Request key {@code reasoning_format}. */
     REASONING_FORMAT("reasoning_format"),

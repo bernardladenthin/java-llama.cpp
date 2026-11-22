@@ -10,6 +10,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **More of llama.cpp's request and sampler options.** `Sampler.ADAPTIVE_P` and `Sampler.TOP_N_SIGMA`
+  (upstream's sampler names `adaptive_p` and `top_n_sigma`, which the enum lacked) with
+  `InferenceParameters.withAdaptiveTarget` / `withAdaptiveDecay` for the adaptive-p sampler (the
+  decay refused outside 0..0.99, as the server does); `withBackendSampling`; `withLoraAdapters(Map)`,
+  the adapters of one request (id to scale, the model's own scales untouched); `withPreservedTokens`
+  (read by the raw completion paths; the chat paths drop it, as llama.cpp's server does);
+  and `ModelParameters.setSpecDraftBackendSampling(boolean)` (`--spec-draft-backend-sampling` /
+  `--no-spec-draft-backend-sampling`). The request keys are held to llama.cpp's schema and the
+  sampler names to its parser by the C++ wire contracts; `CApi` and `CApiDraft` run them on the
+  random model.
+- **`jllama_model_interrupt`** (C API, `jllama_api.h`): the first half of `jllama_model_free` on its
+  own -- every call that waits for the model's inference loop returns `JLLAMA_STATUS_INTERRUPTED`
+  within about a second, nothing is released. For a host that waits for its calls in flight before
+  it frees; `FfmLlamaModel.close()` uses it (`CApiInterrupt`).
+- **`llama-ffm` takes a video decoder**: `FfmLlamaModel.load(parameters, progress, VideoDecoder)` over
+  `jllama_model_load_video`, with the core's `VideoDecoder` / `VideoStream`, as
+  `new LlamaModel(parameters, progress, decoder)` does over JNI (`FfmVideoDecoderTest`, model-free, and
+  `FfmVideoDecoderIntegrationTest` on CI's vision pair, which the `llama-ffm` job fetches now).
+- **`GgufMetadata.getSuppressTokens()`**: the token ids of `tokenizer.ggml.suppress_tokens`, which
+  llama.cpp never samples, read without loading the model.
 - **Video input.** `ContentPart.videoFile(Path)`, `videoBytes(byte[], String)` and
   `videoUrl(String)` put a video into a chat message; llama.cpp samples its frames (4 per second,
   `setVideoFps`) and gives them to the vision projector as images, so every model loaded with a
@@ -72,7 +92,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   refused; two models of the same shape are not told apart, so the inputs have to be one model's.
 - **`TextToSpeech.synthesize(text, SpeechParameters)`** (and `FfmTextToSpeech`,
   `jllama_tts_synthesize_options()` with `jllama_tts_options` / `jllama_tts_options_init()` in the C
-  API): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
+  API -- a static inline over the exported `jllama_tts_options_init_size()`, so a library that grew
+  never writes past an older caller's struct, and a `struct_size` that is no version of the header is
+  refused): every option of llama.cpp's `/tts` route in one immutable builder -- the voice, the sampling
   (`topK`, `topP`, `repeatPenalty`, `seed`, `temperature`) and the delivery of a model that controls
   it, `speed` and `loudness` (llama.cpp b12431, ZONOS3 Mini). A model without delivery control
   refuses a speed other than 1 or a loudness other than 0, and values out of range (a top-p outside
@@ -126,6 +148,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **The plain-C test of every modular build job runs a model.** `c_abi` loads and tokenizes the C++
+  suite's random llama model through upstream's C API and answers a completion through
+  `jllama_model_load` / `jllama_completions`, so each library jar is proven to load and generate from
+  plain C before any Java runs; the model is written by a small helper against the shipped `ggml-base`
+  (ctest fixture `c_abi_model`), no download.
 - **`anthropics/claude-code-action` v1.0.278**, in step with the sibling repositories.
 - **logback-classic 1.6.7 (test scope), JLine 4.7.0 in the standalone `llama-atmosphere-agent` (no source
   change needed), `actions/setup-java` 6.3.0 and `anthropics/claude-code-action` v1.0.276**, in step with
@@ -197,6 +224,332 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `openjdk-21-runtime` 1.23 to its rebuild `1.23-6.1793319828` (OpenJDK 21.0.13). The Android arm64
   library jar and the OpenCL module, built locally with NDK r30, pass `verify-native-deps.py`
   (bionic-only dependencies, 16 KB alignment, 97 exports).
+- **Kokoro and tiny-voca speak** (they answered "no audio was generated" on every synthesis since
+  b12494 / b12497): the engine refused a synthesis that reported no frame, and these two pipelines
+  write the whole utterance in one pass and report none. Only the output decides now, as in upstream's
+  `llama-tts`. Both real pairs are in CI (`models.csv` features `kokoro`, 270 MB, and `tinyvoca`,
+  26 MB) and run the speech pipeline contract (`KokoroTtsIntegrationTest`, `TinyVocaTtsIntegrationTest`);
+  the C++ suite generates a random tiny-voca pair (`CApiTinyVoca`, 7 cases).
+- **llama.cpp b12525** (from b12522, 3 upstream commits): a decision model of the `lfm3-d1` type
+  (LiquidAI's d1-2B, d1-Omni-2B) answers up to 16 questions of a `/v1/systemone` request in one pass
+  (#32553), cpp-httplib 0.67.0 (#32563), and upstream's CI moved to LLVM 22.1.8 (#32548), for which it
+  cast the four `_mm_prefetch` calls that `patches/0017` replaces -- around the whole expression, so
+  the prefetch address is still wrong there; the patch was refreshed onto the new lines and keeps
+  the byte offset.
+- **llama.cpp b12522** (from b12521, 1 upstream commit): the CUDA module picks the FP16/BF16
+  accumulation precision per GPU model through NVML, which it loads at run time when the driver has
+  it (#30672); the Windows CUDA build installs NVML's header (`cuda_nvml_dev`) for it, as upstream
+  does. Nothing of the other natives changed.
+- **llama.cpp b12573** (from b12525, 48 upstream commits in seventeen steps; master, pinned by commit
+  before upstream tags it). b12549 (#32429) gives Inkling 2 an attention input of its own for its
+  relative positions and builds the masks of the hybrid sliding-window memory (LFM2, LFM3, Inkling 2)
+  the way the plain one builds them, so these models reuse their compute graph with flash attention --
+  the reuse check failed on every step before (`CApiGraphReuse`: the generator's LFM3 backbone with
+  `-fa on --kv-unified` reuses its graph and answers as with `LLAMA_GRAPH_REUSE_DISABLE=1`). **VoxCPM2** text to speech (#32443): a MiniCPM4 backbone that makes one
+  hidden state per frame and a projector with FSQ, a residual LM run through libllama, LocDiT flow
+  matching and a causal AudioVAE at 48 kHz; a voice description in parentheses designs the voice,
+  a reference clip clones it (see "Fixed": `TextToSpeech` refused it until the same day), and
+  `flow_steps` / `cfg_scale` (`SpeechParameters`, `/tts`) reach it without a change here
+  (`CApiVoxCpm2`, a random pair the generator writes). An EAGLE-3 draft over a Qwen3-VL target
+  reads the target's layer inputs (#32589, b12542); before, the process ended at an assertion. A `/v1/realtime` session on a model that fell asleep wakes it before it
+  touches the model (#32567; a segmentation fault before, `CApiLfm3AudioSleep`), a recurrent cell
+  is cleared with zeros instead of scaled by 0, so a NaN left in it no longer reaches the next
+  sequence (#31913, `CApiRecurrent.AStateThatOverflowedDoesNotReachTheNextSequence`, a Mamba whose
+  state grows until it overflows: `tiny_model_spec::ssm_a_growth`), `limite` refuses mudd metadata
+  past its index array (#32562), a direct-I/O read that fails with `EIO` falls back to buffered I/O
+  (#32545), the IQ2 quantizer caches its grid search (#31910), `PATH_MAX` is gone (#32557: on Windows a split model under a path of
+  more than 260 bytes of UTF-8 did not load, `CApiShard.AModelSplitByGgufSplitLoadsFromItsFirstFile`,
+  over a gguf-split pair the generator writes), Vulkan,
+  CUDA and OpenCL kernel work, CONV_2D through Metal's tensor API on M5 and split-K on every Apple
+  chip (#32542, b12543) and a fix of one of Metal's ranges (#32602), the graph parameters without the
+  fields the graph reads from the model (#32596), and the WebUI loads diagrams, math and PDFs on demand (#32555; its npm
+  license texts are regenerated, 282 packages). b12550 adds ggml's busy-wait operator `GGML_OP_SLEEP`
+  for scheduler tests (#27258, RPC protocol 10.0.1: the handshake accepts the patch step, and the op
+  runs on an RPC server's device, `RpcLoopback.TheSleepOperationRunsOnTheServerAndKeepsItsInput`),
+  b12551 a scatter kernel for CUDA's batched tensor writes (#32489), b12552 OpenVINO fixes and
+  fewer prefill recompiles (#32590), b12553 loads a YuE2 projector without the unused reranking head
+  `cls.output.weight` (#32606; its load failed before, `CApiYuE2` over a generated pair holds it) and b12554 gives ROPE and SET_ROWS BF16 inputs
+  on the CPU and CUDA, where a BF16 rope is fused into a BF16 cache (#32387), and b12555 gives the
+  OpenCL module int8 KQ products in the decomposed flash attention for Adreno GPUs (#32577). b12556
+  refuses an HRM-Text GGUF whose cache-slot count does not match its block count instead of ending
+  the process, and computes the count in 64 bits, so a product that wrapped to the block count no
+  longer gets the tensor loader past the layers (#32601, `CApiHrm`, red at b12555 with the
+  assertion), and b12557 lets the CUDA module run an expert matmul whose token names one expert in
+  several slots (#32505; ggml now documents duplicate expert ids as supported on every backend, and
+  `test_moe_repack` holds both CPU repack paths of `patches/0022` to them), and b12558 turns subgroup
+  arithmetic off on Qualcomm's proprietary Vulkan driver, where `subgroupAdd()` after divergent code
+  returned wrong sums and the fused ADD+RMS_NORM gave a wrong norm in every decode step, so a model
+  wrote stray tokens after a long prompt (#30826) -- the case of the `vulkan-windows-aarch64` module on a
+  Snapdragon X laptop. No CI job runs a Vulkan module on a GPU; locally the b12558 module was built
+  from the patched tree and upstream's `test-backend-ops -o ADD_RMS_NORM,RMS_NORM_MUL_ADD` passed
+  139 of 139 on Mesa's lavapipe, a CPU Vulkan driver that reports subgroup arithmetic, so the fused
+  path the commit turns off on Adreno ran there and was right; the Qualcomm branch itself needs an
+  Adreno GPU. b12559 folds the query heads of a KV group into one tile of the OpenCL module's
+  decomposed f16 flash attention for short batches (#32631, Adreno; `GGML_OPENCL_FA_KQ_P8_FOLD=0`
+  turns it off): the changed kernel passes clang's OpenCL front end, the module's host part compiles,
+  and a model of the grid shows the folded and the unfolded one write the same cells once each over
+  1932 shapes; it runs only on an Adreno GPU. b12560 gives the WebGPU backend `COL2IM_1D` (#31708),
+  which no natives jar builds. b12561 computes Vulkan's `GATED_DELTA_NET` in chunks on GPUs with
+  matrix cores (#30207; the plain shader reads K through strides of its own now) and b12562 tightens
+  the loop of the fused `RMS_NORM_MUL_ROPE` (#31149): upstream's `test-backend-ops` for both ops passed
+  348 of 348 on lavapipe from the patched tree, the new padded and permuted cases included, while the
+  matrix-core shaders need a GPU. b12563 keeps the precision of CUDA's per-expert `MUL_MAT_ID`
+  fallback (#31345), b12564 speeds up CUDA's single-column MMVQ on Orin (#31268), b12565 fixes a
+  WebGPU copy (#32576), b12566 lets KleidiAI build for HarmonyOS (#32265), and b12567 gives the s390x
+  modules built with VXE (`z15`, `z16`) llamafile kernels for Q2_K to Q6_K (#32600). Nothing in CI ran
+  those on K-quant weights, so `c_abi` now multiplies Q2_K to Q6_K through the CPU module ggml loaded
+  against a reference from ggml-base's dequantization (`kquant_matmul.h`), on every library-jar build
+  and on s390x under qemu, where ggml loads `z15`: locally green there, and with the kernel's block
+  scale off by 0.1% all ten cases the kernel computes are red, the five one-column cases ggml computes
+  itself green. b12568 adds **Domyn Edge** (#32559, arch `domynedge`): sliding-window layers with RoPE
+  and narrower heads, full-attention layers without positions, a norm on the keys with a weight and
+  one on the queries without, and norms after attention and feed-forward; the load refuses a
+  sliding-window rotation wider than the head (`CApiDomynEdge`, a random three-layer model the
+  generator writes: it answers over the cached prompt and from a restored slot, which continues from
+  a checkpoint of the slot file; one batch and `-ub 1` agree; the window changes what a long prompt
+  sees and not a short one, red with the window left unbounded; the refusal, red without it, ends the
+  process in the CPU's ROPE). b12569 reserves graph nodes for the MoE cache (#32636), b12572 moves
+  the per-architecture node budget into the model classes and adds the nodes of LoRA adapters for
+  every architecture (#32648; every architecture keeps its factor), and b12570, b12571 and b12573
+  change the WebUI (a full-screen diagram preview, the reasoning effort in the model picker, icons
+  for vision and audio; no npm package changed). All 26
+  patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
+  (see "Fixed").
+- **llama.cpp b12636** (from b12573, 63 upstream commits in fourteen steps; master, pinned by commit
+  before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
+  (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
+  from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
+  at every step. b12580 adds `--ui-mcp-proxy-allow-private-urls` (#32633): the MCP CORS proxy of
+  `--ui-mcp-proxy` refuses local and private addresses, and with the option it reaches an MCP server
+  on localhost or the LAN; `NativeServer` takes it as it forwards every argument
+  (`NativeServerCors.TheMcpProxyReachesALocalAddressOnlyWithItsOption`: the route is 403 without the
+  proxy, 400 "host is not a public address" without the option -- a local server behind it is never
+  reached -- and the local server's answer with it; red at b12574, whose parser does not know the
+  option). b12576 moves the Hadamard rotation of lightning-indexer keys into the model classes
+  (#32653), b12577 loads `ffn_gate_up_exps.scale` for fused expert matrices and Inkling 2 passes its
+  expert scales on (#32657), b12578 updates CUDA's `GATED_DELTA_NET` check (#32660), and b12579 focuses
+  the WebUI's chat form when the user types with nothing focused (#32570). b12582 loads
+  highlight.js's languages on demand, so the embedded WebUI carries 291 assets instead of 96
+  (#32661; dist 8.1 MB instead of 7.6), b12584 passes `llama-tts`'s thread count to its projector
+  (#32664, the gap `TextToSpeech` had too, see "Fixed"), b12585 publishes Llama UI under a second npm
+  name (#32667) and b12586 searches message contents from the WebUI's search dialog (#32670). b12587
+  gives the WebUI voice messages and dictation with live waveforms and transcripts (#32531, through
+  the server's `/v1/audio/transcriptions` and `/v1/realtime`): the chat app compiles a new library,
+  Llama Voice (`ui/lib/voice`), from source, so `build-webui` and `webui-licenses.yml` check it out too
+  and the license check scans its imports (it has none; without the folder vite fails with "Could not
+  load ../../lib/voice/src/index.ts"). The embedded WebUI keeps 291 assets (8.2 MB). b12588 prunes
+  the rows without an output before Gemma 4's KV-shared layers in a batch of several sequences too
+  (#32342; until then only in a context of one), slice by slice of the attention mask
+  (`Gemma4.ThreeSequencesInOneBatchOf*`: three prompts of a generated Gemma 4 decoded as three
+  sequences of one batch, with a split and a unified KV cache, get the logits each gets alone, 2.3e-5
+  apart at most; red-checked against the patched tree, an output taken back by its place in the batch
+  instead of in its slice is 2.45 apart and wrong mask rows 1.15 and 1.72;
+  `CApiGemma4.ThreeSlotsAtOnceAnswerAsEachAlone` holds the same through the server, three requests at
+  once on three slots with a batch of 8 tokens, red with the wrong mask rows). b12589 extends Vulkan's
+  `COL2IM_1D` (#32673). b12590 gives Drama-3 voice cloning through Fish Audio S2's codec encoder
+  (#32586): `TextToSpeech.supportsSpeakerReference()` is true for a Drama-3 pair whose projector
+  carries the encoder, as for the other six pipelines that encode a clip
+  (`TtsParams.TheSevenPipelinesThatEncodeAClipCloneAVoice`). b12591 marks ggml's version for the next
+  major bump and deprecates `ggml_ftype` (#32647; nothing here uses it). b12592 refuses spoken
+  decision instructions on every model but lfm3-d1-omni with audio input (#32578): on another decision
+  model they are an invalid request with that reason, where they failed as a server error ("Failed to
+  load image or audio file") before
+  (`CApiSystemOne.SpokenInstructionsAreRefusedByEveryModelButLfm3D1OmniWithAudioInput`, red against the
+  old condition). b12593 changes upstream's Docker CI only. b12594 stages Llama Voice's sources for
+  upstream's CMake and Docker UI builds too (#32680; `build-webui` builds with `BUILD_UI=OFF` and the
+  prebuilt `dist`, so it changes nothing here), b12595 fixes a flaky story of the WebUI's tests
+  (#32675; the WebUI still builds and embeds 291 assets, the npm license texts still match the
+  lockfile), b12596 lets Metal fuse a norm chain in either operand of `MUL`/`ADD` (#32300), and
+  b12597 streams only the parsed content of a transcription (#32571): the deltas of
+  `/v1/audio/transcriptions` with `stream` are the transcript, as the final event's text is, and a
+  reasoning part (Qwen3-ASR's "language ..." prefix) is not
+  (`CApiAudio.AStreamedTranscriptionCarriesTheTranscriptAndNotTheReasoning`: the generator's audio
+  projector on the decoder with a template that opens a thinking block and `--reasoning-budget 2`;
+  red against b12596's partial result, whose deltas were the raw text: `e</think>=eeeeeeeeee` for the
+  transcript `=eeeeeeeeee`). b12598 changes upstream's
+  OpenVINO CI, b12599 tunes HIP's `MMVQ` for RDNA1 (#32389), and b12600 adds Inkling 2 Mini, the
+  looped variant of Inkling 2 (#32694, architecture `inkling2_loop`). b12601 documents the OpenVINO
+  backend and fixes the SYCL docs (#30967), and b12602 runs SYCL's grouped XMX GEMM without staging
+  through shared local memory (#31428; the SYCL module is built in CI only). b12603 scores only the
+  k-pools of the ubatch's sequences in QSA (#32519, `qwen4exp`'s sparse attention; no generator
+  here, upstream's architecture test covers it), b12604 refuses a grammar repetition whose maximum is
+  below its minimum (#32551): `"a"{3,2}` is an invalid request with the parser's reason "incorrect
+  number of repetitions", where the number of optional repetitions wrapped around and the parser
+  added rules until the memory ran out
+  (`CApi.AGrammarWhoseRepetitionEndsBeforeItBeginsIsRefusedWithItsReason`: refused on every request
+  path, the reason on stderr, `{2,3}` still constrains the answer; red against b12603 under a 4 GB
+  address-space limit, each parse a `std::bad_alloc` after 10 s), and b12605 changes upstream's server
+  CI. b12606 always uses the fused lightning indexer and drops its switch (#32650; DeepSeek V3.2/V4,
+  GLM-DSA, Kimi K3.1 and the other sparse-attention models; nothing here named it), b12607 and b12608
+  are ppc64le CI and tinyBLAS (#32659), b12609 fixes a load race in zDNN (#32279), b12610 adds bound
+  checks to hrm_text's cycle counts (#32720; with the slot count equal to the block count they cannot
+  be exceeded, so `CApiHrm` sees the same refusals), b12611 shares Inkling 2 Mini's loop slots after
+  the scale pass (#32704), b12612 and b12613 tune Vulkan for RDNA4 and work around an AMD Windows
+  driver in flash attention (#31804, #32466), b12614 makes CUDA's fastdiv abort instead of shifting by
+  32 (#32698), b12615 fuses `ADD`/`RMS_NORM`/`MUL` in SYCL (#31753), and b12616 opens the WebUI's
+  context gauge as a popover (#32685; 291 assets, the license texts unchanged). b12617 and b12618 give
+  SYCL a column-blocked `GATED_DELTA_NET` kernel and an IQ4_NL/IQ4_XS weight reorder (#32456, #31998;
+  built by the CI SYCL jobs only). b12619 adds Kyutai's Hibiki, full-duplex speech translation over a
+  Moshi backbone (#32491, architecture `moshi`, `MTMD_GEN_AUDIO_TYPE_MOSHI`): the model speaks while it
+  listens, on the embedded server's `/v1/realtime` (`mtmd_helper_cap::audio_duplex`); its pipeline
+  refuses a text prompt and a speaker reference, so `TextToSpeech` cannot drive it (README). The same
+  commit moves Pocket TTS's Mimi decoder into a shared SEANet module and changes the Qwen3-TTS pipeline;
+  the generated Pocket TTS and Qwen3-TTS pairs (`CApiPocketTts`, `CApiQwen3Tts*`) keep every exact
+  length and the LFM3 realtime cases pass. No generator for Hibiki yet (TODO.md). b12620 improves the
+  memory access of the CPU's `mul_mat` chunks (#30846), b12621 bounds SYCL's `CONV_TRANSPOSE_1D` input
+  (#31109), and b12622 applies a weight's `.scale` tensor wherever its matrix is multiplied (#32669;
+  `build_lora_mm` / `build_lora_mm_id` look it up by name): ZAYA1, whose graph passed no expert scale
+  on although its `ffn_gate_up_exps.scale` has loaded since b12577, now computes its experts scaled
+  (`CApiWeightScales.Zaya1ScalesItsExperts`: the generator's ZAYA1 with scales answers what the same
+  model with folded weights answers; red at b12619, where it answered like the unscaled model).
+  b12623 merges Parakeet's relative-position views (#32722), b12624 makes `reasoning_effort: none` a
+  level of its own (#32763): a template that renders it lists it in `getReasoningEffortLevels()` and is
+  rendered with it, one that raises on it does not list it and the request goes on without the level
+  (`CApiTemplate.AReasoningEffortOfNoneReachesATemplateThatRendersIt`, red against b12623's probe).
+  b12625 fixes `no_realloc` for two decision models (#32754), b12626 and b12628 fix Vulkan's memset of
+  unaligned ranges and `SCALE` of a non-contiguous source (#32725, #32735), and b12627 fits the
+  server's non-causal batches into one ubatch (#32713) -- which `patches/0036` already does for
+  every caller (a non-causal context's batch is its ubatch), so it stays. b12629 adds cooperative-matrix
+  GEMM kernels for the Adreno 850 to the OpenCL backend (#32686; Q4_0, Q5_0, Q8_0, Q4_K, Q5_K, Q6_K,
+  seven kernels more in the embedded set the Android and Windows OpenCL modules carry; built here as CI's
+  Android job configures it, module-only with the Adreno kernels embedded, all seven are in
+  `libggml-opencl.so`), and b12630 and
+  b12631 move WebGPU to a recent Dawn (#32779, #32782; no WebGPU module is built here). b12632 to
+  b12636: a HIP fix for NVFP4 scales on CDNA3 (#32790), a Vulkan/WebGPU clear on non-UMA devices
+  (#32727), a lazy grammar for tool calls a template writes as bare JSON without a start marker (#32497:
+  Llama 3.x under `tool_choice` `auto` had no grammar at all; `LazyToolGrammar` holds it, red before it),
+  the backward pass of `SIGMOID` (#32126, `GGML_OP_SIGMOID_BACK` appended after the last op,
+  so the op numbers stay and the RPC protocol only moves to 10.0.2), and the GGUF reader keeping a
+  tensor or value type read from the file an integer until it is range-checked (#32641; a type id outside
+  its enum fails the load by name and the process goes on, which a new C API case holds). All patches
+  apply unchanged.
+- **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
+  tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
+  convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
+  `GET_ROWS` on all threads (#32514), and the WebUI's `@ggml-org/llama-brand` from npm instead of a
+  GitHub commit (#32544; declared `CC-BY-NC-4.0 AND MIT AND OFL-1.1`). The WebUI license list now
+  takes the license files below a package's root when its license joins several with AND, so
+  llama-brand's CSS (MIT, `css/LICENSE`) and fonts (OFL-1.1, `fonts/OFL.txt`) carry their texts;
+  `LICENSES/OFL-1.1.txt` and the REUSE annotation follow. New: `CApiZaya1` (a random ZAYA1 answers,
+  restores a slot, gives the same answer with the prompt in one batch and one token at a time and in
+  two slots at once as in each alone -- the last two red with the delayed value head dropped -- and
+  keeps the router and the grouped convolution in F32 when quantized) and `CApiThreads` (the
+  embedding lookup of a 2100-token prompt gives the same answer on one and four threads; red with a
+  broken row split).
+- **A batch of one token, more slots than batch tokens, and a draft model next to a small batch
+  work.** Three places in llama.cpp ended the process -- the JVM -- for a small batch, and the
+  engine refused a `--batch-size` below 2 to avoid the first. `patches/0032`: the server's load
+  evaluates two tokens in one batch to probe the memory (`common_context_can_seq_rm`) and the warmup
+  up to `--batch-size` tokens; both take the context's batch now, so `setBatchSize(1)`,
+  `setCtxSize(1)` (a causal context's batch is at most its size) and `--embedding` with
+  `--ubatch-size 1` load and answer. `patches/0034`: a context with more sequences than its batch
+  holds tokens -- `setParallel(4)` on a batch of 2, or a `NativeServer`'s four default slots on a
+  batch of 1 -- asserted while it was created (`n_outputs_max`). `patches/0033`: a slot drafts at
+  most its share of the server's batch; `-b 3` next to a draft model (whose default draft is three
+  tokens) aborted at the first generation step, and the old refusal let it through. Each such model
+  answers exactly what a model with a large batch answers in ubatches of one token. Only a batch of
+  no tokens is refused now ("--batch-size must be at least 1"), and a negative `--ubatch-size`,
+  which an embedding context would take for its batch. A `NativeServer` parses its argv
+  with llama.cpp's own parser before its worker starts, so the check reads every spelling and the
+  environment, and an argv the parser refuses fails `NativeServer`'s start itself (`CApiBatchSize`:
+  `-b 1`, `-c 1`, `--embedding -ub 1`, two and four slots on a batch of one and two tokens, `-b 3`
+  next to a draft model and the server's start with `-b 1` each abort without their patch;
+  `SmallBatchIntegrationTest` over JNI; `LoadRefusalTest`).
+- **llama.cpp b12515** (from b12506, 9 upstream commits; master, pinned by commit before upstream
+  tags it). A `/v1/realtime` session switched to the type `transcription` takes its instruction the way
+  `/v1/audio/transcriptions` does (#32507): `session.audio.input.transcription.prompt` goes in before
+  the audio (after it for a model whose preset puts the audio first), the language is named when the
+  preset does not, and `session.updated` reports the prompt; before, the prompt was not read. (The
+  slot's own live transcription, `?intent=transcription` on a model with an `asr` template, is
+  unchanged.) Also
+  CUDA fuses `NORM` + `MUL` (+ `ADD`) (#32454), `LLAMA_MOE_RANDOM_ROUTING=1` picks random experts
+  for benchmarks (#29539; the answers are not valid), and tokenizer refactors (#30962, #31070). The
+  WebUI's `package.json` became a publishable npm package (`npx @ggml-org/llama-chat`, #32524); the
+  embedded build is unchanged, its license list is regenerated for the lockfile.
+- **llama.cpp b12506** (from b12504, 2 upstream commits): bf16 for more operators (#32202) -- on the
+  CPU `scale`, `clamp`, `leaky_relu`, `swiglu_oai`, `swiglu_clamp`, `tri` and `diag`, on Vulkan the
+  unary and binary operators and `rms_norm` -- and follow-ups to the WebUI Storybook (#32523). No API
+  change.
+- **llama.cpp b12504** (from b12499, 5 upstream commits): CUDA kernel tuning (conv2d, MMQ for MoE on
+  V100, Pascal DP4A), the OpenVINO backend's larger op set and NPU/GPU passes (#32172), and a
+  Storybook for the WebUI's component library (#32485). No API change.
+- **A model closes the log file its load opened.** `--log-file` (`ModelParameters.setLogFile`, the
+  variable `LLAMA_ARG_LOG_FILE`) sets the file of llama.cpp's process-wide log, and nothing closed it:
+  every later model of the JVM kept writing into it, and Windows could not delete it while the JVM
+  ran. Freeing the model whose load opened the current file (`LlamaModel.close()`,
+  `jllama_model_free`) now closes it, after the model's teardown, a failed load closes it at once,
+  and a later model with a log file of its own takes it over. The option is taken out of the argv
+  (both spellings, `--log-file` and `--log_file`) and the file opened after the parse accepted the
+  rest, so a refused load opens nothing and closes nobody else's file; every such change of the log
+  is serialised with `setLogger`, as two of them interleaved could end the process. A `NativeServer`
+  does the same after its argv was accepted; with `LLAMA_ARG_LOG_FILE` also set, its `--log-file` is
+  applied after the variable, as upstream orders them, and the embedded server no longer flushes the
+  log on its own when it returns (`patches/0006`). `--log-file f --log-disable` keeps the log
+  disabled (`CApiLogFile`).
+- **llama.cpp b12499** (from b12497, 2 upstream commits). The host-memory prompt cache records the
+  LoRA config of every state (#32434) and loads only the states of the adapters a request runs with:
+  it no longer serves a state computed under other scales after `setLoraAdapters`, the gap the
+  Javadoc named. A recurrent or hybrid model reuses its context checkpoints by the position of its
+  state, not by a sliding window (#32434). `patches/0021` now labels a restored slot with the LoRA
+  scales its file was saved with and applies them to the adapters loaded at the restore -- also
+  after the model slept and loaded them again; without it a slot file restored on a server started
+  with `--lora` was cleared again at its first request, and a state saved under other scales than
+  the current ones must not be reused (`LoraCacheFreshSlot`, `LoraCacheSleep`; the file carries the
+  config since, see "Fixed"). Also Vulkan `rms_norm` on Qualcomm (#30824).
+- **llama.cpp b12497** (from b12496, 1 upstream commit: tiny-voca TTS, #32427). The `tts`
+  template's new `tts_g2p()` asks the projector's letter-to-sound model for the pronunciation of a
+  word; the engine hands it `mtmd_gen_audio_g2p`, as `/tts` and `llama-tts` do, so a tiny-voca pair
+  speaks words its lexicon lacks. A projector without one answers none. No tiny-voca pair in CI.
+- **llama.cpp b12496** (from b12494, 2 upstream commits): stream-K matrix multiplication for the
+  HIP module on AMD GCN GPUs (#30022), and the Llama UI library at 0.4.0 (#32480, the version only:
+  the embedded WebUI and its license list are unchanged).
+- **llama.cpp b12494** (from b12493, 1 upstream commit: Kokoro TTS, #32413). `/tts` takes
+  `raw_prompt`, which speaks the text as the backbone's prompt without the model's `tts` template; it
+  reaches the library as `SpeechParameters.rawPrompt`, `jllama_tts_options.raw_prompt` (the struct
+  grows from 80 to 88 bytes, a caller of the older header keeps working) and `SpeechOptions` on the
+  Java server's `/tts`. Kokoro itself is a new pipeline the engine runs through the same calls;
+  there is no Kokoro pair in CI.
+- **llama.cpp b12493** (from b12490, 3 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). Qwen3-TTS clones a voice more closely from the transcript of the speaker reference
+  (#32438, its "ICL" mode): `SpeechParameters.speakerReferenceText` / `jllama_tts_options` /
+  `/tts`'s `speaker_ref_text` reach it unchanged. It needs a clip of 30 s or less and an mmproj
+  converted with the reference encoder; an older one, such as CI's, clones from the speaker embedding
+  as before. Also OpenCL and CUDA kernel work. The C++ suite now checks that the per-tensor weight
+  scales of NVFP4 and FP8 checkpoints are applied, on a dense, a mixture-of-experts, a recurrent and a
+  Qwen3-Next model (whose delta net ignored the scale of its output projection before #32393).
+  `AudioInputIntegrationTest` runs in CI now, on Ultravox v0.5 over Llama-3.2-1B (`models.csv` feature
+  `audio`, 2.2 GB); it skipped itself everywhere before, for want of an audio model in the set. It
+  covers the typed and streamed chat, the raw prompt object, a 35 s clip as two Whisper chunks,
+  determinism, and an image refused by the audio-only projector. Comparing the real pair with the C++
+  suite's generated projector found an upstream defect: llama.cpp drops the last 80 ms of every 30 s
+  chunk of Ultravox v0.5, and aborts the process for an Ultravox projector whose stack stride is a
+  power of two (TODO.md); the C++ suite pins both. The speech contract's delivery case speaks a longer
+  sentence: ZONOS3 ends "Hello." within its codebook delay at a faster speed, which gave silence.
+- **llama.cpp b12490** (from b12480, 10 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). A grammar or JSON schema next to `ignore_eos` is refused now (#32377): a request
+  throws `InvalidRequestException` (`400` on the HTTP routes) where the sampler used to crash, and a
+  model loaded with `--ignore-eos` and `--grammar` / `--json-schema` fails to load. The C++ suite holds
+  both, and several upstream changes of the last bumps that had no test here: the empty stop string,
+  `allOf` over numbers in a JSON schema, the Jinja of b12431, media URLs on private addresses (refused
+  without `--media-allow-private-urls`), every load mode reading the same weights, a 30 s audio clip as
+  one chunk, the TTS template's normalizer, control characters in a pythonic tool argument (LFM2;
+  escaped into valid JSON since #31937) and a `--tensor-split` / `--fit-target` value for every device
+  (#31435). Also CUDA, Vulkan and PLaMo tokenizer speedups.
+- **llama.cpp b12480** (from b12463, 17 upstream commits; pinned by commit, upstream has not tagged
+  the number yet). The WebUI moves to SvelteKit 3 and its built-in service worker (#32463) and compiles
+  the sources of Llama UI, upstream's new design system in `ui/lib/ui` (#32468): `build-webui` and the
+  license check now check out that folder too, and the license texts of the WebUI's npm packages
+  (`llama/legal/natives/webui-npm/`) are generated anew, over the imports of the library's sources as
+  well (357 packages). Minimax-Music3 sings (#32435), and a TTS template can read a model's
+  pronunciation dictionaries (`tts_dict`, #32397, Kokoro); both reach `TextToSpeech` through upstream's
+  helper without a change here. The C++ suite's GGUF generator now writes a random MiniMax Music 3 pair
+  (`CApiMusic3`: a stereo song at 44.1 kHz, classifier-free guidance and the flow-matching steps
+  changing it, a long song decoded in two windows), and a ZONOS3 with a `tts` template and dictionaries
+  (`CApiTtsDict`: a word of the dictionary spoken as its entry, a malformed dictionary ignored); further
+  cases hold the saturating integer conversion of the Jinja templates and the `service-worker.js` route
+  of the embedded server without the UI. Not tested with real weights (no such pair in `models.csv`). Also the
+  output projection scale of Qwen3-Next (#32393) and CUDA, Vulkan, SYCL, OpenCL, Metal and WebGPU
+  kernel fixes.
 - **llama.cpp b12463** (from b12453, 10 upstream commits; pinned by commit, upstream has not tagged
   the number yet). YuE2-3B sings lyrics (#32369), in **stereo**: the speech engine reads the channel
   count of the model and writes the interleaved samples into a WAV header that says so (until now every
@@ -329,12 +682,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   name or the call failed. Patches `0027` and `0028` open them as UTF-8, and `0029` a `file://`
   media URL below a `--media-path` outside ASCII. `0030` reads an option's environment variable
   (`LLAMA_ARG_SLOT_SAVE_PATH`, ...) as UTF-8 too: in the ANSI code page a path outside ASCII in it
-  failed the model load, whatever the arguments said.
+  failed the model load, whatever the arguments said. Of the Windows paths only the download target
+  (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
 - **The standalone `OpenAiCompatServer` speaks.** `--tts-model <gguf> --tts-mmproj <gguf>` load a
   speech model next to the model, and `POST /v1/audio/speech` and `POST /tts` are served; without
   them both answer `501` as before. `--tts-lang` / `--tts-voice` are the defaults of a request
-  that names none. Of the Windows paths only
-  the download target (`--model-url` / `-hf` with `-m`, `LLAMA_CACHE`) still has to be ASCII.
+  that names none. `OpenAiCompatServerSpeechLauncherIntegrationTest` starts `main` with CI's draft
+  model and tiny-voca pair in a child JVM and asks it to speak.
 - **llama.cpp b12242** (from b12233, 9 upstream commits): `NativeServer` serves OpenAI's
   `POST /v1/audio/speech` over a model that generates audio; Gemma 4 audio input as a stream;
   `text.format.json_schema` on the upstream `/v1/responses`; a request with `response_format` and
@@ -461,6 +815,326 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A scaled LoRA adapter or control vector could not be named by an absolute Windows path.**
+  llama.cpp reads `--lora-scaled` and `--control-vector-scaled` as `FNAME:SCALE,...` and split each
+  item at every colon, so the colon after a drive letter made `C:\models\a.gguf:0.5` three parts and
+  the load failed; `ModelParameters.addLoraScaledAdapter` / `addControlVectorScaled` refused such a path
+  for that reason. `patches/0045` splits at the last colon (the scale has none), and the two setters
+  write a path with colons as it is. Found by the first CI run of the C API's control-vector test on
+  Windows arm64; `ScaledFiles` in `test_model_flags.cpp` holds the parser's half on every platform.
+- **Fine-tuning a model ggml cannot differentiate ended the process.** `LlamaTrainer` and
+  `jllama_finetune` run llama.cpp's training loop, whose backward graph is built by
+  `ggml_build_backward_expand`; that function ends the process (`GGML_ABORT`) on a graph op it has no
+  backward pass for, and `llama_opt_epoch` reports nothing. Measured over the test generator's
+  architectures: a mixture of experts (`MUL_MAT_ID`, also Qwen3-Next and ZAYA1), a recurrent model
+  (`SSM_SCAN`), Gemma 4 (the unary `TANH` of its soft-capping) and Cohere2 (`NORM`) each ended the JVM,
+  while llama, Domyn Edge, HY-V3 and Qwen3-VL train. `patches/0044` walks the forward graph with the
+  backward pass's own rules before the first training step and stops the epoch at the first node it
+  would fail on; the reason reaches `llama_opt_error()`, a new function of `llama.h`, and the engine
+  answers `JLLAMA_STATUS_ERROR` / `LlamaException` with "cannot train this model: ggml has no backward
+  pass for MUL_MAT_ID (tensor 'ffn_moe_down-1')" and writes no output. `llama/cmake/check-backward-ops.cmake`
+  holds the patch's op lists to the case labels of `ggml_compute_backward` at configure time, so an op
+  upstream learns to differentiate (b12635 added `SIGMOID`'s) is not refused here afterwards. Two
+  `CApiTrainer` cases hold it: six architectures refused by their op and the process training the next
+  model (an abort of the test process without the check), and the four that still train.
+- **A model with weight scales and an MTP block did not load without MTP drafting.** llama.cpp loads
+  the weight scales of NVFP4 and FP8 conversions (`<matrix>.scale`, `<matrix>.input_scale`) next to the
+  weights an architecture has, and skips the weights of an MTP block unless the model drafts with it
+  (`--spec-type draft-mtp`): the block's scales counted as tensors nobody loaded, and the load failed
+  with "wrong number of tensors" -- for every architecture that skips an MTP block this way (18 at
+  b12631: HY-V3, DeepSeek, GLM, Qwen3.5, Qwen3-Next, ...) whose block carries scales. The loader skips
+  a skipped weight's scales with it now (new `patches/0043`;
+  `CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting`, a failed load without it). The
+  weight-scale tests cover Gemma 4, Domyn Edge, Cohere2, Qwen3-VL, the MTP block's projection and
+  Qwen3-Next's legacy `ssm_in` layout too, which llama.cpp b12622 (#32669) scales since it applies a
+  weight's scale in `build_lora_mm` itself (the TODO entry for that layout is gone).
+- **A JSON schema no value satisfies was answered against it, or failed without its reason.** llama.cpp
+  read `minItems`/`maxItems`, `minLength`/`maxLength` and an integer's `minimum`/`maximum` without
+  comparing them and wrote them into the grammar as they came: `minItems 2 / maxItems 1` was answered
+  with one item and `minLength 3 / maxLength 0` with the empty string; `minItems 3 / maxItems 2` and
+  `minLength 5 / maxLength 2` failed as "failed to parse grammar" (llama.cpp's grammar parser refuses
+  such a repetition since b12604); and an integer from 6 to 5 failed the generation as a server error.
+  Each is refused now while the schema is read, naming the schema path and the bound -- an
+  `InvalidRequestException` (`JLLAMA_STATUS_INVALID_REQUEST`) for the `response_format` or `json_schema`
+  of a request, a `LlamaException` from `LlamaModel.jsonSchemaToGrammar` -- as llama.cpp already refused
+  an `allOf` whose integer ranges do not meet (new `patches/0042`; `CApiStatic.ASchemaWhoseBoundsAdmitNoValueIsRefused`,
+  `CApiStructured.ARequestWithASchemaNoValueSatisfiesIsRefusedAndTheModelGoesOn`, both red without it).
+- **`OpenAiCompatServer` handled `reasoning_effort` itself, after llama.cpp's rule of b11639, and
+  `LlamaModel` had no way to set it.** The chat mapping turned the field into `chat_template_kwargs`
+  (`none` into `enable_thinking: false`), so two later rules of llama.cpp's chat parser never applied
+  to this server: since b12624 a template that renders `none` as a level of its own gets it, and since
+  b12431 a level the template raises on is refused naming the levels it supports -- here it was
+  refused with the template's own exception (`Jinja Exception: max is not supported`). The mapping
+  forwards the field now, through the new `InferenceParameters.withReasoningEffort(String)`
+  (`RequestField.REASONING_EFFORT`, held to upstream's readers by the C++ wire contract), so the
+  Ollama `think`, Anthropic `output_config.effort` and Responses `reasoning.effort` translations take
+  the same way. `ReasoningEffortIntegrationTest` (CI's draft model with a template that prints the
+  level and raises on `max`): `none` and `high` reach the template from the builder and the mapping,
+  `max` is refused naming `high`; red against the old mapping on both counts.
+- **`TextToSpeech`'s thread count reached the backbone only.** The projector -- the speech pipeline's
+  own computation, and the llama contexts it builds itself (tiny-voca's stacks, VoxCPM2's residual LM,
+  YuE2's NAR layers) -- ran on the 4 threads `mtmd_context_params_default()` fixes, whatever
+  `TextToSpeech(model, mmproj, gpuLayers, threads)`, `jllama_tts_load` or `FfmTextToSpeech.load` was
+  given; upstream's own `llama-tts` had the same gap until b12584 (#32664). The projector takes the
+  engine's count now (`jllama_tts::build_tts_mtmd_params`; `TtsParams.TheProjectorComputesWithTheEngineThreadCount`,
+  red with the default left in place). It matters most next to other work: ggml's threads spin at
+  every barrier, so four of them per synthesis on fewer free cores wait for each other. Measured on a
+  4-core machine with `CApiQwen3Tts.Code2wavDecodesAcrossItsSeventyTwoFrameWindow` (the generator's
+  Qwen3-TTS pair, 2 engine threads): alone 0.71 s before and 0.76 s after, three at a time 525-537 s
+  before and 1.5-1.9 s after; the full C++ suite (`ctest -j3`) went from 32 to 3 minutes.
+- **Found by the fourth review round of 2026-11-19 (two reviews and a test-gap hunt), each red before
+  its fix:**
+  - **Two models loaded at the same time on two threads crashed the process** (a segmentation fault
+    in 6 of 6 runs): llama.cpp's fit step swapped the process-wide llama logger for one on the loading
+    thread's stack, and two overlapping loads restored each other's (`patches/0041`,
+    `CApiConcurrency`).
+  - **Three ways a load ended the process (the JVM):** a draft that is no model (a projector, a
+    control vector) given without `--spec-type` -- llama.cpp read its layer count without looking for
+    it (`patches/0038`); `--spec-type ngram-cache` with a lookup cache that is missing or cut short
+    (`-lcs`, `-lcd`; `patches/0038`, which also writes the dynamic cache beside the file and renames it
+    over it); and the first request to a model whose file was moved or deleted while it slept
+    (`--sleep-idle-seconds`): the wake reloads the files and upstream aborts when that fails, so the
+    engine refuses such a wake by the missing path and answers once the file is back
+    (`CApiDraft`, `CApiNgramCache`, `CApiSleep`).
+  - `jllama_finetune` / `LlamaTrainer` reported success when the output could not be written (a
+    directory that does not exist): llama.cpp's saver ignores the failed write. The output is tried
+    before the training and checked after the save; 0 epochs and an unknown optimizer are refused, as
+    `TrainingParameters` refuses them, instead of being trained as one epoch and AdamW.
+  - An interrupted or closed `jllama_systemone` / `handleSystemOne` answered OK with an empty body;
+    it is `JLLAMA_STATUS_INTERRUPTED`.
+  - The C API (a C or FFM host without `JNI_OnLoad`) found no backend module in a modular library
+    jar: only `JNI_OnLoad` loaded the modules next to `libjllama`, and ggml's own search looks next to
+    the executable. Every C API function that needs a backend loads them first now
+    (`backend_modules.cpp`; the modular build jobs run `c_abi_implicit`, the plain-C test without its
+    own module load).
+  - A second embedded server (`jllama_server_start`, `FfmNativeServer`) while one ran replaced the
+    first one's shutdown handler, and the first one's stop never returned. It is refused while one
+    runs (`NativeServer` refused it already).
+  - An attached `NativeServer` turned log prefix and timestamps back on for the whole process,
+    undoing the model's `--no-log-prefix` / `--no-log-timestamps`.
+  - Closing a model's `--log-file` or clearing the logger turned a log disabled by `--log-disable`
+    back on, onto the console (`patches/0040`); setting a logger or a log file still turns it on.
+  - The refusal of a reranker without a classification head read the model before it was
+    downloaded, so `--model-url` / `-hf` of such an encoder reranked with meaningless scores; an `-hf`
+    repository of presets failed with "could not load model from given file path" and is refused by
+    its cause now.
+  - A control vector with a direction on a model's multi-token-prediction block passed the
+    refusal and was then dropped by llama.cpp (the refusal counted the MTP blocks).
+  - `embed("")` was a server error where `embeddings` refuses the empty input as the caller's
+    (`InvalidRequestException`); a LoRA list that is no array, an empty or blank speech text and an
+    image as the speaker reference are the caller's mistake too; malformed infill fields (`prompt`
+    that is no string, `input_extra` that is no array or holds a chunk without text) are refused as
+    upstream's `/infill` refuses them instead of being dropped.
+  - `jllama_tokenize_json` with pieces on a `--vocab-only` model rendered special tokens as `""`.
+  - A device list or projector setting given through the environment (`LLAMA_ARG_DEVICE`,
+    `LLAMA_ARG_MMPROJ_OFFLOAD` off) was overridden by the stale-RPC device selection.
+  - The name of an importance matrix recorded in a quantized GGUF was cut inside a character when
+    longer than 127 bytes.
+  - The per-thread numeric locale of every C API call leaked a locale object per call on macOS
+    (Apple's `newlocale` copies its base) and did nothing useful on Android (bionic); it no longer
+    copies the base on macOS and is a no-op on Android (`CApiLocale.TheNumericLocaleGuardLeaksNothing`,
+    red on a macOS job).
+  - `ModelParameters` split every value at U+001F into several arguments, so a chat template, an
+    alias or a path holding that character injected options into the argv of JNI and FFM; only the
+    values of an option of several values (`--control-vector-layer-range`) are several arguments
+    now (`CliParametersTest`). The split came with the layer-range fix of the same snapshot and was in
+    no release.
+  - New tests besides: a chunked request body over the limit is `413`; two natives directories that
+    ship one file name fail the load by name (`BackendLoadTest`, which now also runs with
+    `net.ladenthin.llama.lib.path` set); the Responses and Anthropic translators' remaining branches;
+    `OpenAiServerCli`'s model options; a load-progress or imatrix callback that throws reaches the
+    caller unchanged and the next load works; the speech pipelines refuse or speak `cfgScale` /
+    `flowSteps` as the request's fault, and an LFM3-Audio raw prompt speaks as the template does; an
+    attach to a closed model is refused over JNI and FFM; and the natives load from an extraction
+    directory named with `ä` (in a child JVM).
+  - Windows: `--grammar-file`, `--chat-template-file`, `-jf`, `--api-key-file` and the lookup caches
+    under a path outside ASCII were opened in the active code page (`patches/0039`).
+- **Found by the test-gap round of 2026-11-19, each red before its fix:**
+  - An OpenAI-shaped embeddings answer named `"gpt-3.5-turbo"` as its model when the request named
+    none; it names the server's model or alias, as upstream's route does (`CApiAlias`, `CApiBert`).
+  - `"stop": ""` on a raw completion with `messages` replaced the `-r` stop words instead of being
+    dropped like an empty entry of a stop array (`CApiTemplateStops`).
+  - `decode` / `jllama_detokenize` of a token id outside the vocabulary was a `LlamaException` with
+    the C++ library's `vector::_M_range_check`; it is an `InvalidRequestException` naming the id and
+    the vocabulary size (`DecodeOutOfVocabularyIntegrationTest`).
+  - `jllama_finetune` / `LlamaTrainer` ended the process on a corpus shorter than one training
+    window (an assertion in ggml) and on a `val_split` outside [0, 1) given to the C API, and wrote the
+    untouched model as a success for a split that left no training window; all three are refused by
+    name.
+  - `--lora-init-without-apply` (`ModelParameters.setLoraInitWithoutApply`) did nothing: upstream's
+    server applies the loaded adapters at their scales to every batch. Such adapters start at scale 0
+    now, until `setLoraAdapters` / `jllama_set_lora_adapters` sets one.
+  - `--no-log-prefix` / `--no-log-timestamps` had no effect in a load or the embedded server:
+    `common_init()`, which turns both on, ran after the parse (`patches/0006`'s `llama_server_parsed`
+    no longer calls it; the host calls it before its parse, as `llama_server()` does).
+  - A synthesis asking for a delivery and for guidance from a model that refuses either was refused
+    as if the guidance alone were the cause; the message names both.
+  - A negative slot id named some slot (upstream takes the id modulo the slot count in `size_t`); a
+    slot action refuses it (`JLLAMA_STATUS_INVALID_REQUEST`). An id at or above the slot count still
+    wraps around, as upstream's server does.
+- **`ModelParameters.setControlVectorLayerRange` failed every load.** It wrote `"START,END"` as one
+  argument, while llama.cpp reads `--control-vector-layer-range START END` as two: the parser took
+  the next argument as END. The builder renders the two values as two arguments now (`putValues`);
+  `ControlVectorLayerRangeIntegrationTest` loads a model with it through JNI. No test had loaded a
+  control vector at all: `CApiControlVector` applies one the generator writes, over every layer of
+  its range or none.
+- **A control vector llama.cpp cannot apply is refused by the load.** One whose width or layer count
+  does not fit the model was logged by `common_init_from_params()`, which then returned the context
+  without the vector and without the steps after it (the LoRA adapters, the warmup): the model ran
+  unsteered and the caller never heard. The load names the vector and the mismatch now.
+- **Chat templates read and write their numbers with a decimal point under any locale.** llama.cpp's
+  Jinja parses a float literal and the `float` filter with `std::stod` and prints a float through the
+  C library, both of which follow `LC_NUMERIC`, which a JVM takes from its environment: under `de_DE`
+  `{{ 0.5 }}` rendered as `0,`. Every C API call, the load and the server's worker thread run under
+  the "C" numeric locale of their own thread now (`numeric_locale.hpp`), and the process's locale stays
+  as it is (`CApiLocale.AChatTemplateReadsAndWritesItsNumbersWithADecimalPointUnderADecimalCommaLocale`,
+  red before).
+- **`LlamaModel` downloads its model files, and reads a draft's type from it.** The load parses its
+  argv as llama.cpp's server example, whose parse leaves the model files to `llama_server()`
+  (`common_models_handler_apply`), and the load is no `llama_server()`: `setModelUrl`, `setHfRepo`
+  and the draft and projector repositories downloaded nothing, and the load failed on a path nobody
+  had written; and a draft's type was never read from its file (an MTP head, a DFlash family draft)
+  or its repository's sidecars, so every draft without `--spec-type` ran as `draft-simple`. The load
+  runs the handler now, outside the log lock (`CApiDownload`, a model served by a loopback HTTP
+  server; `CApiMtp.ADraftWithAnMtpBlockIsReadAsDraftMtpWithoutASpecType`; both red without it).
+  `NativeServer` ran it all along.
+- **An EAGLE-3 draft without a speculative type drafts as EAGLE-3.** A draft model without
+  `--spec-type` (`ModelParameters.setModelDraft` alone) is used as `draft-simple`, which ran an
+  EAGLE-3 draft's decoder without the target's layer inputs it reads: it proposed tokens from a
+  compute buffer nobody had written, which the target then refused. A draft whose GGUF names the
+  architecture `eagle3` is used as `draft-eagle3` now (`CApiEagle3`, over an EAGLE-3 draft the
+  generator writes for a llama and a Qwen3-VL target).
+- **A speech pipeline with a model of its own speaks after an RPC server went away**
+  (`patches/0037`). tiny-voca's stacks, VoxCPM2's residual LM and YuE2's NAR layers are llama models
+  the projector builds itself; kept on the CPU they took every registered device, and an RPC server
+  a load had registered stays registered, so once it was gone every synthesis with such a pipeline
+  failed ("failed to initialize RPC0 backend"). They take the CPU alone now.
+- **Voice cloning for Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2.** `TextToSpeech`,
+  `FfmTextToSpeech` and `jllama_tts_supports_speaker_reference` took llama.cpp's
+  `mtmd_helper_cap::audio_gen_spk_ref`, which names only Qwen3-TTS and Pocket TTS, so a reference
+  clip was refused (`InvalidRequestException`) for four pipelines that clone from one -- among them
+  CI's Chatterbox and ZONOS3 pairs, whose projectors carry the speaker encoder. The engine now
+  decides by the pipeline and by whether the projector takes audio in, as upstream's `/tts` route
+  does (`tts_params.hpp`, `pair_takes_speaker_reference`); the speech contract pins the answer of
+  every pair in CI's set, since its cloning case took whatever the pair reported.
+- **A slot file carries the LoRA config its state was computed with** (`patches/0021`, renamed
+  `0021-server-a-slot-file-carries-the-lora-config-its-state-was-computed-with.patch`). The server
+  kept the scales of the files it had saved in a map by path, so a model loaded again -- the next
+  process -- or a copy of a file counted every state as computed under no adapters, and the first
+  request with adapters cleared it. The config is a section of the file now, after the checkpoints
+  and the draft state (`SLRA`, version 1: each adapter's path and scale), and a restore labels the
+  state with it on the adapters loaded then, matched by path. A state computed under no adapters
+  writes no section and a file without one counts as computed under none, so upstream's format is
+  read and written as before for a server without adapters; llama.cpp's own reader ignores the
+  section. A section that cannot be read, or that names an adapter at a scale other than 0 which
+  the model has not loaded, refuses the restore by the adapter's path (`InvalidRequestException`,
+  `JLLAMA_STATUS_INVALID_REQUEST`) and leaves the slot empty, and so does data after the state that
+  no section reads -- a checkpoint or draft section that was cut, behind which the config cannot be
+  found (`LoraCacheFiles`, `LoraCacheFreshSlot`, red against the previous form).
+- **A decoder without causal attention no longer ends the process at its first long prompt**
+  (`patches/0036`). Without causal attention a call must fit one ubatch, while the context's batch
+  was `--batch-size`: with the defaults (`-b 2048 -ub 512`) a prompt longer than 512 tokens, and
+  with `-ub 1` already the load's memory probe, asserted in `llama_context::decode`. Such a
+  context's batch is its ubatch now, and the server evaluates a longer input a ubatch at a time
+  (`CApiBatchSize.ADecoderWithoutCausalAttentionEvaluatesItsInputAUbatchAtATime`, a random GGUF with
+  `attention.causal = false`; an abort without the patch).
+- **A cut slot file fails its restore instead of ending the process** (`patches/0035`). llama.cpp's
+  file reader does not fail a read past the end of a file on POSIX (it stops short and counts the
+  whole length), so `llama_state_seq_load_file` read a truncated slot file -- an interrupted save, a
+  full disk -- as a state larger than the file and asserted. The restore is an invalid slot file now and the slot is left empty
+  (`CApiSlotFiles.ASlotFileCutInsideItsStateIsRefusedAndTheModelGoesOn`, an abort without the patch).
+- **RPC servers are registered before the parse, never under the log lock.** The engine parses an
+  argv under the lock of the process-wide log, and llama.cpp's `--rpc` handler registers -- connects
+  to -- every server it sees: `patches/0015` re-checked a cached registration inside
+  `ggml_backend_rpc_add_server`, so the endpoint the engine had just registered was connected to
+  again under the lock, and `LLAMA_ARG_RPC`'s servers were registered there for the first time. A
+  slow server held every `setLogger` call and every other load for as long as its connect took.
+  The servers of `--rpc` and `LLAMA_ARG_RPC` are registered first now (an unreachable one of the
+  variable fails the load by name too), the parse sees the argv without its `--rpc` pairs, and a
+  previously registered endpoint is asked for its device count outside the lock
+  (`ggml_backend_rpc_get_device_count`, which `patches/0015` exposes instead). The same holds for a
+  server attached to a loaded model (`NativeServer(model, ...)`), whose `--rpc` servers were
+  registered by its parse before. Every registration and read of ggml's device registry by this
+  library holds a mutex of its own, which a parse takes before the log lock, so two loads that
+  register servers at once no longer race on it. An empty entry (`--rpc a:1,`) is refused, as the
+  parse refused it. Measured with a TCP
+  proxy delaying every connection by 400 ms: a logger swap during a load with `--rpc`, with
+  `LLAMA_ARG_RPC`, during `NativeServer`'s start and during an attach waited about as long as the
+  connect before, a few ms now (`CApiRpc.ALoadWithASlowRpcServerDoesNotHoldTheLogLockWhileItConnects`,
+  POSIX).
+- **A blocking call with `"stream": true` in its body no longer ends the process.** The raw JSON
+  calls (`LlamaModel.handleCompletions` / `handleCompletionsOai`, `FfmLlamaModel.completions` /
+  `chatCompletions`, `jllama_completions` & co.) passed the body's `stream` on, the server then sent
+  the answer in chunks with the same index, and the blocking wait aborted at the second one
+  (`GGML_ASSERT "duplicate result received"`). A blocking call answers the whole result now
+  (`CApi.ABlockingCallAnswersAStreamRequestWhole`, `ResponseJsonStructureTest`, red without the fix).
+- **An embedded server reads its argv once.** `NativeServer` parsed it in the engine and again inside
+  llama.cpp, so an option that reads a file which gives its contents once -- `--api-key-file` from a
+  pipe or `/dev/stdin` -- was read empty the second time, and the server ran without its key,
+  answering every request. Patches `0006` and `0007` add `llama_server_parsed` /
+  `llama_server_attach_parsed`, which run on the engine's parameters, and the parse runs under the
+  log lock, so a `--log-disable` or `LLAMA_ARG_LOG_FILE` there no longer pauses the log worker
+  without it (`CApiServer.AnApiKeyFileThatCanBeReadOnlyOnceProtectsTheServer`, red without the fix).
+- **Numbers on the command line are read with a decimal point whatever the locale.** llama.cpp's
+  option handlers read them with `std::stof`, which follows `LC_NUMERIC`, and a JVM keeps the locale
+  of its environment: under `de_DE` `ModelParameters.setTemp(0.25f)` loaded the model at temperature
+  0 and `setRepeatPenalty(0.9f)` refused the load. The engine parses under the "C" numeric locale of the
+  calling thread, the process's stays as it was (`CApiLocale`, red without the fix; the Linux C++ job
+  generates `de_DE.UTF-8` for it).
+- **What `configureParallelInference` / `jllama_configure` set holds after the idle sleep.** The wake
+  of `--sleep-idle-seconds` built the context from the load's threads and the slot scheduler took the
+  load's similarity; the engine applies the configured values after every wake, wherever they
+  differ from the context's (`EngineTuning`, red without the fix).
+- **An interrupted stream answers `JLLAMA_STATUS_INTERRUPTED`.** After `jllama_model_interrupt` (and
+  therefore during `jllama_model_free`) a receive of a stream in flight answered "Task not found", an
+  error that reads as the caller's mistake, and a stream asked for afterwards got a task nobody would
+  answer; both are `JLLAMA_STATUS_INTERRUPTED` now (`CApiInterrupt`).
+- **A load refused after its parse leaves the log files alone.** A batch of no tokens (below 2 until `patches/0032`) and rank pooling on
+  a model without a classification head are refused after llama.cpp accepted the argv, and the
+  load's `--log-file` had been opened by then -- closing the file another model logged into. The
+  refusal is decided before the file is opened (`CApiLogFile`); a `LLAMA_ARG_LOG_FILE` the refused
+  parse opened is closed at once, as after a free or a refused server argv.
+- **A second `FfmLlamaModel.close()` returns only once the model is freed.** It returned at once
+  while the first was still waiting for the calls in flight, so the weights could still be loaded
+  after a `close()` had returned (`FfmLlamaModelIntegrationTest`).
+- **The C functions that free or stop catch every exception** (`jllama_model_free`,
+  `jllama_server_stop`, `jllama_rpc_server_stop`): one that is no `std::exception` no longer unwinds
+  into a C caller.
+- **A model woken from its idle sleep no longer calls the load-progress callback of its first load.**
+  The server keeps the caller's callback and runs the model load again when `--sleep-idle-seconds`
+  woke it -- on its own thread, long after the load returned and its user data was gone (the stack
+  object of `LlamaModel`'s constructor, an upcall stub of `llama-ffm` whose arena was closed), which
+  could crash the process. The engine forwards to the host during the first load only
+  (`CApiSleep`, red without the fix).
+- **`FfmLlamaModel.close()` interrupts and waits for the calls in flight, and a call after it is
+  refused.** A call that had checked the model was open and then called into the C API while
+  another thread closed it used the freed handle -- `FfmNativeServer.startAttached` included. Every
+  call holds a read lock now and `close()` the write lock, as `FfmTextToSpeech` and `FfmNativeServer`
+  do; `close()` first calls the new `jllama_model_interrupt`, so a blocking completion throws
+  within about a second, as with `LlamaModel`, instead of the close waiting for its whole generation
+  (`FfmLlamaModelIntegrationTest`, red without the lock and without the interrupt).
+- **A speech synthesis that failed no longer leaks its sampler** (`TextToSpeech`, `jllama_tts_*`).
+- **An embedded server closes the `--log-file` it opened when it stops.** `NativeServer` parses its
+  argv inside llama.cpp, where `--log-file` opens the process-wide log file, and nothing closed it:
+  every later line of the process, from any model, went into the stopped server's file, and Windows
+  could not delete it while the JVM ran. The server now owns the file as a model load does, in the
+  classic and the attached mode (`CApiLogFile`, red without the fix).
+- **A text the vocabulary cannot spell is refused with the cause.** A SentencePiece-style vocabulary
+  without byte tokens has nothing for a character it has no token for, and llama.cpp's lookup threw
+  the bare `unordered_map::at`; tokenization, completions, embeddings, infill, reranking and the
+  reasoning budget's message now say that the vocabulary has no token and no byte tokens for a
+  character of the text (`CApiTokenizers`).
+- **A chat template llama.cpp cannot parse fails the load instead of ending the process**, and every
+  refused load parameter names its reason. `common_params_parse` called `exit(1)` for any error that
+  was not an invalid argument -- the chat template check of `setChatTemplate` among them -- so the JVM
+  ended with the reason on stderr; for the others it answered `false` and the reason reached stderr
+  only, while the `LlamaException` said "Failed to parse model parameters". Patch `0031` returns
+  `false` there too and keeps the reason (`common_params_parse_error()`), which the load appends:
+  "Failed to parse model parameters: the supplied chat template is not supported: ...", or
+  `error while handling argument "--override-kv": ...` without the usage text
+  (`CApiParseErrors`, `LoadRefusalTest`). The requests of a command line -- `--help`,
+  `--completion-bash`, `--version`, `--list-devices`, `--cache-list` -- still end the process with
+  status 0, as upstream intends; none of them is a `ModelParameters` setter.
 - **A quantized model no longer carries the path of its importance matrix.**
   `LlamaQuantizer` / `jllama_quantize_imatrix` wrote the path they were given into
   `quantize.imatrix.file` (and passed on a path a matrix carried as its dataset), so a published

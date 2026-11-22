@@ -112,6 +112,37 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertIn("1 package(s) the WebUI sources can reach are not in packages.csv (testonly@1.0.0)",
                       problems[0])
 
+    def test_the_llama_ui_sources_next_to_the_app_are_imports_too(self):
+        # b12480: ui/apps/chat compiles ui/lib/ui/src/lib, which imports from the app's node_modules.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        library = Path(self.temp.name) / "ui" / "lib" / "ui" / "src" / "lib"
+        (app / "src").mkdir(parents=True)
+        library.mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (library / "index.ts").write_text("import { t } from 'testonly';\n")
+        (library / "format.spec.ts").write_text("import { x } from 'typesonly';\n")
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
+    def test_the_llama_voice_sources_next_to_the_app_are_imports_too(self):
+        # b12587: ui/apps/chat compiles ui/lib/voice/src through two vite aliases; its imports resolve
+        # from the app's node_modules as Llama UI's do.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        voice = Path(self.temp.name) / "ui" / "lib" / "voice" / "src"
+        (app / "src").mkdir(parents=True)
+        (voice / "svelte").mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (voice / "index.ts").write_text("export { capture } from './capture';\n")
+        (voice / "svelte" / "recorder.svelte.ts").write_text("import { t } from 'testonly';\n")
+        (voice / "capture.test.ts").write_text("import { x } from 'typesonly';\n")
+        self.assertEqual(webuilicenses.source_dirs(app), [app / "src", voice])
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
     def test_check_reports_a_listed_file_without_its_section(self):
         self.generated()
         path = self.out / "THIRD-PARTY-LICENSES.txt"
@@ -216,6 +247,14 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("CC-BY-NC-4.0 is a license in packages.csv", problems[0])
 
+    def test_the_reuse_annotation_names_no_license_the_list_does_not_have(self):
+        tarballs, _ = self.with_a_github_dependency()
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        problems = webuilicenses.check_reuse(
+            self.out, self.reuse_toml("MIT AND ISC AND CC-BY-NC-4.0 AND Unlicense"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Unlicense is named by REUSE.toml's annotation", problems[0])
+
     def test_a_license_of_the_list_needs_its_text_in_the_licenses_folder(self):
         self.generated()
         licenses = Path(self.temp.name) / "LICENSES"
@@ -235,6 +274,24 @@ class WebuiLicensesTest(unittest.TestCase):
         committed = webuilicenses.REUSE_TOML.parent / "llama/legal/natives/webui-npm"
         self.assertEqual(webuilicenses.check_texts(committed), [])
         self.assertEqual(webuilicenses.check_reuse(committed), [])
+        self.assertEqual(webuilicenses.check_notice(committed), [])
+
+    def test_the_notice_row_counts_the_listed_packages(self):
+        self.generated()
+        listed = webuilicenses._listed(self.out)
+        counts = {}
+        for entry in listed:
+            counts[entry["license"]] = counts.get(entry["license"], 0) + 1
+        parts = ", ".join(f"{license.strip('()')} {count}" for license, count in sorted(counts.items()) if license)
+        notice = Path(self.temp.name) / "NOTICE.md"
+        notice.write_text(f"| WebUI npm bundle | x | y | {len(listed)} pkgs: {parts} | `webui-npm` | z |\n")
+        self.assertEqual(webuilicenses.check_notice(self.out, notice), [])
+        notice.write_text(f"| WebUI npm bundle | x | y | {len(listed) + 75} pkgs: {parts} | `webui-npm` | z |\n")
+        problems = webuilicenses.check_notice(self.out, notice)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{len(listed)} pkgs:", problems[0])
+        notice.write_text("| something else |\n")
+        self.assertIn("not one", webuilicenses.check_notice(self.out, notice)[0])
 
     def test_a_dependency_that_is_no_fixed_archive_is_refused(self):
         for resolved in ("git+ssh://git@github.com/ggml-org/llama-brand.git#master",
@@ -251,6 +308,32 @@ class WebuiLicensesTest(unittest.TestCase):
         self.assertTrue(webuilicenses.LEGAL.match("llama-brand-f055/LICENSE"))
         self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/README.md"))
         self.assertFalse(webuilicenses.LEGAL.match("llama-brand-f055/fonts/OFL.txt"))
+
+    def test_a_package_under_several_licenses_brings_the_texts_of_its_parts(self):
+        # llama-brand from npm (b12521): "CC-BY-NC-4.0 AND MIT AND OFL-1.1", the CSS's MIT text in
+        # css/LICENSE and the fonts' OFL in fonts/OFL.txt; a package under one license keeps only
+        # its root files (alpha's lib/LICENSE stays out).
+        lock = json.loads((self.ui / "package-lock.json").read_text())
+        lock["packages"]["node_modules/alpha"]["license"] = "CC-BY-NC-4.0 AND MIT AND OFL-1.1"
+        (self.ui / "package-lock.json").write_text(json.dumps(lock))
+        tarballs = {
+            "https://registry.npmjs.org/alpha/-/alpha-1.0.0.tgz": tarball({
+                "LICENSE": "marks license", "css/LICENSE": "css mit", "fonts/OFL.txt": "font ofl",
+                "README.md": "readme", "node_modules/x/LICENSE": "vendored"}),
+            "https://registry.npmjs.org/beta/-/beta-2.0.0.tgz": tarball({"LICENSE": "beta license",
+                                                                         "lib/LICENSE": "beta nested"}),
+            "https://registry.npmjs.org/svelte/-/svelte-5.0.0.tgz": tarball({"LICENSE": "svelte"}),
+        }
+        webuilicenses.generate(self.ui, self.out, fetch=tarballs.__getitem__, workers=1)
+        text = (self.out / "THIRD-PARTY-LICENSES.txt").read_text(encoding="utf-8")
+        for name in ("LICENSE", "css/LICENSE", "fonts/OFL.txt"):
+            self.assertIn(f"alpha@1.0.0 (CC-BY-NC-4.0 AND MIT AND OFL-1.1): {name}\n", text)
+        for content in ("marks license", "css mit", "font ofl"):
+            self.assertIn(content, text)
+        for content in ("readme", "vendored", "beta nested"):
+            self.assertNotIn(content, text)
+        self.assertTrue(webuilicenses.NESTED_LEGAL.match("package/fonts/OFL.txt"))
+        self.assertFalse(webuilicenses.NESTED_LEGAL.match("package/LICENSE"))
 
     def test_declared_ids_leave_the_operators_out(self):
         self.assertEqual(webuilicenses.declared_ids("(MPL-2.0 OR Apache-2.0)"), ["MPL-2.0", "Apache-2.0"])

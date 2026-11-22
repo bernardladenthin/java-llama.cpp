@@ -1,0 +1,69 @@
+common : closing a log sink does not turn a disabled log back on
+
+--log-disable pauses common_log's worker, and every setter of common_log pauses and resumes it --
+so a setter restarts a paused log. For a setter that asks for output (a log file, a callback) that is
+what the caller wants. For one that only takes a sink away it is not: a host process runs several
+models with one common_log, and closing the log file of one of them (common_log_set_file(log,
+nullptr)) or clearing its callback (common_log_set_callback(log, nullptr, nullptr), which
+LlamaModel.setLogger(format, null) does to flush) turned the log of a process loaded with
+--log-disable back on, onto the console.
+
+set_file() and set_callback() (the sink 0014 adds) resume the worker now only when it ran before or
+when they set a sink. Nothing changes for a log that was not disabled. Applies after 0014 and 0027,
+which touch the same two functions.
+
+The guard is CApiLogFile.ClosingALogSinkLeavesADisabledLogDisabled in src/test/cpp/test_c_api.cpp:
+a model loaded with --log-disable --log-file is freed (its file closed) and the logger cleared, and
+a later load prints nothing to stdout or stderr.
+
+Drop-check on every bump: read set_file() in common/log.cpp -- once it does not resume a paused
+worker when it closes the file, drop the patch (and keep the set_callback() half in 0014).
+
+diff --git a/common/log.cpp b/common/log.cpp
+--- a/common/log.cpp
++++ b/common/log.cpp
+@@ -397,7 +397,14 @@
+         thrd.join();
+     }
+ 
++    // whether the worker runs: false once --log-disable paused it
++    bool is_running() {
++        std::lock_guard<std::mutex> lock(mtx);
++        return running;
++    }
++
+     void set_file(const char * path) {
++        const bool was_running = is_running();
+         pause();
+ 
+         if (file) {
+@@ -410,7 +417,10 @@
+             file = nullptr;
+         }
+ 
+-        resume();
++        // a file asked for turns a paused log on, as before; closing one leaves it as it was
++        if (was_running || path) {
++            resume();
++        }
+     }
+ 
+     void set_stdo(bool enabled) {
+@@ -424,12 +434,16 @@
+     void set_callback(common_log_callback cb, void * user_data) {
+         // pause() drains the queue through the current sink before the worker stops, so an entry
+         // logged before the swap never reaches the new callback
++        const bool was_running = is_running();
+         pause();
+ 
+         callback           = cb;
+         callback_user_data = user_data;
+ 
+-        resume();
++        // a callback asked for turns a paused log on; clearing one leaves it as it was
++        if (was_running || cb) {
++            resume();
++        }
+     }
+ 
+     bool get_colors() const {

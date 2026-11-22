@@ -57,11 +57,29 @@ TEST(TtsParams, CarriesTheEngineSettings) {
 }
 
 // ---------------------------------------------------------------------------
-// The speaker-reference rule engine_synthesize applies before it touches the model: a pair without a
-// voice encoder (mtmd_helper_cap::audio_gen_spk_ref false) refuses a reference by name; no reference,
+// The speaker-reference rule engine_synthesize applies before it touches the model: a pair that does
+// not clone (pair_takes_speaker_reference false) refuses a reference by name; no reference,
 // or a pair that clones voices, goes on. The pair itself needs a TTS GGUF, which TtsIntegrationTest
 // loads; this pins the rule and the message without one.
 // ---------------------------------------------------------------------------
+TEST(TtsParams, TheProjectorComputesWithTheEngineThreadCount) {
+    // mtmd_context_params_default() says 4, so 1 and 7 are the counts that show whether the engine's
+    // reached the projector (red when build_tts_mtmd_params leaves the default).
+    ASSERT_EQ(mtmd_context_params_default().n_threads, 4);
+    const common_params one = jllama_tts::build_tts_params("m.gguf", 0, 1, 64);
+    const mtmd_context_params cpu = jllama_tts::build_tts_mtmd_params(0, one.cpuparams.n_threads);
+    EXPECT_EQ(cpu.n_threads, 1);
+    EXPECT_FALSE(cpu.use_gpu);
+    const common_params seven = jllama_tts::build_tts_params("m.gguf", 99, 7, 64);
+    const mtmd_context_params gpu = jllama_tts::build_tts_mtmd_params(99, seven.cpuparams.n_threads);
+    EXPECT_EQ(gpu.n_threads, 7);
+    EXPECT_TRUE(gpu.use_gpu);
+    // without a count the engine's default reaches the projector too
+    const common_params fallback = jllama_tts::build_tts_params("m.gguf", 0, 0, 64);
+    EXPECT_EQ(jllama_tts::build_tts_mtmd_params(0, fallback.cpuparams.n_threads).n_threads,
+              jllama_tts::TTS_DEFAULT_THREADS);
+}
+
 TEST(TtsSpeakerReference, NoReferenceIsAlwaysAccepted) {
     EXPECT_EQ(jllama_tts::speaker_reference_refusal(false, ""), "");
     EXPECT_EQ(jllama_tts::speaker_reference_refusal(true, ""), "");
@@ -75,6 +93,36 @@ TEST(TtsSpeakerReference, APairWithoutAVoiceEncoderRefusesTheReferenceByName) {
     const std::string refusal = jllama_tts::speaker_reference_refusal(false, "clips/voice.wav");
     EXPECT_NE(refusal.find("does not accept a speaker reference"), std::string::npos) << refusal;
     EXPECT_NE(refusal.find("clips/voice.wav"), std::string::npos) << refusal;
+}
+
+// Which pipelines clone a voice from a clip (read from mtmd-helper-gen.cpp at b12541): the six that
+// call encode_speaker on a reference, and none of the others. llama.cpp's audio_gen_spk_ref names
+// only Qwen3-TTS and Pocket TTS, so the rule must not depend on it for the other four.
+TEST(TtsSpeakerReference, TheSevenPipelinesThatEncodeAClipCloneAVoice) {
+    // Drama-3 since b12590 (#32586)
+    for (const mtmd_gen_audio_type type :
+         {MTMD_GEN_AUDIO_TYPE_QWEN3TTS, MTMD_GEN_AUDIO_TYPE_POCKETTTS, MTMD_GEN_AUDIO_TYPE_CHATTERBOX,
+          MTMD_GEN_AUDIO_TYPE_FISH_S2, MTMD_GEN_AUDIO_TYPE_ZONOS3, MTMD_GEN_AUDIO_TYPE_VOXCPM2,
+          MTMD_GEN_AUDIO_TYPE_DRAMA3}) {
+        EXPECT_TRUE(jllama_tts::pipeline_clones_voice_from_clip(type)) << type;
+        EXPECT_TRUE(jllama_tts::pair_takes_speaker_reference(false, type, true)) << type;
+    }
+}
+
+TEST(TtsSpeakerReference, ThePipelinesWithoutAClipEncoderDoNotClone) {
+    for (const mtmd_gen_audio_type type :
+         {MTMD_GEN_AUDIO_TYPE_NONE, MTMD_GEN_AUDIO_TYPE_SOPRANO, MTMD_GEN_AUDIO_TYPE_LFM3A, MTMD_GEN_AUDIO_TYPE_YUE2,
+          MTMD_GEN_AUDIO_TYPE_MINIMAX_MUSIC3, MTMD_GEN_AUDIO_TYPE_KOKORO, MTMD_GEN_AUDIO_TYPE_TINY_VOCA}) {
+        EXPECT_FALSE(jllama_tts::pipeline_clones_voice_from_clip(type)) << type;
+        EXPECT_FALSE(jllama_tts::pair_takes_speaker_reference(false, type, true)) << type;
+    }
+}
+
+TEST(TtsSpeakerReference, AProjectorWithoutAudioInTakesNoReferenceWhateverThePipeline) {
+    EXPECT_FALSE(jllama_tts::pair_takes_speaker_reference(true, MTMD_GEN_AUDIO_TYPE_QWEN3TTS, false));
+    EXPECT_FALSE(jllama_tts::pair_takes_speaker_reference(false, MTMD_GEN_AUDIO_TYPE_ZONOS3, false));
+    // a pipeline llama.cpp's capability names (a future one) is taken as it says
+    EXPECT_TRUE(jllama_tts::pair_takes_speaker_reference(true, MTMD_GEN_AUDIO_TYPE_NONE, true));
 }
 
 // The language handed to the pipeline (b11941, #31257): a prompt rendered from a "tts" chat template

@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12463](https://img.shields.io/badge/llama.cpp-%23b12463-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12463)  
+[![llama.cpp b12636](https://img.shields.io/badge/llama.cpp-%23b12636-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12636)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -418,7 +418,7 @@ cmake --build build --config Release
 ```
 
 > [!TIP]
-> Downloading a model from Java (`ModelParameters#setModelUrl(String)`, `setHfRepo(String)`) needs no build option: the build links BoringSSL statically and fetches `https://` URLs out of the box (not on Android, s390x or a Linux SYCL build). `-DLLAMA_CURL` is deprecated upstream and ignored.
+> Downloading a model from Java (`ModelParameters#setModelUrl(String)`, `setHfRepo(String)`) needs no build option: the build links BoringSSL statically and fetches `https://` URLs out of the box (not on Android, s390x or a Linux SYCL build). `-DLLAMA_CURL` is deprecated upstream and ignored. The download runs at the load, through llama.cpp's own models handler, which also reads `LLAMA_ARG_HF_REPO`, `LLAMA_ARG_MODEL_URL` and `LLAMA_ARG_DOCKER_REPO` from the JVM's environment, as `llama-server` does: set there, they apply to every load (`-hf` takes the place of an explicit `setModel`). A Hugging Face repository of presets (a `preset.ini` at its root) is a set of models and is refused by a `LlamaModel`; `NativeServer` serves it in router mode.
 
 The library is put in a directory matching your platform and backend, which appears in the cmake output. For example:
 
@@ -553,8 +553,8 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
 | `net.ladenthin.llama.decision.model` | `models/tinylaya-for-testing-Q8_0.gguf` | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, MiniCPM-OCR-Jev, LFM3 d1, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; the default is upstream's own test model (`ggml-org/tinylaya-for-testing-gguf`, in CI's set). While the file is missing only the rejection of a non-decision model runs. |
-| `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
-| `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
+| `net.ladenthin.llama.audio.model` | `models/Llama-3.2-1B-Instruct-Q4_K_M.gguf` (CI's Ultravox pair) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
+| `net.ladenthin.llama.audio.mmproj` | `models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
 | `net.ladenthin.llama.tts.model` | `models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
 | `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
@@ -568,6 +568,10 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.tts.chatterbox.mmproj` | `models/mmproj-chatterbox-F16.gguf` (test self-skips if missing) | test | `ChatterboxIntegrationTest` | Path to its mmproj. |
 | `net.ladenthin.llama.tts.zonos.model` | `models/ZONOS3-Mini-Q8_0.gguf` (test self-skips if missing) | test | `ZonosTtsIntegrationTest` | Path to a ZONOS3 backbone (`ggml-org/ZONOS3-Mini-GGUF`), the pipeline with delivery control; the same contract plus speed and loudness. |
 | `net.ladenthin.llama.tts.zonos.mmproj` | `models/mmproj-ZONOS3-Mini-F32.gguf` (test self-skips if missing) | test | `ZonosTtsIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.tts.kokoro.model` | `models/Kokoro-82M-F32.gguf` (test self-skips if missing) | test | `KokoroTtsIntegrationTest` | Path to a Kokoro backbone (`ggml-org/Kokoro-82M-GGUF`), a pipeline that writes the whole utterance in one pass; the speech pipeline contract. |
+| `net.ladenthin.llama.tts.kokoro.mmproj` | `models/mmproj-Kokoro-82M-F16.gguf` (test self-skips if missing) | test | `KokoroTtsIntegrationTest` | Path to its mmproj. |
+| `net.ladenthin.llama.tts.tinyvoca.model` | `models/tiny-voca-F32.gguf` (test self-skips if missing) | test | `TinyVocaTtsIntegrationTest` | Path to a tiny-voca backbone (`ggml-org/tiny-voca-GGUF`), the same kind of pipeline at 4.5M parameters; the speech pipeline contract. |
+| `net.ladenthin.llama.tts.tinyvoca.mmproj` | `models/mmproj-tiny-voca-F32.gguf` (test self-skips if missing) | test | `TinyVocaTtsIntegrationTest` | Path to its mmproj. |
 | `net.ladenthin.llama.realtime.model` | `models/LFM3-Audio-2B-Q4_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to a model that holds a spoken conversation on `NativeServer`'s `/v1/realtime` (audio in, text and audio out), CI's is LFM3-Audio. |
 | `net.ladenthin.llama.realtime.mmproj` | `models/mmproj-LFM3-Audio-2B-Q8_0.gguf` (test self-skips if missing) | test | `RealtimeNativeServerIntegrationTest` | Path to its mmproj (e.g. `mmproj-LFM3-Audio-2B-Q8_0.gguf`). |
 | `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
@@ -796,7 +800,11 @@ text-to-speech-only model), `supportsAudioGeneration()` (speech output, the embe
 `POST /tts`) and `supportsAudioStream()` (realtime transcription, `/v1/realtime`), and from the chat
 template `supportsReasoningEffort()` and `getReasoningEffortLevels()`: the `reasoning_effort` levels the
 template renders differently (llama.cpp b11954), so a client offers only the settings that change
-something.
+something. Since b12624 `none` is one of them when the template renders it, and a request with
+`reasoning_effort: none` then passes it to the template; otherwise `none` only turns thinking off.
+`InferenceParameters.withReasoningEffort(String)` sets the level of a request, and `OpenAiCompatServer`
+forwards an OpenAI request's `reasoning_effort` the same way; a level the template raises on is refused
+as an `InvalidRequestException` naming the levels it supports.
 
 ### Tool Calling
 
@@ -939,10 +947,15 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 Per the upstream contract, a scale update lists the adapters to keep active — any adapter missing
 from the map is set to scale `0` (disabled). A slot whose cache was computed under other scales clears
 it at its next request, so no answer mixes old and new adapters (upstream does the same since
-llama.cpp b12431, #30367; `patches/0021` additionally starts every slot with the server's adapters, so a
-state restored into a never-used slot is not thrown away). The
-host-memory prompt cache (`--cache-ram`, on by default) does not record the adapters and can still load a
-state saved under other scales; disable it (`setCacheRamMib(0)`) where that matters.
+llama.cpp b12431, #30367). The host-memory prompt cache (`--cache-ram`, on by default) records the
+adapters of every state since b12498 and loads only the states of the adapters a request runs with. A
+slot file records them too (`patches/0021`: a section after the state, each adapter's path and
+scale), so a restored slot counts as computed under the scales it was saved with -- in another
+process as well, matched by the adapter's path. A file without the section (saved by a model
+without adapters, or by llama.cpp itself) counts as computed under none, which the first request
+with adapters clears; a file saved under an adapter the model has not loaded is refused by the
+adapter's path (unless its scale was 0, which is no adapter at all), and so is a file whose sections
+cannot be read up to the LoRA config.
 
 ### Text-to-Speech
 
@@ -964,8 +977,9 @@ Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
 `synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
 `synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
 voice cloning from a reference clip. `supportsSpeakerReference()` says whether the loaded pair can
-clone a voice (Qwen3-TTS can, Pocket TTS when its projector carries the voice encoder; a pair that
-cannot refuses a reference clip with an `InvalidRequestException`, as it does a voice it does not have). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
+clone a voice (Qwen3-TTS, Chatterbox, Fish Audio S2, ZONOS3, VoxCPM2 and Drama-3 can, as can Pocket TTS, each
+when its projector carries the voice encoder -- CI's Chatterbox and ZONOS3 projectors do, its Pocket TTS
+projector does not; a pair that cannot refuses a reference clip with an `InvalidRequestException`, as it does a voice it does not have). `getVoices()` lists the predefined voices of a model that ships some (Pocket TTS
 without voice cloning, LFM3-Audio); such a model speaks with the one named as `voice`, or with the
 first of the list. As with `LlamaModel`, native memory is not GC-managed — use
 try-with-resources or call `close()`.
@@ -1008,13 +1022,26 @@ Two more come from a model that sings rather than speaks, **YuE2** (llama.cpp b1
 lyrics in **stereo**: the WAV file then says two channels, and `/tts`'s `pcm` answers name
 `channels=2`): `cfgScale` (classifier-free guidance of the audio codes, above 0, `1` = none) and
 `flowSteps` (steps of its flow-matching solver, 1 to 1024; fewer is faster and less accurate), both
-`0` for the model's own, and refused by every other model. `speakerReferenceText` (b12453) is the
-transcript of a speaker reference, which Fish Audio S2 puts into its prompt. A `maxFrames` of `0` leaves
+`0` for the model's own. MiniMax Music 3 (b12480) and **VoxCPM2** (b12531) read them too, and every
+other model refuses them. VoxCPM2 speaks at 48 kHz and ships no predefined voices: a voice is designed
+by a description in parentheses at the start of the text, or cloned from a speaker reference when its
+mmproj carries the AudioVAE encoder (it clones without the transcript and ignores
+`speakerReferenceText`). No VoxCPM2 conversion is in CI's model set; the C++ suite drives the pipeline
+over a random pair. **Hibiki** (b12636, Kyutai's full-duplex speech translation over Moshi) speaks while
+it listens: llama.cpp's pipeline for it takes neither a text prompt nor a speaker reference and only
+streams PCM, so `TextToSpeech` cannot drive it (a synthesis is refused as an invalid request, read from
+upstream's code: no Hibiki conversion is in CI's set and the C++ suite has no generator for it);
+`NativeServer` serves it on `/v1/realtime`, where the first audio opens a response that runs until it is
+cancelled. `speakerReferenceText` (b12453) is the
+transcript of a speaker reference, which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) clones
+the voice from more closely (with a clip of 30 s or less and an mmproj converted with the reference encoder). A `maxFrames` of `0` leaves
 the length to the model (512 frames for most; YuE2 stops by itself), which is what `/tts` does when a
-request names none.
+request names none. `rawPrompt` (b12494, `/tts`'s `raw_prompt`) speaks the text as the backbone's prompt as given,
+without the model's `tts` chat template -- for a caller that renders the prompt itself.
 
 `FfmTextToSpeech` (`llama-ffm`) has the same overloads, over the C API's
-`jllama_tts_synthesize_options` (a `jllama_tts_options` struct, filled by `jllama_tts_options_init`).
+`jllama_tts_synthesize_options` (a `jllama_tts_options` struct, filled by `jllama_tts_options_init_size`
+with the size of the module's own layout, as a C caller's `jllama_tts_options_init` passes its header's).
 
 This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
 [#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS

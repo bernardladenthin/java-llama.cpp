@@ -30,6 +30,14 @@ public class SpeechParametersTest {
         assertThat(defaults.getSpeakerReferenceText(), is(nullValue()));
         assertThat(defaults.getCfgScale(), is(0.0f));
         assertThat(defaults.getFlowSteps(), is(0));
+        assertThat(defaults.isRawPrompt(), is(false));
+    }
+
+    @Test
+    void aRawPromptIsKeptByACopy() {
+        SpeechParameters raw = SpeechParameters.builder().rawPrompt(true).build();
+        assertThat(raw.toBuilder().seed(2).build().isRawPrompt(), is(true));
+        assertThat(raw.toString(), containsString("rawPrompt=true"));
     }
 
     @Test

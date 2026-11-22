@@ -1,0 +1,42 @@
+llama : a non-causal context's batch is its ubatch
+
+Without causal attention every token of a call attends to every other, so llama_context::decode()
+asserts that a call fits one ubatch (GGML_ASSERT "non-causal attention requires n_ubatch >=
+n_tokens"). The context's batch, though, is --batch-size: for a causal context it is capped at
+n_ctx, for a non-causal one not at all, and llama_n_batch() then promises more tokens per call than
+a call may hold. Every caller that splits its input by llama_n_batch() ended the process on a
+decoder without causal attention (a diffusion model, or any GGUF with <arch>.attention.causal =
+false): the server's load at its two-token memory probe and its warmup with --ubatch-size 1, and
+with the defaults (-b 2048 -ub 512) the first prompt longer than 512 tokens. An encoder's
+embeddings were safe only because common_init_result sets n_batch to n_ubatch with --embedding.
+
+A non-causal context's batch is now its ubatch, so llama_n_batch() is what a call may hold, and the
+server and the warmup evaluate a longer input a ubatch at a time. Nothing changes for a causal
+context, or for a non-causal one whose batch already was its ubatch (every --embedding context).
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a random llama GGUF written with
+attention.causal = false loads with -ub 1 and answers a prompt longer than its ubatch with -ub 2,
+with the same answer as with -b 2 -ub 2 (an abort of the test process before, at the load or at the
+request).
+
+Drop-check on every bump: read the n_batch lines of llama_context's constructor in
+src/llama-context.cpp -- once a non-causal context's n_batch is no larger than its n_ubatch, or
+decode() splits a non-causal call itself, drop the patch.
+
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -351,6 +351,13 @@ llama_context::llama_context(
+ 
+     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+ 
++    // without causal attention every token of a call sees every other, so a call is one ubatch
++    // (decode() asserts that): the batch is no larger, and a caller that splits its input by
++    // llama_n_batch() -- the server, the warmup -- evaluates it a ubatch at a time
++    if (!cparams.causal_attn) {
++        cparams.n_batch = cparams.n_ubatch;
++    }
++
+     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
+     // output_reserve() keeps an output row for every sequence, which can be more than a batch holds
+     cparams.n_outputs_max = std::max(cparams.n_outputs_max, cparams.n_seq_max);

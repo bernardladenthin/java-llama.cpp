@@ -388,10 +388,17 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Computes the embedding vector of a text, taken verbatim.
      *
+     * <p>One vector per text, which is what a pooled model answers. A model loaded with pooling
+     * {@code none} answers one vector per token, of which this returns the first; use
+     * {@link #handleEmbeddings(String, boolean)} for all of them.
+     *
      * @param prompt the text
      * @return its embedding
-     * @throws IllegalStateException unless the model was loaded with
-     *     {@link net.ladenthin.llama.parameters.ModelParameters#enableEmbedding()}
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if the text is rejected, e.g. because it does
+     *         not tokenize with this vocabulary
+     * @throws net.ladenthin.llama.exception.LlamaException unless the model was loaded with
+     *         {@link net.ladenthin.llama.parameters.ModelParameters#enableEmbedding()}, or when the model is closed
+     *         during the call
      */
     public native float[] embed(String prompt);
 
@@ -1231,11 +1238,12 @@ public class LlamaModel implements AutoCloseable {
      *
      * <p>A slot whose cache was computed under other scales clears it at its next request, so no
      * answer mixes the old and the new adapters (the rule upstream applies to adapters named per
-     * request; upstream's {@code POST /lora-adapters} path itself does not, which
-     * {@code patches/0021} fixes). One cache does not record the adapters: the host-memory prompt
-     * cache ({@code --cache-ram}, on by default) can load a state saved under other scales into a
-     * slot; disable it with {@link ModelParameters#setCacheRamMib(int) setCacheRamMib(0)} where
-     * adapters change while that matters.
+     * request, and to the server's since llama.cpp b12416). The host-memory prompt cache
+     * ({@code --cache-ram}, on by default) records the adapters of every state and loads only the
+     * states of the adapters a request runs with (llama.cpp b12498). A slot file does not record
+     * them; the server remembers the scales of every file it saves, and a restored slot counts as
+     * computed under those -- a file it did not save (one of an earlier process) under none, which
+     * the first request with adapters clears ({@code patches/0021}).
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter

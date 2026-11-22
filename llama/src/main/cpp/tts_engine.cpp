@@ -30,7 +30,7 @@ struct tts_engine {
     mtmd::context_ptr mctx;
     int n_threads = 4;
     int n_batch = 2048;
-    // mtmd_helper_cap::audio_gen_spk_ref of the loaded pair (b11901, #31183), read once at load.
+    // Whether the loaded pair clones a voice from a clip (pair_takes_speaker_reference), read once at load.
     bool speaker_reference = false;
     // The predefined voices of the projector (b12061, #31429), read once at load; empty for most models.
     std::vector<std::string> voices;
@@ -65,8 +65,7 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
 
-    mtmd_context_params mtmd_params = mtmd_context_params_default();
-    mtmd_params.use_gpu = n_gpu_layers != 0;
+    mtmd_context_params mtmd_params = jllama_tts::build_tts_mtmd_params(n_gpu_layers, params.cpuparams.n_threads);
     if (mmproj_device && mmproj_device->empty()) {
         mtmd_params.use_gpu = false;
     } else if (mmproj_device) {
@@ -85,11 +84,10 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
     engine->channels = info.n_channels > 0 ? info.n_channels : 1;
-    // The capability names the pipeline (Qwen3-TTS, Pocket TTS), not the file: a Pocket TTS projector
-    // converted without its voice encoder takes no audio in (no input sample rate), and a reference
-    // clip then fails to decode -- found by CI's pair, which ships predefined voices instead.
-    engine->speaker_reference = mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref &&
-                                mtmd_get_audio_sample_rate(engine->mctx.get()) >= 0;
+    // The pipeline clones a voice and the projector has the encoder for the clip (tts_params.hpp).
+    engine->speaker_reference = jllama_tts::pair_takes_speaker_reference(
+        mtmd_helper_get_capabilities(engine->model, engine->mctx.get()).audio_gen_spk_ref, info.type,
+        mtmd_support_audio(engine->mctx.get()));
     for (int32_t i = 0; const char *name = mtmd_gen_audio_voice_name(engine->mctx.get(), i); i++) {
         engine->voices.emplace_back(name);
     }
@@ -131,6 +129,12 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         err = "engine is null";
         return false;
     }
+    // Nothing to speak: upstream's /tts refuses an empty input (400), and the pipelines answered one --
+    // or a text of spaces -- each its own way: audio of nothing, "failed to set TTS input" or "no audio
+    // was generated", none of them the caller's mistake.
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        return refuse("the text is empty: there is nothing to speak");
+    }
     // Values no model can take, before anything is loaded.
     const std::string invalid = synthesis_options_refusal(options);
     if (!invalid.empty()) {
@@ -164,7 +168,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         sparams.top_p = top_p;
         sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_P);
     }
-    common_sampler *smpl = common_sampler_init(engine->model, sparams);
+    // Owned: a template or a pipeline call below can throw, and a raw pointer leaked the sampler then.
+    common_sampler_ptr smpl(common_sampler_init(engine->model, sparams));
     if (smpl == nullptr) {
         err = "failed to init sampler";
         return false;
@@ -178,10 +183,14 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         auto wrapper = mtmd_helper_bitmap_init_from_file(engine->mctx.get(), speaker_reference_path.c_str(), false,
                                                          mtmd_helper_init_opt_default());
         if (!wrapper.bitmap) {
-            common_sampler_free(smpl);
             return refuse("failed to load speaker reference audio: " + speaker_reference_path);
         }
         speaker_bitmap.reset(wrapper.bitmap);
+        // the helper reads images too: an image named as the reference reached set_input, which
+        // refused it with a message that said neither why nor that the request was at fault
+        if (!mtmd_bitmap_is_audio(speaker_bitmap.get())) {
+            return refuse("the speaker reference is no audio: " + speaker_reference_path);
+        }
     }
 
     // b12061 (#31429): mtmd_helper_gen_audio_inp lost its `voice`; a model with predefined voices
@@ -193,7 +202,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     case predefined_voice::NOT_USED:
         break;
     case predefined_voice::CONFLICT:
-        common_sampler_free(smpl);
         return refuse("a voice and a speaker reference cannot be used together");
     case predefined_voice::FIRST:
         voice_name = engine->voices.front();
@@ -201,7 +209,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     case predefined_voice::NAMED:
         speaker_bitmap.reset(mtmd_gen_audio_get_voice(engine->mctx.get(), voice_name.c_str()));
         if (!speaker_bitmap) {
-            common_sampler_free(smpl);
             std::string message = "unknown voice \"" + voice_name + "\", the model has:";
             for (const std::string &name : engine->voices) {
                 message += " " + name;
@@ -217,7 +224,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     mtmd_helper::gen_audio gen;
     gen.init(engine->ctx, engine->mctx.get());
     if (!gen.valid()) {
-        common_sampler_free(smpl);
         err = "failed to initialise audio generation: the context cannot run the audio generation of this model";
         return false;
     }
@@ -229,7 +235,17 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     // A model with a "tts" chat template (LFM3-Audio) speaks the prompt rendered from it, the others
     // the text itself -- upstream's /tts route and llama-tts do the same (b11941, #31257). Throws on a
     // template error, which the C API reports.
-    const std::string rendered = common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name);
+    // b12494: raw_prompt skips the template (the text is phonemes or a whole prompt), as /tts does
+    // b12497: the template's tts_g2p() asks the projector's letter-to-sound model (tiny-voca), with
+    // the buffer upstream's /tts and llama-tts give it; a model without one answers none
+    mtmd_context *mctx = engine->mctx.get();
+    const auto g2p = [mctx](const std::string &word) {
+        char buf[512];
+        return mtmd_gen_audio_g2p(mctx, word.c_str(), buf, sizeof(buf)) > 0 ? std::string(buf) : std::string();
+    };
+    const std::string rendered = options.raw_prompt
+                                     ? std::string()
+                                     : common_chat_get_tts_prompt(engine->templates.get(), text, lang, voice_name, g2p);
     const std::string &prompt = rendered.empty() ? text : rendered;
     const std::string pipeline_lang = tts_pipeline_lang(!rendered.empty(), lang);
 
@@ -238,7 +254,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     inp.prompt = prompt.c_str();
     inp.prompt_len = prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
-    // b12453 (#32330): the reference's transcript, which Fish S2 puts into its prompt; the others ignore it
+    // b12453 (#32330): the reference's transcript, which Fish S2 puts into its prompt and Qwen3-TTS (b12491,
+    // #32438) continues the reference speech from; the others ignore it
     inp.speaker_ref_text = options.speaker_reference_text.empty() ? nullptr : options.speaker_reference_text.c_str();
     inp.lang = pipeline_lang.empty() ? nullptr : pipeline_lang.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
@@ -266,14 +283,21 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
 
     const int32_t input_status = gen.set_input(&inp);
     if (input_status == 2) {
-        // the ranges are checked above, so what is left is a model without delivery or generation control
-        common_sampler_free(smpl);
-        return refuse(synthesis_uses_generation_control(options) ? "the model does not support cfg_scale or flow_steps"
-                      : synthesis_uses_delivery(options)         ? "the model does not support speed or loudness"
-                                                                 : "the TTS input is invalid for the model");
+        // the engine's ranges are checked above, so what is left is a model without delivery or generation
+        // control, or a value outside the model's own range (VoxCPM2 takes flow_steps 2 to 32 only), which
+        // llama.cpp names in its log only
+        // both asked for: llama.cpp checks the delivery first, and either can be the cause
+        const bool generation = synthesis_uses_generation_control(options);
+        const bool delivery = synthesis_uses_delivery(options);
+        return refuse(generation && delivery
+                          ? "the model does not support speed or loudness, or cfg_scale or flow_steps, or not these "
+                            "values (llama.cpp's log names which)"
+                      : generation ? "the model does not support cfg_scale or flow_steps, or not these values (its own "
+                                     "range is in llama.cpp's log)"
+                      : delivery   ? "the model does not support speed or loudness"
+                                   : "the TTS input is invalid for the model");
     }
     if (input_status != 0) {
-        common_sampler_free(smpl);
         err = "failed to set TTS input (prompt/speaker-reference/lang rejected)";
         return false;
     }
@@ -283,7 +307,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         // the 2048 asked for at load); a larger one fails the prompt ("prompt processing failed")
         int32_t remaining = gen.step_prompt(static_cast<int32_t>(llama_n_batch(engine->ctx)));
         if (remaining < 0) {
-            common_sampler_free(smpl);
             err = "prompt processing failed";
             return false;
         }
@@ -294,8 +317,8 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
 
     // note: some pipelines ignore this token and drive generation from the hidden state instead
     auto sample_semantic_code = [&]() -> llama_token {
-        llama_token t = common_sampler_sample(smpl, engine->ctx, -1);
-        common_sampler_accept(smpl, t, true);
+        llama_token t = common_sampler_sample(smpl.get(), engine->ctx, -1);
+        common_sampler_accept(smpl.get(), t, true);
         return t;
     };
 
@@ -310,7 +333,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
     while (!stop && n_frames < max_new) {
         const float *h_next = nullptr;
         if (gen.step_gen(sampled, h_state, &h_next, &stop) != 0) {
-            common_sampler_free(smpl);
             err = "audio-frame generation failed at frame " + std::to_string(n_frames);
             return false;
         }
@@ -321,7 +343,6 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         h_state = h_next;
         sampled = sample_semantic_code();
     }
-    common_sampler_free(smpl);
 
     int32_t sample_rate = 0;
     const char *data = nullptr;
@@ -330,7 +351,10 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const synthe
         err = "failed to read generated audio output";
         return false;
     }
-    if (n_frames == 0 || data_len == 0) {
+    // n_frames counts the frames step_gen() reported; a pipeline that is not autoregressive (Kokoro and
+    // tiny-voca, b12494 and b12497) writes the whole utterance from the prompt and reports none, which
+    // is why only the output decides, as in upstream's llama-tts
+    if (data_len == 0) {
         err = "no audio was generated";
         return false;
     }

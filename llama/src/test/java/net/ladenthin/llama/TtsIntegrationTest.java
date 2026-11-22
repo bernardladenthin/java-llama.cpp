@@ -4,6 +4,7 @@
 
 package net.ladenthin.llama;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -96,8 +97,8 @@ public class TtsIntegrationTest {
     @Test
     @DisplayName("Qwen3-TTS reports that it clones a voice from a speaker reference")
     public void supportsSpeakerReference() {
-        // llama.cpp's mtmd_helper_cap::audio_gen_spk_ref (b11901) is true for the Qwen3-TTS pipeline,
-        // which encodes the reference clip with the speaker encoder bundled in its mmproj.
+        // the Qwen3-TTS pipeline encodes the reference clip with the speaker encoder bundled in its mmproj
+        // (the engine's pair_takes_speaker_reference, tts_params.hpp)
         assertTrue(tts().supportsSpeakerReference(), "Qwen3-TTS must accept a speaker reference");
     }
 
@@ -120,6 +121,32 @@ public class TtsIntegrationTest {
 
         // The committed clip is 2.6 s of 48 kHz stereo; llama.cpp decodes it at the projector's rate.
         assertWellFormedWav(tts().synthesize("hello from llama", reference, "english", MAX_FRAMES, 4, 0), false);
+    }
+
+    @Test
+    @DisplayName("a reference transcript leaves the audio as it is with CI's mmproj, which has no reference encoder")
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    public void aReferenceTranscriptFallsBackToTheSpeakerEmbeddingWithoutTheReferenceEncoder() {
+        // llama.cpp b12491 (#32438): with the transcript of the speaker reference, Qwen3-TTS continues
+        // the reference speech (its "ICL" mode). That needs the reference encoder in the mmproj, which
+        // the converter writes since that change; CI's pair is older, so the pipeline warns and clones
+        // from the speaker embedding alone -- the same audio as without the transcript, for one seed.
+        // A newer mmproj in models.csv fails this test, and the test then has to assert the opposite.
+        String reference = TestConstants.resolveModelProperty(
+                TestConstants.PROP_AUDIO_PATH, TestConstants.DEFAULT_AUDIO_INPUT_PATH);
+        Assumptions.assumeTrue(new File(reference).exists(), "speaker reference clip missing: " + reference);
+        SpeechParameters plain = SpeechParameters.builder()
+                .speakerReferenceAudioPath(reference)
+                .maxFrames(MAX_FRAMES)
+                .seed(5)
+                .build();
+        SpeechParameters transcribed = plain.toBuilder()
+                .speakerReferenceText("The words spoken in the reference clip.")
+                .build();
+        byte[] without = tts().synthesize("hello from llama", plain);
+        byte[] with = tts().synthesize("hello from llama", transcribed);
+        assertWellFormedWav(without, false);
+        assertArrayEquals(without, with);
     }
 
     @Test

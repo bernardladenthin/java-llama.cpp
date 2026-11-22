@@ -85,6 +85,40 @@ TEST(RpcSupport, RpcAsLastArgumentWithoutValueRequestsNothing) {
     EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama", "--rpc"}).empty());
 }
 
+TEST(RpcSupport, TheEnvironmentsEndpointsComeBeforeTheArgvs) {
+    // a parse applies LLAMA_ARG_RPC before the argv, and every value registers its servers
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "c:3"}, "a:1,b:2"),
+              (std::vector<std::string>{"a:1", "b:2", "c:3"}));
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama"}, "a:1"), (std::vector<std::string>{"a:1"}));
+    EXPECT_TRUE(jllama::rpc::requested_endpoints({"llama"}, "").empty()) << "an empty variable is not set";
+}
+
+TEST(RpcSupport, AnEmptyEntryIsKeptAsUpstreamKeepsIt) {
+    // upstream's add_rpc_devices splits with string_split, which keeps an empty entry, and fails to
+    // register it: "a:1," was refused by the parse, and is refused by prepare_argv now that the parse
+    // no longer sees --rpc
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", "a:1,"}), (std::vector<std::string>{"a:1", ""}));
+    EXPECT_EQ(jllama::rpc::requested_endpoints({"llama", "--rpc", ""}), (std::vector<std::string>{""}));
+    try {
+        (void)jllama::rpc::prepare_argv({"llama", "--rpc", ","});
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find("empty RPC server"), std::string::npos) << e.what();
+    }
+}
+
+TEST(RpcSupport, TheParsedArgvHasNoRpcOptionLeft) {
+    // prepare_argv has registered the servers; the parse, which runs under the log lock, connects to none
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "--rpc", "a:1", "-m", "x.gguf", "--rpc", "b:2", "-ngl", "9"}),
+              (std::vector<std::string>{"llama", "-m", "x.gguf", "-ngl", "9"}));
+    // a --rpc without a value stays, for the parse to refuse
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "-m", "x.gguf", "--rpc"}),
+              (std::vector<std::string>{"llama", "-m", "x.gguf", "--rpc"}));
+    // read by name, not by position: a "--rpc" at the end stays even when it is another option's value
+    EXPECT_EQ(jllama::rpc::without_rpc_options({"llama", "--alias", "--rpc"}),
+              (std::vector<std::string>{"llama", "--alias", "--rpc"}));
+}
+
 TEST(RpcSupport, DeviceOptionIsRecognisedInBothSpellings) {
     EXPECT_TRUE(jllama::rpc::has_device_option({"llama", "--device", "CUDA0"}));
     EXPECT_TRUE(jllama::rpc::has_device_option({"llama", "-dev", "none"}));
@@ -287,6 +321,40 @@ TEST(RpcLoopback, ServerComputesTheSameResultAsTheLocalCpu) {
     }
 }
 
+// GGML_OP_SLEEP (b12550, protocol 10.0.1) busy-waits on the device that runs it and returns its input
+// as a view. Over RPC that device is the server's: the client's compute takes at least the wait, and
+// the data comes back as it went in. A server whose op table lacks the new op would not wait.
+TEST(RpcLoopback, TheSleepOperationRunsOnTheServerAndKeepsItsInput) {
+    loopback_server server;
+    ASSERT_TRUE(server.listening()) << "no free port found for the loopback RPC server";
+    ggml_backend_t rpc = ggml_backend_rpc_init(server.endpoint().c_str(), 0);
+    ASSERT_NE(rpc, nullptr);
+
+    ggml_init_params params = {ggml_tensor_overhead() * 4 + ggml_graph_overhead(), nullptr, true};
+    ggml_context *ctx = ggml_init(params);
+    ggml_tensor *x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4);
+    const int32_t wait_us = 300000;
+    ggml_tensor *y = ggml_sleep(ctx, x, wait_us);
+    ggml_cgraph *graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, y);
+    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, rpc);
+    ASSERT_NE(buffer, nullptr);
+    const std::vector<float> in = {1.5f, -2.0f, 3.25f, 0.0f};
+    ggml_backend_tensor_set(x, in.data(), 0, ggml_nbytes(x));
+
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_EQ(ggml_backend_graph_compute(rpc, graph), GGML_STATUS_SUCCESS);
+    std::vector<float> out(in.size());
+    ggml_backend_tensor_get(y, out.data(), 0, ggml_nbytes(y));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    EXPECT_GE(elapsed, std::chrono::microseconds(wait_us)) << "the server did not wait";
+    EXPECT_EQ(out, in);
+    ggml_backend_buffer_free(buffer);
+    ggml_free(ctx);
+    ggml_backend_free(rpc);
+}
+
 TEST(RpcLoopback, StopEndsTheServerAndFreesThePort) {
     loopback_server server;
     ASSERT_TRUE(server.listening());
@@ -436,16 +504,112 @@ TEST(RpcClient, AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt) {
     EXPECT_GT(checked, 0u);
 }
 
+TEST(RpcClient, ADeviceChoiceMadeThroughTheEnvironmentIsNotOverridden) {
+    // The parse applies the environment before the argv, so what prepare_argv appends overrides a
+    // choice made through it: a LLAMA_ARG_DEVICE list was replaced by the --device prepare_argv wrote,
+    // and a LLAMA_ARG_MMPROJ_OFFLOAD that kept the projector on the CPU by its --mmproj-device. A
+    // registered server this argv does not ask for makes both appear without the variables.
+    loopback_server server;
+    ASSERT_TRUE(server.listening());
+    (void)jllama::rpc::prepare_argv({"llama", "--rpc", server.endpoint()});
+    const auto set = [](const char *name, const char *value) {
+#ifdef _WIN32
+        _putenv_s(name, value != nullptr ? value : "");
+#else
+        if (value != nullptr) {
+            setenv(name, value, 1);
+        } else {
+            unsetenv(name);
+        }
+#endif
+    };
+    const std::vector<std::string> argv = {"llama", "-m", "x.gguf"};
+    const auto plain = jllama::rpc::prepare_argv(argv);
+    ASSERT_TRUE(jllama::rpc::has_device_option(plain));
+    ASSERT_TRUE(jllama::rpc::has_mmproj_device_option(plain));
+
+    set("LLAMA_ARG_DEVICE", "none");
+    const auto with_device = jllama::rpc::prepare_argv(argv);
+    set("LLAMA_ARG_DEVICE", nullptr);
+    EXPECT_FALSE(jllama::rpc::has_device_option(with_device));
+
+    for (const char *off : {"0", "false", "off", "disabled", "OFF"}) {
+        set("LLAMA_ARG_MMPROJ_OFFLOAD", off);
+        EXPECT_FALSE(jllama::rpc::has_mmproj_device_option(jllama::rpc::prepare_argv(argv))) << off;
+    }
+    // on, it names no device -- as --mmproj-offload does not -- and the projector is pinned as without it
+    set("LLAMA_ARG_MMPROJ_OFFLOAD", "1");
+    EXPECT_TRUE(jllama::rpc::has_mmproj_device_option(jllama::rpc::prepare_argv(argv)));
+    set("LLAMA_ARG_MMPROJ_OFFLOAD", nullptr);
+}
+
 TEST(RpcClient, ARegisteredServerThatWentAwayIsReportedOnTheNextRegistration) {
     std::string endpoint;
     {
         loopback_server server;
         ASSERT_TRUE(server.listening());
         endpoint = server.endpoint();
-        ASSERT_NE(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+        jllama::rpc::register_server(endpoint);
+        EXPECT_TRUE(jllama::rpc::is_registered(endpoint));
     }
-    // the endpoint is still cached in ggml-rpc's registry map; it must be re-checked, not trusted
-    EXPECT_EQ(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+    // ggml-rpc answers the endpoint from its cache, without contacting the server ...
+    EXPECT_NE(ggml_backend_rpc_add_server(endpoint.c_str()), nullptr);
+    // ... so the registration asks the server itself (patches/0015 exposes the device count), and
+    // the load fails now instead of at the first tensor upload
+    try {
+        jllama::rpc::register_server(endpoint);
+        FAIL() << "a server that went away was registered";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find(endpoint), std::string::npos) << e.what();
+    }
+}
+
+TEST(RpcClient, PrepareArgvRegistersTheEnvironmentsServersAndRefusesAnUnreachableOne) {
+    // upstream's parse registers LLAMA_ARG_RPC's servers itself, so prepare_argv registers them too:
+    // before the parse (outside its lock), with the same message for an unreachable one
+    struct env_reset {
+        ~env_reset() {
+#ifdef _WIN32
+            _putenv_s("LLAMA_ARG_RPC", "");
+#else
+            unsetenv("LLAMA_ARG_RPC");
+#endif
+        }
+    } reset;
+    const auto set_env = [](const std::string &value) {
+#ifdef _WIN32
+        _putenv_s("LLAMA_ARG_RPC", value.c_str());
+#else
+        setenv("LLAMA_ARG_RPC", value.c_str(), 1);
+#endif
+    };
+    set_env(closed_endpoint());
+    try {
+        (void)jllama::rpc::prepare_argv({"llama", "-m", "x.gguf"});
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find(closed_endpoint()), std::string::npos) << e.what();
+    }
+    loopback_server server;
+    ASSERT_TRUE(server.listening());
+    set_env(server.endpoint());
+    const auto argv = jllama::rpc::prepare_argv({"llama", "-m", "x.gguf"});
+    EXPECT_TRUE(jllama::rpc::is_registered(server.endpoint()));
+    // Other tests of this process leave RPC devices behind. If they are stale, the --device list that
+    // keeps them out must name the environment's server: this argv asked for it.
+    std::string name;
+    for (const auto &device : jllama::rpc::registered_devices()) {
+        if (device.endpoint == server.endpoint()) {
+            name = device.name;
+        }
+    }
+    ASSERT_FALSE(name.empty());
+    for (size_t i = 0; i + 1 < argv.size(); ++i) {
+        if (argv[i] == "--device") {
+            EXPECT_NE(jllama::rpc::split_endpoints(argv[i + 1]).front(), "none") << argv[i + 1];
+            EXPECT_NE(argv[i + 1].find(name), std::string::npos) << argv[i + 1];
+        }
+    }
 }
 
 TEST(RpcClient, AGoneServersDeviceReportsNoMemoryInsteadOfAborting) {

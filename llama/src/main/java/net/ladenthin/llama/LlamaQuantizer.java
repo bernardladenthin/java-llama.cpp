@@ -162,7 +162,8 @@ public final class LlamaQuantizer {
     /**
      * Compute the importance matrix of a model over a calibration text, reporting progress: the
      * callback is called on the calling thread after every chunk with the fraction of the chunks
-     * done, and returning {@code false} cancels the run, which then throws and writes nothing.
+     * done, and returning {@code false} cancels the run, which then throws and writes nothing. An
+     * exception the callback throws cancels it too and is rethrown unchanged.
      *
      * @param modelPath path to the model, best the unquantized one
      * @param textPath path to the calibration text (plain UTF-8 text)

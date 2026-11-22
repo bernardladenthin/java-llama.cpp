@@ -1,0 +1,148 @@
+common : a draft or a lookup cache that is no such file fails the load, not the process
+
+Three places of common/ end the process (GGML_ASSERT / GGML_ABORT) on a file the caller named, which a
+host that embeds llama.cpp -- a JVM, a server with other models loaded -- answers with its own death:
+
+- common_speculative_types_from_gguf() reads `<arch>.block_count` with gguf_get_val_u32() without
+  looking whether the key is there. The models handler calls it for every draft model given without
+  --spec-type, so a GGUF that has an architecture and no layer count -- a projector, a LoRA adapter, a
+  control vector named as the draft -- aborted the load. It now infers no type from such a file, and
+  the load refuses it as it refuses any file that is no model.
+- The n-gram lookup caches of --spec-type ngram-cache (-lcs, -lcd): a static cache that cannot be read,
+  or a dynamic one that exists and cannot be read, was GGML_ABORT; common_ngram_cache_load() asserted
+  on every short read, so a cache cut short or a file of another kind aborted as well. They throw now:
+  the server logs "failed to initialize speculative decoding context" and runs without that type, as
+  it does for every other speculative type that fails to start. An empty file is an empty cache, as
+  before; a file cut inside an n-gram is refused too (it used to read as the n-grams before the cut).
+- The dynamic cache is saved when the server stops, with a plain std::ofstream over the file: a save
+  cut short (the process killed, a full disk) left the truncated file that aborted the next load. It
+  is written beside the file and renamed over it now.
+
+The guards are CApiDraft.ADraftThatIsNoModelFailsTheLoadAndTheProcessGoesOn and
+CApiNgramCache.* in src/test/cpp/test_c_api.cpp (an abort of the test process without the patch).
+
+Drop-check on every bump: read common_speculative_types_from_gguf() in common/speculative.cpp (once
+it checks the key before gguf_get_val_u32, drop that hunk), the two GGML_ABORTs of the ngram-cache
+implementation's constructor, and common_ngram_cache_load() in common/ngram-cache.cpp (once neither
+aborts on the file's content, drop those hunks).
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -2639,7 +2639,8 @@
+                 }
+             } catch (const std::ifstream::failure &) {
+                 SPC_ERR("failed to open static lookup cache: %s\n", ngram.lookup_cache_static.c_str());
+-                GGML_ABORT("Couldn't read static lookup cache");
++                // the server logs it and runs without this speculative type
++                throw std::runtime_error("Couldn't read static lookup cache " + ngram.lookup_cache_static);
+             }
+         }
+ 
+@@ -2659,7 +2660,7 @@
+                             ngram.lookup_cache_dynamic.c_str());
+                 } else {
+                     SPC_ERR("failed to open dynamic lookup cache: %s\n", ngram.lookup_cache_dynamic.c_str());
+-                    GGML_ABORT("Couldn't read dynamic lookup cache");
++                    throw std::runtime_error("Couldn't read dynamic lookup cache " + ngram.lookup_cache_dynamic);
+                 }
+             }
+         }
+@@ -2864,7 +2865,13 @@
+ 
+     const std::string arch = gguf_get_val_str(gguf_ctx.get(), arch_id);
+     if (arch != "dflash") {
+-        const uint32_t block_count = gguf_get_val_u32(gguf_ctx.get(), gguf_find_key(gguf_ctx.get(), (arch + ".block_count").c_str()));
++        // a GGUF without a layer count (a projector, an adapter, a control vector given as the draft) is
++        // no model to read a type from: the load refuses it, where gguf_get_val_u32 would abort
++        const int64_t block_count_id = gguf_find_key(gguf_ctx.get(), (arch + ".block_count").c_str());
++        if (block_count_id < 0 || gguf_get_kv_type(gguf_ctx.get(), block_count_id) != GGUF_TYPE_UINT32) {
++            return {};
++        }
++        const uint32_t block_count = gguf_get_val_u32(gguf_ctx.get(), block_count_id);
+ 
+         if (gguf_find_tensor(gguf_ctx.get(), ("blk." + std::to_string(block_count - 1) + ".nextn.eh_proj.weight").c_str()) >= 0) {
+             return { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
+diff --git a/common/ngram-cache.cpp b/common/ngram-cache.cpp
+--- a/common/ngram-cache.cpp
++++ b/common/ngram-cache.cpp
+@@ -5,6 +5,7 @@
+ #include <cinttypes>
+ #include <cstdint>
+ #include <cstdio>
++#include <filesystem>
+ #include <fstream>
+ #include <thread>
+ #include <algorithm>
+@@ -196,7 +197,10 @@
+ }
+ 
+ void common_ngram_cache_save(common_ngram_cache & ngram_cache, const std::string & filename) {
+-    std::ofstream file_out(filename, std::ios::binary);
++    // written beside the file and renamed over it: a save cut short (the process killed, a full disk)
++    // leaves the previous cache rather than a truncated one
++    const std::string filename_tmp = filename + ".tmp";
++    std::ofstream file_out(filename_tmp, std::ios::binary);
+     for (std::pair<common_ngram, common_ngram_cache_part> item : ngram_cache) {
+         const common_ngram      ngram        = item.first;
+         common_ngram_cache_part token_counts = item.second;
+@@ -215,6 +219,18 @@
+             file_out.write(reinterpret_cast<const char *>(&count), sizeof(int32_t));
+         }
+     }
++    file_out.close();
++    std::error_code ec;
++    if (file_out.fail()) {
++        LOG_ERR("%s: failed to write the lookup cache %s\n", __func__, filename_tmp.c_str());
++        std::filesystem::remove(filename_tmp, ec);
++        return;
++    }
++    std::filesystem::rename(filename_tmp, filename, ec);
++    if (ec) {
++        LOG_ERR("%s: failed to replace the lookup cache %s: %s\n", __func__, filename.c_str(), ec.message().c_str());
++        std::filesystem::remove(filename_tmp, ec);
++    }
+ }
+ 
+ common_ngram_cache common_ngram_cache_load(const std::string & filename) {
+@@ -233,24 +249,31 @@
+     char * ntokensc = reinterpret_cast<char*>(&ntokens);
+     char * tokenc   = reinterpret_cast<char*>(&token);
+     char * countc   = reinterpret_cast<char*>(&count);
++    // a file cut short (a save interrupted, a full disk) or no cache at all is an error of the file, not
++    // of this program: the caller gets an exception rather than an abort of the process
++    const auto invalid = [&filename]() {
++        return std::ifstream::failure("Invalid or truncated lookup cache " + filename);
++    };
+     while(hashmap_file.read(ngramc, sizeof(common_ngram))) {
+-        GGML_ASSERT(!hashmap_file.eof());
+-        GGML_ASSERT(hashmap_file.read(ntokensc, sizeof(int32_t)));
+-        GGML_ASSERT(ntokens > 0);
++        if (hashmap_file.eof() || !hashmap_file.read(ntokensc, sizeof(int32_t)) || ntokens <= 0) {
++            throw invalid();
++        }
+         common_ngram_cache_part token_counts;
+ 
+         for (int i = 0; i < ntokens; ++i) {
+-            GGML_ASSERT(!hashmap_file.eof());
+-            GGML_ASSERT(hashmap_file.read(tokenc, sizeof(llama_token)));
+-            GGML_ASSERT(!hashmap_file.eof());
+-            GGML_ASSERT(hashmap_file.read(countc, sizeof(int32_t)));
+-            GGML_ASSERT(count > 0);
++            if (hashmap_file.eof() || !hashmap_file.read(tokenc, sizeof(llama_token)) ||
++                hashmap_file.eof() || !hashmap_file.read(countc, sizeof(int32_t)) || count <= 0) {
++                throw invalid();
++            }
+             token_counts.emplace(token, count);
+         }
+ 
+         ngram_cache.emplace(ngram, token_counts);
+     }
+-    GGML_ASSERT(hashmap_file.eof());
++    // the end of the file, and not inside an n-gram
++    if (!hashmap_file.eof() || hashmap_file.gcount() != 0) {
++        throw invalid();
++    }
+ 
+     return ngram_cache;
+ }

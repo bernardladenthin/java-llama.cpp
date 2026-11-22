@@ -47,7 +47,7 @@ class FfmTextToSpeechIntegrationTest {
 
     @Test
     void qwen3TtsClonesAVoiceFromASpeakerReference() {
-        // mtmd_helper_cap::audio_gen_spk_ref through jllama_tts_supports_speaker_reference's bool slot
+        // the engine's cloning rule through jllama_tts_supports_speaker_reference's bool slot
         assertTrue(tts.supportsSpeakerReference());
         // mtmd_gen_audio_info::n_voices through jllama_tts_voices' string array: none for Qwen3-TTS
         assertTrue(tts.getVoices().isEmpty());

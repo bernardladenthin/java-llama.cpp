@@ -221,7 +221,9 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the logical maximum batch size (default: 0).
+     * Set the logical maximum batch size (default: 2048, llama.cpp's). A batch of one token works --
+     * the server evaluates more tokens a batch at a time, and a slot drafts at most its share of the
+     * batch -- while the model refuses a size of 0 at load, and so does a {@code NativeServer}.
      *
      * @param batchSize the logical maximum batch size
      * @return this builder
@@ -936,6 +938,10 @@ public final class ModelParameters extends CliParameters {
      * A cache needs a GPU backend: without one the model does not load (llama.cpp: "MoE cache
      * requires a GPU backend").</p>
      *
+     * <p>llama.cpp reports the cache's hit rate only in its log, when the model is closed (INFO lines
+     * {@code llama_moe_cache: ... hits = ..., misses = ..., hit rate = ...%}, see
+     * {@code LlamaModel.setLogger}); there is no counter in {@code getMetrics()}.</p>
+     *
      * @param mib the cache size in MiB, {@code 0} to disable
      * @return this builder
      * @throws IllegalArgumentException if {@code mib} is negative (upstream rejects it as well)
@@ -1066,18 +1072,14 @@ public final class ModelParameters extends CliParameters {
     /**
      * Add a LoRA adapter with user-defined scaling (can be repeated to use multiple adapters).
      *
-     * <p><b>The file path may not contain a colon, which on Windows means it may not be absolute.</b>
-     * llama.cpp reads this option as {@code FNAME:SCALE,...} and splits each item on <em>every</em>
-     * colon, demanding exactly two parts, so {@code X:\models\a.gguf:1.0} yields three and is
-     * refused. That is upstream's limitation, not a choice here; pass a path relative to the working
-     * directory, or load the adapter with {@link #addLoraAdapter(String)} (scale 1.0) and set the
-     * scale after the load with {@link net.ladenthin.llama.LlamaModel#setLoraAdapter(int, float)},
-     * which takes any path.
+     * <p>llama.cpp reads this option as {@code FNAME:SCALE,...}. Upstream splits each item at every
+     * colon, so an absolute Windows path ({@code X:\models\a.gguf:1.0}) was refused; this library's
+     * llama.cpp (patches/0045) splits at the last one, and the path may hold colons.
      *
-     * @param fname the file path of the LoRA adapter, without a colon
+     * @param fname the file path of the LoRA adapter
      * @param scale the user-defined scaling factor
      * @return this builder
-     * @throws IllegalArgumentException if {@code fname} contains a colon
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
         return appendCsvValue(ModelOption.LORA_SCALED, scaledField(ModelOption.LORA_SCALED, fname, scale));
@@ -1114,13 +1116,13 @@ public final class ModelParameters extends CliParameters {
     /**
      * Add a control vector with user-defined scaling (can be repeated to add multiple scaled control vectors).
      *
-     * <p>The file path may not contain a colon — same upstream constraint as
-     * {@link #addLoraScaledAdapter(String, float)}, which explains it.
+     * <p>The path may hold colons, as for {@link #addLoraScaledAdapter(String, float)}, which
+     * explains the format.
      *
-     * @param fname the file path of the control vector, without a colon
+     * @param fname the file path of the control vector
      * @param scale the user-defined scaling factor
      * @return this builder
-     * @throws IllegalArgumentException if {@code fname} contains a colon
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     public ModelParameters addControlVectorScaled(String fname, float scale) {
         return appendCsvValue(
@@ -1128,25 +1130,24 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Render one {@code FNAME:SCALE} item, refusing a path the upstream parser cannot split.
+     * Render one {@code FNAME:SCALE} item.
      *
      * <p>It used to be rendered {@code FNAME,SCALE}. The comma has been the <em>list</em> separator
      * since llama.cpp #18056 (b7448) while the field separator is a colon, so every value this emitted
      * was rejected: {@code --lora-scaled <path>,1.0} fails the argv parse with {@code invalid stof
-     * argument} and the model does not load at all. Measured against the real parser at b11639.
+     * argument} and the model does not load at all. Measured against the real parser at b11639. A path
+     * with a colon was refused here until patches/0045 split the item at its last colon: upstream splits
+     * at every one, which no absolute Windows path survives.
      *
      * @param option the option the item is for, named in the error message
      * @param fname  the file path
      * @param scale  the scaling factor
      * @return the rendered {@code FNAME:SCALE} item
-     * @throws IllegalArgumentException if {@code fname} contains a colon
+     * @throws IllegalArgumentException if {@code fname} is empty
      */
     private static String scaledField(ModelOption option, String fname, float scale) {
-        if (fname.indexOf(':') >= 0) {
-            throw new IllegalArgumentException(option.getCliOption()
-                    + " reads its value as FNAME:SCALE and splits on every colon, so a path containing one"
-                    + " cannot be expressed: " + fname
-                    + " -- pass a relative path, or load it unscaled and set the scale after the load");
+        if (fname.isEmpty()) {
+            throw new IllegalArgumentException(option.getCliOption() + " needs a non-empty file path");
         }
         return fname + ":" + scale;
     }
@@ -1159,8 +1160,8 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setControlVectorLayerRange(int start, int end) {
-        putString(ModelOption.CONTROL_VECTOR_LAYER_RANGE, start + "," + end);
-        return this;
+        // two arguments: "start,end" as one made every load fail (upstream reads START and END apart)
+        return putValues(ModelOption.CONTROL_VECTOR_LAYER_RANGE, String.valueOf(start), String.valueOf(end));
     }
 
     /**
@@ -1428,6 +1429,11 @@ public final class ModelParameters extends CliParameters {
      * <p>The file is written <em>in addition to</em> the console (or the
      * {@link net.ladenthin.llama.LlamaModel#setLogger} callback), not instead of it.
      *
+     * <p>llama.cpp keeps one log file per process: the model whose load opened it writes every
+     * line of the process into it, those of other models included, until it is closed, and closing
+     * it closes the file. A later model with a log file of its own takes that over; a load that
+     * fails closes the file it opened.
+     *
      * @param logFile the path to the log file
      * @return this builder
      */
@@ -1534,6 +1540,23 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Choose where the draft of speculative decoding is sampled ({@code --spec-draft-backend-sampling}
+     * / {@code --no-spec-draft-backend-sampling}).
+     *
+     * <p>{@code true} samples the draft on the backend the draft model runs on, {@code false} on the
+     * CPU. Without a call the server's default applies. It matters only with a draft model
+     * ({@link #setModelDraft(String)}) or a model's own MTP heads.</p>
+     *
+     * @param enabled {@code true} to sample the draft on the backend, {@code false} on the CPU
+     * @return this builder
+     */
+    public ModelParameters setSpecDraftBackendSampling(boolean enabled) {
+        setFlag(enabled ? ModelFlag.SPEC_DRAFT_BACKEND_SAMPLING : ModelFlag.NO_SPEC_DRAFT_BACKEND_SAMPLING);
+        clearFlag(enabled ? ModelFlag.NO_SPEC_DRAFT_BACKEND_SAMPLING : ModelFlag.SPEC_DRAFT_BACKEND_SAMPLING);
+        return this;
+    }
+
+    /**
      * Set the comma-separated list of devices to use for offloading the draft model.
      *
      * @param deviceDraft comma-separated list of devices for offloading the draft model
@@ -1561,8 +1584,9 @@ public final class ModelParameters extends CliParameters {
      * itself: it would be loaded and never asked. So when no type is set
      * ({@link #setSpecTypes(SpecType, SpecType...)}) and llama.cpp infers none from the draft file (it does
      * for an MTP, DFlash or DSpark draft), this library uses the draft model as a plain one,
-     * {@link SpecType#DRAFT_SIMPLE}. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded
-     * and unused.</p>
+     * {@link SpecType#DRAFT_SIMPLE}, or, when its GGUF names the architecture {@code eagle3}, as
+     * {@link SpecType#DRAFT_EAGLE3}: an EAGLE-3 draft reads the target's layer inputs, which only
+     * that type hands it. {@code setSpecTypes(SpecType.NONE)} keeps the model loaded and unused.</p>
      *
      * @param modelDraft the file path of the draft model
      * @return this builder
@@ -1869,9 +1893,9 @@ public final class ModelParameters extends CliParameters {
      * expensive.</p>
      *
      * <p>Upstream accepts a positive count or {@code -1} to disable, and <strong>rejects</strong>
-     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, because
-     * upstream's own rejection aborts the whole argv parse and surfaces only as
-     * {@code "Failed to parse model parameters"}, naming neither the flag nor the reason.</p>
+     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, so the
+     * mistake is an exception at the setter, not a refused load ({@code "Failed to parse model
+     * parameters: "} followed by llama.cpp's own message).</p>
      *
      * @param seconds idle seconds before the model is released, or {@code -1} to disable
      * @return this builder

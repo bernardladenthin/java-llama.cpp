@@ -1,0 +1,120 @@
+common : the log scope of the fit is safe for loads on several threads
+
+common_fit_params() demotes llama's log lines below a level to debug for the length of its probe
+loads, through common_fit_log_scope (common/fit.cpp): the scope saved the process-wide llama logger,
+installed one whose user data was the scope itself -- an object on the loading thread's stack -- and
+restored what it had saved. A host that embeds llama.cpp loads models on several threads at once; two
+overlapping scopes then restored each other's logger, the logger pointed at the frame of a scope that
+had ended, and the next log line of the process jumped into it (a SIGSEGV in llama_log_internal_v, in 4
+of 5 runs of two loads at once). The fit runs in every common_init_from_params(): a model's load, a
+wake from the idle sleep, text to speech, the trainer.
+
+The scopes share one logger now, installed by the first and removed by the last under a mutex, and
+each thread demotes only its own lines, by the level of its innermost scope (a thread_local). A line
+of another thread passes unchanged, where it was demoted by whichever scope was installed. Found by the
+test-gap review of 2026-11-19.
+
+The guard is CApiConcurrency.TwoModelsLoadedAtOnceOnTwoThreadsAnswerAsEachAlone in
+src/test/cpp/test_c_api.cpp (two loads at once on two threads, each model answering what it answers
+alone; a crash of the test process without the patch).
+
+Drop-check on every bump: read common_fit_log_scope in common/fit.cpp -- once it no longer installs a
+logger whose user data is the scope, or serialises the scopes itself, drop the patch.
+
+diff --git a/common/fit.cpp b/common/fit.cpp
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -11,6 +11,7 @@
+ #include <cassert>
+ #include <stdexcept>
+ #include <cinttypes>
++#include <mutex>
+ #include <set>
+ #include <string>
+ #include <vector>
+@@ -30,31 +31,73 @@
+ };
+ 
+ // RAII: send llama logs below min_level to the debug log
++//
++// The llama logger is process-wide, and a host that embeds llama.cpp may load models on several threads
++// at once. Each scope used to save the logger, install one whose user data was itself -- on the loading
++// thread's stack -- and restore what it had saved: two overlapping scopes left the logger pointing at the
++// frame of a scope that had ended, and the next log line of the process jumped into it. The scopes now
++// share one logger, installed by the first and removed by the last, and each thread demotes only its own
++// lines, by the min_level of its innermost scope.
+ struct common_fit_log_scope {
+-    common_fit_log_scope(ggml_log_level min_level) : min_level(min_level) {
+-        llama_log_get(&original_logger.callback, &original_logger.user_data);
+-        llama_log_set([](ggml_log_level level, const char * text, void * user_data) {
+-            const common_fit_log_scope * self = (const common_fit_log_scope *) user_data;
+-            const ggml_log_level level_eff = level >= self->min_level ? level : GGML_LOG_LEVEL_DEBUG;
+-            self->original_logger.callback(level_eff, text, self->original_logger.user_data);
+-        }, this);
++    common_fit_log_scope(ggml_log_level min_level) : prev_level(t_min_level), prev_depth(t_depth) {
++        std::lock_guard<std::mutex> lock(state().mutex);
++        t_min_level = min_level;
++        t_depth     = prev_depth + 1;
++        if (state().active++ == 0) {
++            llama_log_get(&state().callback, &state().user_data);
++            llama_log_set(forward, nullptr);
++        }
+     }
+ 
+     ~common_fit_log_scope() {
+-        llama_log_set(original_logger.callback, original_logger.user_data);
++        std::lock_guard<std::mutex> lock(state().mutex);
++        t_min_level = prev_level;
++        t_depth     = prev_depth;
++        if (--state().active == 0) {
++            llama_log_set(state().callback, state().user_data);
++        }
+     }
+ 
+     common_fit_log_scope(const common_fit_log_scope &) = delete;
+     common_fit_log_scope & operator=(const common_fit_log_scope &) = delete;
+ 
+ private:
+-    struct {
++    struct shared_state {
++        std::mutex        mutex;
++        int               active    = 0;
++        ggml_log_callback callback  = nullptr;
++        void *            user_data = nullptr;
++    };
++
++    static shared_state & state() {
++        static shared_state s;
++        return s;
++    }
++
++    static void forward(ggml_log_level level, const char * text, void * /*user_data*/) {
+         ggml_log_callback callback;
+-        void * user_data;
+-    } original_logger;
+-    ggml_log_level min_level;
++        void *            user_data;
++        {
++            std::lock_guard<std::mutex> lock(state().mutex);
++            callback  = state().callback;
++            user_data = state().user_data;
++        }
++        const ggml_log_level level_eff = t_depth == 0 || level >= t_min_level ? level : GGML_LOG_LEVEL_DEBUG;
++        if (callback != nullptr) {
++            callback(level_eff, text, user_data);
++        }
++    }
++
++    static thread_local ggml_log_level t_min_level;
++    static thread_local int            t_depth;
++
++    ggml_log_level prev_level;
++    int            prev_depth;
+ };
+ 
++thread_local ggml_log_level common_fit_log_scope::t_min_level = GGML_LOG_LEVEL_NONE;
++thread_local int            common_fit_log_scope::t_depth     = 0;
++
+ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
+         const std::vector<std::string> & paths_model,
+         const llama_model_params * mparams,

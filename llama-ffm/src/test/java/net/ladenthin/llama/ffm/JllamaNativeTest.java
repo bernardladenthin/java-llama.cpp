@@ -19,7 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -29,6 +31,7 @@ import net.ladenthin.llama.value.LlamaCppVersion;
 import net.ladenthin.llama.value.LogLevel;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The model-free half of the C API through FFM: the library loads through the core's loader, the
@@ -214,26 +217,33 @@ class JllamaNativeTest {
     }
 
     /**
-     * {@code jllama_tts_options} as the library lays it out: jllama_tts_options_init writes its own
-     * sizeof into struct_size, which must be this module's layout, and the defaults land where the
-     * layout reads them. A field the header gains without the layout fails here, not as a corrupt
-     * struct in a synthesis.
+     * {@code jllama_tts_options} as the library lays it out: asked to fill more than it knows,
+     * jllama_tts_options_init_size writes its own sizeof into struct_size, which must be this
+     * module's layout, and leaves the bytes behind it alone; the defaults land where the layout reads
+     * them. A field the header gains without the layout fails here, not as a corrupt struct in a
+     * synthesis.
      */
     @Test
     void ttsOptionsLayoutIsTheLibrarysAndItsDefaultsLeaveEverythingToTheModel() {
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment options = arena.allocate(JllamaNative.TTS_OPTIONS);
-            JllamaNative.invoke(JllamaNative.TTS_OPTIONS_INIT, options);
+            MemorySegment options = arena.allocate(256, 8);
+            options.fill((byte) 0x5a);
+            JllamaNative.invoke(JllamaNative.TTS_OPTIONS_INIT, options, 256L);
             assertThat(options.get(JAVA_LONG, 0), is(JllamaNative.TTS_OPTIONS.byteSize()));
+            for (long i = JllamaNative.TTS_OPTIONS.byteSize(); i < 256; i++) {
+                assertThat("byte " + i, options.get(ValueLayout.JAVA_BYTE, i), is((byte) 0x5a));
+            }
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("temperature")), is(-1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("top_p")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("repeat_penalty")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("speed")), is(1.0f));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(0.0f));
-            assertThat(JllamaNative.TTS_OPTIONS.byteSize(), is(80L));
+            assertThat(JllamaNative.TTS_OPTIONS.byteSize(), is(88L));
             assertThat(JllamaNative.offset("speaker_reference_text"), is(64L));
             assertThat(JllamaNative.offset("cfg_scale"), is(72L));
             assertThat(JllamaNative.offset("flow_steps"), is(76L));
+            assertThat(JllamaNative.offset("raw_prompt"), is(80L));
+            assertThat(options.get(JAVA_INT, JllamaNative.offset("raw_prompt")), is(0));
             assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("cfg_scale")), is(0.0f));
             assertThat(options.get(JAVA_INT, JllamaNative.offset("flow_steps")), is(0));
             assertThat(options.get(ADDRESS, JllamaNative.offset("speaker_reference_text")), is(MemorySegment.NULL));
@@ -253,11 +263,36 @@ class JllamaNativeTest {
                             .speakerReferenceText("Hello there.")
                             .cfgScale(1.5f)
                             .flowSteps(16)
+                            .rawPrompt(true)
                             .build());
             assertThat(transcribed.get(JAVA_FLOAT, JllamaNative.offset("cfg_scale")), is(1.5f));
             assertThat(transcribed.get(JAVA_INT, JllamaNative.offset("flow_steps")), is(16));
+            assertThat(transcribed.get(JAVA_INT, JllamaNative.offset("raw_prompt")), is(1));
             assertThat(transcribed.get(ADDRESS, JllamaNative.offset("speaker_reference_text"))
                     .reinterpret(16).getString(0), is("Hello there."));
+        }
+    }
+
+    /**
+     * A caller of an older header (64 bytes: up to {@code loudness}) gets exactly those bytes:
+     * {@code struct_size} 64 and nothing written behind it, so a library that grew never writes past
+     * an older caller's struct.
+     */
+    @Test
+    void ttsOptionsInitWritesNoMoreThanTheCallerDeclares() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment options = arena.allocate(JllamaNative.TTS_OPTIONS);
+            options.fill((byte) 0x5a);
+            JllamaNative.invoke(JllamaNative.TTS_OPTIONS_INIT, options, 64L);
+            assertThat(options.get(JAVA_LONG, 0), is(64L));
+            assertThat(options.get(JAVA_FLOAT, JllamaNative.offset("loudness")), is(0.0f));
+            for (long i = 64; i < JllamaNative.TTS_OPTIONS.byteSize(); i++) {
+                assertThat("byte " + i, options.get(ValueLayout.JAVA_BYTE, i), is((byte) 0x5a));
+            }
+            // a size that does not hold struct_size is ignored
+            options.fill((byte) 0x5a);
+            JllamaNative.invoke(JllamaNative.TTS_OPTIONS_INIT, options, 4L);
+            assertThat(options.get(ValueLayout.JAVA_BYTE, 0), is((byte) 0x5a));
         }
     }
 
@@ -273,6 +308,29 @@ class JllamaNativeTest {
                             wav, length));
             assertThat(e.getMessage(), containsString("TextToSpeech handle is null"));
         }
+    }
+
+    @Test
+    void finetuneReportsAMissingTrainingFileAndABrokenConfiguration() {
+        LlamaException missing = assertThrows(LlamaException.class, () -> Jllama.finetune(
+                "{\"model_path\": \"/nonexistent/m.gguf\", \"training_file\": \"/nonexistent/t.txt\","
+                        + " \"output_path\": \"/nonexistent/out.gguf\"}"));
+        assertThat(missing.getMessage(), containsString("/nonexistent/t.txt"));
+        LlamaException broken = assertThrows(LlamaException.class, () -> Jllama.finetune("{not json"));
+        assertThat(broken.getMessage(), containsString("invalid training config"));
+    }
+
+    @Test
+    void theClassicServerStartsInRouterModeAndARefusedArgvFailsTheStart(@TempDir Path models) {
+        // router mode: no model argument, an empty models directory -- the worker runs without a model
+        try (FfmNativeServer server = FfmNativeServer.start(
+                "--host", "127.0.0.1", "--port", "0", "--models-dir", models.toString())) {
+            assertTrue(server.isRunning());
+        }
+        // the argv is parsed before the worker starts, so a refused one is the start's exception
+        LlamaException refused = assertThrows(
+                LlamaException.class, () -> FfmNativeServer.start("--no-such-option", "--port", "0"));
+        assertThat(refused.getMessage(), containsString("Failed to parse server parameters"));
     }
 
     @Test

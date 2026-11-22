@@ -177,7 +177,7 @@ final class OllamaApiSupport {
         }
 
         // Ollama's "think": false switches a model's thinking off, a string picks a level (gpt-oss); the
-        // chat mapper applies reasoning_effort as upstream does. "think": true switches it on, also over
+        // chat mapper forwards reasoning_effort to upstream's chat parser. "think": true switches it on, also over
         // a server whose thinking is off by default (--reasoning off): upstream lets a request's
         // enable_thinking override that, and it must stay a JSON boolean (a string is refused there).
         JsonNode think = ollamaRequest.path("think");

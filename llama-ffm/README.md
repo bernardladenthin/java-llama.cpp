@@ -69,7 +69,7 @@ String grammar = Jllama.jsonSchemaToGrammar("{\"type\": \"object\"}");
 
 | Class | C functions |
 |---|---|
-| `FfmLlamaModel` | `jllama_model_*`, chat / raw / OpenAI completions and their streams, `apply_template`, `embed`, `embeddings`, `rerank`, `tokenize`, `detokenize`, `metrics`, `slot_action`, LoRA, `configure`, `systemone` |
+| `FfmLlamaModel` | `jllama_model_*` (`jllama_model_load_video` with the core's `VideoDecoder`), chat / raw / OpenAI completions and their streams, `apply_template`, `embed`, `embeddings`, `rerank`, `tokenize`, `detokenize`, `metrics`, `slot_action`, LoRA, `configure`, `systemone` |
 | `FfmTaskStream` | `jllama_*_stream_receive`, `jllama_task_release` |
 | `FfmNativeServer` | `jllama_server_*` (classic, attached, the router's worker command) |
 | `FfmRpcServer` | `jllama_rpc_server_*` |
@@ -86,14 +86,18 @@ it selects a registered JDK 22+ from `~/.m2/toolchains.xml`. CI needs only the s
 ```bash
 mvn -pl llama -am -DskipTests install          # the core first
 mvn -f llama-ffm/pom.xml verify                # the model-free tests + the model-backed ones
-# the model-backed tests take the draft model and the Qwen3-TTS pair of .github/models.csv, or:
+# the model-backed tests take the draft model, the Qwen3-TTS and the vision pair of .github/models.csv, or:
 mvn -f llama-ffm/pom.xml verify -Dnet.ladenthin.llama.ffm.model=/path/to/model.gguf \
     -Dnet.ladenthin.llama.ffm.tts.model=/path/to/backbone.gguf \
-    -Dnet.ladenthin.llama.ffm.tts.mmproj=/path/to/mmproj.gguf
+    -Dnet.ladenthin.llama.ffm.tts.mmproj=/path/to/mmproj.gguf \
+    -Dnet.ladenthin.llama.ffm.vision.model=/path/to/vision.gguf \
+    -Dnet.ladenthin.llama.ffm.vision.mmproj=/path/to/vision-mmproj.gguf
 ```
 
 `FfmNativeServerTest` and `FfmTextToSpeechTest` run over fake `Backend` implementations and need
-no native library. `JllamaNativeTest` and the model-backed `FfmLlamaModelIntegrationTest` and
+no native library, nor does `FfmVideoDecoderTest` (the video decoder's bridge, driven with memory of
+its own); `FfmVideoDecoderIntegrationTest` reads a request's video through a Java decoder on the
+vision pair. `JllamaNativeTest` and the model-backed `FfmLlamaModelIntegrationTest` and
 `FfmTextToSpeechIntegrationTest` (the speaker-reference capability and a cloned-voice synthesis)
 skip themselves without a native build (`llama/src/main/natives`, or
 `-Dnet.ladenthin.llama.lib.path=<natives directory>`); `FfmRpcServerTest` serves the CPU over

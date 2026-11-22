@@ -12,7 +12,8 @@ package net.ladenthin.llama.args;
  * argument ({@code common_speculative_type} in {@code common/common.h}). Upstream's default is
  * {@link #NONE}: a draft model alone ({@code --spec-draft-model}) drafts nothing until a type asks
  * for it, which is why this library selects {@link #DRAFT_SIMPLE} for a draft model when no type is
- * set (see {@link net.ladenthin.llama.parameters.ModelParameters#setModelDraft(String)}).</p>
+ * set, and {@link #DRAFT_EAGLE3} for an EAGLE-3 draft (see
+ * {@link net.ladenthin.llama.parameters.ModelParameters#setModelDraft(String)}).</p>
  *
  * @see net.ladenthin.llama.parameters.ModelParameters#setSpecTypes(SpecType, SpecType...)
  */

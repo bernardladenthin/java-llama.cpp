@@ -124,6 +124,7 @@ class TextToSpeechBackendTest {
         float loudness;
         float cfgScale;
         int flowSteps;
+        boolean rawPrompt;
 
         @Nullable
         String referenceText;
@@ -145,6 +146,7 @@ class TextToSpeechBackendTest {
             this.referenceText = parameters.getSpeakerReferenceText();
             this.cfgScale = parameters.getCfgScale();
             this.flowSteps = parameters.getFlowSteps();
+            this.rawPrompt = parameters.isRawPrompt();
             if (speakerReferenceAudioPath != null) {
                 try {
                     this.referenceBytes = Files.readAllBytes(Paths.get(speakerReferenceAudioPath));
@@ -180,8 +182,17 @@ class TextToSpeechBackendTest {
         assertThat(engine.referenceText, is(nullValue()));
         assertThat(engine.cfgScale, is(equalTo(0.0f)));
         assertThat(engine.flowSteps, is(equalTo(0)));
+        assertThat(engine.rawPrompt, is(false));
         assertThat(backend.voices(), is(equalTo(Collections.singletonList("alba"))));
         assertThat(backend.toString(), containsString("maxFrames=0"));
+    }
+
+    @Test
+    void aRawPromptReachesTheEngine() throws IOException {
+        RecordingEngine engine = new RecordingEngine();
+        new TextToSpeechBackend(engine)
+                .synthesize("hi", null, null, SpeechOptions.defaults().withRawPrompt(true));
+        assertThat(engine.rawPrompt, is(true));
     }
 
     @Test

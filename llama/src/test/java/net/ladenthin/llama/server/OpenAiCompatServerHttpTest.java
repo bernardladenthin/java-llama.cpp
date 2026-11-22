@@ -205,6 +205,71 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A chunked body carries no {@code Content-Length}, so the header check cannot see it: the
+     * bounded read alone has to stop it, with the same status and error body as a body whose
+     * {@code Content-Length} is over the limit.
+     */
+    @Test
+    public void oversizedChunkedRequestBodyWithoutContentLengthRejectedWith413() throws IOException {
+        OpenAiServerConfig cfg = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .maxRequestBodyBytes(32)
+                .build();
+        StringBuilder content = new StringBuilder();
+        while (content.length() < 2048) {
+            content.append("this body is well over thirty-two bytes ");
+        }
+        String body = "{\"messages\":[{\"role\":\"user\",\"content\":\"" + content + "\"}]}";
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), cfg).start()) {
+            Response withLength = post(server.getPort(), "/v1/chat/completions", body, "");
+            Response chunked = postChunked(server.getPort(), "/v1/chat/completions", body);
+
+            assertThat(chunked.code, is(413));
+            assertThat(chunked.body, is(withLength.body));
+            JsonNode error = READER.readTree(chunked.body).path("error");
+            assertThat(error.path("message").asText(), is("Request body too large"));
+            assertThat(error.path("type").asText(), is("invalid_request_error"));
+        }
+    }
+
+    /** A body that fits the limit is read whole in chunked mode as well. */
+    @Test
+    public void chunkedRequestBodyWithinTheLimitIsServed() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            Response response = postChunked(server.getPort(), "/v1/chat/completions", CHAT_BODY);
+
+            assertThat(response.code, is(200));
+            assertThat(response.body, containsString("hello"));
+        }
+    }
+
+    /** POST in chunked transfer encoding, so the request carries no {@code Content-Length}. */
+    private static Response postChunked(int port, String path, String body) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setChunkedStreamingMode(64);
+        conn.setRequestProperty("Content-Type", "application/json");
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        String contentType = conn.getContentType();
+        InputStream is = code < 400 ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder text = new StringBuilder();
+        if (is != null) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                for (int c = reader.read(); c != -1; c = reader.read()) {
+                    text.append((char) c);
+                }
+            }
+        }
+        conn.disconnect();
+        return new Response(code, text.toString(), null, contentType);
+    }
+
     @Test
     public void infillRouteReturnsContent() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
@@ -437,6 +502,38 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             Response chat = post(server.getPort(), "/v1/chat/completions/input_tokens", CHAT_BODY, "");
             assertThat(chat.body, chat.code, is(501));
             assertThat(READER.readTree(chat.body).path("error").path("type").asText(), is("not_supported_error"));
+        }
+    }
+
+    @Test
+    public void everyAliasOfARouteReachesItsHandler() throws IOException {
+        // the aliases no other test requested: a typo in one of them is a 404 for the clients that use it
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            int port = server.getPort();
+            String rerank = "{\"query\":\"q\",\"documents\":[\"a\",\"b\"]}";
+            for (String path : new String[] {"/rerank", "/reranking", "/v1/reranking", "/v1/rerank"}) {
+                Response response = post(port, path, rerank, "");
+                assertThat(path, response.code, is(200));
+                assertThat(path, response.body, containsString("relevance_score"));
+            }
+            String infill = "{\"input_prefix\":\"def add(a,b):\\n    return \",\"input_suffix\":\"\"}";
+            for (String path : new String[] {"/infill", "/v1/infill"}) {
+                Response response = post(port, path, infill, "");
+                assertThat(path, response.code, is(200));
+                assertThat(path, response.body, containsString("content"));
+            }
+            String messages = "{\"model\":\"test-model\",\"max_tokens\":16,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response anthropic = post(port, "/messages", messages, "");
+            assertThat(anthropic.code, is(200));
+            assertThat(anthropic.body, containsString("\"type\":\"message\""));
+            Response responses = post(port, "/responses", "{\"model\":\"test-model\",\"input\":\"hi\"}", "");
+            assertThat(responses.code, is(200));
+            assertThat(responses.body, containsString("\"object\":\"response\""));
+            // without a speech engine the speech routes are there and say so (501), not missing (404)
+            for (String path : new String[] {"/audio/speech", "/v1/audio/speech", "/tts"}) {
+                assertThat(path, post(port, path, "{\"input\":\"hi\"}", "").code, is(501));
+            }
         }
     }
 

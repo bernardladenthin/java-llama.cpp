@@ -25,11 +25,28 @@ Refreshed at b12316: #31467 made the download progress throttle per file and add
 for g_shutdown_handler_mutex is gone. 6 hunks: the flag, the guarded handler, the two resets, and
 opts.install_signal_handlers.
 
+Since the review of 2026-11-18 the embedded server also skips the common_log_flush() at the end of
+llama_server(): it pauses and resumes common_log's worker without the engine's g_common_log_mutex,
+and the host's setLogger / log-file changes take that lock.
+
+Since round three of that review the patch also adds llama_server_parsed(params, argc, argv): the
+same server over an argv the embedding host has parsed already. NativeServer's engine parses the
+argv once, under its log lock, to refuse a bad argv at the start and to own the log file; a second
+parse inside llama_server() read every file option again, and one from a pipe (--api-key-file
+/dev/stdin) the second time empty -- the server then ran without its API key. llama_server_parsed()
+does not call common_init(): the host calls it before its parse, as llama_server() does, since
+2026-11-19 -- called after the parse it turned common_log's prefix and timestamps on again, so
+--no-log-prefix / --no-log-timestamps had no effect (CApiLogFile.TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect).
+
+Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
+embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
+does) -- once it has one, port native_server.cpp to it and drop the patch.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index a0640f12b..cba74c59e 100644
+index d14978286..97ad17901 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -28,6 +28,53 @@
+@@ -29,6 +29,53 @@
  static std::function<void(int)> shutdown_handler;
  static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
  
@@ -83,7 +100,16 @@ index a0640f12b..cba74c59e 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -499,6 +546,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -48,6 +95,8 @@ struct server_run_opts {
+ 
+ // satisfies -Wmissing-declarations (used by llama command)
+ int llama_server(int argc, char ** argv);
++// [jllama] llama_server() over an argv the embedding host has parsed already (see below)
++int llama_server_parsed(common_params & params, int argc, char ** argv);
+ 
+ // to be used via CLI (argc / argv are used by router mode only)
+ int llama_server(common_params & params, int argc, char ** argv);
+@@ -511,6 +560,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
  
      // setup server instances manager
      std::optional<server_models_routes> models_routes;
@@ -93,7 +119,7 @@ index a0640f12b..cba74c59e 100644
      try {
          models_routes.emplace(params, argc, argv);
      } catch (const std::exception & e) {
-@@ -575,14 +625,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -587,14 +639,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
      }
      ctx_http.is_ready.store(true);
  
@@ -110,7 +136,7 @@ index a0640f12b..cba74c59e 100644
  
      try {
          models_routes->models.load_startup_models();
-@@ -643,6 +693,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -655,6 +707,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
      server_tools   tools;
  
      server_http_context ctx_http;
@@ -120,7 +146,7 @@ index a0640f12b..cba74c59e 100644
      if (!ctx_http.init(params)) {
          SRV_ERR("%s", "failed to initialize HTTP server\n");
          return 1;
-@@ -695,11 +748,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -707,11 +762,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
  
      SRV_INF("%s", "model loaded\n");
  
@@ -134,16 +160,55 @@ index a0640f12b..cba74c59e 100644
  
      if (opts.install_signal_handlers) {
          server_install_signal_handlers();
-@@ -811,7 +864,11 @@ int llama_server(int argc, char ** argv) {
+@@ -823,8 +878,49 @@ int llama_server(int argc, char ** argv) {
      llama_backend_init();
      llama_numa_init(params.numa);
  
 -    const int result = server_run(params, argc, argv, role, server_run_opts{});
+-    common_log_flush(common_log_main());
 +    server_run_opts opts;
 +    // [jllama] no process-wide SIGINT/SIGTERM handlers when embedded in the JVM (they would hijack
 +    // the JVM's own); NativeServer stops the embedded server via llama_server_request_shutdown()
 +    opts.install_signal_handlers = !g_llama_server_embedded.load();
 +    const int result = server_run(params, argc, argv, role, opts);
-     common_log_flush(common_log_main());
++    // [jllama] embedded, the host owns common_log and changes it under a lock of its own: this flush
++    // (a pause and a resume of the log worker) raced a setLogger on another thread, and the worker
++    // writes what is queued without it
++    if (!g_llama_server_embedded.load()) {
++        common_log_flush(common_log_main());
++    }
++    return result;
++}
++
++// [jllama] llama_server() for an embedding host that parsed the argv itself, once (NativeServer's
++// engine parses it before the worker starts, under its own lock, to refuse a bad argv at the start
++// and to own the log file): a second parse here read every file option again, and one from a pipe
++// (--api-key-file /dev/stdin) the second time empty -- a server without its API key. argv is still
++// what router mode hands its workers.
++int llama_server_parsed(common_params & params, int argc, char ** argv) {
++    server_role role;
++
++    std::setlocale(LC_NUMERIC, "C");
++
++#ifndef _WIN32
++    signal(SIGPIPE, SIG_IGN);
++#endif
++
++    // the host called common_init() before its parse (prepare_server_argv), as llama_server() does: here
++    // it would turn on again the log prefix and timestamps the argv turned off
++    server_stream_session_manager_start();
++
++    SRV_INF("%s", "initializing ...\n");
++
++    llama_backend_init();
++    llama_numa_init(params.numa);
++
++    server_run_opts opts;
++    opts.install_signal_handlers = !g_llama_server_embedded.load();
++    const int result = server_run(params, argc, argv, role, opts);
++    if (!g_llama_server_embedded.load()) {
++        common_log_flush(common_log_main());
++    }
      return result;
  }
+ 

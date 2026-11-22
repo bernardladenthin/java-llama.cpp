@@ -21,13 +21,20 @@
 #include "jllama_engine.hpp"
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
+#include "numeric_locale.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <clocale>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -45,8 +52,12 @@ constexpr int N_PARALLEL_AUTO = -1;
 // caller, so 1 slot is the appropriate default and preserves pre-b7433 behaviour.
 constexpr int N_PARALLEL_DEFAULT = 1;
 
-// Serialises set_log_sink callers; see the header.
-std::mutex g_set_log_sink_mutex;
+// Serialises every change this layer makes to common_log that pauses and resumes its worker thread
+// (the sink, the log file, a parse with a log option that pauses it): two of them interleaved race
+// on that std::thread -- a resume assigns a fresh thread over one another pause still joins, which is
+// std::terminate -- and a pause that finds the worker already stopping returns before it is joined,
+// so a fclose() could run under a flush. See set_log_sink in the header.
+std::mutex g_common_log_mutex;
 
 // Throws the exception a failed task result maps to: an error the server reports with code 400
 // (ERROR_TYPE_INVALID_REQUEST, ERROR_TYPE_EXCEED_CONTEXT_SIZE) is the request's fault.
@@ -87,6 +98,21 @@ json parse_json_body(const std::string &body_text) {
     throw std::runtime_error(e.what());
 }
 
+// llama.cpp spells a character its vocabulary has no token for with byte tokens
+// (llama_vocab::byte_to_token, a token_to_id.at): a vocabulary without them throws the map's bare
+// std::out_of_range ("unordered_map::at"), which names neither the cause nor the text. Runs a
+// tokenization and names the cause instead.
+template <typename F> auto naming_vocabulary_gaps(F &&tokenization) -> decltype(tokenization()) {
+    try {
+        return tokenization();
+    } catch (const std::out_of_range &e) {
+        throw std::runtime_error(
+            std::string("the text has a character the model's vocabulary has no token for, and the vocabulary has "
+                        "no byte tokens to spell it with (") +
+            e.what() + ")");
+    }
+}
+
 // The batch completed without a task-level error, or this throws.
 void require_batch_ok(const server_response_reader::batch_response &br) {
     if (br.error) {
@@ -121,8 +147,11 @@ server_task indexed_token_task(server_response_reader &rd, server_task_type type
 server_task_result_ptr post_and_wait(jllama_context *jctx, server_task task) {
     auto rd = jctx->server.get_response_reader();
     task.id = rd.get_new_id();
-    wake_and_post(rd, std::move(task), true);
+    wake_and_post(jctx, rd, std::move(task), true);
     auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
+    if (!result && jctx->closing.load()) {
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     require_result_ok(result);
     return result;
 }
@@ -142,6 +171,10 @@ json special_tokens_json(const llama_vocab *vocab) {
 // The streaming reader of a task, copied out under the lock so it stays alive across next(),
 // which runs without the lock and may race a concurrent task_release()/free().
 std::shared_ptr<server_response_reader> reader_of(jllama_context *jctx, int id_task) {
+    if (jctx->closing.load()) {
+        // jllama_model_interrupt cleared the readers: the task was cut, not unknown
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     std::lock_guard<std::mutex> lk(jctx->readers_mutex);
     auto it = jctx->readers.find(id_task);
     if (it == jctx->readers.end()) {
@@ -181,6 +214,23 @@ bool gguf_lacks_classification_head(const std::string &path) {
     }
     gguf_free(g);
     return lacks;
+}
+
+// The architecture the GGUF at path names (general.architecture), or "" when it cannot be read.
+std::string gguf_architecture(const std::string &path) {
+    if (path.empty()) {
+        return std::string();
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), no_data);
+    if (g == nullptr) {
+        return std::string();
+    }
+    const int64_t key = gguf_find_key(g, "general.architecture");
+    std::string arch =
+        key >= 0 && gguf_get_kv_type(g, key) == GGUF_TYPE_STRING ? gguf_get_val_str(g, key) : std::string();
+    gguf_free(g);
+    return arch;
 }
 
 } // namespace
@@ -253,10 +303,276 @@ struct video_decoder_host {
     };
 };
 
+// --log-file (and its variable LLAMA_ARG_LOG_FILE) opens a file of the process-wide common_log
+// while the argv is parsed; common_params keeps no record of it. Without an owner the file stayed
+// open after the model was freed, later models of the process kept writing into it, and Windows
+// cannot delete it while the JVM runs. So the option is taken out of the argv and the file opened
+// here, after the parse accepted the rest: a refused parse opens nothing and closes nothing. The
+// load (later its model, or an embedded server) that opened the current file owns it, under an id
+// that is never reused; freeing the owner closes the file, a failed load closes it at once, and a
+// later --log-file takes the file and the ownership over, as it takes the file in common_log.
+// LLAMA_ARG_LOG_FILE is applied by the parse itself, before the argv (common_params_parse_ex), so a
+// load in a process with the variable set owns the file its parse opened. Guarded by
+// g_common_log_mutex.
+std::uint64_t g_log_file_owner = 0; // 0: no file of this layer's open
+std::uint64_t g_next_log_file_owner = 1;
+
+// What the parse does to a long option: "--log_file" is "--log-file".
+std::string long_option_name(const std::string &arg) {
+    std::string name = arg;
+    if (name.rfind("--", 0) == 0) {
+        std::replace(name.begin(), name.end(), '_', '-');
+    }
+    return name;
+}
+
+bool env_is_set(const char *name) {
+    const char *value = std::getenv(name);
+    return value != nullptr && *value != '\0';
+}
+
+// Removes every "--log-file <path>" (index 0 is the program name) and returns the last path, as the
+// parse would keep it; empty when there is none. An option without a value stays, for the parse to
+// refuse ("expected value for argument"). A value of another option that is literally "--log-file"
+// would be taken for the option -- the parse reads values by position, which this scan does not.
+std::string take_log_file_option(std::vector<std::string> &argv) {
+    std::string path;
+    std::vector<std::string> kept;
+    kept.reserve(argv.size());
+    for (size_t i = 0; i < argv.size(); i++) {
+        if (i > 0 && i + 1 < argv.size() && long_option_name(argv[i]) == "--log-file") {
+            path = argv[i + 1];
+            i++;
+            continue;
+        }
+        kept.push_back(argv[i]);
+    }
+    argv = std::move(kept);
+    return path;
+}
+
+// Whether the argv names the long option `name` (index 0 is the program name).
+bool has_long_option(const std::vector<std::string> &argv, const char *name) {
+    for (size_t i = 1; i < argv.size(); i++) {
+        if (long_option_name(argv[i]) == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Opens `path` as the log file (if any) and makes a new owner of the file now open; 0 when none was
+// opened. Caller holds g_common_log_mutex. `env_opened`: the parse just opened LLAMA_ARG_LOG_FILE's.
+// `disabled`: the argv has --log-disable, which the parse applied by pausing the log worker -- and
+// opening a file resumes it, so it is paused again, as upstream's order (the file first, the
+// option after it) leaves it.
+std::uint64_t open_log_file_locked(const std::string &path, bool env_opened, bool disabled) {
+    if (!path.empty()) {
+        common_log_set_file(common_log_main(), path.c_str());
+        if (disabled) {
+            common_log_pause(common_log_main());
+        }
+    } else if (!env_opened) {
+        return 0;
+    }
+    g_log_file_owner = g_next_log_file_owner++;
+    return g_log_file_owner;
+}
+
+// Closes the log file if `owner` still owns it. Called from destructors and from free(): a failure
+// to restart common_log's worker (std::system_error from std::thread) must not end the process.
+void release_log_file(std::uint64_t owner) noexcept {
+    if (owner == 0) {
+        return;
+    }
+    try {
+        std::lock_guard<std::mutex> lk(g_common_log_mutex);
+        if (g_log_file_owner == owner) {
+            g_log_file_owner = 0;
+            common_log_set_file(common_log_main(), nullptr);
+        }
+    } catch (...) {
+        // the file stays open; nothing else to do in a teardown
+    }
+}
+
+// Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
+// embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
+// that looks like a relevance and is none. Refused by the model file's tensor list -- and by the
+// lists of its --shard files, any of which may carry the head (b12233). Empty when it can rerank.
+std::string rank_pooling_refusal(const common_params &params) {
+    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
+        gguf_lacks_classification_head(params.model.path) &&
+        std::all_of(params.model.shards.begin(), params.model.shards.end(),
+                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
+        return "'" + params.model.path +
+               "' has no classification head (cls / cls.output tensors), so it cannot rerank: rank pooling needs a "
+               "reranker model";
+    }
+    return std::string();
+}
+
+// `what` with the reason the last refused parse on this thread gave (patches/0031), without the
+// usage text upstream appends after a blank line.
+std::string parse_refusal(const char *what) {
+    std::string reason = common_params_parse_error();
+    reason = reason.substr(0, reason.find("\n\n"));
+    while (!reason.empty() && (reason.back() == '\n' || reason.back() == ' ')) {
+        reason.pop_back();
+    }
+    return reason.empty() ? std::string(what) : std::string(what) + ": " + reason;
+}
+
+// Closes the file a load opened unless the load handed it to its model.
+struct log_file_claim {
+    std::uint64_t owner = 0;
+    bool handed = false;
+    ~log_file_claim() {
+        if (!handed) {
+            release_log_file(owner);
+        }
+    }
+};
+
+// The caller's load-progress callback, for the first load only. The server keeps the callback in
+// its params and calls it from every later load_model() as well -- a wake from the idle sleep runs
+// one on the worker thread, long after the caller's user data is gone (patches/0002 keeps a callback
+// that is not the server's own). The relay forwards while the first load runs and answers true
+// without the host afterwards.
+struct load_progress_relay {
+    llama_progress_callback callback = nullptr;
+    void *user_data = nullptr;
+    std::atomic<bool> active{true};
+
+    static bool forward(float progress, void *self) {
+        auto *relay = static_cast<load_progress_relay *>(self);
+        return !relay->active.load() || relay->callback(progress, relay->user_data);
+    }
+};
+
 } // namespace
+
+// A control vector llama.cpp cannot apply: common_init_from_params() logs it and returns the context
+// without the vector -- and without the steps after it, the LoRA adapters and the warmup among them --
+// so the model ran unsteered and the caller never heard. Decided before the load from the files: the
+// vectors' width against the model's (<arch>.embedding_length) and their layers against its block
+// count, as common_control_vector_load() reads them. Empty when every vector applies, or when the model
+// file cannot be read here (the load reports that).
+std::string control_vector_refusal(const common_params &params) {
+    if (params.control_vectors.empty() || params.model.path.empty()) {
+        return std::string();
+    }
+    gguf_init_params no_data = {true, nullptr};
+    gguf_context *g = gguf_init_from_file(params.model.path.c_str(), no_data);
+    if (g == nullptr) {
+        return std::string();
+    }
+    // -1 for a key that is missing or of another type -- as int64_t: in a ternary with the uint32_t of
+    // gguf_get_val_u32 the -1 became 4294967295, and a missing nextn_predict_layers made the layer
+    // count negative, which skipped every check below
+    const auto u32 = [g](const std::string &key) -> int64_t {
+        const int64_t id = gguf_find_key(g, key.c_str());
+        return id >= 0 && gguf_get_kv_type(g, id) == GGUF_TYPE_UINT32 ? static_cast<int64_t>(gguf_get_val_u32(g, id))
+                                                                      : int64_t{-1};
+    };
+    const int64_t arch_id = gguf_find_key(g, "general.architecture");
+    const std::string arch =
+        arch_id >= 0 && gguf_get_kv_type(g, arch_id) == GGUF_TYPE_STRING ? gguf_get_val_str(g, arch_id) : "";
+    const int64_t n_embd = u32(arch + ".embedding_length");
+    // the layers llama_model_n_layer() counts, which upstream loads the vector for: the blocks
+    // without the multi-token-prediction ones after them (a direction on an MTP block passed this
+    // check against the block count and was then dropped by the load)
+    const int64_t n_layer = u32(arch + ".block_count") - std::max<int64_t>(0, u32(arch + ".nextn_predict_layers"));
+    gguf_free(g);
+    if (n_embd < 0 || n_layer < 0) {
+        return std::string();
+    }
+    std::string names;
+    for (const auto &cvec : params.control_vectors) {
+        names += (names.empty() ? "" : ", ") + cvec.fname;
+    }
+    const common_control_vector_data data = common_control_vector_load(params.control_vectors, n_layer);
+    if (data.n_embd == -1) {
+        return "a control vector cannot be applied to this model (" + names +
+               "): a file that cannot be read, a direction tensor that is not 1-D F32, or a layer past the model's " +
+               std::to_string(n_layer) + " (llama.cpp's log names which)";
+    }
+    if (data.n_embd != n_embd) {
+        return "a control vector has " + std::to_string(data.n_embd) + " values per layer and the model " +
+               std::to_string(n_embd) + " (" + names + ")";
+    }
+    return std::string();
+}
+
+std::string batch_refusal(const common_params &params) {
+    // A batch of no tokens: llama_context takes n_ubatch from it too, and every decode -- the warmup,
+    // the server's memory probe -- aborts the process adding its first token (GGML_ABORT "failed to
+    // add token") -- the JVM, for a Java caller. A batch of one token works since patches/0032, which
+    // makes the warmup and the probe decode no more than the context's batch in one call.
+    if (params.n_batch < 1) {
+        return "--batch-size must be at least 1 (got " + std::to_string(params.n_batch) +
+               "): a batch of no tokens cannot evaluate anything";
+    }
+    // A negative ubatch reaches llama_context as a huge unsigned one, and an embedding context takes
+    // its batch from the ubatch (common_init_result) -- a batch of four billion tokens to allocate.
+    // 0 is upstream's "the batch size".
+    if (params.n_ubatch < 0) {
+        return "--ubatch-size must not be negative (got " + std::to_string(params.n_ubatch) + ")";
+    }
+    return std::string();
+}
+
+std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params, bool attached) {
+    // The only parse of the server's argv: llama_server_parsed() (patches/0006) runs on these
+    // params, so a file option is read once -- a second parse read one from a pipe empty (an
+    // --api-key-file /dev/stdin, a server without its key). LLAMA_ARG_LOG_FILE is applied by the
+    // parse before the argv; the argv's --log-file is opened after it, as upstream orders them.
+    const std::string path = take_log_file_option(argv);
+    // the `--rpc` servers are registered (rpc::prepare_argv, before this): the parse under the log
+    // lock connects to none of them
+    std::vector<std::string> parse_args = jllama::rpc::without_rpc_options(argv);
+    std::vector<char *> parse_argv;
+    parse_argv.reserve(parse_args.size());
+    for (auto &arg : parse_args) {
+        parse_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    // before the parse, as llama_server() calls it: it turns common_log's prefix and timestamps on,
+    // which --no-log-prefix / --no-log-timestamps in the argv turn off again (llama_server_parsed()
+    // does not call it, patches/0006). Not for an attached server: the model's load called it, and a
+    // second call turned on what the model's argv had turned off (llama_server_attach() never calls it).
+    if (!attached) {
+        common_init();
+    }
+    log_file_claim log_file;
+    bool parsed = false;
+    std::string refusal;
+    {
+        // the registry before the log lock (see load())
+        std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
+        std::lock_guard<std::mutex> lk(g_common_log_mutex);
+        {
+            const jllama::c_numeric_locale numbers;
+            parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
+                                         LLAMA_EXAMPLE_SERVER);
+        }
+        refusal = parsed ? batch_refusal(params) : parse_refusal("Failed to parse server parameters");
+        // a file the variable opened is this start's whatever happens; a refused start closes it
+        log_file.owner = open_log_file_locked(refusal.empty() ? path : std::string(), env_is_set("LLAMA_ARG_LOG_FILE"),
+                                              has_long_option(argv, "--log-disable"));
+    }
+    if (!refusal.empty()) {
+        throw std::runtime_error(refusal);
+    }
+    log_file.handed = true;
+    return log_file.owner;
+}
+
+void release_log_file_of_server(std::uint64_t owner) { release_log_file(owner); }
 
 jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_callback progress,
                      void *progress_user_data, const video_decoder *decoder) {
+    // The load parses the chat templates (and the argv, under its own guard as well).
+    const jllama::c_numeric_locale numbers;
     // First, so that the host's release callback runs on every way out of this function.
     std::shared_ptr<video_decoder_host> video_host;
     if (decoder != nullptr) {
@@ -282,27 +598,116 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // this load -- see rpc_support.hpp.
     std::vector<std::string> rpc_argv =
         jllama::rpc::prepare_argv(std::vector<std::string>(filtered_argv.begin(), filtered_argv.end()));
+    const std::string log_file_path = take_log_file_option(rpc_argv);
+    // the parse below holds the log lock, and its `--rpc` handler would register -- connect to -- the
+    // servers prepare_argv has registered already
+    std::vector<std::string> parse_args = jllama::rpc::without_rpc_options(rpc_argv);
     std::vector<char *> parse_argv;
-    parse_argv.reserve(rpc_argv.size());
-    for (auto &arg : rpc_argv) {
+    parse_argv.reserve(parse_args.size());
+    for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
-    if (!common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER)) {
-        throw std::runtime_error("Failed to parse model parameters");
+    // before the parse, as llama_server() calls it: it turns common_log's prefix and timestamps on, and
+    // after the parse it turned off what --no-log-prefix / --no-log-timestamps had just set
+    common_init();
+    log_file_claim log_file;
+    bool parsed = false;
+    std::string refusal;
+    {
+        // Every parse holds the lock: --log-disable, --log-colors and LLAMA_ARG_LOG_FILE pause the log
+        // worker inside it, and the server example's parse downloads nothing (common_params_parse_ex
+        // leaves that to the load) and connects to no RPC server (see above), so it is short. It
+        // registers LLAMA_ARG_RPC's servers again (answered from ggml-rpc's cache), so it holds the RPC
+        // registry's mutex too -- taken first, so that a parse waiting for another load's connect
+        // (rpc::prepare_argv holds the mutex while it connects) does not hold the log lock meanwhile.
+        std::lock_guard<std::recursive_mutex> registry(jllama::rpc::registry_mutex());
+        std::lock_guard<std::mutex> log_lock(g_common_log_mutex);
+        {
+            const jllama::c_numeric_locale numbers;
+            parsed = common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params,
+                                         LLAMA_EXAMPLE_SERVER);
+        }
+        // A refused load parameter, like a refused parse: JLLAMA_STATUS_ERROR / LlamaException. Decided
+        // before the argv's --log-file is opened: opening it closes the file another model logs into.
+        if (!parsed) {
+            refusal = parse_refusal("Failed to parse model parameters");
+        } else if (!vocab_only) {
+            refusal = batch_refusal(params);
+            if (refusal.empty()) {
+                refusal = rank_pooling_refusal(params);
+            }
+        }
+        // A parse in a process with LLAMA_ARG_LOG_FILE set opened that file before it read the argv;
+        // a refused one too (unless an earlier environment variable was refused first, which this
+        // cannot tell apart), and the claim closes it then.
+        log_file.owner =
+            open_log_file_locked(refusal.empty() ? log_file_path : std::string(), env_is_set("LLAMA_ARG_LOG_FILE"),
+                                 has_long_option(rpc_argv, "--log-disable"));
+    }
+    if (!refusal.empty()) {
+        throw std::runtime_error(refusal);
     }
 
-    // A draft model nobody asks: upstream's speculative types default to none, and the parse above
-    // infers one from the draft file only for an MTP, DFlash or DSpark draft. A plain draft model
+    // The server example's parse leaves the model files to the server: common_params_parse_ex skips
+    // common_models_handler_apply for LLAMA_EXAMPLE_SERVER, which llama_server() runs itself, and this
+    // load is no llama_server(). Without it --model-url, -hf and the draft and projector repositories
+    // were never downloaded (the load failed on a model path nobody had written), and a draft's type was
+    // never read from its file or its repository's sidecars. Outside the log lock: it may download.
+    try {
+        common_models_handler models = common_models_handler_init(params, LLAMA_EXAMPLE_SERVER);
+        common_models_handler_apply(models, params);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("failed to fetch the model files: ") + e.what());
+    }
+    // A repository of presets (a preset.ini at its root) is a set of models: the handler clears the
+    // model path so that llama_server() starts in router mode, and the load then failed with "could not
+    // load model from given file path", which named the wrong cause.
+    if (!params.models_preset.empty() && params.model.path.empty()) {
+        throw std::runtime_error("'" + params.model.hf_repo +
+                                 "' is a repository of model presets, not a model: a model load takes one model "
+                                 "file (-m, --model-url), and the embedded server serves presets in router mode");
+    }
+    // The refusal of the parse block read the file before the handler wrote it: a reranker without a
+    // head downloaded by --model-url or -hf was never refused (a file that is not there has no tensor
+    // list to read). Read again once the files are there; a refusal in the parse block has thrown already.
+    if (!vocab_only) {
+        const std::string pooling = rank_pooling_refusal(params);
+        if (!pooling.empty()) {
+            throw std::runtime_error(pooling);
+        }
+    }
+    // --lora-init-without-apply: upstream's common_init_from_params leaves the adapters unapplied to the
+    // context, but the server applies params' adapters at their scales to every batch, so the option did
+    // nothing (b12541) -- ModelParameters.setLoraInitWithoutApply was a no-op. Scale 0 is "loaded, not
+    // applied", which jllama_set_lora_adapters (the server's POST /lora-adapters) later changes.
+    if (params.lora_init_without_apply) {
+        for (auto &adapter : params.lora_adapters) {
+            adapter.scale = 0.0f;
+        }
+    }
+    if (!vocab_only) {
+        const std::string vectors = control_vector_refusal(params);
+        if (!vectors.empty()) {
+            throw std::runtime_error(vectors);
+        }
+    }
+
+    // A draft model nobody asks: upstream's speculative types default to none, and the models handler
+    // above infers one only for an MTP head or a DFlash family draft (from the file) and for a
+    // repository's sidecars (MTP, DSpark, DFlash, EAGLE-3). A plain draft model
     // would then be loaded and never used (measured: 0 drafted tokens against 35 of 48 with the
-    // type), so it is used as what it is. An explicit --spec-type, "none" included, is not the
-    // default list (the option appends to it) and stays as given.
+    // type), so it is used as what it is. An EAGLE-3 draft is no plain draft: its decoder reads the
+    // target's layer inputs, which only draft-eagle3 hands it -- as draft-simple it read a compute
+    // buffer nobody had written and proposed noise (found with the generator's EAGLE-3 draft). An
+    // explicit --spec-type, "none" included, is not the default list (the option appends to it) and
+    // stays as given.
     if (params.speculative.has_dft() &&
         params.speculative.types == std::vector<enum common_speculative_type>{COMMON_SPECULATIVE_TYPE_NONE}) {
-        params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
-        SRV_INF("%s", "a draft model without --spec-type: using it as draft-simple\n");
+        const bool eagle3 = gguf_architecture(params.speculative.draft.mparams.path) == "eagle3";
+        params.speculative.types = {eagle3 ? COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3
+                                           : COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+        SRV_INF("a draft model without --spec-type: using it as %s\n", eagle3 ? "draft-eagle3" : "draft-simple");
     }
-
-    common_init();
 
     std::unique_ptr<jllama_context> jctx(new jllama_context());
     jctx->vocab_only = vocab_only;
@@ -319,6 +724,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
             throw std::runtime_error("could not load tokenizer from given file path");
         }
         jctx->vocab = llama_model_get_vocab(jctx->vocab_only_model);
+        jctx->log_file_owner = log_file.owner;
+        log_file.handed = true;
         return jctx.release();
     }
 
@@ -334,24 +741,16 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         jctx->params.n_parallel = N_PARALLEL_DEFAULT;
     }
 
-    // Rank pooling without a classification head: llama.cpp then takes the first value of the pooled
-    // embedding as the score (measured: 0.40 for a document of a random BERT without one), a number
-    // that looks like a relevance and is none. Refused here, by the model file's tensor list -- and
-    // by the lists of its --shard files, any of which may carry the head (b12233).
-    if (params.embedding && params.pooling_type == LLAMA_POOLING_TYPE_RANK &&
-        gguf_lacks_classification_head(params.model.path) &&
-        std::all_of(params.model.shards.begin(), params.model.shards.end(),
-                    [](const std::string &shard) { return gguf_lacks_classification_head(shard); })) {
-        throw std::runtime_error("'" + params.model.path +
-                                 "' has no classification head (cls / cls.output tensors), so it cannot rerank: "
-                                 "rank pooling needs a reranker model");
-    }
-
     LOG_INF("%s: loading model\n", __func__);
 
+    std::shared_ptr<load_progress_relay> progress_relay;
     if (progress != nullptr) {
-        params.load_progress_callback = progress;
-        params.load_progress_callback_user_data = progress_user_data;
+        progress_relay = std::make_shared<load_progress_relay>();
+        progress_relay->callback = progress;
+        progress_relay->user_data = progress_user_data;
+        params.load_progress_callback = &load_progress_relay::forward;
+        params.load_progress_callback_user_data = progress_relay.get();
+        jctx->load_progress = progress_relay;
     }
 
     // Before load_model(), as upstream's llama_server() does -- see jllama_context::routes. It keeps
@@ -364,7 +763,11 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         jctx->server.set_video_decoder(&video_host->mtmd);
     }
 
-    if (!jctx->server.load_model(params)) {
+    const bool loaded = jctx->server.load_model(params);
+    if (progress_relay != nullptr) {
+        progress_relay->active.store(false);
+    }
+    if (!loaded) {
         // The failed load may have left a vocab-only model? No: that is the other branch. Nothing
         // to free besides the context (the server owns what it loaded and frees it in its
         // destructor).
@@ -393,6 +796,8 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     // which is also what lets the same loop serve a C caller without a JVM at all.
     jllama_context *raw_ctx = jctx.get();
     jctx->worker = std::thread([raw_ctx]() {
+        // for the thread's life: the worker renders what the server does on its own thread
+        const jllama::c_numeric_locale numbers;
         raw_ctx->worker_ready.store(true);
         raw_ctx->server.start_loop();
     });
@@ -401,10 +806,12 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         std::this_thread::yield();
     }
 
+    jctx->log_file_owner = log_file.owner;
+    log_file.handed = true;
     return jctx.release();
 }
 
-void free(jllama_context *jctx) {
+void interrupt(jllama_context *jctx) noexcept {
     if (jctx == nullptr) {
         return;
     }
@@ -415,9 +822,20 @@ void free(jllama_context *jctx) {
     jctx->closing.store(true, std::memory_order_release);
     if (!jctx->vocab_only) {
         // Cancel any pending streaming readers before stopping the server.
-        std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-        jctx->readers.clear();
+        try {
+            std::lock_guard<std::mutex> lk(jctx->readers_mutex);
+            jctx->readers.clear();
+        } catch (...) {
+            // a reader's destructor that throws: the flag above already ends every wait
+        }
     }
+}
+
+void free(jllama_context *jctx) {
+    if (jctx == nullptr) {
+        return;
+    }
+    interrupt(jctx);
 
     // Wait for every in-flight call (an entry point still inside its jllama_context_guard) to
     // release its user reference BEFORE tearing anything down -- a concurrent call could otherwise
@@ -447,7 +865,11 @@ void free(jllama_context *jctx) {
         llama_model_free(jctx->vocab_only_model);
     }
 
+    // After the context and the model are destroyed, so that their teardown lines (the MoE cache's
+    // hit rate among them) still reach the file.
+    const std::uint64_t log_file_owner = jctx->log_file_owner;
     delete jctx;
+    release_log_file(log_file_owner);
 }
 
 void require_server(const jllama_context *jctx, const char *operation) {
@@ -478,14 +900,67 @@ void require_server(const jllama_context *jctx, const char *operation) {
 // Teardown ordering: a caller parked in `wait_until_no_sleep()` when the queue terminates is never
 // released. That is safe only because every caller runs inside a `jllama_context_guard`, and free()
 // waits for `users == 0` before `terminate()`. Do not call this from the teardown path.
+// The files a wake from the idle sleep loads again (server_context_impl::load_model() over the
+// load's params), the first one that is gone, or "". Upstream ends the process when that reload fails
+// (GGML_ABORT "failed to reload model after sleeping"), so a model whose file was moved or deleted
+// while it slept took its host with it on the next request; refused here before the wake, the model
+// stays asleep and answers again once the file is back.
+static std::string missing_file_for_wake(const common_params &params) {
+    std::vector<std::string> paths = {params.model.path};
+    paths.insert(paths.end(), params.model.shards.begin(), params.model.shards.end());
+    paths.push_back(params.mmproj.path);
+    paths.push_back(params.speculative.draft.mparams.path);
+    for (const auto &adapter : params.lora_adapters) {
+        paths.push_back(adapter.path);
+    }
+    for (const auto &vector : params.control_vectors) {
+        paths.push_back(vector.fname);
+    }
+    for (const auto &path : paths) {
+        std::error_code ec;
+        if (!path.empty() && !std::filesystem::exists(std::filesystem::u8path(path), ec)) {
+            return path;
+        }
+    }
+    return std::string();
+}
+
+// jllama_hold_server_awake, refused while the model sleeps and a file of it is gone (see above). A
+// file that disappears between this check and the reload still ends the process -- upstream's reload
+// has no way back -- but that is a window of one wake, not every request after the file went.
+static void hold_awake(jllama_context *jctx, server_queue &queue) {
+    if (queue.is_sleeping()) {
+        const std::string missing = missing_file_for_wake(jctx->params);
+        if (!missing.empty()) {
+            throw std::runtime_error("the model is asleep (--sleep-idle-seconds) and cannot be woken: '" + missing +
+                                     "', which the wake loads again, is gone");
+        }
+    }
+    jllama_hold_server_awake(queue);
+}
+
 void wake_server(jllama_context *jctx) {
     if (jctx->vocab_only) {
         return; // no server_context in vocab-only mode; the model is owned directly and never sleeps
     }
     server_response_reader rd = jctx->server.get_response_reader();
-    jllama_hold_server_awake(rd.queue_tasks);
+    hold_awake(jctx, rd.queue_tasks);
+    llama_context *lctx = jctx->server.get_llama_context();
     // Re-read the vocab: a sleep/resume cycle replaced the model this pointer came from.
-    jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
+    jctx->vocab = llama_model_get_vocab(llama_get_model(lctx));
+    // The resume built that context from the load-time params, and the slot scheduler took its
+    // similarity from them too: what configure() set is applied again where it differs.
+    if (jctx->configured.load() && lctx != nullptr) {
+        std::lock_guard<std::mutex> tuning(jctx->tuning_mutex);
+        const int n = jctx->params.cpuparams.n_threads;
+        const int nb = jctx->params.cpuparams_batch.n_threads;
+        if (llama_n_threads(lctx) != n || llama_n_threads_batch(lctx) != nb) {
+            llama_set_n_threads(lctx, n, nb);
+        }
+        if (jctx->server.get_slot_prompt_similarity() != jctx->params.slot_prompt_similarity) {
+            jctx->server.set_slot_prompt_similarity(jctx->params.slot_prompt_similarity);
+        }
+    }
 }
 
 server_context_meta wake_and_get_meta(jllama_context *jctx) {
@@ -545,8 +1020,10 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
             throw std::logic_error("a multimodal prompt carried no media");
         }
     } else if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
-        auto tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
+        auto tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true,
+                                          mtmd_helper_init_opt_default());
+        });
         // A task carries one prompt. Upstream answers several prompts with one choice each; taking the
         // first here dropped the others without a word, so they are refused instead.
         if (tokenized_prompts.size() > 1) {
@@ -568,7 +1045,8 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
         llama_tokens forced = sampling.reasoning_budget_end.front();
         const std::string &message = jctx->params.sampling.reasoning_budget_message;
         if (!message.empty()) {
-            const llama_tokens message_tokens = common_tokenize(jctx->vocab, message, false, true);
+            const llama_tokens message_tokens =
+                naming_vocabulary_gaps([&]() { return common_tokenize(jctx->vocab, message, false, true); });
             forced.insert(forced.begin(), message_tokens.begin(), message_tokens.end());
         }
         sampling.reasoning_budget_forced = std::move(forced);
@@ -605,16 +1083,17 @@ static void name_completion_task(server_task &task, const server_context_meta &m
 // `sleeping`, and upstream's loop leaves that flag SET when it exits on !running. So a caller parked
 // here when the queue is terminated is never released. It is safe only because every caller holds a
 // jllama_context_guard user reference and free() waits for users == 0 BEFORE calling terminate().
-void wake_and_post(server_response_reader &rd, server_task &&task, bool front) {
-    jllama_hold_server_awake(rd.queue_tasks);
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, server_task &&task, bool front) {
+    hold_awake(jctx, rd.queue_tasks);
     rd.post_task(std::move(task), front);
 }
 
 // The chat session (if any) is what the reader builds its task_result_state from -- the parser that
 // turns generated text into content, reasoning and tool calls. A default session is the non-chat
 // case (content only).
-void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks, const common_chat_session &session) {
-    jllama_hold_server_awake(rd.queue_tasks);
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, std::vector<server_task> &&tasks,
+                   const common_chat_session &session) {
+    hold_awake(jctx, rd.queue_tasks);
     rd.post_tasks(std::move(tasks), session);
 }
 
@@ -651,10 +1130,14 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
     task.apply_chat_session(session);
     apply_raw_chat_sampling(task, raw_chat);
     task.params.res_type = res_type;
+    // A blocking call answers the whole result. With the body's "stream": true the server sends it
+    // in chunks, all with index 0, and wait_for_all ends the process at the second one
+    // (GGML_ASSERT "duplicate result received") -- a raw JSON body reaches this path as it is.
+    task.params.stream = false;
     name_completion_task(task, meta);
     std::vector<server_task> tasks;
     tasks.push_back(std::move(task));
-    wake_and_post(rd, std::move(tasks), session);
+    wake_and_post(jctx, rd, std::move(tasks), session);
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     require_batch_ok(br);
     return std::move(br.results);
@@ -663,6 +1146,9 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
 int streaming_request(jllama_context *jctx, const json &data, server_task_type task_type, task_response_type res_type,
                       std::vector<raw_buffer> files, const common_chat_session &session,
                       const raw_chat_sampling &raw_chat) {
+    if (jctx->closing.load()) {
+        throw jllama_interrupted("inference interrupted by close()");
+    }
     auto meta = wake_and_get_meta(jctx);
     auto rd = std::make_shared<server_response_reader>(jctx->server.get_response_reader());
     const int tid = rd->get_new_id();
@@ -676,7 +1162,7 @@ int streaming_request(jllama_context *jctx, const json &data, server_task_type t
         name_completion_task(task, meta);
         std::vector<server_task> tasks;
         tasks.push_back(std::move(task));
-        wake_and_post(*rd, std::move(tasks), session);
+        wake_and_post(jctx, *rd, std::move(tasks), session);
     } catch (const std::exception &e) {
         throw jllama_invalid_request(e.what());
     }
@@ -693,6 +1179,9 @@ json stream_next(jllama_context *jctx, int id_task, bool &stop) {
         // events.
         while (true) {
             server_task_result_ptr result = rd->next([jctx] { return jctx->closing.load(); });
+            if (!result && jctx->closing.load()) {
+                throw jllama_interrupted("inference interrupted by close()");
+            }
             require_result_ok(result);
             json payload = result->to_json();
             if (payload.is_null()) {
@@ -743,7 +1232,7 @@ std::string chat_completions_stream_receive(jllama_context *jctx, int id_task, b
 }
 
 void set_log_sink(common_log_callback callback, void *user_data) {
-    std::lock_guard<std::mutex> swap_lock(g_set_log_sink_mutex);
+    std::lock_guard<std::mutex> swap_lock(g_common_log_mutex);
     // Detach the current sink first: this pauses common_log's worker, which drains every queued
     // entry through the OLD callback (a synchronous flush for the caller that sets null) and joins.
     common_log_set_callback(common_log_main(), nullptr, nullptr);
@@ -903,11 +1392,30 @@ static void prepare_infill_prompt(jllama_context *jctx, const server_context_met
             throw jllama_invalid_request(std::string("\"") + field + "\" is required");
         }
     }
-    data["input_extra"] = json_value(data, "input_extra", json::array());
+    // upstream's /infill validation (server-context.cpp, post_infill): json_value() turned a value of
+    // another type into its default, so a prompt that was no string was dropped, a chunk without text
+    // made the prompt builder throw a type error, and a filename of another type became "tmp"
+    if (data.contains("prompt") && !data.at("prompt").is_string()) {
+        throw jllama_invalid_request("\"prompt\" must be a string");
+    }
+    if (data.contains("input_extra") && !data.at("input_extra").is_array()) {
+        throw jllama_invalid_request("\"input_extra\" must be an array of {\"filename\": string, \"text\": string}");
+    }
+    const json input_extra = json_value(data, "input_extra", json::array());
+    for (const auto &chunk : input_extra) {
+        if (!chunk.is_object() || !chunk.contains("text") || !chunk.at("text").is_string()) {
+            throw jllama_invalid_request("extra_context chunk must contain a \"text\" field with a string value");
+        }
+        if (chunk.contains("filename") && !chunk.at("filename").is_string()) {
+            throw jllama_invalid_request("extra_context chunk's \"filename\" field must be a string");
+        }
+    }
+    data["input_extra"] = input_extra;
     const std::string prompt = json_value(data, "prompt", std::string());
     try {
-        std::vector<server_tokens> tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
+        std::vector<server_tokens> tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
+        });
         data["prompt"] =
             format_prompt_infill(jctx->vocab, data.at("input_prefix"), data.at("input_suffix"), data.at("input_extra"),
                                  jctx->params.n_batch, jctx->params.n_predict, meta.slot_n_ctx, jctx->params.spm_infill,
@@ -941,7 +1449,9 @@ static void add_template_stops(jllama_context *jctx, json &data, const std::vect
     }
     json stops = json::array();
     const json requested = data.contains("stop") ? data.at("stop") : json();
-    if (requested.is_string()) {
+    // an empty word is no stop (upstream #32093 drops it), in a string as in an array, and the CLI
+    // defaults then apply as the schema applies them
+    if (requested.is_string() && !requested.get<std::string>().empty()) {
         stops.push_back(requested);
     } else if (requested.is_array()) {
         for (const auto &word : requested) {
@@ -1114,16 +1624,22 @@ std::vector<float> embed(jllama_context *jctx, const std::string &prompt) {
     SRV_INF("Calling embedding '%s'\n", prompt.c_str());
     llama_tokens tokens;
     try {
-        tokens = tokenize_mixed(jctx->vocab, prompt, true, true);
+        tokens = naming_vocabulary_gaps([&]() { return tokenize_mixed(jctx->vocab, prompt, true, true); });
     } catch (const std::exception &e) {
         rethrow_by_type(e);
+    }
+    // as embeddings() and upstream's handler refuse it: an empty input is the caller's mistake (a
+    // vocabulary that adds no BOS sent an empty task, which the server answered as a completion, and
+    // this call reported "embedding result is empty", a server error)
+    if (tokens.empty()) {
+        throw jllama_invalid_request("Input content cannot be empty");
     }
     auto rd = jctx->server.get_response_reader();
     server_task task(SERVER_TASK_TYPE_EMBEDDING);
     task.id = rd.get_new_id();
     task.tokens = server_tokens(tokens, false);
     task.index = 0;
-    wake_and_post(rd, std::move(task));
+    wake_and_post(jctx, rd, std::move(task));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     require_batch_ok(br);
     if (br.results.empty()) {
@@ -1143,12 +1659,16 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
             "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
     }
     task_response_type res_type = oai_compat ? TASK_RESPONSE_TYPE_OAI_EMBD : TASK_RESPONSE_TYPE_NONE;
+    // The name an OpenAI answer carries when the request names none: the server's (the alias, else
+    // the model's name), as upstream's handle_embeddings_impl passes it. It was "gpt-3.5-turbo".
+    std::string model_name;
     {
         auto meta = wake_and_get_meta(jctx);
         if (res_type != TASK_RESPONSE_TYPE_NONE && meta.pooling_type == LLAMA_POOLING_TYPE_NONE) {
             throw jllama_invalid_request(
                 "Pooling type 'none' is not OAI compatible. Please use a different pooling type");
         }
+        model_name = meta.model_name;
     }
     const json body = parse_json_body(body_text);
     bool force_no_oaicompat = false;
@@ -1165,8 +1685,9 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
     }
     std::vector<server_tokens> tokenized_prompts;
     try {
-        tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
+        tokenized_prompts = naming_vocabulary_gaps([&]() {
+            return tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
+        });
     } catch (const std::exception &e) {
         // `"prompt" must not be empty` is a std::invalid_argument, as upstream throws it
         rethrow_by_type(e);
@@ -1184,18 +1705,16 @@ std::string embeddings(jllama_context *jctx, const std::string &body_text, bool 
                                            server_tokens(tokenized_prompts[i].get_tokens(), false), static_cast<int>(i),
                                            res_type));
     }
-    wake_and_post(rd, std::move(tasks));
+    wake_and_post(jctx, rd, std::move(tasks));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     require_batch_ok(br);
     json responses = json::array();
     for (const auto &result : br.results) {
         responses.push_back(result->to_json());
     }
-    const json out =
-        (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
-            ? format_embeddings_response_oaicompat(
-                  body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64)
-            : responses;
+    const json out = (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
+                         ? format_embeddings_response_oaicompat(body, model_name, responses, use_base64)
+                         : responses;
     return safe_json_to_str(out);
 }
 
@@ -1212,12 +1731,14 @@ std::string rerank(jllama_context *jctx, const std::string &query, const std::ve
     std::vector<server_task> tasks;
     tasks.reserve(documents.size());
     for (size_t i = 0; i < documents.size(); i++) {
-        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
-                                           format_prompt_rerank(model, jctx->vocab, nullptr, query, documents[i], {},
-                                                                {}, mtmd_helper_init_opt_default()),
+        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_RERANK, naming_vocabulary_gaps([&]() {
+                                               return format_prompt_rerank(model, jctx->vocab, nullptr, query,
+                                                                           documents[i], {}, {},
+                                                                           mtmd_helper_init_opt_default());
+                                           }),
                                            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
-    wake_and_post(rd, std::move(tasks));
+    wake_and_post(jctx, rd, std::move(tasks));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     require_batch_ok(br);
     // rerank_results_to_json throws std::invalid_argument on a malformed/out-of-range result index:
@@ -1232,7 +1753,7 @@ std::string rerank(jllama_context *jctx, const std::string &query, const std::ve
 std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special) {
     // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
     wake_server(jctx);
-    return tokenize_mixed(jctx->vocab, text, add_special, true);
+    return naming_vocabulary_gaps([&]() { return tokenize_mixed(jctx->vocab, text, add_special, true); });
 }
 
 std::string tokenize_json(jllama_context *jctx, const std::string &text, bool add_special, bool with_pieces) {
@@ -1242,13 +1763,9 @@ std::string tokenize_json(jllama_context *jctx, const std::string &text, bool ad
         llama_context *lctx = jctx->vocab_only ? nullptr : jctx->server.get_llama_context();
         for (const auto &token : tokens) {
             std::string piece;
-            if (lctx != nullptr) {
-                piece = common_token_to_piece(lctx, token);
-            } else {
-                char buf[256];
-                const int n = llama_token_to_piece(jctx->vocab, token, buf, static_cast<int>(sizeof(buf)), 0, false);
-                piece = n > 0 ? std::string(buf, n) : std::string();
-            }
+            // the same piece either way: with the special tokens rendered and no length limit (a
+            // vocab-only model rendered "<s>" as "" and cut a piece at 256 bytes)
+            piece = lctx != nullptr ? common_token_to_piece(lctx, token) : common_token_to_piece(jctx->vocab, token);
             tokens_response.push_back({{"id", token}, {"piece", token_piece_value(piece)}});
         }
     } else {
@@ -1259,6 +1776,16 @@ std::string tokenize_json(jllama_context *jctx, const std::string &text, bool ad
 
 std::string detokenize(jllama_context *jctx, const std::vector<llama_token> &tokens) {
     wake_server(jctx);
+    // An id the vocabulary does not have is the caller's mistake. llama.cpp reads the piece of one
+    // with an at() (llama_vocab::token_get_attr), whose std::out_of_range reached the caller as a
+    // server error with the C++ library's message, naming neither the id nor the vocabulary.
+    const int32_t n_vocab = llama_vocab_n_tokens(jctx->vocab);
+    for (const llama_token token : tokens) {
+        if (token < 0 || token >= n_vocab) {
+            throw jllama_invalid_request("token id " + std::to_string(token) + " is outside the vocabulary of " +
+                                         std::to_string(n_vocab) + " tokens");
+        }
+    }
     if (jctx->vocab_only) {
         return tokens_to_str(jctx->vocab, tokens);
     }
@@ -1292,6 +1819,11 @@ std::string metrics(jllama_context *jctx) {
 // the directory had no effect and a file could be written anywhere the process may write. Erasing
 // needs no file and stays available.
 std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename) {
+    // Upstream takes the id modulo the slot count in size_t: -1 named some slot (slot 1 of two), and its
+    // "Invalid slot ID" was unreachable. An id at or above the count wraps around on purpose.
+    if (id_slot < 0) {
+        throw jllama_invalid_request("Invalid slot ID " + std::to_string(id_slot) + ": a slot id is not negative");
+    }
     if (op == slot_op::erase) {
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = id_slot;
@@ -1318,8 +1850,9 @@ std::string lora_adapters(jllama_context *jctx) { return one_shot(jctx, server_t
 std::string set_lora_adapters(jllama_context *jctx, const std::string &adapters_json) {
     const json data = parse_json_body(adapters_json);
     if (!data.is_array()) {
-        // Same contract as the upstream POST /lora-adapters route body.
-        throw std::runtime_error("LoRA adapter list must be a JSON array of {id, scale} objects");
+        // Same contract as the upstream POST /lora-adapters route body, and the same verdict: upstream
+        // answers it 400 (ERROR_TYPE_INVALID_REQUEST), the caller's mistake.
+        throw jllama_invalid_request("LoRA adapter list must be a JSON array of {id, scale} objects");
     }
     server_task task(SERVER_TASK_TYPE_SET_LORA);
     task.set_lora = parse_lora_request(data);
@@ -1341,6 +1874,10 @@ void configure(jllama_context *jctx, const std::string &config_json) {
     // n_threads / n_threads_batch through the public llama.h API. The setter requires both values;
     // a missing one is filled from the cached common_params so a single-field update is a no-op for
     // the other field, and the cache is kept in sync so a follow-up call reads back what was applied.
+    // Woken first: a sleeping model has no context to set, and a resume would rebuild it from the
+    // load-time params (wake_server applies these values again after every later resume).
+    wake_server(jctx);
+    std::lock_guard<std::mutex> tuning(jctx->tuning_mutex);
     if (n_threads_opt.has_value() || n_threads_batch_opt.has_value()) {
         llama_context *lctx = jctx->server.get_llama_context();
         if (lctx == nullptr) {
@@ -1357,7 +1894,9 @@ void configure(jllama_context *jctx, const std::string &config_json) {
     // server_context::set_slot_prompt_similarity(), carried as patches/0003 (upstream #22393).
     if (slot_sim_opt.has_value()) {
         jctx->server.set_slot_prompt_similarity(*slot_sim_opt);
+        jctx->params.slot_prompt_similarity = *slot_sim_opt;
     }
+    jctx->configured.store(true);
 }
 
 std::string systemone(jllama_context *jctx, const std::string &body) {
@@ -1381,6 +1920,16 @@ std::string systemone(jllama_context *jctx, const std::string &body) {
             throw jllama_invalid_request(message);
         }
         throw std::runtime_error(message);
+    }
+    // A wait cut by free() / jllama_model_interrupt: upstream's handler returns its response untouched
+    // when the results are terminated, i.e. status 200 and no body -- reported as an empty answer
+    // before. Checked by the answer, not by the flag alone: one that completed before the interrupt
+    // is given out.
+    if (res->data.empty()) {
+        if (jctx->closing.load()) {
+            throw jllama_interrupted("inference interrupted by close()");
+        }
+        throw std::runtime_error("the decision request returned no answer");
     }
     return res->data;
 }
@@ -1442,7 +1991,17 @@ llama_model_kv_override string_override(const char *key, const std::string &valu
     llama_model_kv_override kvo{};
     std::snprintf(kvo.key, sizeof(kvo.key), "%s", key);
     kvo.tag = LLAMA_KV_OVERRIDE_TYPE_STR;
-    std::snprintf(kvo.val_str, sizeof(kvo.val_str), "%s", value.c_str());
+    // val_str holds 127 bytes: a longer value is cut, and cut at a character boundary -- inside a
+    // multi-byte character it wrote invalid UTF-8 into the GGUF (a file name of 43 CJK characters
+    // already is one). A continuation byte is 10xxxxxx.
+    size_t n = std::min(value.size(), sizeof(kvo.val_str) - 1);
+    if (n < value.size()) {
+        while (n > 0 && (static_cast<unsigned char>(value[n]) & 0xC0) == 0x80) {
+            --n;
+        }
+    }
+    std::memcpy(kvo.val_str, value.data(), n);
+    kvo.val_str[n] = '\0';
     return kvo;
 }
 

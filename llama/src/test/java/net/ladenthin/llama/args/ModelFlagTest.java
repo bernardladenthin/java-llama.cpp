@@ -69,7 +69,7 @@ public class ModelFlagTest {
 
     @Test
     public void testEnumCount() {
-        // 31 after four removals, all for the same reason: llama.cpp's server arg parser rejects an
+        // 40, after four removals, all for the same reason: llama.cpp's server arg parser rejects an
         // option it does not register, so a stale constant does not merely have no effect -- it makes
         // every setFlag caller's model unloadable.
         //   FLASH_ATTN     -- --flash-attn stopped being valueless at b10273 (on|off|auto is
@@ -78,8 +78,9 @@ public class ModelFlagTest {
         //   MLOCK, NO_MMAP -- deprecated at b10092, deleted at b10878.
         //                     Use ModelParameters#setLoadMode.
         //   DUMP_KV_CACHE  -- removed upstream with no replacement.
+        // The last two added: SPEC_DRAFT_BACKEND_SAMPLING / NO_SPEC_DRAFT_BACKEND_SAMPLING (b9261).
         // src/test/cpp/test_model_flags.cpp enforces this against the real option table.
-        assertEquals(38, ModelFlag.values().length);
+        assertEquals(40, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

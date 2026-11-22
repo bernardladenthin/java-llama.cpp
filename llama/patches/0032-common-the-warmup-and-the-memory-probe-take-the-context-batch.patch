@@ -1,0 +1,69 @@
+common : the warmup and the memory probe take the context's batch
+
+common_context_can_seq_rm() (which the server runs for the target and the draft context when it
+loads a model) decodes two tokens in one batch, and the warmup of common_init_from_params() decodes
+up to params.n_batch tokens. A context whose batch holds one token -- -b 1, -c 1 (llama_context caps
+a causal context's n_batch at the n_ctx it was given, before it pads the cache to 256 cells), an
+embedding context with -ub 1 -- ended the
+process there: common_batch renders into a llama_batch_ext of n_batch tokens, and the second token is
+a GGML_ABORT ("failed to add token"). The server itself handles a batch of one token (it decodes in
+sub-batches of n_batch, and decode() treats n_batch == 1 on its own); only these two places did not.
+
+The probe now decodes the two tokens in sub-batches of the context's n_batch -- the same memory
+afterwards; with -c 1 the cache still holds the second token. The warmup takes at most llama_n_batch(ctx)
+tokens instead of params.n_batch, and the encoder's at most llama_n_ubatch(ctx), since an encoder
+reads its input in one ubatch.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: a model loaded with -b 1 or -c 1, with and
+without the warmup, answers what a model with a batch of 64 answers in ubatches of one token, and an
+embedding context and a BERT encoder with -ub 1 load (each an abort of the test process before; the
+case -b 2 -ub 1 loaded before too). Until this patch the engine refused those values at load
+(jllama::engine::batch_refusal). A decoder without causal attention needs patches/0036 as well: its
+batch has to be its ubatch.
+
+Drop-check on every bump: read common_context_can_seq_rm() and the warmup of
+common_init_from_params() in common/common.cpp -- once both decode no more than the context's batch
+in one call, drop the patch.
+
+diff --git a/common/common.cpp b/common/common.cpp
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1528,6 +1528,8 @@ common_init_result_ptr common_init_from_params(common_params & params, bool mode
+         }
+ 
+         if (llama_model_has_encoder(model)) {
++            // the encoder reads its input in one ubatch, which can be smaller than the two tokens
++            tmp.resize(std::max<size_t>(1, std::min(tmp.size(), (size_t) llama_n_ubatch(lctx))));
+             common_batch batch = common_batch_get_one(lctx, tmp);
+             llama_process(lctx, LLAMA_PROCESS_TYPE_ENCODE, batch.get());
+             llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
+@@ -1538,7 +1540,8 @@ common_init_result_ptr common_init_from_params(common_params & params, bool mode
+             tmp.push_back(decoder_start_token_id);
+         }
+         if (llama_model_has_decoder(model)) {
+-            tmp.resize(std::min(tmp.size(), (size_t) params.n_batch));
++            // the context's batch, not params.n_batch: a causal context's batch is at most its n_ctx
++            tmp.resize(std::max<size_t>(1, std::min(tmp.size(), (size_t) llama_n_batch(lctx))));
+             common_batch batch = common_batch_get_one(lctx, tmp);
+             std::vector<float> zeros;
+             common_batch_set_zero_state(batch, model, zeros);
+@@ -1606,12 +1609,17 @@ common_context_seq_rm_type common_context_can_seq_rm(llama_context * ctx) {
+     tmp.push_back(0);
+     tmp.push_back(0);
+ 
+-    int ret;
++    int ret = 0;
+     {
+         common_batch batch = common_batch_get_one(ctx, tmp);
+         std::vector<float> zeros;
+         common_batch_set_zero_state(batch, llama_get_model(ctx), zeros);
+-        ret = llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get());
++        // at most n_batch tokens a call: with -b 1 (or -c 1, which caps a causal context's batch at one
++        // token) the two tokens are decoded one at a time, which leaves the same memory
++        const int32_t n_batch = std::max<int32_t>(1, (int32_t) llama_n_batch(ctx));
++        for (int32_t off = 0; off < batch.size() && ret == 0; off += n_batch) {
++            ret = llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get_sub_batch(off, std::min(n_batch, batch.size() - off)));
++        }
+     }
+     if (ret != 0) {
+         COM_ERR("llama_process() failed: %d\n", ret);

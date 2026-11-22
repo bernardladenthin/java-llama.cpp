@@ -5,8 +5,9 @@
 A ~2.6 s stereo 16-bit 48 kHz WAV (~488 KB) used by
 `AudioInputIntegrationTest` as the committed default audio prompt, so the
 audio-input path can be exercised end-to-end without staging a clip
-out-of-band (the audio *model* + mmproj still have to be supplied via
-system properties — see below).
+out-of-band. The model pair defaults to CI's Ultravox v0.5 over
+Llama-3.2-1B (feature `audio` of `.github/models.csv`); the
+`net.ladenthin.llama.audio.model` / `.mmproj` properties override it.
 
 ### Provenance
 

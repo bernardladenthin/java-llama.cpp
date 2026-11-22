@@ -10,10 +10,14 @@
 #include "server-common.h"
 #include "server-chat.h"
 #include "native_server_engine.hpp"
+#include "jllama_engine.hpp"
 #include "native_server_bridge.h"
 #include "rpc_support.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
@@ -32,24 +36,74 @@ void bind_argv(native_server *srv) {
     }
 }
 
+// The embedded server that runs, if any. llama.cpp keeps the shutdown state of an embedded server in
+// globals (patches/0006, 0007): a second server replaced the first one's shutdown handler, so the
+// first one's stop() signalled the second, and its own loop then waited for a server that never ended.
+// One server at a time, as the C API documents and NativeServer enforces: a start while another runs
+// is refused, and a server that returned (stopped, or failed to start its model) gives the slot back.
+std::atomic<native_server *> g_live_server{nullptr};
+
+// Claims the slot for `srv`, or throws; given back by the destructor unless handed to the worker.
+class live_server_claim {
+  public:
+    explicit live_server_claim(native_server *srv) : srv_(srv) {
+        native_server *expected = nullptr;
+        if (!g_live_server.compare_exchange_strong(expected, srv)) {
+            throw std::runtime_error("an embedded server is already running in this process; stop it before "
+                                     "starting another one (llama.cpp keeps an embedded server's state in globals)");
+        }
+    }
+    live_server_claim(const live_server_claim &) = delete;
+    live_server_claim &operator=(const live_server_claim &) = delete;
+    ~live_server_claim() {
+        if (!handed_) {
+            release(srv_);
+        }
+    }
+    void hand_to_worker() { handed_ = true; }
+    static void release(native_server *srv) {
+        native_server *expected = srv;
+        g_live_server.compare_exchange_strong(expected, nullptr);
+    }
+
+  private:
+    native_server *srv_;
+    bool handed_ = false;
+};
+
 } // namespace
 
 native_server *start(const std::vector<std::string> &argv) {
     std::unique_ptr<native_server> owned(new native_server());
+    live_server_claim claim(owned.get());
     // Same RPC preparation as a model load (rpc_support.hpp): an unreachable `--rpc` server fails
     // here with a clear message (std::invalid_argument), and RPC devices another model registered
     // in this process stay out of this server's model.
     owned->args = jllama::rpc::prepare_argv(argv);
+    // The argv is parsed here, once, and the worker runs on these params (llama_server_parsed): a
+    // refused argv, or a batch llama.cpp would abort the process on, fails this call -- before the
+    // argv's log file is opened. A --log-file is opened here too; the server owns the file until it
+    // returns, then the file is closed (unless a model or another server took it).
+    owned->params = std::make_shared<common_params>();
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params, false);
     bind_argv(owned.get());
-    native_server *srv = owned.release();
 
     // Embedded mode: no process signal handlers, honour the forwarded argv (patches/0006).
     llama_server_set_embedded(true);
-    srv->worker = std::thread([srv]() {
-        srv->exit_code = llama_server(static_cast<int>(srv->argv.size()), srv->argv.data());
-        srv->finished.store(true);
-    });
-    return srv;
+    native_server *srv = owned.get();
+    try {
+        srv->worker = std::thread([srv, log_file]() {
+            srv->exit_code = llama_server_parsed(*srv->params, static_cast<int>(srv->argv.size()), srv->argv.data());
+            jllama::engine::release_log_file_of_server(log_file);
+            srv->finished.store(true);
+            live_server_claim::release(srv);
+        });
+    } catch (...) {
+        jllama::engine::release_log_file_of_server(log_file);
+        throw;
+    }
+    claim.hand_to_worker();
+    return owned.release();
 }
 
 native_server *start_attached(jllama_context *jctx, const std::vector<std::string> &argv) {
@@ -66,26 +120,40 @@ native_server *start_attached(jllama_context *jctx, const std::vector<std::strin
     if (!jctx->routes) {
         throw std::runtime_error("a vocab-only model has no server context to attach to");
     }
-    // The user reference held for the worker's lifetime: the model's free() waits for users == 0,
-    // so a model is never freed under a running attach (close the server before the model).
-    jllama_context *held = acquire_jllama_context(jctx);
     std::unique_ptr<native_server> owned(new native_server());
-    owned->args = argv;
+    live_server_claim claim(owned.get());
+    // The parse below sees the argv without its --rpc pairs, so their servers are registered (and an
+    // unreachable one refused) here, before it takes the log lock -- as for start().
+    owned->args = jllama::rpc::prepare_argv(argv);
+    owned->params = std::make_shared<common_params>();
+    const std::uint64_t log_file = jllama::engine::prepare_server_argv(owned->args, *owned->params, true);
     bind_argv(owned.get());
-    native_server *srv = owned.release();
 
     // The attach entry always parses the forwarded argv; set the embedded flag anyway so any shared
     // embedded-mode behaviour in server.cpp stays consistent with start().
     llama_server_set_embedded(true);
     server_context *ctx_server = &jctx->server;
     server_routes *routes = jctx->routes.get();
-    srv->worker = std::thread([srv, ctx_server, routes, held]() {
-        srv->exit_code =
-            llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server, *routes);
-        srv->finished.store(true);
+    native_server *srv = owned.get();
+    // The user reference held for the worker's lifetime: the model's free() waits for users == 0,
+    // so a model is never freed under a running attach (close the server before the model). Taken
+    // last: a start that fails before the worker runs gives it and the log file back.
+    jllama_context *held = acquire_jllama_context(jctx);
+    try {
+        srv->worker = std::thread([srv, ctx_server, routes, held, log_file]() {
+            srv->exit_code = llama_server_attach_parsed(*srv->params, *ctx_server, *routes);
+            jllama::engine::release_log_file_of_server(log_file);
+            srv->finished.store(true);
+            live_server_claim::release(srv);
+            release_jllama_context_impl(held);
+        });
+    } catch (...) {
         release_jllama_context_impl(held);
-    });
-    return srv;
+        jllama::engine::release_log_file_of_server(log_file);
+        throw;
+    }
+    claim.hand_to_worker();
+    return owned.release();
 }
 
 void stop(native_server *srv) {

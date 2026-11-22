@@ -1,0 +1,113 @@
+common : argument files and lookup caches are opened by their UTF-8 names
+
+Windows: the files the server's options name were opened with narrow streams, which MSVC's runtime
+reads in the active code page. The argv is UTF-8 -- every handler reads it so, and 0030 reads the
+environment so -- and upstream's executables are UTF-8 processes through an app manifest; a library
+inside java.exe is not. A path outside ASCII on a code page such as 1252 failed with "failed to open
+file", the same class as 0024-0029:
+
+- common/arg.cpp: read_file(), behind --grammar-file, --chat-template-file, --ui-config-file, -f and
+  -sysf; the stream of --json-schema-file (-jf); the one of --api-key-file.
+- common/ngram-cache.cpp: common_ngram_cache_load() and _save() (--lookup-cache-static,
+  --lookup-cache-dynamic of --spec-type ngram-cache), and in common/speculative.cpp the existence
+  check of the dynamic cache.
+
+They open std::filesystem::u8path(name) now, which is the identity elsewhere. Applies after 0038,
+which rewrites the same functions of the two cache files.
+
+Not covered here, and recorded in TODO.md: the download cache. Its paths are std::filesystem::path
+values that common/hf-cache.cpp and common/download.cpp turn back into strings with .string() (the
+code page) before they reach ggml_fopen (UTF-8), so -hf and --model-url without -m fail under a
+Windows user profile outside ASCII; and BoringSSL's file BIO behind --ssl-key-file / --ssl-cert-file.
+
+The guards are CApiNonAsciiPaths.ArgumentFilesAreReadUnderNonAsciiNames and
+CApiNonAsciiPaths.LookupCachesAreReadAndWrittenUnderNonAsciiNames in src/test/cpp/test_c_api.cpp,
+which only a Windows job can turn red (the names are UTF-8 elsewhere either way).
+
+Drop-check on every bump: read read_file(), the --json-schema-file and --api-key-file handlers of
+common/arg.cpp and the two functions of common/ngram-cache.cpp -- once none of them opens the narrow
+string, drop the patch.
+
+diff --git a/common/arg.cpp b/common/arg.cpp
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -42,7 +42,9 @@
+ };
+ 
+ static std::string read_file(const std::string & fname) {
+-    std::ifstream file(fname);
++    // the name is UTF-8 (the argv and the environment are, see get_value_from_env); a narrow
++    // std::ifstream on Windows reads it in the active code page
++    std::ifstream file(std::filesystem::u8path(fname));
+     if (!file) {
+         throw std::runtime_error(string_format("error: failed to open file '%s'\n", fname.c_str()));
+     }
+@@ -2308,7 +2310,7 @@
+         {"-jf", "--json-schema-file"}, "FILE",
+         "File containing a JSON schema to constrain generations (https://json-schema.org/), e.g. `{\"type\": \"object\"}` for any JSON object",
+         [](common_params & params, const std::string & value) {
+-            std::ifstream file(value);
++            std::ifstream file(std::filesystem::u8path(value));
+             if (!file) {
+                 throw std::runtime_error(string_format("error: failed to open file '%s'\n", value.c_str()));
+             }
+@@ -3579,7 +3581,7 @@
+         {"--api-key-file"}, "FNAME",
+         "path to file containing API keys, one per line; lines starting with a hash are treated as comments (default: none)",
+         [](common_params & params, const std::string & value) {
+-            std::ifstream key_file(value);
++            std::ifstream key_file(std::filesystem::u8path(value));
+             if (!key_file) {
+                 throw std::runtime_error(string_format("error: failed to open file '%s'\n", value.c_str()));
+             }
+diff --git a/common/ngram-cache.cpp b/common/ngram-cache.cpp
+--- a/common/ngram-cache.cpp
++++ b/common/ngram-cache.cpp
+@@ -200,7 +200,11 @@
+     // written beside the file and renamed over it: a save cut short (the process killed, a full disk)
+     // leaves the previous cache rather than a truncated one
+     const std::string filename_tmp = filename + ".tmp";
+-    std::ofstream file_out(filename_tmp, std::ios::binary);
++    // the names are UTF-8, as every path of the argv; narrow on Windows they would be read in the
++    // active code page
++    const std::filesystem::path path     = std::filesystem::u8path(filename);
++    const std::filesystem::path path_tmp = std::filesystem::u8path(filename_tmp);
++    std::ofstream file_out(path_tmp, std::ios::binary);
+     for (std::pair<common_ngram, common_ngram_cache_part> item : ngram_cache) {
+         const common_ngram      ngram        = item.first;
+         common_ngram_cache_part token_counts = item.second;
+@@ -223,18 +227,18 @@
+     std::error_code ec;
+     if (file_out.fail()) {
+         LOG_ERR("%s: failed to write the lookup cache %s\n", __func__, filename_tmp.c_str());
+-        std::filesystem::remove(filename_tmp, ec);
++        std::filesystem::remove(path_tmp, ec);
+         return;
+     }
+-    std::filesystem::rename(filename_tmp, filename, ec);
++    std::filesystem::rename(path_tmp, path, ec);
+     if (ec) {
+         LOG_ERR("%s: failed to replace the lookup cache %s: %s\n", __func__, filename.c_str(), ec.message().c_str());
+-        std::filesystem::remove(filename_tmp, ec);
++        std::filesystem::remove(path_tmp, ec);
+     }
+ }
+ 
+ common_ngram_cache common_ngram_cache_load(const std::string & filename) {
+-    std::ifstream hashmap_file(filename, std::ios::binary);
++    std::ifstream hashmap_file(std::filesystem::u8path(filename), std::ios::binary);
+     if (!hashmap_file) {
+         throw std::ifstream::failure("Unable to open file " + filename);
+     }
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -2653,7 +2653,7 @@
+                 }
+             } catch (const std::ifstream::failure &) {
+                 std::error_code ec;
+-                const bool exists = std::filesystem::exists(ngram.lookup_cache_dynamic, ec);
++                const bool exists = std::filesystem::exists(std::filesystem::u8path(ngram.lookup_cache_dynamic), ec);
+                 if (!exists && !ec) {
+                     // missing file is created on destruction
+                     SPC_WRN("dynamic lookup cache file does not exist: %s, starting with empty cache\n",

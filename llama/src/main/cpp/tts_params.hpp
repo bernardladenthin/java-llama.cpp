@@ -14,6 +14,7 @@
 
 #include "common.h"
 #include "cpu_params.hpp"
+#include "mtmd.h"
 
 #include <cmath>
 #include <cstdint>
@@ -53,10 +54,60 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
 }
 
 // ---------------------------------------------------------------------------
+// The projector's context. mtmd_context_params_default() fixes its thread count at 4, and the
+// projector computes the audio -- and the llama contexts it builds itself (tiny-voca's stacks,
+// VoxCPM2's residual LM, YuE2's NAR layers) -- with it, so the engine's count has to be passed on:
+// llama-tts did not either until b12584 (#32664), and TextToSpeech's thread count reached the
+// backbone only. n_threads is the count build_tts_params resolved.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline mtmd_context_params build_tts_mtmd_params(int n_gpu_layers, int n_threads) {
+    mtmd_context_params params = mtmd_context_params_default();
+    params.use_gpu = n_gpu_layers != 0;
+    params.n_threads = n_threads;
+    return params;
+}
+
+// ---------------------------------------------------------------------------
+// Whether a pipeline clones a voice from a reference clip, which the projector's audio encoder
+// encodes (encode_speaker in tools/mtmd/mtmd-helper-gen.cpp). Read from the pipelines at b12541:
+// Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a clip, and Drama-3 since
+// b12590 (#32586: the clip's codes from the codec encoder, its transcript in the prompt; until then
+// "voice cloning is not supported yet"); Kokoro and tiny-voca take only a predefined voice and refuse a
+// clip ("use one of its voices"), LFM3-Audio names its voice in the prompt and ignores a clip, Soprano
+// refuses any reference, YuE2 and MiniMax Music 3 do not read it. llama.cpp's
+// mtmd_helper_cap::audio_gen_spk_ref still names only the first two
+// (#31183, b11901; unchanged at b12593), while its own /tts route asks only whether the projector
+// has an audio encoder -- so the capability refused cloning for five pipelines that clone.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline bool pipeline_clones_voice_from_clip(mtmd_gen_audio_type type) {
+    switch (type) {
+    case MTMD_GEN_AUDIO_TYPE_QWEN3TTS:
+    case MTMD_GEN_AUDIO_TYPE_POCKETTTS:
+    case MTMD_GEN_AUDIO_TYPE_CHATTERBOX:
+    case MTMD_GEN_AUDIO_TYPE_FISH_S2:
+    case MTMD_GEN_AUDIO_TYPE_ZONOS3:
+    case MTMD_GEN_AUDIO_TYPE_VOXCPM2:
+    case MTMD_GEN_AUDIO_TYPE_DRAMA3:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether the loaded pair takes a speaker reference: llama.cpp's capability or a pipeline above,
+// and a projector that takes audio in -- a Pocket TTS or ZONOS3 projector converted without its
+// voice encoder has none, and a reference clip then fails to decode (found by CI's Pocket TTS
+// pair, which ships predefined voices instead).
+[[nodiscard]] inline bool pair_takes_speaker_reference(bool capability, mtmd_gen_audio_type type,
+                                                       bool projector_takes_audio) {
+    return (capability || pipeline_clones_voice_from_clip(type)) && projector_takes_audio;
+}
+
+// ---------------------------------------------------------------------------
 // The refusal for a speaker reference the loaded pair cannot use, or "" when the request may go on.
-// `supported` is llama.cpp's mtmd_helper_cap::audio_gen_spk_ref (b11901, #31183): true for Qwen3-TTS
-// and Pocket TTS, false for a pipeline without a voice encoder (Soprano), whose set_input rejects any
-// speaker reference -- before this check that surfaced as the generic "TTS input rejected" error.
+// `supported` is pair_takes_speaker_reference() above: false for a pipeline that does not clone (Soprano,
+// whose set_input rejects any speaker reference -- before this check that surfaced as the generic "TTS
+// input rejected" error) or a projector without a voice encoder.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::string speaker_reference_refusal(bool supported, const std::string &speaker_reference_path) {
     if (speaker_reference_path.empty() || supported) {
@@ -125,9 +176,10 @@ struct synthesis_options {
     float repeat_penalty = 1.0f;        ///< repetition penalty of the backbone, 1 = off
     float speed = 1.0f;                 ///< speaking speed relative to the model's pace, > 0
     float loudness = 0.0f;              ///< target loudness in LUFS, < 0; 0 = the model's own
-    std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2), "" for none
+    std::string speaker_reference_text; ///< transcript of the speaker reference (Fish S2, Qwen3-TTS), "" for none
     float cfg_scale = 0.0f;             ///< guidance scale of the audio codes, > 0; 0 = the model's own (YuE2)
     int flow_steps = 0;                 ///< flow-matching solver steps, 1..1024; 0 = the model's own (YuE2)
+    bool raw_prompt = false;            ///< the text as it is, the model's "tts" template skipped (b12494)
 };
 
 // The refusal for values no model can take, or "" when the request may go on. Whether the model

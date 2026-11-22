@@ -57,4 +57,56 @@ public class ToolCallDeltaAccumulatorTest {
         assertThat(accumulator.hasToolCalls(), is(false));
         assertThat(accumulator.toOpenAiToolCalls().size(), is(0));
     }
+
+    @Test
+    public void aFragmentWithoutAnIndexBelongsToTheFirstCall() {
+        // some servers leave out "index" for a single call; the fragments still form one call
+        ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"c\","
+                + "\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}");
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"1}\"}}]}}]}");
+        ArrayNode toolCalls = accumulator.toOpenAiToolCalls();
+        assertThat(toolCalls.size(), is(1));
+        assertThat(toolCalls.get(0).path("function").path("arguments").asText(), is("{\"a\":1}"));
+    }
+
+    @Test
+    public void anIdOrANameThatArrivesLaterIsTakenAndTheLastOneWins() {
+        ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"{}\"}}]}}]}");
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"late\","
+                + "\"function\":{\"name\":\"named_late\"}}]}}]}");
+        JsonNode toolCall = accumulator.toOpenAiToolCalls().get(0);
+        assertThat(toolCall.path("id").asText(), is("late"));
+        assertThat(toolCall.path("function").path("name").asText(), is("named_late"));
+        assertThat(toolCall.path("function").path("arguments").asText(), is("{}"));
+    }
+
+    @Test
+    public void aCallWithoutIdOrNameStillHasBothFieldsAsEmptyStrings() {
+        ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
+        accumulator.accept(
+                "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2," + "\"function\":{\"arguments\":\"x\"}}]}}]}");
+        JsonNode toolCall = accumulator.toOpenAiToolCalls().get(0);
+        assertThat(toolCall.path("id").isTextual(), is(true));
+        assertThat(toolCall.path("id").asText(), is(""));
+        assertThat(toolCall.path("function").path("name").asText(), is(""));
+    }
+
+    @Test
+    public void fieldsOfTheWrongTypeAndAMalformedChunkContributeNothing() {
+        ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":7,"
+                + "\"function\":{\"name\":[\"no\"],\"arguments\":{\"not\":\"a string\"}}}]}}]}");
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":");
+        accumulator.accept("{\"choices\":[{\"delta\":{\"tool_calls\":{\"index\":0}}}]}");
+        // the first chunk opened the call, nothing of it was text
+        ArrayNode toolCalls = accumulator.toOpenAiToolCalls();
+        assertThat(toolCalls.size(), is(1));
+        assertThat(toolCalls.get(0).path("id").asText(), is(""));
+        assertThat(toolCalls.get(0).path("function").path("name").asText(), is(""));
+        assertThat(toolCalls.get(0).path("function").path("arguments").asText(), is(""));
+    }
 }

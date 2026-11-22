@@ -60,11 +60,18 @@ disproved. So this patch is ahead of upstream rather than diverging from it: the
 the moment the runner image ships a clang that makes the diagnostic fatal, and until then they
 compile four warnings and a prefetch address that is 18x/34x too far.
 
-Runnable guard: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
-block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise. That test is red if this
-patch is dropped, and -- the case that matters -- also red if the cast is written around the
-whole expression, `(const char *)(&x[ib] + sizeof(block_q4_0))`, which fixes (1) and silently
-keeps (2).
+At b12525 (#32548, upstream's CI moved to LLVM 22.1.8) upstream took exactly that form:
+`(const char *) (&x[ib] + sizeof(block_q4_0))` on all four calls -- the type half is fixed upstream
+now, the address is still 18x/34x too far. The patch was refreshed onto those lines (only the `-`
+side changed) and keeps both halves through ggml_prefetch_at.
+
+Runnable guards: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
+block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise -- the helper only, red when the
+helper is written element-wise or with the cast around the whole expression. That the four call
+sites of quants.c go through the helper is checked by llama/cmake/check-prefetch-byte-offset.cmake,
+which fails the configure on every platform when a _mm_prefetch call of the patched file does not
+(upstream's `(const char *)(&x[ib] + sizeof(block_q4_0))` compiles and keeps (2), so a refresh that
+lost the quants.c hunks would pass every other check).
 
 On a bump, check whether upstream fixed this themselves:
 `git grep -n _mm_prefetch ggml/src/ggml-cpu/arch/x86/quants.c` in the new tag. That grep is a
@@ -72,12 +79,12 @@ LOCATOR, NOT A VERDICT -- it returns FOUR hits at every tag, because the calls e
 (measured at b11639 (a0e6dc738): lines 846, 847, 864, 865). Read them: the fix is upstream's only
 when the cast to a byte pointer happens BEFORE the addition. `(const char *)(&x[ib] + sizeof(...))`
 casts the whole expression, silences the compiler and keeps the wrong address, so it looks fixed and
-is not -- test_prefetch.cpp is what tells those two apart. Only then DROP this patch rather than
+is not -- reading the four calls is what tells those two apart. Only then DROP this patch rather than
 refreshing it.
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/prefetch.h b/ggml/src/ggml-cpu/arch/x86/prefetch.h
 new file mode 100644
-index 0000000..9be944e
+index 000000000..ff6e6c3d0
 --- /dev/null
 +++ b/ggml/src/ggml-cpu/arch/x86/prefetch.h
 @@ -0,0 +1,27 @@
@@ -109,7 +116,7 @@ index 0000000..9be944e
 +    return (const char *) base + byte_offset;
 +}
 diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
-index ea54cfe..dea0952 100644
+index 594da2683..840116e34 100644
 --- a/ggml/src/ggml-cpu/arch/x86/quants.c
 +++ b/ggml/src/ggml-cpu/arch/x86/quants.c
 @@ -7,6 +7,7 @@
@@ -120,23 +127,23 @@ index ea54cfe..dea0952 100644
  
  #include <math.h>
  #include <string.h>
-@@ -779,8 +780,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+@@ -861,8 +862,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
      __m128 acc_3 = _mm_setzero_ps();
  
      for (; ib + 1 < nb; ib += 2) {
--        _mm_prefetch(&x[ib] + sizeof(block_q4_0), _MM_HINT_T0);
--        _mm_prefetch(&y[ib] + sizeof(block_q8_0), _MM_HINT_T0);
+-        _mm_prefetch((const char *) (&x[ib] + sizeof(block_q4_0)), _MM_HINT_T0);
+-        _mm_prefetch((const char *) (&y[ib] + sizeof(block_q8_0)), _MM_HINT_T0);
 +        _mm_prefetch(ggml_prefetch_at(&x[ib], sizeof(block_q4_0)), _MM_HINT_T0);
 +        _mm_prefetch(ggml_prefetch_at(&y[ib], sizeof(block_q8_0)), _MM_HINT_T0);
  
          // Compute combined scale for the block 0 and 1
          const __m128 d_0_1 = _mm_set1_ps( GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d) );
-@@ -797,8 +798,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+@@ -879,8 +880,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
          bx_1 = _mm_sub_epi8(bx_1, off);
          const __m128i i32_1 = mul_sum_i8_pairs(bx_1, by_1);
  
--        _mm_prefetch(&x[ib] + 2 * sizeof(block_q4_0), _MM_HINT_T0);
--        _mm_prefetch(&y[ib] + 2 * sizeof(block_q8_0), _MM_HINT_T0);
+-        _mm_prefetch((const char *) (&x[ib] + 2 * sizeof(block_q4_0)), _MM_HINT_T0);
+-        _mm_prefetch((const char *) (&y[ib] + 2 * sizeof(block_q8_0)), _MM_HINT_T0);
 +        _mm_prefetch(ggml_prefetch_at(&x[ib], 2 * sizeof(block_q4_0)), _MM_HINT_T0);
 +        _mm_prefetch(ggml_prefetch_at(&y[ib], 2 * sizeof(block_q8_0)), _MM_HINT_T0);
  

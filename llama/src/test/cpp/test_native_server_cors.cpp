@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-// What `--cors-origins` does to a request of the embedded llama-server (upstream #32098, b12309).
+// What `--cors-origins` does to a request of the embedded llama-server (upstream #32098, b12309),
+// the service-worker routes it answers without the UI (b12480), and what the MCP CORS proxy may
+// reach (b12580).
 //
 // Until b12309 the option only decided the Access-Control-Allow-Origin header: a browser hid the
 // response of a foreign page, and the request itself ran. Since then a value other than `*` refuses
@@ -83,6 +85,14 @@ class cors_router {
         client.set_connection_timeout(5);
         client.set_read_timeout(10);
         return client.Get("/health", headers);
+    }
+
+    // GET of another path, no extra headers.
+    httplib::Result get_path(const std::string &path) const {
+        httplib::Client client("127.0.0.1", port_);
+        client.set_connection_timeout(5);
+        client.set_read_timeout(10);
+        return client.Get(path);
     }
 
     // The server answers once it listens; until then the connection is refused.
@@ -185,4 +195,75 @@ TEST(NativeServerCors, WithoutTheOptionEveryHostAndOriginIsServed) {
     // upstream's default pair (`*` with credentials) names the origin that asked: a browser refuses `*` there
     EXPECT_EQ(foreign->get_header_value("Access-Control-Allow-Origin"), "http://evil.example");
     EXPECT_EQ(status_of(router.get({{"Sec-Fetch-Site", "cross-site"}})), 200);
+}
+
+TEST(NativeServerCors, WithoutTheUiBothServiceWorkerPathsAnswerAWorkerThatRemovesItself) {
+    // A browser that used the built-in UI keeps its service worker. Without the UI the server answers
+    // the worker's update check with one that unregisters itself, uncached; since b12480 (#32463, the
+    // UI on SvelteKit 3's own worker) under service-worker.js as well as the older sw.js.
+    cors_router router({"--no-ui"});
+    ASSERT_TRUE(router.wait_until_listening());
+    for (const char *path : {"/sw.js", "/service-worker.js"}) {
+        const httplib::Result res = router.get_path(path);
+        ASSERT_TRUE(res) << path;
+        EXPECT_EQ(res->status, 200) << path;
+        EXPECT_EQ(res->get_header_value("Cache-Control"), "no-cache") << path;
+        EXPECT_NE(res->get_header_value("Content-Type").find("application/javascript"), std::string::npos) << path;
+        EXPECT_NE(res->body.find("unregister"), std::string::npos) << path << ": " << res->body;
+    }
+}
+
+TEST(NativeServerCors, TheMcpProxyReachesALocalAddressOnlyWithItsOption) {
+    // `--ui-mcp-proxy` lets Llama Chat reach MCP servers that send no CORS headers, through
+    // /cors-proxy?url=<target>. It refuses local and private addresses, so a page that can talk to the
+    // server cannot use it to reach the machine's or the LAN's own services; b12580 (#32633) adds
+    // `--ui-mcp-proxy-allow-private-urls` for an MCP server on localhost or the LAN (the environment
+    // variable that did it before was a test hook). A local server stands in for such an MCP server
+    // and counts the requests that reach it: the proxy must not touch it without the option.
+    struct local_target {
+        httplib::Server server;
+        std::atomic<int> reached{0};
+        std::thread thread;
+        int port = 0;
+        local_target() {
+            server.Get("/tools", [this](const httplib::Request &, httplib::Response &res) {
+                reached.fetch_add(1);
+                res.set_content("a local MCP server", "text/plain");
+            });
+            port = server.bind_to_any_port("127.0.0.1");
+            thread = std::thread([this]() { server.listen_after_bind(); });
+            server.wait_until_ready();
+        }
+        ~local_target() { // also when an assertion returns early
+            server.stop();
+            thread.join();
+        }
+    } target;
+    ASSERT_GT(target.port, 0);
+    const std::string proxied = "/cors-proxy?url=" + httplib::encode_uri_component(
+                                                         "http://127.0.0.1:" + std::to_string(target.port) + "/tools");
+
+    {
+        cors_router without_proxy({});
+        ASSERT_TRUE(without_proxy.wait_until_listening());
+        EXPECT_EQ(status_of(without_proxy.get_path(proxied)), 403);
+    }
+    {
+        cors_router public_only({"--ui-mcp-proxy"});
+        ASSERT_TRUE(public_only.wait_until_listening());
+        const httplib::Result refused = public_only.get_path(proxied);
+        ASSERT_TRUE(refused);
+        EXPECT_EQ(refused->status, 400) << refused->body;
+        EXPECT_NE(refused->body.find("host is not a public address"), std::string::npos) << refused->body;
+    }
+    EXPECT_EQ(target.reached.load(), 0) << "the proxy reached a loopback address without the option";
+    {
+        cors_router private_too({"--ui-mcp-proxy", "--ui-mcp-proxy-allow-private-urls"});
+        ASSERT_TRUE(private_too.wait_until_listening());
+        const httplib::Result res = private_too.get_path(proxied);
+        ASSERT_TRUE(res);
+        EXPECT_EQ(res->status, 200) << res->body;
+        EXPECT_EQ(res->body, "a local MCP server");
+    }
+    EXPECT_EQ(target.reached.load(), 1);
 }

@@ -1,0 +1,32 @@
+llama : a context holds an output row for every sequence
+
+llama_context's constructor caps the outputs of a batch at n_batch (or the caller's n_outputs_max),
+and output_reserve(), which the constructor calls, keeps max(n_outputs, n_seq_max) rows and asserts
+that this is within that cap. A context with more sequences than its batch holds tokens -- -b 2
+-np 4 in the server, or any caller with n_seq_max above n_batch -- therefore ended the process while
+it was being created (GGML_ASSERT(n_outputs_max <= cparams.n_outputs_max) in output_reserve), and
+the server's load took the same path through common_fit_params(). A context of four sequences and a
+batch of two tokens is valid otherwise: the server decodes its batch in sub-batches of n_batch.
+
+The cap is now at least n_seq_max, the rows output_reserve() keeps anyway. Nothing changes for a
+context whose batch holds a token per sequence, which is every context with the default batch.
+
+The guard is CApiBatchSize in src/test/cpp/test_c_api.cpp: two slots on a batch of one token, and
+four on a batch of two, load and answer what one slot answers (an abort of the test process before).
+
+Drop-check on every bump: read the n_outputs_max lines of llama_context's constructor in
+src/llama-context.cpp -- once the cap is at least n_seq_max, or output_reserve() no longer keeps a
+row per sequence, drop the patch.
+
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -352,6 +352,8 @@
+     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+ 
+     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
++    // output_reserve() keeps an output row for every sequence, which can be more than a batch holds
++    cparams.n_outputs_max = std::max(cparams.n_outputs_max, cparams.n_seq_max);
+     cparams.n_outputs_max_per_seq = params.n_outputs_max_per_seq == 0 ?
+             cparams.n_outputs_max : std::min(params.n_outputs_max_per_seq, cparams.n_outputs_max);
+ 

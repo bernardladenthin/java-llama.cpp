@@ -114,13 +114,16 @@ public final class FfmNativeServer implements AutoCloseable {
     public static FfmNativeServer startAttached(FfmLlamaModel model, String... args) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(args, "args");
-        try (Arena arena = Arena.ofConfined()) {
-            String[] argv = withProgramName(args);
-            MemorySegment out = pointerSlot(arena);
-            JllamaNative.call(JllamaNative.SERVER_START_ATTACHED, model.handle(), argv.length, cStrings(arena, argv),
-                    out);
-            return new FfmNativeServer(out.get(ADDRESS, 0));
-        }
+        // under the model's read lock: a close() on another thread cannot free the handle between the
+        // model's closed check and the C API taking its reference for the server's lifetime
+        return new FfmNativeServer(model.withHandle(handle -> {
+            try (Arena arena = Arena.ofConfined()) {
+                String[] argv = withProgramName(args);
+                MemorySegment out = pointerSlot(arena);
+                JllamaNative.call(JllamaNative.SERVER_START_ATTACHED, handle, argv.length, cStrings(arena, argv), out);
+                return out.get(ADDRESS, 0);
+            }
+        }));
     }
 
     /**

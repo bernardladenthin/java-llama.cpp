@@ -15,11 +15,14 @@
 //
 // The routings give an expert 0, 1, 3, 4 and 17 tokens (the gemv tail alone, one gemm group, a full
 // 16-row gemm group plus a gemv tail), one slot of -1 (no expert: the output row stays zero), and a
-// single token (token generation). Each runs with one input row per token (the gate/up projections)
-// and one per slot (the down projection), on 1, 3 and 4 threads -- 3 does not divide the column blocks
-// evenly, and 1 thread leaves units past the last column. Four weight types reach the repack path on
-// AVX2 (MXFP4 of gpt-oss, Q4_0, IQ4_NL, Q4_K with its Q8_K activations); a type the running CPU does
-// not repack is skipped, not passed.
+// single token (token generation). A fourth routing names the same expert in two or three slots of one
+// token, which ggml documents as supported on every backend since llama.cpp b12557 (#32505 dropped the
+// "undefined behaviour" note of ggml_mul_mat_id and turned the duplicate-id cases of test-backend-ops
+// on): the batched path then gathers one token twice into a gemm group. Each runs with one input row per token (the
+// gate/up projections) and one per slot (the down projection), on 1, 3 and 4 threads -- 3 does not divide the column
+// blocks evenly, and 1 thread leaves units past the last column. Four weight types reach the repack path on AVX2 (MXFP4
+// of gpt-oss, Q4_0, IQ4_NL, Q4_K with its Q8_K activations); a type the running CPU does not repack is skipped, not
+// passed.
 //
 // The switch is resolved through the CPU backend's get_proc_address, the way libjllama reaches it in a
 // GGML_BACKEND_DL build, so a llama.cpp bump that drops the patch reds this file at once.
@@ -101,6 +104,23 @@ Routing spread(bool with_empty_slot) {
 }
 
 Routing single_token() { return Routing{"single_token", 4, {{5, 0, 3, 2}}}; }
+
+// 10 tokens, 3 slots, an expert named twice or three times by one token: e3 gets 12 rows from 6 tokens
+// (three gemm groups of four, each token in it twice), e0 6, e1 3 rows from a single token, e2 6 from 3
+// tokens, e5 3
+Routing duplicates() {
+    Routing r{"duplicate_ids", 3, {}};
+    for (int t = 0; t < 10; ++t) {
+        if (t < 6) {
+            r.ids.push_back({3, 3, 0});
+        } else if (t == 6) {
+            r.ids.push_back({1, 1, 1});
+        } else {
+            r.ids.push_back({2, 5, 2});
+        }
+    }
+    return r;
+}
 
 struct Case {
     ggml_type type;
@@ -219,6 +239,21 @@ TEST_P(MoeRepack, BothPathsComputeWhatTheGenericPathComputes) {
                 << " is " << actual[worst] << ", the generic path gives " << expected[worst];
         }
     }
+    // with one input row per token, two slots of a token that name the same expert are the same product
+    if (!c.row_per_slot) {
+        for (size_t t = 0; t < c.routing.ids.size(); ++t) {
+            for (int s = 1; s < c.routing.n_used; ++s) {
+                for (int o = 0; o < s; ++o) {
+                    if (c.routing.ids[t][s] != -1 && c.routing.ids[t][s] == c.routing.ids[t][o]) {
+                        for (int64_t n = 0; n < N; ++n) {
+                            EXPECT_EQ(expected[(t * c.routing.n_used + s) * N + n],
+                                      expected[(t * c.routing.n_used + o) * N + n]);
+                        }
+                    }
+                }
+            }
+        }
+    }
     // a slot routed to no expert stays zero on every path (the generic path's reference included)
     for (size_t t = 0; t < c.routing.ids.size(); ++t) {
         for (int s = 0; s < c.routing.n_used; ++s) {
@@ -238,7 +273,7 @@ TEST_P(MoeRepack, BothPathsComputeWhatTheGenericPathComputes) {
 std::vector<Case> cases() {
     std::vector<Case> out;
     for (ggml_type type : {GGML_TYPE_MXFP4, GGML_TYPE_Q4_0, GGML_TYPE_IQ4_NL, GGML_TYPE_Q4_K}) {
-        for (const Routing &routing : {spread(false), spread(true), single_token()}) {
+        for (const Routing &routing : {spread(false), spread(true), single_token(), duplicates()}) {
             for (bool row_per_slot : {false, true}) {
                 out.push_back({type, routing, row_per_slot});
             }

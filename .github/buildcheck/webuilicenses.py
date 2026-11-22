@@ -8,7 +8,9 @@ jar (webui-generated/ui.cpp), and the bundle strips every legal comment. So the 
 llama/legal/natives/webui-npm/, generated from the pinned ui/apps/chat:
 
 - `closure()` -- a static upper bound of the packages the bundle can contain: the bare imports
-  of ui/apps/chat/src (tests, stories and type-only imports left out), closed over the runtime
+  of ui/apps/chat/src and, since b12480, of the Llama UI sources it compiles from ui/lib/ui/src/lib
+  and, since b12587, of Llama Voice's from ui/lib/voice/src (tests, stories and type-only imports
+  left out), closed over the runtime
   dependencies package-lock.json records. Upper bound on purpose: shipping a text for a package
   that tree-shaking dropped is harmless, missing one is not.
 - `generate()` -- each package's own license/notice files, byte for byte from the tarball
@@ -39,6 +41,11 @@ from pathlib import Path
 # with software (the WebUI's logo and favicons since b12316); without it the license text alone
 # would read as "not in a commercial distribution".
 LEGAL = re.compile(r"^[^/]+/(licen[cs]e|copying|notice|unlicense|authors|brand-usage)([.-][^/]*)?$", re.I)
+# A license file below the root. Taken only from a package whose package.json joins several licenses
+# with AND: its parts carry their own texts there (llama-brand from npm since b12521: the CSS MIT in
+# css/LICENSE, the fonts OFL-1.1 in fonts/OFL.txt, next to the CC BY-NC marks). A package under one
+# license keeps only its root files; a nested one there belongs to something it vendors or ships aside.
+NESTED_LEGAL = re.compile(r"^[^/]+/(?:[^/]+/)+(licen[cs]e|copying|notice|ofl)([.-][^/]*)?$", re.I)
 # A dependency npm resolved from a GitHub repository at a commit, not from the registry.
 GITHUB_COMMIT = re.compile(r"^git\+(?:ssh://git@|https://)github\.com/([^/]+)/([^/#]+?)(?:\.git)?#([0-9a-f]{40})$")
 # The same dependency as npm writes it since b12387 (upstream #32112): GitHub's archive of the commit.
@@ -58,6 +65,8 @@ DECLARED = "(declared in package.json)"
 SPDX_TEXTS = Path(__file__).resolve().parents[2] / "LICENSES"
 # Where the text file's own licenses are declared: its annotation names every license in it.
 REUSE_TOML = Path(__file__).resolve().parents[2] / "REUSE.toml"
+
+NOTICE_MD = Path(__file__).resolve().parents[2] / "llama/legal/natives/NOTICE.md"
 SPDX_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
@@ -71,10 +80,25 @@ def lockfile_digest(ui):
     return hashlib.sha256((Path(ui) / "package-lock.json").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
+def source_dirs(ui):
+    """The folders of sources the bundle compiles: the app's src, and the libraries' next to it.
+
+    Since b12480 (upstream #32468) ui/apps/chat compiles the sources of ui/lib/ui (the package
+    @ggml-org/llama-ui, scripts/llama-ui.js), whose imports resolve from the app's node_modules, so
+    they reach the bundle like the app's own; upstream's scripts/ui-assets.cmake stages that folder
+    next to the app, at ../../lib/ui. Since b12587 (#32531) it compiles Llama Voice the same way
+    (ui/lib/voice/src, @ggml-org/llama-voice, through two vite aliases of the app; the library has no
+    build step in the repository). Before each, its folder does not exist and is left out.
+    """
+    lib = Path(ui).parent.parent / "lib"
+    libraries = [lib / "ui" / "src" / "lib", lib / "voice" / "src"]
+    return [Path(ui) / "src"] + [folder for folder in libraries if folder.is_dir()]
+
+
 def imports(ui):
-    """Bare package names imported by ui/apps/chat/src."""
+    """Bare package names imported by the sources the bundle compiles (source_dirs)."""
     roots = set(IMPLICIT)
-    for folder, _, files in os.walk(Path(ui) / "src"):
+    for folder, _, files in (walk for top in source_dirs(ui) for walk in os.walk(top)):
         for name in files:
             path = (Path(folder) / name).as_posix()
             if (not re.search(r"\.(ts|js|svelte|css|mjs)$", name) or name.endswith(".d.ts")
@@ -150,9 +174,11 @@ def _texts(package, fetch):
     """The package's own legal files from its source archive, or its declared license + author."""
     url = tarball_url(package)
     texts, author = [], ""
+    several = " AND " in (package["license"] or "")
     with tarfile.open(fileobj=io.BytesIO(fetch(url)), mode="r:gz") as archive:
         for member in sorted(archive.getmembers(), key=lambda m: m.name):
-            if member.isfile() and LEGAL.match(member.name):
+            nested = several and NESTED_LEGAL.match(member.name) and "/node_modules/" not in member.name
+            if member.isfile() and (LEGAL.match(member.name) or nested):
                 texts.append((member.name.split("/", 1)[1], archive.extractfile(member).read()))
             elif member.isfile() and member.name.count("/") == 1 and member.name.endswith("/package.json"):
                 meta = json.loads(archive.extractfile(member).read())
@@ -251,7 +277,7 @@ def check_texts(out):
 
 
 def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
-    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names every license packages.csv lists.
+    """REUSE.toml's annotation of THIRD-PARTY-LICENSES.txt names exactly the licenses packages.csv lists.
 
     `reuse lint` cannot see this: it holds the annotation to the LICENSES folder, not to what the
     file contains. A lockfile that brings a license the repository has not carried before
@@ -272,7 +298,40 @@ def check_reuse(out, reuse_toml=REUSE_TOML, licenses=SPDX_TEXTS):
                 f"{target.name} does not name it" for spdx_id in used if spdx_id not in declared]
     problems += [f"{spdx_id} is a license in packages.csv without a text in {Path(licenses).name}/"
                  for spdx_id in used if not (Path(licenses) / f"{spdx_id}.txt").is_file()]
+    # and the other way: a license no package has any more leaves the file declared as more than it is
+    # (Unlicense after the WebUI's lockfile of b12541 dropped its one package)
+    problems += [f"{spdx_id} is named by {reuse_toml.name}'s annotation of {target.name}, and no package "
+                 "of packages.csv has it" for spdx_id in sorted(declared) if spdx_id not in used]
     return problems
+
+
+def check_notice(out, notice=NOTICE_MD):
+    """NOTICE.md's row of the WebUI npm bundle counts what packages.csv lists.
+
+    The row is written by hand, and a lockfile that changed under it kept the old numbers (357
+    packages for a list of 282 after b12541): its total, each license's count, the packages without a
+    license field and those that ship no license file.
+    """
+    rows = [line for line in Path(notice).read_text(encoding="utf-8").splitlines()
+            if line.startswith("| WebUI npm bundle")]
+    if len(rows) != 1:
+        return [f"{Path(notice).name} has {len(rows)} rows for the WebUI npm bundle, not one"]
+    row = rows[0]
+    listed = _listed(out)
+    counts = {}
+    for entry in listed:
+        counts[entry["license"]] = counts.get(entry["license"], 0) + 1
+    expected = [f"{len(listed)} pkgs:"]
+    for license_expression, count in sorted(counts.items()):
+        if license_expression:
+            expected.append(f"{license_expression.strip('()')} {count}")
+        else:
+            expected.append(f"{count} without field")
+    without_file = sum(1 for entry in listed if DECLARED in entry["files"].split(";"))
+    if without_file:
+        expected.append(f"{without_file} packages ship no license file")
+    return [f"{Path(notice).name}'s WebUI npm row does not say \"{text}\" (packages.csv)"
+            for text in expected if text not in row]
 
 
 def check(ui, out):

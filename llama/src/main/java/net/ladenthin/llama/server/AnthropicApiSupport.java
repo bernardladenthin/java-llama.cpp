@@ -163,7 +163,7 @@ final class AnthropicApiSupport {
             openAi.put("thinking_budget_tokens", thinking.path("budget_tokens").asInt(DEFAULT_THINKING_BUDGET_TOKENS));
         }
         // As upstream since llama.cpp b12416 (#32321): Anthropic's output_config.effort is the OpenAI
-        // reasoning_effort, which the chat mapper hands to the template.
+        // reasoning_effort, which the chat mapper forwards to llama.cpp's chat parser.
         JsonNode effort = request.path("output_config").path("effort");
         if (effort.isTextual() && !effort.asText().isEmpty()) {
             openAi.put("reasoning_effort", effort.asText());

@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -260,7 +261,8 @@ public class LlamaLoader {
      * once per JVM (after a successful load {@link #initialize()} does nothing), read by {@link
      * #getBuildInfo()}.
      */
-    private static volatile Map<String, String> loadedBuild = Collections.emptyMap();
+    private static final AtomicReference<Map<String, String>> LOADED_BUILD =
+            new AtomicReference<>(Collections.<String, String>emptyMap());
 
     /**
      * Prefix of the per-backend extraction subdirectory below the temp dir,
@@ -405,12 +407,12 @@ public class LlamaLoader {
             final String libPath = loadedLibPath;
             final String backend = loadedBackend;
             final String reported = reportedChange;
-            final Map<String, String> build = loadedBuild;
+            final Map<String, String> build = LOADED_BUILD.get();
             loaded = false;
             loadedLibPath = null;
             loadedBackend = null;
             reportedChange = null;
-            loadedBuild = Collections.emptyMap();
+            LOADED_BUILD.set(Collections.<String, String>emptyMap());
             return () -> {
                 synchronized (INITIALIZE_LOCK) {
                     loaded = wasLoaded;
@@ -838,7 +840,7 @@ public class LlamaLoader {
         if (!loader.load(library)) {
             return false;
         }
-        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(build));
+        LOADED_BUILD.set(Collections.unmodifiableMap(new LinkedHashMap<>(build)));
         List<String> modules = new ArrayList<>();
         for (Map.Entry<String, String> module : MODULE_LIBRARY_NAMES.entrySet()) {
             if (Files.isRegularFile(dir.resolve(System.mapLibraryName(module.getValue())))) {
@@ -868,7 +870,7 @@ public class LlamaLoader {
      *         a library loaded from a directory that carries no build file
      */
     public static Map<String, String> getBuildInfo() {
-        return loadedBuild;
+        return LOADED_BUILD.get();
     }
 
     /**
@@ -881,7 +883,7 @@ public class LlamaLoader {
      * @param build a map {@link #getBuildInfo()} returned (copied)
      */
     static void restoreBuildInfo(Map<String, String> build) {
-        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(build));
+        LOADED_BUILD.set(Collections.unmodifiableMap(new LinkedHashMap<>(build)));
     }
 
     /**
@@ -1221,7 +1223,7 @@ public class LlamaLoader {
         if (!extractAndLoadLibraryFile(libraryDir.resourcePath, libraryFileName, targetFolder)) {
             return false;
         }
-        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(libraryDir.build));
+        LOADED_BUILD.set(Collections.unmodifiableMap(new LinkedHashMap<>(libraryDir.build)));
         // The modules are extracted, never loaded from here (ggml loads them at JNI_OnLoad), and a
         // module ggml cannot load fails silently -- so at least say what is there (extractFile reports
         // each file it had to write; the others were reused from an earlier start). The native side

@@ -12,8 +12,9 @@ library loaded into java.exe cannot.
 The fix opens the stream on std::filesystem::u8path(), the identity on platforms whose narrow
 encoding is UTF-8 already. Same class as 0024 to 0028.
 
-Read from the source, not measured on Windows before this patch was written: the Windows jobs of
-CI are its first run there.
+Measured on Windows 11, code page 1252, on 2026-11-11
+(docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md): red without the patch,
+green with it.
 
 Drop-check: drop this patch when handle_media() no longer opens the narrow string (u8path, a wide
 conversion, ggml_fopen) -- CApiNonAsciiPaths.TheMediaDirectoryIsCheckedAsUtf8 then stays green

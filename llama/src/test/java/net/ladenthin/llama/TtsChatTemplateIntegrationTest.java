@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.SpeechParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -115,7 +116,9 @@ public class TtsChatTemplateIntegrationTest {
     @Test
     @DisplayName("no voice cloning: the pair reports it and refuses a speaker reference")
     public void refusesASpeakerReference() {
-        assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio has no voice encoder");
+        // its projector has an audio encoder (for speech in), but its pipeline ignores a clip: the voice is
+        // named in the prompt
+        assertFalse(tts.supportsSpeakerReference(), "LFM3-Audio clones no voice");
         // the request's fault, so that a server answers 400
         assertThrows(
                 InvalidRequestException.class,
@@ -143,6 +146,57 @@ public class TtsChatTemplateIntegrationTest {
         LlamaException unknown = assertThrows(
                 LlamaException.class, () -> tts.synthesize("Hello.", null, "en", "nobody", MAX_FRAMES, 4, 1));
         assertTrue(unknown.getMessage().contains(voices.get(0)), unknown.getMessage());
+    }
+
+    /** The greedy request the raw-prompt cases compare: the same seed and frame cap each time. */
+    private static SpeechParameters greedy(boolean rawPrompt) {
+        return SpeechParameters.builder()
+                .maxFrames(MAX_FRAMES)
+                .seed(7)
+                .temperature(0.0f)
+                .rawPrompt(rawPrompt)
+                .build();
+    }
+
+    /**
+     * With {@code rawPrompt} the text is the backbone's prompt as given (llama.cpp b12494): the prompt
+     * this model's {@code "tts"} template renders for a text, passed raw, is the same synthesis as that
+     * text with the template -- so the flag crosses JNI and the template is skipped, nothing else.
+     */
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("a raw prompt is the backbone's prompt as given: the rendered template, raw, is the same audio")
+    public void aRawPromptIsTheTemplatesPromptAsGiven() {
+        // what LFM3-Audio's tokenizer.chat_template.tts renders for "Good morning." with its defaults
+        String rendered = "<|startoftext|><|im_start|>system\nPerform TTS in American English using a female voice."
+                + "<|im_end|>\n<|im_start|>user\nGood morning.<|im_end|>\n<|im_start|>assistant\n<|audio_start|>";
+
+        byte[] templated = tts.synthesize("Good morning.", greedy(false));
+        byte[] raw = tts.synthesize(rendered, greedy(true));
+
+        assertWellFormedAudibleWav(templated);
+        assertArrayEquals(templated, raw, "the rendered prompt given raw must be the templated synthesis");
+    }
+
+    /**
+     * The bare text as a raw prompt does not end in {@code <|audio_start|>}, and the pipeline refuses
+     * it in {@code set_input}: a {@link LlamaException} that is no {@link InvalidRequestException}, as
+     * upstream's {@code /tts} answers a refused prompt with a server error (500), not 400. The same text
+     * with the template still speaks, and the model answers the next request as before.
+     */
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @DisplayName("the bare text as a raw prompt is refused as a server error, and the template still speaks it")
+    public void theBareTextAsARawPromptIsRefusedAndTheTemplatedSynthesisIsUnchanged() {
+        byte[] before = tts.synthesize("Good morning.", greedy(false));
+
+        LlamaException refused =
+                assertThrows(LlamaException.class, () -> tts.synthesize("Good morning.", greedy(true)));
+
+        assertFalse(refused instanceof InvalidRequestException, "a refused prompt is no request error: " + refused);
+        assertTrue(refused.getMessage().contains("failed to set TTS input"), refused.getMessage());
+        assertWellFormedAudibleWav(before);
+        assertArrayEquals(before, tts.synthesize("Good morning.", greedy(false)), "the next synthesis is unchanged");
     }
 
     /** RIFF/WAVE, PCM mono 16-bit at a positive rate, consistent sizes and at least one non-zero sample. */

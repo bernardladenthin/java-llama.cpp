@@ -11,8 +11,9 @@ activeCodePage=UTF-8 manifest, and a library loaded into java.exe cannot.
 The fix opens the stream on std::filesystem::u8path(fname), the identity on platforms whose
 narrow encoding is UTF-8 already. Same class as 0024, 0025 and 0026.
 
-Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; not measured on
-Windows with the fix before it was written: CI's Windows C++ jobs are its first run there.
+Listed as open in docs/handover/local-agent-report-windows-non-ascii-paths.md; measured on
+Windows 11, code page 1252, on 2026-11-11 (docs/handover/local-agent-report-windows-non-ascii-paths-b12283.md):
+red without the patch, green with it.
 
 Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green

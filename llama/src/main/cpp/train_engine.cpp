@@ -16,6 +16,8 @@
 
 #include <jni.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +30,23 @@ using json = nlohmann::json;
 namespace jllama_train {
 
 bool finetune(const finetune_config &cfg, std::string &err) {
+    // llama_opt_epoch asserts 0 <= the training part <= the windows, so a split outside [0, 1) ended
+    // the process (a negative or a too large part), and 1 trained on nothing; LlamaTrainer's
+    // TrainingParameters refuses the same range, the C API did not.
+    if (!(cfg.val_split >= 0.0f && cfg.val_split < 1.0f)) {
+        err = "val_split must be in [0, 1), was " + std::to_string(cfg.val_split);
+        return false;
+    }
+    // what TrainingParameters refuses, refused here too: build_train_params made 0 epochs one and an
+    // unknown optimizer AdamW, so a C caller's typo trained something else than it asked for
+    if (cfg.epochs < 1) {
+        err = "epochs must be at least 1, was " + std::to_string(cfg.epochs);
+        return false;
+    }
+    if (cfg.optimizer != 0 && cfg.optimizer != 1) {
+        err = "optimizer must be 0 (AdamW) or 1 (SGD), was " + std::to_string(cfg.optimizer);
+        return false;
+    }
     common_params params = build_train_params(cfg);
 
     // The corpus is either read from a file or supplied inline.
@@ -41,6 +60,29 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         params.prompt.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     } else {
         params.prompt = cfg.training_text;
+    }
+
+    // llama_model_save_to_file() returns nothing and ignores a failed write (upstream's saver drops
+    // gguf_write_to_file's bool): a run into a directory that does not exist reported success and left
+    // no file. The output is tried after the inputs and before the training, which takes long, and
+    // checked after the save.
+    if (cfg.output_path.empty()) {
+        err = "output_path is required";
+        return false;
+    }
+    const std::filesystem::path output = std::filesystem::u8path(cfg.output_path);
+    {
+        std::error_code ec;
+        const bool existed = std::filesystem::exists(output, ec);
+        std::ofstream probe(output, std::ios::binary | std::ios::app);
+        if (!probe) {
+            err = "cannot write the output file: " + cfg.output_path;
+            return false;
+        }
+        probe.close();
+        if (!existed) {
+            std::filesystem::remove(output, ec);
+        }
     }
 
     llama_backend_init();
@@ -58,12 +100,31 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     }
 
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
-    if (tokens.size() < 2) {
-        err = "training corpus produced too few tokens (need at least 2)";
+    // llama.cpp's dataset (common_opt_dataset_init) cuts the corpus into windows of n_ctx + 1 tokens,
+    // one every `stride` tokens, and counts them as (tokens - n_ctx - 1) / stride in size_t: a corpus
+    // shorter than one window wrapped to a huge count, and one shorter than a window and a stride gave
+    // none -- ggml asserts on either, which ended the process (the JVM). The context is the padded one
+    // llama.cpp made (a multiple of 256), not the n_ctx asked for.
+    const int64_t n_ctx = llama_n_ctx(ctx);
+    const int64_t stride = std::max<int64_t>(1, n_ctx / 2);
+    const int64_t minimum = n_ctx + 1 + stride;
+    if (static_cast<int64_t>(tokens.size()) < minimum) {
+        err = "training corpus produced too few tokens: " + std::to_string(tokens.size()) + ", need at least " +
+              std::to_string(minimum) + " (one window of n_ctx + 1 = " + std::to_string(n_ctx + 1) +
+              " tokens and a stride of " + std::to_string(stride) + ")";
         return false;
     }
 
-    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx, tokens, llama_n_ctx(ctx) / 2);
+    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx, tokens, stride);
+    // a split that holds every window out leaves nothing to train on, and the run wrote the model it
+    // was given as a success
+    const int64_t n_windows = ggml_opt_dataset_ndata(dataset);
+    if (static_cast<int64_t>(n_windows * (1.0f - params.val_split)) < 1) {
+        ggml_opt_dataset_free(dataset);
+        err = "val_split " + std::to_string(params.val_split) + " leaves no training window of the " +
+              std::to_string(n_windows) + " the corpus gives (" + std::to_string(tokens.size()) + " tokens)";
+        return false;
+    }
 
     llama_opt_params lopt_params = {
         /*n_ctx_train     =*/0,
@@ -80,18 +141,44 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     ggml_opt_result_t result_train = ggml_opt_result_init();
     ggml_opt_result_t result_eval = ggml_opt_result_init();
 
+    // A model whose graph needs a gradient ggml cannot compute (MUL_MAT_ID of a mixture of experts, SSM_SCAN, NORM,
+    // TANH, ...) ended the process in ggml_build_backward_expand; patches/0044 stops the epoch before it and names the
+    // op through llama_opt_error.
+    std::string refused;
     for (params.lr.epoch = 0; params.lr.epoch < params.lr.epochs; ++params.lr.epoch) {
         llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split, ggml_opt_epoch_callback_progress_bar,
                         ggml_opt_epoch_callback_progress_bar);
         ggml_opt_result_reset(result_train);
         ggml_opt_result_reset(result_eval);
+        if (const char *error = llama_opt_error(ctx)) {
+            refused = error;
+            break;
+        }
     }
 
     ggml_opt_result_free(result_train);
     ggml_opt_result_free(result_eval);
     ggml_opt_dataset_free(dataset);
+    if (!refused.empty()) {
+        err = refused;
+        return false;
+    }
 
+    // Gone before the save, so that a file afterwards is the save's and not an older one -- a regular
+    // file only: an output such as /dev/null is written to, never removed, and not checked.
+    std::error_code ec;
+    const bool regular = !std::filesystem::exists(output, ec) || std::filesystem::is_regular_file(output, ec);
+    if (regular) {
+        std::filesystem::remove(output, ec);
+    }
     llama_model_save_to_file(model, params.out_file.c_str());
+    if (regular) {
+        const auto written = std::filesystem::file_size(output, ec);
+        if (ec || written == 0) {
+            err = "could not write the trained model to " + cfg.output_path;
+            return false;
+        }
+    }
 
     // Deliberately NOT calling llama_backend_free(): other live llama contexts in this JVM
     // (e.g. an inference LlamaModel) may still depend on the initialized backend.

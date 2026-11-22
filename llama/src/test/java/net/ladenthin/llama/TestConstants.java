@@ -198,7 +198,8 @@ public class TestConstants {
     public static final String DEFAULT_DECISION_MODEL_PATH = resolveModelPath("models/tinylaya-for-testing-Q8_0.gguf");
 
     /**
-     * System property holding a path to an audio-input model GGUF (e.g. Ultravox / Qwen2.5-Omni).
+     * System property overriding the audio-input model GGUF ({@link #DEFAULT_AUDIO_MODEL_PATH} when unset;
+     * any Ultravox / Qwen2.5-Omni model works).
      * Consumed by {@code AudioInputIntegrationTest} (llama.cpp discussion #13759). The test self-skips
      * when this, the mmproj, or the audio clip is unset/missing.
      */
@@ -215,6 +216,16 @@ public class TestConstants {
      * {@code ContentPart.audioFile(Path)}.
      */
     public static final String PROP_AUDIO_PATH = LlamaSystemProperties.PREFIX + ".audio.input";
+
+    /**
+     * CI's audio-input model (.github/models.csv, feature {@code audio}): Ultravox v0.5 on Llama-3.2-1B.
+     * The default of {@link #PROP_AUDIO_MODEL_PATH}.
+     */
+    public static final String DEFAULT_AUDIO_MODEL_PATH = resolveModelPath("models/Llama-3.2-1B-Instruct-Q4_K_M.gguf");
+
+    /** The Ultravox projector of {@link #DEFAULT_AUDIO_MODEL_PATH}, the default of {@link #PROP_AUDIO_MMPROJ_PATH}. */
+    public static final String DEFAULT_AUDIO_MMPROJ_PATH =
+            resolveModelPath("models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf");
 
     /**
      * Path used by {@code AudioInputIntegrationTest} when {@link #PROP_AUDIO_PATH} is unset. Points at
@@ -331,6 +342,36 @@ public class TestConstants {
 
     /** The mmproj of {@link #DEFAULT_ZONOS_MODEL_PATH}. */
     public static final String DEFAULT_ZONOS_MMPROJ_PATH = resolveModelPath("models/mmproj-ZONOS3-Mini-F32.gguf");
+
+    /**
+     * System property overriding the Kokoro backbone of {@code KokoroTtsIntegrationTest}
+     * ({@link #DEFAULT_KOKORO_MODEL_PATH} when unset).
+     */
+    public static final String PROP_KOKORO_MODEL = LlamaSystemProperties.PREFIX + ".tts.kokoro.model";
+
+    /** System property overriding the mmproj of {@link #PROP_KOKORO_MODEL}. */
+    public static final String PROP_KOKORO_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.kokoro.mmproj";
+
+    /** CI's Kokoro-82M backbone, the PL-BERT phoneme encoder (.github/models.csv, feature {@code kokoro}). */
+    public static final String DEFAULT_KOKORO_MODEL_PATH = resolveModelPath("models/Kokoro-82M-F32.gguf");
+
+    /** The mmproj of {@link #DEFAULT_KOKORO_MODEL_PATH}. */
+    public static final String DEFAULT_KOKORO_MMPROJ_PATH = resolveModelPath("models/mmproj-Kokoro-82M-F16.gguf");
+
+    /**
+     * System property overriding the tiny-voca backbone of {@code TinyVocaTtsIntegrationTest}
+     * ({@link #DEFAULT_TINY_VOCA_MODEL_PATH} when unset).
+     */
+    public static final String PROP_TINY_VOCA_MODEL = LlamaSystemProperties.PREFIX + ".tts.tinyvoca.model";
+
+    /** System property overriding the mmproj of {@link #PROP_TINY_VOCA_MODEL}. */
+    public static final String PROP_TINY_VOCA_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.tinyvoca.mmproj";
+
+    /** CI's tiny-voca backbone, the phoneme encoder (.github/models.csv, feature {@code tinyvoca}). */
+    public static final String DEFAULT_TINY_VOCA_MODEL_PATH = resolveModelPath("models/tiny-voca-F32.gguf");
+
+    /** The mmproj of {@link #DEFAULT_TINY_VOCA_MODEL_PATH}. */
+    public static final String DEFAULT_TINY_VOCA_MMPROJ_PATH = resolveModelPath("models/mmproj-tiny-voca-F32.gguf");
 
     /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
     public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");

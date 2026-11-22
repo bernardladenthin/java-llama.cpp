@@ -750,4 +750,56 @@ public class AnthropicApiSupportTest {
                 + "\"tool_choice\":{\"type\":\"auto\"}}"));
         assertThat(openAi.has("parallel_tool_calls"), is(false));
     }
+
+    /**
+     * An assistant turn with an image and a tool call keeps both: the content as parts in block order
+     * and the call as {@code tool_calls}, with the thinking as {@code reasoning_content}, as upstream's
+     * {@code convert_anthropic_to_oai} builds the message.
+     */
+    @Test
+    public void anAssistantMessageWithAnImageAndAToolUseKeepsPartsAndToolCallsLikeUpstream() throws IOException {
+        // arrange
+        JsonNode request = read("{\"messages\":[{\"role\":\"assistant\",\"content\":["
+                + "{\"type\":\"thinking\",\"thinking\":\"zoom in\"},"
+                + "{\"type\":\"text\",\"text\":\"look\"},"
+                + "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":\"https://example.com/a.png\"}},"
+                + "{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"zoom\",\"input\":{\"x\":1}}]}]}");
+
+        // act
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"text\",\"text\":\"look\"},"
+                        + "{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/a.png\"}}],"
+                        + "\"tool_calls\":[{\"id\":\"t1\",\"type\":\"function\","
+                        + "\"function\":{\"name\":\"zoom\",\"arguments\":\"{\\\"x\\\":1}\"}}],"
+                        + "\"reasoning_content\":\"zoom in\"}]")));
+    }
+
+    /**
+     * A message whose content array is empty keeps its slot as an empty message, so the turns around
+     * it still alternate. Upstream's {@code convert_anthropic_to_oai} emits no message for it, which
+     * leaves the two user turns next to each other.
+     */
+    @Test
+    public void aMessageWithAnEmptyContentArrayKeepsItsSlot() throws IOException {
+        // arrange
+        JsonNode request = read("{\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"hi\"},"
+                + "{\"role\":\"assistant\",\"content\":[]},"
+                + "{\"role\":\"user\",\"content\":\"again\"}]}");
+
+        // act
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(request).path("messages");
+
+        // assert
+        assertThat(
+                messages,
+                is(read("[{\"role\":\"user\",\"content\":\"hi\"},"
+                        + "{\"role\":\"assistant\",\"content\":\"\"},"
+                        + "{\"role\":\"user\",\"content\":\"again\"}]")));
+    }
 }

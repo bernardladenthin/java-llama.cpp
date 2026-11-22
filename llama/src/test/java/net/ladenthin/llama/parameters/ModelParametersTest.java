@@ -299,46 +299,63 @@ public class ModelParametersTest {
     }
 
     /**
-     * The colon is the field separator and upstream splits on every one of them, demanding exactly
-     * two parts -- so an absolute Windows path cannot be expressed at all. Refusing it here names the
-     * cause instead of letting the load fail with "Failed to parse model parameters".
+     * The colon is the field separator, and upstream splits at every one of them, demanding exactly
+     * two parts -- so no absolute Windows path could be expressed, and this builder refused a path
+     * with a colon. patches/0045 splits at the last colon (the scale has none); the path is written
+     * as it is, and the parser's half is held by {@code ScaledFiles} in {@code test_model_flags.cpp}.
      */
     @Test
-    public void aScaledPathContainingAColonIsRefusedWithTheReason() {
-        IllegalArgumentException lora = assertThrows(
-                IllegalArgumentException.class,
-                () -> new ModelParameters().addLoraScaledAdapter("X:\\models\\a.gguf", 1f));
-        assertThat(lora.getMessage(), containsString("--lora-scaled"));
-        assertThat(lora.getMessage(), containsString("FNAME:SCALE"));
-        assertThat(lora.getMessage(), containsString("X:\\models\\a.gguf"));
-
-        IllegalArgumentException vector = assertThrows(
-                IllegalArgumentException.class, () -> new ModelParameters().addControlVectorScaled("C:/vec.gguf", 1f));
-        assertThat(vector.getMessage(), containsString("--control-vector-scaled"));
-
-        // a relative path is what works, and is what the message points at
+    public void aScaledPathContainingAColonIsWrittenAsItIs() {
         assertThat(
                 new ModelParameters()
-                        .addLoraScaledAdapter("../models/a.gguf", 1f)
+                        .addLoraScaledAdapter("X:\\models\\a.gguf", 1f)
                         .parameters
                         .get("--lora-scaled"),
-                is("../models/a.gguf:1.0"));
+                is("X:\\models\\a.gguf:1.0"));
+        assertThat(
+                new ModelParameters()
+                        .addControlVectorScaled("C:/vec.gguf", 0.5f)
+                        .parameters
+                        .get("--control-vector-scaled"),
+                is("C:/vec.gguf:0.5"));
+        IllegalArgumentException empty =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().addLoraScaledAdapter("", 1f));
+        assertThat(empty.getMessage(), is("--lora-scaled needs a non-empty file path"));
     }
 
     // -------------------------------------------------------------------------
-    // setControlVectorLayerRange — "start,end" format
+    // setControlVectorLayerRange — two arguments, START and END
     // -------------------------------------------------------------------------
 
+    /** The option and the arguments after it in {@code p.toArray()}. */
+    private static java.util.List<String> rangeArguments(ModelParameters p, int count) {
+        java.util.List<String> argv = java.util.Arrays.asList(p.toArray());
+        int at = argv.indexOf("--control-vector-layer-range");
+        return argv.subList(at, Math.min(argv.size(), at + 1 + count));
+    }
+
     @Test
-    public void testSetControlVectorLayerRange() {
-        ModelParameters p = new ModelParameters().setControlVectorLayerRange(2, 10);
-        assertThat(p.parameters.get("--control-vector-layer-range"), is("2,10"));
+    public void testSetControlVectorLayerRangeIsTwoArguments() {
+        // upstream reads START and END as two arguments; "2,10" as one made every load fail
+        ModelParameters p =
+                new ModelParameters().setControlVectorLayerRange(2, 10).setCtxSize(64);
+        assertThat(
+                rangeArguments(p, 3),
+                is(java.util.Arrays.asList("--control-vector-layer-range", "2", "10", "--ctx-size")));
+        assertThat(p.toString().contains("--control-vector-layer-range 2 10 --ctx-size 64 "), is(true));
     }
 
     @Test
     public void testSetControlVectorLayerRangeSameStartEnd() {
         ModelParameters p = new ModelParameters().setControlVectorLayerRange(5, 5);
-        assertThat(p.parameters.get("--control-vector-layer-range"), is("5,5"));
+        assertThat(rangeArguments(p, 2), is(java.util.Arrays.asList("--control-vector-layer-range", "5", "5")));
+    }
+
+    @Test
+    public void testSetControlVectorLayerRangeReplacesTheEarlierRange() {
+        ModelParameters p =
+                new ModelParameters().setControlVectorLayerRange(1, 2).setControlVectorLayerRange(3, 4);
+        assertThat(rangeArguments(p, 3), is(java.util.Arrays.asList("--control-vector-layer-range", "3", "4")));
     }
 
     // -------------------------------------------------------------------------
@@ -667,8 +684,8 @@ public class ModelParametersTest {
     public void testVideoTimestampIntervalRejectsValuesAboveIntMax() {
         // The upstream field is int64_t but the flag is registered with an int handler, dispatched
         // through std::stoi -- so a larger value throws out_of_range, common_params_parse returns
-        // false, and the caller sees only "Failed to parse model parameters", naming neither the
-        // flag nor the reason.
+        // false, and the load fails long after the setter was called (until patch 0031 with
+        // "Failed to parse model parameters" alone, naming neither the flag nor the reason).
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE + 1L));
@@ -809,8 +826,8 @@ public class ModelParametersTest {
     @Test
     public void testSetSleepIdleSecondsRejectsTheValuesUpstreamRejects() {
         // Upstream's handler throws on 0 and on anything below -1, which aborts the whole argv parse
-        // and reaches the caller only as "Failed to parse model parameters". Reject here instead, so
-        // the message names the flag. This test replaced one that asserted 0 serialises to "0" --
+        // and fails the load (until patch 0031 as "Failed to parse model parameters" alone). Reject
+        // here instead, at the setter. This test replaced one that asserted 0 serialises to "0" --
         // it pinned a value the server cannot accept.
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(0));
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(-2));
@@ -834,6 +851,22 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().setClearIdle(false);
         assertThat(p.parameters, hasKey("--no-cache-idle-slots"));
         assertThat(p.parameters, not(hasKey("--cache-idle-slots")));
+    }
+
+    @Test
+    public void testSetSpecDraftBackendSamplingTrue_writesTheFlagAndClearsItsNegation() {
+        ModelParameters p =
+                new ModelParameters().setSpecDraftBackendSampling(false).setSpecDraftBackendSampling(true);
+        assertThat(p.parameters, hasKey("--spec-draft-backend-sampling"));
+        assertThat(p.parameters, not(hasKey("--no-spec-draft-backend-sampling")));
+    }
+
+    @Test
+    public void testSetSpecDraftBackendSamplingFalse_writesTheNegationAndClearsTheFlag() {
+        ModelParameters p =
+                new ModelParameters().setSpecDraftBackendSampling(true).setSpecDraftBackendSampling(false);
+        assertThat(p.parameters, hasKey("--no-spec-draft-backend-sampling"));
+        assertThat(p.parameters, not(hasKey("--spec-draft-backend-sampling")));
     }
 
     // -------------------------------------------------------------------------

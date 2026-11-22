@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 public final class SpeechOptions {
 
     private static final SpeechOptions DEFAULTS =
-            new SpeechOptions(null, null, null, null, null, null, null, null, null, null, null, null);
+            new SpeechOptions(null, null, null, null, null, null, null, null, null, null, null, null, false);
 
     private final byte @Nullable [] speakerReference;
     private final @Nullable Integer maxFrames;
@@ -28,6 +28,7 @@ public final class SpeechOptions {
     private final @Nullable String speakerReferenceText;
     private final @Nullable Float cfgScale;
     private final @Nullable Integer flowSteps;
+    private final boolean rawPrompt;
 
     /**
      * Create the options of one request.
@@ -82,7 +83,8 @@ public final class SpeechOptions {
                 loudness,
                 null,
                 null,
-                null);
+                null,
+                false);
     }
 
     private SpeechOptions(
@@ -97,7 +99,8 @@ public final class SpeechOptions {
             @Nullable Float loudness,
             @Nullable String speakerReferenceText,
             @Nullable Float cfgScale,
-            @Nullable Integer flowSteps) {
+            @Nullable Integer flowSteps,
+            boolean rawPrompt) {
         this.speakerReference = speakerReference == null ? null : speakerReference.clone();
         this.maxFrames = maxFrames;
         this.topK = topK;
@@ -110,11 +113,13 @@ public final class SpeechOptions {
         this.speakerReferenceText = speakerReferenceText;
         this.cfgScale = cfgScale;
         this.flowSteps = flowSteps;
+        this.rawPrompt = rawPrompt;
     }
 
     /**
      * These options with the transcript of the speaker reference (llama.cpp b12453's
-     * {@code speaker_ref_text}), which a model that puts it into its prompt (Fish Audio S2) uses.
+     * {@code speaker_ref_text}), which Fish Audio S2 puts into its prompt and Qwen3-TTS (b12491) uses to
+     * continue the reference speech; the other models ignore it.
      *
      * @param text the transcript, or {@code null} for none
      * @return a copy of these options with the transcript
@@ -132,12 +137,13 @@ public final class SpeechOptions {
                 loudness,
                 text,
                 cfgScale,
-                flowSteps);
+                flowSteps,
+                rawPrompt);
     }
 
     /**
      * These options with the guidance scale and the solver steps of a flow-matching model (llama.cpp
-     * b12459's {@code cfg_scale} and {@code flow_steps}, YuE2); another model refuses any value but
+     * b12459's {@code cfg_scale} and {@code flow_steps}: YuE2, MiniMax Music 3, VoxCPM2); another model refuses any value but
      * {@code null}.
      *
      * @param guidance the classifier-free guidance scale, or {@code null} for the model's own
@@ -157,7 +163,33 @@ public final class SpeechOptions {
                 loudness,
                 speakerReferenceText,
                 guidance,
-                steps);
+                steps,
+                rawPrompt);
+    }
+
+    /**
+     * These options with llama.cpp b12494's {@code raw_prompt}: the text goes to the model as it is
+     * (phonemes, or a whole prompt in the model's format), and the {@code "tts"} chat template of a
+     * model that has one is skipped.
+     *
+     * @param raw {@code true} to skip the template
+     * @return a copy of these options with the choice
+     */
+    public SpeechOptions withRawPrompt(boolean raw) {
+        return new SpeechOptions(
+                speakerReference,
+                maxFrames,
+                topK,
+                seed,
+                temperature,
+                topP,
+                repeatPenalty,
+                speed,
+                loudness,
+                speakerReferenceText,
+                cfgScale,
+                flowSteps,
+                raw);
     }
 
     /**
@@ -251,7 +283,7 @@ public final class SpeechOptions {
     }
 
     /**
-     * The transcript of the speaker reference (a model that puts it into its prompt, Fish Audio S2).
+     * The transcript of the speaker reference (Fish Audio S2, Qwen3-TTS since b12491).
      *
      * @return the transcript, or {@code null} for none
      */
@@ -260,7 +292,8 @@ public final class SpeechOptions {
     }
 
     /**
-     * The classifier-free guidance scale of the audio codes (a flow-matching model, YuE2).
+     * The classifier-free guidance scale of the audio codes (a flow-matching model: YuE2, MiniMax Music 3,
+     * VoxCPM2).
      *
      * @return the scale, or {@code null} for the model's own
      */
@@ -269,12 +302,21 @@ public final class SpeechOptions {
     }
 
     /**
-     * The steps of the flow-matching ODE solver (YuE2).
+     * The steps of the flow-matching ODE solver (YuE2, MiniMax Music 3, VoxCPM2).
      *
      * @return the steps, or {@code null} for the model's own
      */
     public @Nullable Integer getFlowSteps() {
         return flowSteps;
+    }
+
+    /**
+     * Whether the text goes to the model as it is, without its {@code "tts"} chat template (b12494).
+     *
+     * @return {@code true} to skip the template
+     */
+    public boolean isRawPrompt() {
+        return rawPrompt;
     }
 
     @Override
@@ -293,6 +335,7 @@ public final class SpeechOptions {
                 + (speakerReferenceText == null ? "none" : speakerReferenceText.length() + " chars")
                 + ", cfgScale=" + cfgScale
                 + ", flowSteps=" + flowSteps
+                + ", rawPrompt=" + rawPrompt
                 + '}';
     }
 }

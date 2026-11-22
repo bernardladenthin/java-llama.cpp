@@ -205,9 +205,14 @@ public final class ModelMeta {
 
     /**
      * The reasoning effort levels the model's chat template renders differently, lowest first, out of
-     * {@code minimal}, {@code low}, {@code medium}, {@code high}, {@code xhigh} and {@code max}
-     * (llama.cpp b11944, #31271). A level the template ignores is left out, and of levels that render
-     * the same only the highest is kept, so each entry is a distinct setting worth offering.
+     * {@code none}, {@code minimal}, {@code low}, {@code medium}, {@code high}, {@code xhigh} and
+     * {@code max} (llama.cpp b11944, #31271; {@code none} since b12624, #32763). A level the template
+     * ignores is left out, and of levels that render the same only the highest is kept, so each entry is
+     * a distinct setting worth offering.
+     *
+     * <p>A {@code reasoning_effort} of {@code none} also turns thinking off: it reaches the template only
+     * when this list names it, and is dropped otherwise. Another level the template raises on is refused
+     * as an invalid request naming these levels (b12431).</p>
      *
      * <p>Empty when the template has no reasoning effort ({@link #supportsReasoningEffort()} is
      * {@code false}), and for metadata from a vocab-only load or from a build before llama.cpp

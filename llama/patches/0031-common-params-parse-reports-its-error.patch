@@ -1,0 +1,73 @@
+common: report a refused argument parse instead of ending the process
+
+common_params_parse() (common/arg.cpp) printed every refusal to stderr and either answered false
+(an std::invalid_argument, as every option handler's error is wrapped) or called exit(1) (any other
+exception). The second covers what is checked after the arguments are read: a --chat-template
+that common_chat_verify_template() refuses throws std::runtime_error, so
+ModelParameters.setChatTemplate() with a template that does not parse ended the JVM with status 1
+(measured with a death test, b12521). And the reason of a refusal reached stderr only, so the C API
+and LlamaModel could only say "Failed to parse model parameters" (b12489: --ignore-eos next
+to --grammar).
+
+The patch answers false for every exception, with the parameters restored as for an invalid
+argument, and keeps the message in a thread-local string, common_params_parse_error(), cleared at
+the start of every parse. --help, --completion-bash, --version, --list-devices and --cache-list
+still exit(0): they are a command line's own requests, not an error.
+
+Guard: CApiParseErrors (test_c_api.cpp) -- a template that does not parse is refused with the
+template's error, and a value --override-kv refuses is named with the option -- and
+CApi.AModelLoadedWithIgnoreEosAndAGrammarIsRefused, which reads upstream's message for --ignore-eos
+next to --grammar; red without the patch (the first ends the test process, the others read only the
+generic message).
+
+Drop-check: drop this patch when common_params_parse() no longer calls exit() for an error and
+hands its reason to the caller.
+
+diff --git a/common/arg.h b/common/arg.h
+--- a/common/arg.h
++++ b/common/arg.h
+@@ -126,6 +126,9 @@
+ //       this is a side-effect that should be avoided
+ bool common_params_parse(int argc, char ** argv, common_params & params, llama_example ex, void(*print_usage)(int, char **) = nullptr);
+ 
++// why the last common_params_parse() on this thread answered false, empty after one that succeeded
++const std::string & common_params_parse_error();
++
+ // load all backends and print the list of available (non-CPU) devices to stdout
+ void common_print_available_devices();
+ 
+diff --git a/common/arg.cpp b/common/arg.cpp
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -1292,7 +1292,14 @@
+     return true;
+ }
+ 
++static thread_local std::string g_common_params_parse_error;
++
++const std::string & common_params_parse_error() {
++    return g_common_params_parse_error;
++}
++
+ bool common_params_parse(int argc, char ** argv, common_params & params, llama_example ex, void(*print_usage)(int, char **)) {
++    g_common_params_parse_error.clear();
+     auto ctx_arg = common_params_parser_init(params, ex, print_usage);
+     const common_params params_org = ctx_arg.params; // the example can modify the default params
+ 
+@@ -1316,11 +1323,15 @@
+         params.lr.init();
+     } catch (const std::invalid_argument & ex) {
+         fprintf(stderr, "%s\n", ex.what());
++        g_common_params_parse_error = ex.what();
+         ctx_arg.params = params_org;
+         return false;
+     } catch (std::exception & ex) {
++        // an embedding host (a JVM) must not be ended by the arguments it passes: report the error
+         fprintf(stderr, "%s\n", ex.what());
+-        exit(1); // for other exceptions, we exit with status code 1
++        g_common_params_parse_error = ex.what();
++        ctx_arg.params = params_org;
++        return false;
+     }
+ 
+     return true;

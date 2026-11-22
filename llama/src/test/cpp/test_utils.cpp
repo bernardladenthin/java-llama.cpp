@@ -19,6 +19,7 @@
 //   - token_piece_value  (native /tokenize wire format)
 
 #include <gtest/gtest.h>
+#include <regex>
 
 // Pull in all utils.hpp definitions.  No JNI headers needed.
 #include "utils.hpp"
@@ -1528,4 +1529,269 @@ TEST(ContentOnlyParseUtf8, IncompleteTrailingSequence_DroppedNotReplaced) {
     std::string content;
     EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xE2\x82")));
     EXPECT_EQ(content, "abc");
+}
+
+// ============================================================
+// Pythonic tool arguments with control characters (upstream #31937, b12480..b12490)
+//
+//   LFM2-style models write a tool call as Python, `[python(code='a<LF>b')]`, and
+//   upstream converts the arguments to JSON (normalize_quotes_to_json). Until #31937
+//   a raw control character inside a quoted argument was copied verbatim, so the
+//   `arguments` string returned to the client was not JSON, and a request that sent
+//   that history back failed. The template is LFM2-8B-A1B's chat template, verbatim
+//   from upstream's models/templates (the one upstream's own test uses).
+// ============================================================
+
+namespace {
+
+constexpr const char *LFM2_TEMPLATE = R"TMPL({{- bos_token -}}
+{%- set system_prompt = "" -%}
+{%- set ns = namespace(system_prompt="") -%}
+{%- if messages[0]["role"] == "system" -%}
+	{%- set ns.system_prompt = messages[0]["content"] -%}
+	{%- set messages = messages[1:] -%}
+{%- endif -%}
+{%- if tools -%}
+	{%- set ns.system_prompt = ns.system_prompt + ("\n" if ns.system_prompt else "") + "List of tools: <|tool_list_start|>[" -%}
+	{%- for tool in tools -%}
+		{%- if tool is not string -%}
+			{%- set tool = tool | tojson -%}
+		{%- endif -%}
+		{%- set ns.system_prompt = ns.system_prompt + tool -%}
+		{%- if not loop.last -%}
+			{%- set ns.system_prompt = ns.system_prompt + ", " -%}
+		{%- endif -%}
+	{%- endfor -%}
+	{%- set ns.system_prompt = ns.system_prompt + "]<|tool_list_end|>" -%}
+{%- endif -%}
+{%- if ns.system_prompt -%}
+	{{- "<|im_start|>system\n" + ns.system_prompt + "<|im_end|>\n" -}}
+{%- endif -%}
+{%- for message in messages -%}
+	{{- "<|im_start|>" + message["role"] + "\n" -}}
+	{%- set content = message["content"] -%}
+	{%- if content is not string -%}
+		{%- set content = content | tojson -%}
+	{%- endif -%}
+	{%- if message["role"] == "tool" -%}
+		{%- set content = "<|tool_response_start|>" + content + "<|tool_response_end|>" -%}
+	{%- endif -%}
+	{{- content + "<|im_end|>\n" -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+	{{- "<|im_start|>assistant\n" -}}
+{%- endif -%}
+)TMPL";
+
+// Parses `output` the way the server parses a finished answer of an LFM2 model that was
+// given the tool `python(code: string)`.
+common_chat_msg parse_lfm2_answer(const std::string &output) {
+    common_chat_templates_ptr tmpls = common_chat_templates_init(nullptr, LFM2_TEMPLATE, "<|startoftext|>");
+    common_chat_tool python;
+    python.name = "python";
+    python.description = "an ipython interpreter";
+    python.parameters = R"({"type":"object","properties":{"code":{"type":"string"}},"required":["code"]})";
+    common_chat_msg user;
+    user.role = "user";
+    user.content = "run it";
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.tools = {python};
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
+    const common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
+    common_chat_parser_params parser_params(params);
+    parser_params.parser = params.parser;
+    return common_chat_parse(common_chat_input(output), /*is_partial=*/false, parser_params);
+}
+
+} // namespace
+
+TEST(PythonicToolArguments, AnEscapedNewlineIsAlreadyValidJson) {
+    // The control of the test below: the same call with the newline written as an escape.
+    const common_chat_msg msg = parse_lfm2_answer("<|tool_call_start|>[python(code='a\\nb')]<|tool_call_end|>");
+    ASSERT_EQ(msg.tool_calls.size(), 1u);
+    EXPECT_EQ(msg.tool_calls[0].name, "python");
+    const json args = json::parse(msg.tool_calls[0].arguments);
+    EXPECT_EQ(args.at("code").get<std::string>(), "a\nb");
+}
+
+TEST(PythonicToolArguments, RawControlCharactersInAQuotedArgumentAreEscapedIntoValidJson) {
+    for (const char *quote : {"'", "\""}) {
+        const std::string raw = std::string("a\nb\tc\rd\x01") + "e";
+        const std::string output =
+            std::string("<|tool_call_start|>[python(code=") + quote + raw + quote + ")]<|tool_call_end|>";
+        const common_chat_msg msg = parse_lfm2_answer(output);
+        ASSERT_EQ(msg.tool_calls.size(), 1u) << "quote " << quote;
+        const std::string &arguments = msg.tool_calls[0].arguments;
+        for (char c : arguments) {
+            EXPECT_GE(static_cast<unsigned char>(c), 0x20u)
+                << "a raw control character reached the arguments: " << arguments;
+        }
+        json args;
+        ASSERT_NO_THROW(args = json::parse(arguments)) << arguments;
+        EXPECT_EQ(args.at("code").get<std::string>(), raw) << "quote " << quote;
+    }
+}
+
+// ============================================================
+// Lazy grammar for bare JSON tool calls (llama.cpp b12634, #32497)
+// ============================================================
+
+namespace {
+
+// Llama 3.2's template, copied from upstream's models/templates/meta-llama-Llama-3.2-3B-Instruct.jinja
+// (the one upstream's own test uses). Its tool calls are a bare {"name": ..., "parameters": ...}
+// object: no start marker for a lazy grammar to wait for.
+const char *const LLAMA32_TEMPLATE = R"LLAMA32({{- bos_token }}
+{%- if custom_tools is defined %}
+    {%- set tools = custom_tools %}
+{%- endif %}
+{%- if not tools_in_user_message is defined %}
+    {%- set tools_in_user_message = true %}
+{%- endif %}
+{%- if not date_string is defined %}
+    {%- if strftime_now is defined %}
+        {%- set date_string = strftime_now("%d %b %Y") %}
+    {%- else %}
+        {%- set date_string = "26 Jul 2024" %}
+    {%- endif %}
+{%- endif %}
+{%- if not tools is defined %}
+    {%- set tools = none %}
+{%- endif %}
+
+{#- This block extracts the system message, so we can slot it into the right place. #}
+{%- if messages[0]['role'] == 'system' %}
+    {%- set system_message = messages[0]['content']|trim %}
+    {%- set messages = messages[1:] %}
+{%- else %}
+    {%- set system_message = "" %}
+{%- endif %}
+
+{#- System message #}
+{{- "<|start_header_id|>system<|end_header_id|>\n\n" }}
+{%- if tools is not none %}
+    {{- "Environment: ipython\n" }}
+{%- endif %}
+{{- "Cutting Knowledge Date: December 2023\n" }}
+{{- "Today Date: " + date_string + "\n\n" }}
+{%- if tools is not none and not tools_in_user_message %}
+    {{- "You have access to the following functions. To call a function, please respond with JSON for a function call." }}
+    {{- 'Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.' }}
+    {{- "Do not use variables.\n\n" }}
+    {%- for t in tools %}
+        {{- t | tojson(indent=4) }}
+        {{- "\n\n" }}
+    {%- endfor %}
+{%- endif %}
+{{- system_message }}
+{{- "<|eot_id|>" }}
+
+{#- Custom tools are passed in a user message with some extra guidance #}
+{%- if tools_in_user_message and not tools is none %}
+    {#- Extract the first user message so we can plug it in here #}
+    {%- if messages | length != 0 %}
+        {%- set first_user_message = messages[0]['content']|trim %}
+        {%- set messages = messages[1:] %}
+    {%- else %}
+        {{- raise_exception("Cannot put tools in the first user message when there's no first user message!") }}
+{%- endif %}
+    {{- '<|start_header_id|>user<|end_header_id|>\n\n' -}}
+    {{- "Given the following functions, please respond with a JSON for a function call " }}
+    {{- "with its proper arguments that best answers the given prompt.\n\n" }}
+    {{- 'Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.' }}
+    {{- "Do not use variables.\n\n" }}
+    {%- for t in tools %}
+        {{- t | tojson(indent=4) }}
+        {{- "\n\n" }}
+    {%- endfor %}
+    {{- first_user_message + "<|eot_id|>"}}
+{%- endif %}
+
+{%- for message in messages %}
+    {%- if not (message.role == 'ipython' or message.role == 'tool' or 'tool_calls' in message) %}
+        {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' }}
+    {%- elif 'tool_calls' in message %}
+        {%- if not message.tool_calls|length == 1 %}
+            {{- raise_exception("This model only supports single tool-calls at once!") }}
+        {%- endif %}
+        {%- set tool_call = message.tool_calls[0].function %}
+        {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
+        {{- '{"name": "' + tool_call.name + '", ' }}
+        {{- '"parameters": ' }}
+        {{- tool_call.arguments | tojson }}
+        {{- "}" }}
+        {{- "<|eot_id|>" }}
+    {%- elif message.role == "tool" or message.role == "ipython" %}
+        {{- "<|start_header_id|>ipython<|end_header_id|>\n\n" }}
+        {%- if message.content is mapping or message.content is iterable %}
+            {{- message.content | tojson }}
+        {%- else %}
+            {{- message.content }}
+        {%- endif %}
+        {{- "<|eot_id|>" }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' }}
+{%- endif %}
+)LLAMA32";
+
+// The chat parameters of a Llama 3.2 request that offers the tool `special_function(arg1: integer)`.
+common_chat_params llama32_params_with_a_tool(common_chat_tool_choice choice) {
+    common_chat_templates_ptr tmpls = common_chat_templates_init(nullptr, LLAMA32_TEMPLATE, "<|begin_of_text|>");
+    common_chat_tool tool;
+    tool.name = "special_function";
+    tool.description = "I'm special";
+    tool.parameters = R"({"type":"object","properties":{"arg1":{"type":"integer"}},"required":["arg1"]})";
+    common_chat_msg user;
+    user.role = "user";
+    user.content = "Hey";
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.tools = {tool};
+    inputs.tool_choice = choice;
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
+    return common_chat_templates_apply(tmpls.get(), inputs);
+}
+
+} // namespace
+
+TEST(LazyToolGrammar, BareJsonToolCallsGetALazyGrammarUnderToolChoiceAuto) {
+    // Until b12634 a template whose calls have no start marker got no grammar at all with
+    // tool_choice auto, so a Llama 3.x model was free to write a call the parser then could not read.
+    // Now the grammar waits for the opening of the call object.
+    const common_chat_params params = llama32_params_with_a_tool(COMMON_CHAT_TOOL_CHOICE_AUTO);
+    ASSERT_FALSE(params.grammar.empty());
+    EXPECT_TRUE(params.grammar_lazy);
+    bool pattern = false;
+    for (const common_grammar_trigger &trigger : params.grammar_triggers) {
+        if (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN) {
+            pattern = true;
+            const std::regex re(trigger.value);
+            EXPECT_TRUE(std::regex_search(std::string(R"({"name": "special_function")"), re)) << trigger.value;
+            EXPECT_TRUE(std::regex_search(std::string(R"({"name":"special_function")"), re)) << trigger.value;
+            EXPECT_FALSE(std::regex_search(std::string("Hello, world!"), re)) << trigger.value;
+        }
+    }
+    EXPECT_TRUE(pattern) << "no pattern trigger for the bare JSON call";
+}
+
+TEST(LazyToolGrammar, BareJsonToolCallsAreStillParsed) {
+    // The parser half was there before: the call is read from the bare object.
+    const common_chat_params params = llama32_params_with_a_tool(COMMON_CHAT_TOOL_CHOICE_AUTO);
+    common_chat_parser_params parser_params(params);
+    parser_params.parser = params.parser;
+    const common_chat_msg msg = common_chat_parse(
+        common_chat_input(R"({"name": "special_function", "parameters": {"arg1": 1}})"), false, parser_params);
+    ASSERT_EQ(msg.tool_calls.size(), 1u);
+    EXPECT_EQ(msg.tool_calls[0].name, "special_function");
+    EXPECT_EQ(json::parse(msg.tool_calls[0].arguments).at("arg1").get<int>(), 1);
+}
+
+TEST(LazyToolGrammar, ToolChoiceNoneGetsNoGrammar) {
+    const common_chat_params params = llama32_params_with_a_tool(COMMON_CHAT_TOOL_CHOICE_NONE);
+    EXPECT_TRUE(params.grammar.empty()) << params.grammar;
 }

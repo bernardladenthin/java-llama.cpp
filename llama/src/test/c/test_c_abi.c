@@ -9,13 +9,20 @@
 // ggml-backend.h are consumable as C from the shipped shared libraries (the symbols are exported,
 // the headers are C), that jllama_api.h compiles as C and its jllama_* symbols are exported from
 // the shipped libjllama, that ggml_backend_load_all_from_path() finds the CPU modules in the
-// natives directory it is given, and -- when JLLAMA_C_ABI_MODEL names a GGUF -- that a model loads
-// through upstream's API. Registered
+// natives directory it is given, that the CPU module it chose multiplies K-quant weights as a
+// reference from ggml-base says (kquant_matmul.h), and -- when JLLAMA_C_ABI_MODEL names a GGUF -- that a model loads
+// and tokenizes through upstream's API and answers a completion through jllama_model_load /
+// jllama_completions. The ctest sets JLLAMA_C_ABI_MODEL to the C++ suite's random llama model,
+// which write_c_abi_model.cpp writes as a fixture (or to the file it named at configure time). Registered
 // as the ctest `c_abi` of every modular build (llama/CMakeLists.txt), run by build.sh/build.bat
 // right after the build, so the four modular CPU jobs run a test again (BUILD_TESTING is refused
 // there: jllama_test needs the CPU backend statically).
 //
-// Usage: jllama_c_abi <natives directory>   (JLLAMA_C_ABI_MODEL=<gguf> loads a model as well)
+// Usage: jllama_c_abi <natives directory> [implicit]   (JLLAMA_C_ABI_MODEL=<gguf> loads a model as well)
+//
+// `implicit` (the ctest `c_abi_implicit`) skips the program's own ggml_backend_load_all_from_path(): the
+// first C API call that needs a backend loads the modules next to libjllama (backend_modules.hpp). Before
+// that, a C consumer found no backend at all -- only JNI_OnLoad loaded them.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +31,7 @@
 #include "ggml-backend.h"
 #include "llama.h"
 #include "jllama_api.h"
+#include "kquant_matmul.h"
 
 static int fail(const char * what) {
     fprintf(stderr, "c_abi: FAILED: %s\n", what);
@@ -57,6 +65,47 @@ static const char * pinned_tag(const char * dir) {
     return tag;
 }
 
+/* The C API alone, with no module load of the program's own: no device before the first call (the
+ * modules are not loaded yet, so the test cannot pass vacuously), a model loaded and answering after it,
+ * and a CPU device among those ggml then reports. */
+static int implicit_load(const char * dir) {
+    const char * model_path = getenv("JLLAMA_C_ABI_MODEL");
+    if (model_path == NULL || model_path[0] == '\0') {
+        return fail("implicit: JLLAMA_C_ABI_MODEL is not set");
+    }
+    if (ggml_backend_dev_count() != 0) {
+        return fail("implicit: a device is registered before the first C API call");
+    }
+    const char * load_argv[] = {"c_abi", "-m", model_path, "-c", "128", "-ngl", "0", "--no-warmup", "-t", "1"};
+    jllama_model * served = NULL;
+    if (jllama_model_load((int) (sizeof load_argv / sizeof load_argv[0]), load_argv, NULL, NULL, &served) !=
+            JLLAMA_STATUS_OK || served == NULL) {
+        fprintf(stderr, "c_abi: implicit: %s\n", jllama_last_error());
+        return fail("implicit: jllama_model_load did not load the modules next to the library");
+    }
+    int cpu = 0;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (ggml_backend_dev_type(ggml_backend_dev_get(i)) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+            cpu = 1;
+        }
+    }
+    char * response = NULL;
+    const jllama_status status =
+        jllama_completions(served, "{\"prompt\":\"Hello\",\"n_predict\":4,\"temperature\":0}", &response);
+    const int answered = status == JLLAMA_STATUS_OK && response != NULL && strstr(response, "\"content\"") != NULL;
+    jllama_string_free(response);
+    jllama_model_free(served);
+    if (!cpu) {
+        return fail("implicit: no CPU device after the load");
+    }
+    if (!answered) {
+        return fail("implicit: jllama_completions");
+    }
+    printf("c_abi: implicit: the C API loaded the modules of %s itself; %zu device(s)\n", dir, ggml_backend_dev_count());
+    printf("c_abi: OK\n");
+    return 0;
+}
+
 int main(int argc, char ** argv) {
     if (argc < 2 || argv[1][0] == '\0') {
         return fail("usage: jllama_c_abi <natives directory>");
@@ -77,6 +126,9 @@ int main(int argc, char ** argv) {
         return fail("jllama_build_info() does not name the pinned llama.cpp tag of its directory");
     }
     printf("c_abi: jllama C API %s over llama.cpp %s\n", api_version, build_info);
+    if (argc > 2 && strcmp(argv[2], "implicit") == 0) {
+        return implicit_load(dir);
+    }
     printf("c_abi: loading the backend modules from %s\n", dir);
     ggml_backend_load_all_from_path(dir);
     llama_backend_init();
@@ -100,6 +152,11 @@ int main(int argc, char ** argv) {
         return fail("no CPU device among the registered devices");
     }
     printf("c_abi: system info: %s\n", llama_print_system_info());
+    /* The CPU module ggml chose computes K-quant products as a reference from ggml-base says it should
+     * (kquant_matmul.h): on s390x under qemu that is the z15 module and llamafile's VXE kernel. */
+    if (jllama_check_kquant_matmul() != 0) {
+        return fail("MUL_MAT over K-quant weights on the CPU backend differs from the reference");
+    }
 
     const char * model_path = getenv("JLLAMA_C_ABI_MODEL");
     if (model_path != NULL && model_path[0] != '\0') {
@@ -113,7 +170,47 @@ int main(int argc, char ** argv) {
         llama_model_desc(model, description, sizeof description);
         printf("c_abi: loaded %s: %s, %lld parameters\n", model_path, description,
                (long long) llama_model_n_params(model));
+        /* Layer A: upstream's tokenizer through the C API. */
+        const struct llama_vocab * vocab = llama_model_get_vocab(model);
+        const char * text = "Hello world";
+        llama_token tokens[64];
+        const int32_t n_tokens = llama_tokenize(vocab, text, (int32_t) strlen(text), tokens, 64, false, false);
+        if (n_tokens <= 0) {
+            llama_model_free(model);
+            return fail("llama_tokenize returned no tokens");
+        }
+        for (int32_t i = 0; i < n_tokens; i++) {
+            if (tokens[i] < 0 || tokens[i] >= llama_vocab_n_tokens(vocab)) {
+                llama_model_free(model);
+                return fail("llama_tokenize returned a token outside the vocabulary");
+            }
+        }
+        printf("c_abi: '%s' is %d token(s) of a vocabulary of %d\n", text, (int) n_tokens,
+               (int) llama_vocab_n_tokens(vocab));
         llama_model_free(model);
+
+        /* Layer B: the same file through jllama_model_load and a completion, as a C consumer runs it. */
+        const char * load_argv[] = {"c_abi", "-m", model_path, "-c", "128", "-ngl", "0", "--no-warmup", "-t", "1"};
+        jllama_model * served = NULL;
+        if (jllama_model_load((int) (sizeof load_argv / sizeof load_argv[0]), load_argv, NULL, NULL, &served) !=
+                JLLAMA_STATUS_OK || served == NULL) {
+            fprintf(stderr, "c_abi: %s\n", jllama_last_error());
+            return fail("jllama_model_load");
+        }
+        char * response = NULL;
+        const jllama_status status = jllama_completions(
+            served, "{\"prompt\":\"Hello\",\"n_predict\":4,\"temperature\":0}", &response);
+        if (status != JLLAMA_STATUS_OK || response == NULL || strstr(response, "\"content\"") == NULL ||
+            strstr(response, "\"tokens_predicted\"") == NULL) {
+            fprintf(stderr, "c_abi: status %d, %s, %s\n", (int) status, response != NULL ? response : "(null)",
+                    jllama_last_error());
+            jllama_string_free(response);
+            jllama_model_free(served);
+            return fail("jllama_completions");
+        }
+        printf("c_abi: jllama_completions answered %zu bytes\n", strlen(response));
+        jllama_string_free(response);
+        jllama_model_free(served);
     } else {
         printf("c_abi: JLLAMA_C_ABI_MODEL not set, no model loaded\n");
     }

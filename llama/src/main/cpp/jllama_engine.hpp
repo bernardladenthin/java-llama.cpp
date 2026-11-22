@@ -81,6 +81,12 @@ struct video_decoder {
 void free(jllama_context *jctx);
 
 /**
+ * free()'s first step on its own (jllama_model_interrupt): marks the handle closing, so every parked
+ * reader unwinds within one poll, and cancels the streaming readers. Idempotent; frees nothing.
+ */
+void interrupt(jllama_context *jctx) noexcept;
+
+/**
  * Refuses an operation on a model loaded with --vocab-only, which has the tokenizer but no server
  * context and no inference loop: throws std::runtime_error naming `operation` ("<operation> is not
  * available in vocab-only mode ..."). Such a model answers the model meta, tokenize and detokenize
@@ -109,8 +115,8 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
                               std::vector<raw_buffer> files = {});
 
 /** Wakes the queue, then posts (see the comment in the .cpp for why the wake is not optional). */
-void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false);
-void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, server_task &&task, bool front = false);
+void wake_and_post(jllama_context *jctx, server_response_reader &rd, std::vector<server_task> &&tasks,
                    const common_chat_session &session = {});
 
 /**
@@ -166,9 +172,12 @@ void task_release(jllama_context *jctx, int id_task);
 
 /**
  * Installs (or, with null, removes) the log sink of common_log (patches/0014), the sink
- * LlamaModel.setLogger and jllama_set_log_callback share. Swaps are serialised: a swap pauses and
- * resumes common_log's worker thread, and two concurrent swaps raced on that std::thread
- * (std::terminate, measured by LlamaLoggerTest before the lock existed). Removing the sink first
+ * LlamaModel.setLogger and jllama_set_log_callback share. Swaps are serialised with every other
+ * change of common_log this layer makes (the --log-file a load opens or a free closes, a parse with
+ * --log-disable or --log-colors): each pauses and resumes common_log's worker thread, and two of them
+ * interleaved raced on that std::thread (std::terminate, measured by LlamaLoggerTest before the lock
+ * existed). A log callback must therefore not set the sink, load or free a model itself: the
+ * thread doing so waits for the worker the callback runs on. Removing the sink first
  * drains every queued entry to the previous callback, which is what makes "set null" a
  * synchronous flush. With a sink installed, llama/ggml lines are routed into common_log as well,
  * so they reach it before the first model load runs common_init().
@@ -229,6 +238,28 @@ void set_cpu_moe_batched(bool batched);
 /** Reranks documents against a query (needs `--reranking`); the result array. */
 [[nodiscard]] std::string rerank(jllama_context *jctx, const std::string &query,
                                  const std::vector<std::string> &documents);
+
+/**
+ * Why llama.cpp would abort the process loading a model with these parameters, or empty: a
+ * --batch-size of 0 gives a context whose batch holds no token, and the first decode aborts; a
+ * negative --ubatch-size becomes a huge unsigned one (and the batch of an embedding context).
+ */
+[[nodiscard]] std::string batch_refusal(const common_params &params);
+
+/**
+ * Parses an embedded server's argv into `params` before its worker starts -- the only parse: the
+ * worker runs llama_server_parsed() / llama_server_attach_parsed() (patches/0006, 0007) on them, so a
+ * file option is read once. A refused argv or batch (batch_refusal) throws std::runtime_error with
+ * the reason, synchronously and before the argv's log file is opened (a file LLAMA_ARG_LOG_FILE
+ * opened is closed again). Then the server's half of the --log-file ownership: takes "--log-file
+ * <path>" out of `argv` and opens the file after the variable's, as upstream orders them, and
+ * returns the owner id (0: no log file). The release closes the file unless a model's load or
+ * another server has taken it over since. `attached`: the server serves a loaded model, whose load ran
+ * common_init() already -- running it again turned the log prefix and timestamps of the model's
+ * --no-log-prefix / --no-log-timestamps back on, process-wide.
+ */
+[[nodiscard]] std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params &params, bool attached);
+void release_log_file_of_server(std::uint64_t owner);
 
 /** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */
 [[nodiscard]] std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special);
