@@ -343,7 +343,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`Gemma4.ThreeSequencesInOneBatchOf*`: three prompts of a generated Gemma 4 decoded as three
   sequences of one batch, with a split and a unified KV cache, get the logits each gets alone, 2.3e-5
   apart at most; red-checked against the patched tree, an output taken back by its place in the batch
-  instead of in its slice is 2.45 apart and wrong mask rows 1.15 and 1.72). b12589 extends Vulkan's
+  instead of in its slice is 2.45 apart and wrong mask rows 1.15 and 1.72;
+  `CApiGemma4.ThreeSlotsAtOnceAnswerAsEachAlone` holds the same through the server, three requests at
+  once on three slots with a batch of 8 tokens, red with the wrong mask rows). b12589 extends Vulkan's
   `COL2IM_1D` (#32673). b12590 gives Drama-3 voice cloning through Fish Audio S2's codec encoder
   (#32586): `TextToSpeech.supportsSpeakerReference()` is true for a Drama-3 pair whose projector
   carries the encoder, as for the other six pipelines that encode a clip

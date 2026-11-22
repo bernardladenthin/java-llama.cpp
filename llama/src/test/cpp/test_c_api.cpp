@@ -4224,6 +4224,91 @@ TEST(CApiZaya1, TwoSlotsAtOnceAnswerAsEachAlone) {
     std::filesystem::remove(path, ignored);
 }
 
+// Gemma 4 through the server (b12588, #32342). The server decodes the slots that are busy at the same
+// time in one batch; with a batch of 8 tokens a prompt of a slot is evaluated in pieces, the piece
+// before its last with no output, while the other slots generate -- sequences with other numbers of
+// outputs in one batch, which the graph's pruning before the KV-shared layers takes apart slice by
+// slice of the attention mask (test_gemma4.cpp holds it on llama.h). Three requests at once on three
+// slots answer what each answers alone, with a unified and with a split KV cache. Red-checked on the
+// pruning: pruned rows given the mask rows of the first tokens instead of their own fail it with the
+// split cache; an output taken back by its place in the batch instead of in its slice does not reach
+// the server's batches (it reaches test_gemma4.cpp's, which put the outputs where they want).
+TEST(CApiGemma4, ThreeSlotsAtOnceAnswerAsEachAlone) {
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::gemma4(8, "jllama-c-api-gemma4-slots"));
+    ASSERT_FALSE(path.empty());
+    // longer than the window of 8, and of other lengths, so the slots are in other phases at a time
+    const std::vector<std::string> prompts = {"Hello there, how are you", "Yellow paint dries in the sun today",
+                                              "The quick brown fox jumps over the lazy dog at noon"};
+    const auto request = [](const std::string &prompt) {
+        return json{{"prompt", prompt}, {"n_predict", 12},    {"temperature", 0},
+                    {"n_probs", 3},     {"ignore_eos", true}, {"cache_prompt", false}}
+            .dump();
+    };
+    // the log-probabilities of the top tokens of every step, and the number of prompt tokens evaluated
+    const auto read = [](const Owned &response) {
+        std::vector<double> out;
+        const json j = json::parse(response.str());
+        for (const json &step : j.at("completion_probabilities")) {
+            for (const json &top : step.at("top_logprobs")) {
+                out.push_back(top.at("logprob").get<double>());
+            }
+        }
+        out.push_back(j.at("timings").at("prompt_n").get<double>());
+        return out;
+    };
+    std::vector<std::vector<double>> alone;
+    {
+        jllama_model *model = load_tiny(path, {"-c", "128", "-b", "8", "-ub", "8"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned meta;
+        ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        EXPECT_EQ(json::parse(meta.str()).at("architecture").get<std::string>(), "gemma4");
+        for (const std::string &prompt : prompts) {
+            Owned response;
+            ASSERT_EQ(jllama_completions(model, request(prompt).c_str(), &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            alone.push_back(read(response));
+        }
+        jllama_model_free(model);
+    }
+    for (size_t p = 0; p < prompts.size(); ++p) {
+        ASSERT_EQ(alone[p].size(), 12u * 3u + 1u) << p;
+        EXPECT_EQ(alone[p].back(), static_cast<double>(prompts[p].size())) << "the whole prompt, no cache";
+    }
+    double apart = 0.0;
+    for (size_t i = 0; i + 1 < alone[0].size(); ++i) {
+        apart = std::max(apart, std::fabs(alone[0][i] - alone[1][i]));
+    }
+    EXPECT_GT(apart, 1e-3) << "the prompts are answered with other probabilities";
+
+    for (const char *kv : {"--kv-unified", "--no-kv-unified"}) {
+        SCOPED_TRACE(kv);
+        jllama_model *model = load_tiny(path, {"-c", "384", "-np", "3", "-b", "8", "-ub", "8", kv});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        std::vector<Owned> together(prompts.size());
+        std::vector<jllama_status> status(prompts.size(), JLLAMA_STATUS_ERROR);
+        std::vector<std::thread> threads;
+        for (size_t i = 0; i < prompts.size(); ++i) {
+            threads.emplace_back(
+                [&, i]() { status[i] = jllama_completions(model, request(prompts[i]).c_str(), &together[i].s); });
+        }
+        for (auto &thread : threads) {
+            thread.join();
+        }
+        for (size_t p = 0; p < prompts.size(); ++p) {
+            ASSERT_EQ(status[p], JLLAMA_STATUS_OK) << p;
+            const std::vector<double> got = read(together[p]);
+            ASSERT_EQ(got.size(), alone[p].size()) << p;
+            for (size_t i = 0; i < got.size(); ++i) {
+                EXPECT_NEAR(got[i], alone[p][i], 1e-3) << "prompt " << p << ", value " << i;
+            }
+        }
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 // Domyn Edge (b12568, #32559): sliding-window layers with RoPE and heads half as wide, full-attention
 // layers without positions, sandwich norms (tiny_model_spec::domyn_edge).
 namespace {
