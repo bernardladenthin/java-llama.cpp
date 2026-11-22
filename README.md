@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12628](https://img.shields.io/badge/llama.cpp-%23b12628-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12628)  
+[![llama.cpp b12631](https://img.shields.io/badge/llama.cpp-%23b12631-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12631)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1024,7 +1024,7 @@ other model refuses them. VoxCPM2 speaks at 48 kHz and ships no predefined voice
 by a description in parentheses at the start of the text, or cloned from a speaker reference when its
 mmproj carries the AudioVAE encoder (it clones without the transcript and ignores
 `speakerReferenceText`). No VoxCPM2 conversion is in CI's model set; the C++ suite drives the pipeline
-over a random pair. **Hibiki** (b12628, Kyutai's full-duplex speech translation over Moshi) speaks while
+over a random pair. **Hibiki** (b12631, Kyutai's full-duplex speech translation over Moshi) speaks while
 it listens: llama.cpp's pipeline for it takes neither a text prompt nor a speaker reference and only
 streams PCM, so `TextToSpeech` cannot drive it (a synthesis is refused as an invalid request, read from
 upstream's code: no Hibiki conversion is in CI's set and the C++ suite has no generator for it);

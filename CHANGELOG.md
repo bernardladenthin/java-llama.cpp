@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12628** (from b12573, 55 upstream commits in twelve steps; master, pinned by commit
+- **llama.cpp b12631** (from b12573, 58 upstream commits in thirteen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -407,8 +407,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   b12625 fixes `no_realloc` for two decision models (#32754), b12626 and b12628 fix Vulkan's memset of
   unaligned ranges and `SCALE` of a non-contiguous source (#32725, #32735), and b12627 fits the
   server's non-causal batches into one ubatch (#32713) -- which `patches/0036` already does for
-  every caller (a non-causal context's batch is its ubatch), so it stays. All 31 patches apply
-  unchanged.
+  every caller (a non-causal context's batch is its ubatch), so it stays. b12629 adds cooperative-matrix
+  GEMM kernels for the Adreno 850 to the OpenCL backend (#32686; Q4_0, Q5_0, Q8_0, Q4_K, Q5_K, Q6_K,
+  seven kernels more in the embedded set the Android and Windows OpenCL modules carry; built here as CI's
+  Android job configures it, module-only with the Adreno kernels embedded, all seven are in
+  `libggml-opencl.so`), and b12630 and
+  b12631 move WebGPU to a recent Dawn (#32779, #32782; no WebGPU module is built here). All 31 patches
+  apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
