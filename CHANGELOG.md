@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12600** (from b12573, 27 upstream commits in six steps; master, pinned by commit
+- **llama.cpp b12602** (from b12573, 29 upstream commits in seven steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -366,7 +366,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   red against b12596's partial result, whose deltas were the raw text: `e</think>=eeeeeeeeee` for the
   transcript `=eeeeeeeeee`). b12598 changes upstream's
   OpenVINO CI, b12599 tunes HIP's `MMVQ` for RDNA1 (#32389), and b12600 adds Inkling 2 Mini, the
-  looped variant of Inkling 2 (#32694, architecture `inkling2_loop`). All 31 patches apply unchanged.
+  looped variant of Inkling 2 (#32694, architecture `inkling2_loop`). b12601 documents the OpenVINO
+  backend and fixes the SYCL docs (#30967), and b12602 runs SYCL's grouped XMX GEMM without staging
+  through shared local memory (#31428; the SYCL module is built in CI only). All 31 patches apply
+  unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
