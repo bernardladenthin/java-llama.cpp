@@ -806,6 +806,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A JSON schema no value satisfies was answered against it, or failed without its reason.** llama.cpp
+  read `minItems`/`maxItems`, `minLength`/`maxLength` and an integer's `minimum`/`maximum` without
+  comparing them and wrote them into the grammar as they came: `minItems 2 / maxItems 1` was answered
+  with one item and `minLength 3 / maxLength 0` with the empty string; `minItems 3 / maxItems 2` and
+  `minLength 5 / maxLength 2` failed as "failed to parse grammar" (llama.cpp's grammar parser refuses
+  such a repetition since b12604); and an integer from 6 to 5 failed the generation as a server error.
+  Each is refused now while the schema is read, naming the schema path and the bound -- an
+  `InvalidRequestException` (`JLLAMA_STATUS_INVALID_REQUEST`) for the `response_format` or `json_schema`
+  of a request, a `LlamaException` from `LlamaModel.jsonSchemaToGrammar` -- as llama.cpp already refused
+  an `allOf` whose integer ranges do not meet (new `patches/0042`; `CApiStatic.ASchemaWhoseBoundsAdmitNoValueIsRefused`,
+  `CApiStructured.ARequestWithASchemaNoValueSatisfiesIsRefusedAndTheModelGoesOn`, both red without it).
 - **`OpenAiCompatServer` handled `reasoning_effort` itself, after llama.cpp's rule of b11639, and
   `LlamaModel` had no way to set it.** The chat mapping turned the field into `chat_template_kwargs`
   (`none` into `enable_thinking: false`), so two later rules of llama.cpp's chat parser never applied

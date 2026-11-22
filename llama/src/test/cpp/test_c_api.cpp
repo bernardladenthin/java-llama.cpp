@@ -2496,6 +2496,51 @@ TEST(CApiStatic, AnAllOfOverNumbersIsOneRangeAndAnEmptyOneIsRefused) {
     EXPECT_NE(std::string(jllama_last_error()).find("empty numeric range"), std::string::npos) << jllama_last_error();
 }
 
+// patches/0042: a schema whose bounds admit no value is refused while it is read, naming the bound. The
+// converter wrote such bounds into the grammar as they came: a repetition {2,1} the grammar parser refuses
+// since b12604 without the reason, one item for minItems 2 / maxItems 1, the empty string for minLength 3
+// / maxLength 0, and the character range [6-5] for an integer from 6 to 5. Equal bounds and an open upper
+// bound stay what they were, and a number's bounds, which the grammar does not carry, stay unchecked.
+TEST(CApiStatic, ASchemaWhoseBoundsAdmitNoValueIsRefused) {
+    const struct {
+        const char *schema;
+        const char *reason;
+    } refused[] = {
+        {R"({"type":"array","items":{"type":"integer"},"minItems":3,"maxItems":2})", "minItems"},
+        {R"({"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":1})", "minItems"},
+        {R"({"type":"array","minItems":1,"maxItems":0})", "minItems"},
+        {R"({"type":"string","minLength":5,"maxLength":2})", "minLength"},
+        {R"({"type":"string","minLength":3,"maxLength":0})", "minLength"},
+        {R"({"type":"integer","minimum":6,"maximum":5})", "no integer"},
+        {R"({"type":"integer","minimum":1.5,"maximum":1.6})", "no integer"},
+        {R"({"type":"integer","exclusiveMinimum":5,"exclusiveMaximum":6})", "no integer"},
+        {R"({"type":"object","properties":{"a":{"type":"string","minLength":2,"maxLength":1}}})", "/properties/a"},
+    };
+    for (const auto &c : refused) {
+        Owned grammar;
+        EXPECT_EQ(jllama_json_schema_to_grammar(c.schema, &grammar.s), JLLAMA_STATUS_ERROR) << c.schema;
+        EXPECT_EQ(grammar.s, nullptr) << c.schema;
+        EXPECT_NE(std::string(jllama_last_error()).find(c.reason), std::string::npos) << jllama_last_error();
+    }
+    const struct {
+        const char *schema;
+        const char *rule;
+    } kept[] = {
+        {R"({"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2})", "{1,1}"},
+        {R"({"type":"array","items":{"type":"integer"},"minItems":0,"maxItems":0})", R"("[" space  space "]")"},
+        {R"({"type":"array","items":{"type":"integer"},"minItems":3})", "{2,}"},
+        {R"({"type":"string","minLength":3,"maxLength":3})", "char{3,3}"},
+        {R"({"type":"integer","minimum":5,"maximum":5})", R"(("5"))"},
+        {R"({"type":"number","minimum":6,"maximum":5})", "integral-part"},
+    };
+    for (const auto &c : kept) {
+        Owned grammar;
+        ASSERT_EQ(jllama_json_schema_to_grammar(c.schema, &grammar.s), JLLAMA_STATUS_OK)
+            << c.schema << ": " << jllama_last_error();
+        EXPECT_NE(grammar.str().find(c.rule), std::string::npos) << c.schema << "\n" << grammar.str();
+    }
+}
+
 // patches/0022's switch through the C API: it reaches the CPU backend's entry points, round-trips,
 // and refuses a null out-pointer. What the two paths compute is test_moe_repack.cpp's business.
 TEST(CApiStatic, CpuMoeBatchedSwitchRoundTrips) {
@@ -11680,6 +11725,43 @@ TEST_F(CApiStructured, AResponseFormatNextToToolsStillConstrainsTheWholeAnswer) 
     // schema now whether or not tools are offered.
     const std::string content = chat_content(model_, std::string(YES_NO_NESTED) + ONE_TOOL);
     EXPECT_TRUE(is_yes_or_no(content)) << content;
+}
+
+// patches/0042 on the request paths: a response_format (chat) and a json_schema (raw completion) whose
+// bounds no value meets are the caller's fault, named, and the model answers the next request. Without
+// the patch the chat answers were "[99996]" and "\"\"" -- one item for minItems 2 and the empty string for
+// minLength 3 --, two schemas failed as "failed to parse grammar", and the integer from 6 to 5 failed the
+// generation as a server error ("Unexpected empty grammar stack").
+TEST_F(CApiStructured, ARequestWithASchemaNoValueSatisfiesIsRefusedAndTheModelGoesOn) {
+    const char *const schemas[] = {
+        R"({"type":"array","items":{"type":"integer"},"minItems":3,"maxItems":2})",
+        R"({"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":1})",
+        R"({"type":"string","minLength":5,"maxLength":2})",
+        R"({"type":"string","minLength":3,"maxLength":0})",
+        R"({"type":"integer","minimum":6,"maximum":5})",
+    };
+    for (const char *schema : schemas) {
+        Owned chat;
+        const std::string chat_request =
+            std::string(R"({"messages":[{"role":"user","content":"Answer."}],"temperature":0,"max_tokens":24,)"
+                        R"("response_format":{"type":"json_schema","schema":)") +
+            schema + "}}";
+        EXPECT_EQ(jllama_chat_completions(model_, chat_request.c_str(), &chat.s), JLLAMA_STATUS_INVALID_REQUEST)
+            << schema << ": " << (chat.s != nullptr ? chat.str() : std::string());
+        EXPECT_NE(std::string(jllama_last_error()).find("JSON schema error"), std::string::npos) << jllama_last_error();
+
+        Owned raw;
+        const std::string raw_request =
+            std::string(R"({"prompt":"Answer.","temperature":0,"n_predict":8,"json_schema":)") + schema + "}";
+        EXPECT_EQ(jllama_completions(model_, raw_request.c_str(), &raw.s), JLLAMA_STATUS_INVALID_REQUEST)
+            << schema << ": " << (raw.s != nullptr ? raw.str() : std::string());
+        EXPECT_NE(std::string(jllama_last_error()).find("JSON schema error"), std::string::npos) << jllama_last_error();
+    }
+    // the bounds that meet still constrain the answer, and the model answers after the refusals
+    const std::string two =
+        chat_content(model_, R"(,"response_format":{"type":"json_schema","schema":)"
+                             R"({"type":"array","items":{"enum":[1,2]},"minItems":2,"maxItems":2}})");
+    EXPECT_TRUE(std::regex_match(two, std::regex(R"(\[\s*[12],\s*[12]\s*\])"))) << two;
 }
 
 namespace {

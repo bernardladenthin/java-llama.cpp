@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**31 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**32 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -53,6 +53,7 @@ match a binary to this page.
 | 0039 | [`0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-names.patch`](#0039-common-argument-files-and-lookup-caches-are-opened-by-their-utf8-namespatch) | common : argument files and lookup caches are opened by their UTF-8 names | 3 | 6 |
 | 0040 | [`0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch`](#0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-onpatch) | common : closing a log sink does not turn a disabled log back on | 1 | 3 |
 | 0041 | [`0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch`](#0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threadspatch) | common : the log scope of the fit is safe for loads on several threads | 1 | 2 |
+| 0042 | [`0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch`](#0042-common-a-json-schema-whose-bounds-admit-no-value-is-refusedpatch) | common : a JSON schema whose bounds admit no value is refused | 1 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1339,4 +1340,37 @@ alone; a crash of the test process without the patch).
 
 Drop-check on every bump: read common_fit_log_scope in common/fit.cpp -- once it no longer installs a
 logger whose user data is the scope, or serialises the scopes itself, drop the patch.
+```
+
+## 0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch
+
+**Files (1):** `common/json-schema.cpp`
+
+The patch's own header, verbatim:
+
+```text
+common : a JSON schema whose bounds admit no value is refused
+
+The schema parser (common/json-schema.cpp) read minItems/maxItems, minLength/maxLength and an integer's
+minimum/maximum without comparing them, and json_schema_to_grammar wrote whatever they gave. A schema no
+value satisfies then went three ways, measured with a chat request on a random model at b12631:
+
+- minItems 3 / maxItems 2 and minLength 5 / maxLength 2 became a repetition {2,1} / {5,2}, which the
+  grammar parser refuses since b12604 (#32551) -- "failed to parse grammar", without the reason;
+- minItems 2 / maxItems 1 and minLength 3 / maxLength 0 became a grammar of one item and of the empty
+  string: the request was answered with "[99996]" and "\"\"", against the schema it gave;
+- an integer with minimum 6 and maximum 5 became the character range [6-5], which nothing matches: the
+  generation failed with "Unexpected empty grammar stack after accepting piece", a server error.
+
+Each is refused now while the schema is read, naming the schema path and the bound, as a schema error
+the server answers as an invalid request -- the way the converter already refuses an allOf whose
+integer ranges do not meet (#31834). A number's bounds are not written into the grammar at all and stay
+as they are.
+
+The guard is CApiStatic.ASchemaWhoseBoundsAdmitNoValueIsRefused and
+CApiStructured.ARequestWithASchemaNoValueSatisfiesIsRefusedAndTheModelGoesOn in
+src/test/cpp/test_c_api.cpp.
+
+Drop-check on every bump: read build_array, build_string and build_integer in common/json-schema.cpp --
+once they compare the two bounds themselves, drop the patch.
 ```

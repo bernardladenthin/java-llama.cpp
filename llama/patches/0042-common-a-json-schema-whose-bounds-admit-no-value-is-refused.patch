@@ -1,0 +1,59 @@
+common : a JSON schema whose bounds admit no value is refused
+
+The schema parser (common/json-schema.cpp) read minItems/maxItems, minLength/maxLength and an integer's
+minimum/maximum without comparing them, and json_schema_to_grammar wrote whatever they gave. A schema no
+value satisfies then went three ways, measured with a chat request on a random model at b12631:
+
+- minItems 3 / maxItems 2 and minLength 5 / maxLength 2 became a repetition {2,1} / {5,2}, which the
+  grammar parser refuses since b12604 (#32551) -- "failed to parse grammar", without the reason;
+- minItems 2 / maxItems 1 and minLength 3 / maxLength 0 became a grammar of one item and of the empty
+  string: the request was answered with "[99996]" and "\"\"", against the schema it gave;
+- an integer with minimum 6 and maximum 5 became the character range [6-5], which nothing matches: the
+  generation failed with "Unexpected empty grammar stack after accepting piece", a server error.
+
+Each is refused now while the schema is read, naming the schema path and the bound, as a schema error
+the server answers as an invalid request -- the way the converter already refuses an allOf whose
+integer ranges do not meet (#31834). A number's bounds are not written into the grammar at all and stay
+as they are.
+
+The guard is CApiStatic.ASchemaWhoseBoundsAdmitNoValueIsRefused and
+CApiStructured.ARequestWithASchemaNoValueSatisfiesIsRefusedAndTheModelGoesOn in
+src/test/cpp/test_c_api.cpp.
+
+Drop-check on every bump: read build_array, build_string and build_integer in common/json-schema.cpp --
+once they compare the two bounds themselves, drop the patch.
+
+diff --git a/common/json-schema.cpp b/common/json-schema.cpp
+index eb57a524a..8741a5666 100644
+--- a/common/json-schema.cpp
++++ b/common/json-schema.cpp
+@@ -203,6 +203,9 @@ class common_chat_schema_builder {
+         }
+         node->min_items = get_count(schema, "minItems", path, 0);
+         node->max_items = get_count(schema, "maxItems", path, -1);
++        if (node->max_items >= 0 && node->min_items > node->max_items) {
++            fail(path, "minItems must not be greater than maxItems");
++        }
+         return node;
+     }
+ 
+@@ -218,6 +221,9 @@ class common_chat_schema_builder {
+         node->format     = get_format(schema, path);
+         node->min_length = get_count(schema, "minLength", path, 0);
+         node->max_length = get_count(schema, "maxLength", path, -1);
++        if (node->max_length >= 0 && node->min_length > node->max_length) {
++            fail(path, "minLength must not be greater than maxLength");
++        }
+         return node;
+     }
+ 
+@@ -233,6 +239,9 @@ class common_chat_schema_builder {
+         } else if (schema.contains("exclusiveMaximum")) {
+             node->maximum = get_bound(schema, "exclusiveMaximum", path, /* round_up */ true) - 1;
+         }
++        if (node->minimum > node->maximum) {
++            fail(path, "no integer lies between the minimum and the maximum");
++        }
+         return node;
+     }
+ 
