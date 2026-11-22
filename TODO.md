@@ -359,6 +359,12 @@ the log lock)
   it is cancelled), and `TextToSpeech` refusing the pair by name.
   The Pocket TTS generator already writes a Mimi decoder; the encoder, the depformer's acoustic delay
   of two frames and the backbone are new. No Hibiki conversion is in `models.csv`.
+- **Parakeet has no generator** (b12628, #32722): llama.cpp fixed an out-of-bounds read in the
+  relative-position scores of the Parakeet encoder (`tools/mtmd/models/parakeet.cpp`, two views over
+  the scores merged into one with the diagonal stride), which nothing here exercises -- no Parakeet
+  conversion is in `models.csv`, and the generator writes no FastConformer (subsampling convolutions,
+  relative-position attention, the convolution module). A generated projector would let a test hold
+  that the encoder's embeddings of a clip do not depend on what lies past its last frame.
 - VibeVoice-ASR and higgs v3 STT have no model in `models.csv`; Nemotron 3.5 Transcribe (b12087),
   MageVL-Cowork (b12192), Qwen3-VL's video prompt format (b12098), Gemma 4's audio stream (b12237) and
   Inkling 2 (#32217) are reached through the existing multimodal paths and exercised by no test here.
