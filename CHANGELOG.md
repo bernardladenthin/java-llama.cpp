@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12637** (from b12573, 64 upstream commits in fifteen steps; master, pinned by commit
+- **llama.cpp b12638** (from b12573, 65 upstream commits in sixteen steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -429,7 +429,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for `NativeServer` with its own model; attach mode, whose model is loaded already, does not serve the
   route. `patches/0006` was refreshed for it (the instance's shutdown handler also ends the SSE
   clients), and two C API cases follow a held download from its first half to the loaded model and a
-  load that fails to its end.
+  load that fails to its end. b12638 parses chat answers by token (#29307): the chat templates of a
+  model know its control and user-defined tokens, and the formats built on them (Qwen3-Coder, Qwen3.5,
+  Nemotron Nano 3, gpt-oss, Gemma 4, Muse Glimmer and others) end a reasoning block or open a tool call
+  only at the token itself, while the same characters written out stay text. GBNF token rules take
+  sets and ranges of ids (`<[1000,1005-1010]>`, negated `!<[...]>`), and a token a token rule names is
+  no longer matched by a character rule. Three C API cases hold it, the first two red at b12637: a grammar
+  of token sets and ranges and one whose `[a-c]` no longer takes the token it names elsewhere (`bbb`
+  before); a Qwen3-Coder-style template whose reasoning ends at the token `</think>` but not at the same
+  characters spelled out; and a tool call of that format opened at the token `<tool_call>` and parsed
+  into the call. All patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

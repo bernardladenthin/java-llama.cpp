@@ -14749,3 +14749,180 @@ TEST(CApiGraphReuse, AHybridSlidingWindowModelReusesItsGraphWithFlashAttention) 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
+
+namespace {
+// the text without the end-of-generation byte 4 at its end: write_tiny_llama_gguf(prefix, false, 4)
+// makes that byte the model's EOS, an ordinary byte token whose piece the answer keeps; a grammar
+// that is done leaves the model nothing else to write
+std::string without_eos_byte(std::string text) {
+    if (!text.empty() && text.back() == '\x04') {
+        text.pop_back();
+    }
+    return text;
+}
+
+// the single token of one character of the generator's byte vocabulary
+int single_token(jllama_model *model, const char *text) {
+    int *tokens = nullptr;
+    size_t count = 0;
+    EXPECT_EQ(jllama_tokenize(model, text, false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    const int token = count == 1 ? tokens[0] : -1;
+    jllama_tokens_free(tokens);
+    EXPECT_GE(token, 0) << "'" << text << "' is not one token";
+    return token;
+}
+
+std::string raw_under_grammar(jllama_model *model, const std::string &grammar, const json &logit_bias) {
+    json request = {{"prompt", "Hello there"}, {"temperature", 0}, {"n_predict", 8}, {"grammar", grammar}};
+    if (!logit_bias.is_null()) {
+        request["logit_bias"] = logit_bias;
+    }
+    Owned completion;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << grammar << ": " << jllama_last_error();
+    return completion.s != nullptr ? without_eos_byte(json::parse(completion.str()).at("content").get<std::string>())
+                                   : std::string();
+}
+} // namespace
+
+TEST(CApiGrammar, ATokenRuleTakesSetsAndRangesOfIdsAndItsTokensLeaveTheCharacterRules) {
+    // b12638 (#29307): a token rule takes several ids and inclusive ranges (<[1,5-9]>, negated
+    // !<[...]>), and a token a token rule names is no longer matched by a character rule -- [a-c] does
+    // not take the token "b" once the grammar names it. A logit bias makes the biased token the greedy
+    // choice wherever the grammar allows it, so each answer below is exact. At b12637 the sets did not
+    // parse (the request was refused) and [a-c] took "b": the last answer was "bbb".
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-grammar-token-sets", false, 4);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const int a = single_token(model, "a");
+    const int b = single_token(model, "b");
+    const int c = single_token(model, "c");
+    const int x = single_token(model, "x");
+    const int z = single_token(model, "z");
+    ASSERT_EQ(b, a + 1);
+    ASSERT_EQ(c, a + 2);
+    const std::string range = std::to_string(a) + "-" + std::to_string(c);
+    const std::string set = std::to_string(x) + "," + std::to_string(z);
+
+    // a range and a set, the biased member of each taken
+    const std::string sets = "root ::= <[" + range + "]> <[" + set + "]>";
+    EXPECT_EQ(raw_under_grammar(model, sets, json::array({json::array({c, 100}), json::array({x, 100})})), "cx");
+    EXPECT_EQ(raw_under_grammar(model, sets, json::array({json::array({b, 100}), json::array({z, 100})})), "bz");
+    // without a bias the answer is still a member of each
+    const std::string free_answer = raw_under_grammar(model, sets, nullptr);
+    ASSERT_EQ(free_answer.size(), 2u) << free_answer;
+    EXPECT_NE(std::string("abc").find(free_answer[0]), std::string::npos) << free_answer;
+    EXPECT_NE(std::string("xz").find(free_answer[1]), std::string::npos) << free_answer;
+    // a negated set refuses the biased token it names
+    const std::string negated =
+        raw_under_grammar(model, "root ::= !<[" + range + "]>", json::array({json::array({b, 100})}));
+    ASSERT_FALSE(negated.empty());
+    EXPECT_EQ(std::string("abc").find(negated[0]), std::string::npos) << negated;
+    // the token a token rule names leaves the character rules: [a-c] takes a and c only
+    const std::string opaque = raw_under_grammar(model, "root ::= [a-c] [a-c] <[" + std::to_string(b) + "]>",
+                                                 json::array({json::array({b, 100})}));
+    ASSERT_EQ(opaque.size(), 3u) << opaque;
+    EXPECT_NE(opaque[0], 'b') << opaque;
+    EXPECT_NE(opaque[1], 'b') << opaque;
+    EXPECT_EQ(opaque[2], 'b') << opaque;
+    // and a grammar that does not name it keeps the token in the character rule
+    EXPECT_EQ(raw_under_grammar(model, "root ::= [a-c] [a-c] [a-c]", json::array({json::array({b, 100})})), "bbb");
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiChatTokens, AThinkingTagEndsTheReasoningOnlyAsItsTokenNotSpelledOut) {
+    // b12638 (#29307) parses the Qwen3-Coder format (also Qwen3.5, Nemotron Nano 3) by token: with
+    // the thinking tags control tokens of the vocabulary, as in those models, the reasoning ends at the
+    // token </think>, and the same characters written out are text. A grammar fixes what the model
+    // writes: the tags as tokens give reasoning "plan" and content "answer"; the end tag spelled out
+    // (the token </think> is named in an unused rule, so the character rule cannot take it) ends
+    // nothing, and the text keeps it. Parsed by text, at b12637, the second answer split like the first.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-chat-tokens", false, 4,
+                                                   {"<think>", "</think>", "<tool_call>", "</tool_call>"});
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- a Qwen3-Coder template: <tool_call> <function= <parameter= <think> -#}"
+                             "{%- for message in messages -%}"
+                             "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+    jllama_model *model = load_with_chat_template(path, tmpl);
+    ASSERT_NE(model, nullptr);
+    const int think = N_VOCAB;
+    const int end_think = N_VOCAB + 1;
+    const auto chat = [&](const std::string &grammar) {
+        const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                              {"temperature", 0},
+                              {"n_predict", 30},
+                              {"grammar", grammar}};
+        Owned response;
+        EXPECT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()).at("choices").at(0).at("message") : json();
+    };
+    const json tokens =
+        chat("root ::= <[" + std::to_string(think) + "]> \"plan\" <[" + std::to_string(end_think) + "]> \"answer\"");
+    EXPECT_EQ(tokens.value("reasoning_content", std::string()), "plan") << tokens.dump();
+    EXPECT_EQ(without_eos_byte(tokens.value("content", std::string())), "answer") << tokens.dump();
+    const json spelled = chat("root ::= <[" + std::to_string(think) + "]> \"plan</think>answer\"\nunused ::= <[" +
+                              std::to_string(end_think) + "]>");
+    const std::string text =
+        spelled.value("reasoning_content", std::string()) + spelled.value("content", std::string());
+    EXPECT_NE(text.find("plan</think>answer"), std::string::npos) << spelled.dump();
+    EXPECT_NE(without_eos_byte(spelled.value("content", std::string())), "answer") << spelled.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiChatTokens, AQwen3CoderToolCallStartsAtItsTokenAndIsParsedIntoTheCall) {
+    // The Qwen3-Coder format's tool calls since b12638 (#29307): the grammar opens a call at the token
+    // <tool_call> and closes it at </tool_call> (token rules over the vocabulary's control tokens), the
+    // argument between them by the parameter's schema. With tool_choice "required" and a logit bias on
+    // <tool_call>, the greedy model calls the one tool; a boolean parameter leaves it two answers, and
+    // a bias on the end-of-generation byte ends the answer after the call. The parser turns it into
+    // the OpenAI tool call with the boolean as its argument. (This holds the format the bump moved
+    // onto tokens; parsed by text it gave the same call.)
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-qwen3-coder-tools", false, 4,
+                                                   {"<think>", "</think>", "<tool_call>", "</tool_call>"});
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- a Qwen3-Coder template without thinking: <tool_call> <function= <parameter= -#}"
+                             "{%- for message in messages -%}"
+                             "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+    jllama_model *model = load_with_chat_template(path, tmpl);
+    ASSERT_NE(model, nullptr);
+    const int tool_call = N_VOCAB + 2;
+    const int eos = single_token(model, "\x04");
+    const json tool = {{"type", "function"},
+                       {"function",
+                        {{"name", "set"},
+                         {"description", "sets the flag"},
+                         {"parameters",
+                          {{"type", "object"},
+                           {"properties", {{"flag", {{"type", "boolean"}}}}},
+                           {"required", json::array({"flag"})}}}}}};
+    const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"tools", json::array({tool})},
+                          {"tool_choice", "required"},
+                          {"temperature", 0},
+                          {"n_predict", 200}, // every byte is a token of its own: the call alone is about 60
+                          {"logit_bias", json::array({json::array({tool_call, 100}), json::array({eos, 100})})}};
+    Owned response;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json choice = json::parse(response.str()).at("choices").at(0);
+    EXPECT_EQ(choice.value("finish_reason", std::string()), "tool_calls") << choice.dump();
+    const json calls = choice.at("message").value("tool_calls", json::array());
+    ASSERT_EQ(calls.size(), 1u) << choice.dump();
+    EXPECT_EQ(calls.at(0).at("function").value("name", std::string()), "set") << choice.dump();
+    const json arguments = json::parse(calls.at(0).at("function").value("arguments", std::string("{}")));
+    ASSERT_TRUE(arguments.contains("flag")) << choice.dump();
+    EXPECT_TRUE(arguments.at("flag").is_boolean()) << choice.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}

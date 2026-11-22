@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12637](https://img.shields.io/badge/llama.cpp-%23b12637-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12637)  
+[![llama.cpp b12638](https://img.shields.io/badge/llama.cpp-%23b12638-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12638)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1725,6 +1725,11 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
     model.generate(inferParams);
 }
 ```
+
+The grammar is llama.cpp's GBNF. A token rule names tokens by id: `<[1000]>`, since llama.cpp b12638
+also several ids and inclusive ranges (`<[1000,1005-1010]>`) and their complement (`!<[1000-1010]>`). A
+token a token rule names is matched as that token only: once the grammar names `<[98]>`, a character
+rule such as `[a-c]` no longer takes token 98, even where its text would fit.
 
 ### Reactive integration (Reactor, RxJava, Kotlin Flow, Akka)
 
