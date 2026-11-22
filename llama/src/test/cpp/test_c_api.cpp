@@ -2924,13 +2924,12 @@ bool overwrite_after(const std::string &path, const std::string &marker, size_t 
     return static_cast<bool>(f);
 }
 
-// A GGUF string as the file stores it: its length as a little-endian u64, then the bytes.
+// A GGUF string as the file stores it: its length as a u64, then the bytes. gguf writes a file in the
+// byte order of the host that writes it (a big-endian GGUF on s390x), and so does overwrite_after.
 std::string gguf_string(const std::string &s) {
     std::string out(8, '\0');
-    uint64_t n = s.size();
-    for (int i = 0; i < 8; ++i) {
-        out[i] = static_cast<char>((n >> (8 * i)) & 0xff);
-    }
+    const uint64_t n = s.size();
+    std::memcpy(&out[0], &n, sizeof(n));
     return out + s;
 }
 
@@ -8733,11 +8732,14 @@ TEST_F(CApiVoxCpm2, ASynthesisIsAMonoWavOfWholeFramesAt48kHz) {
     EXPECT_EQ(le32(wav, 40), wav.size() - 44) << "the data chunk holds every sample";
     // a stop at the first frame is held back to 4 frames (n_frames > min_len + 1), 0.64 s
     EXPECT_EQ(frames_of(wav), 4) << wav.size();
-    const auto *pcm = reinterpret_cast<const int16_t *>(wav.data() + 44);
     // the generator keeps the decoder inside tanh's range (measured: RMS 5114, peak 30080 of 32767), so the
-    // comparisons below are made on samples, not on silence or on the clamp of the 16-bit conversion
-    const int peak = std::accumulate(pcm, pcm + (wav.size() - 44) / 2, 0,
-                                     [](int m, int16_t s) { return std::max(m, std::abs(static_cast<int>(s))); });
+    // comparisons below are made on samples, not on silence or on the clamp of the 16-bit conversion. The
+    // samples are little-endian whatever the host (read as host int16 on s390x they reached 32768).
+    int peak = 0;
+    for (size_t i = 44; i + 1 < wav.size(); i += 2) {
+        const auto sample = static_cast<int16_t>(static_cast<uint16_t>(wav[i] | wav[i + 1] << 8));
+        peak = std::max(peak, std::abs(static_cast<int>(sample)));
+    }
     EXPECT_GT(peak, 1000);
     EXPECT_LT(peak, 32767);
     std::vector<unsigned char> again;
@@ -11612,6 +11614,287 @@ TEST(CApiDownload, AModelUrlIsDownloadedToItsPathAndLoaded) {
     std::filesystem::remove(source, ec);
     std::filesystem::remove_all(dir, ec);
 }
+
+namespace {
+// a loopback HTTP server that serves `bytes` at /model.gguf and holds the body after its first half
+// until release(): a download the test can watch while it runs
+struct HeldModelServer {
+    httplib::Server http;
+    std::thread serving;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool released = false;
+    int port = 0;
+    explicit HeldModelServer(const std::string &bytes) {
+        http.Get("/model.gguf", [this, &bytes](const httplib::Request &, httplib::Response &res) {
+            res.set_content_provider(bytes.size(), "application/octet-stream",
+                                     [this, &bytes](size_t offset, size_t, httplib::DataSink &sink) {
+                                         const size_t half = bytes.size() / 2;
+                                         if (offset < half) {
+                                             return sink.write(bytes.data() + offset, half - offset);
+                                         }
+                                         std::unique_lock<std::mutex> lock(mutex);
+                                         cv.wait_for(lock, std::chrono::seconds(60), [this] { return released; });
+                                         return sink.write(bytes.data() + offset, bytes.size() - offset);
+                                     });
+        });
+        port = http.bind_to_any_port("127.0.0.1");
+        serving = std::thread([this]() { http.listen_after_bind(); });
+        http.wait_until_ready();
+    }
+    void release() {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        cv.notify_all();
+    }
+    ~HeldModelServer() {
+        release();
+        http.stop();
+        serving.join();
+    }
+};
+
+// the events of GET /models/sse, read on a thread of their own from the moment the server listens
+// until it ends the stream
+struct ModelsSseReader {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::vector<json> events;
+    bool ended = false;
+    int status = 0;
+    std::string content_type;
+    std::thread reading;
+    explicit ModelsSseReader(int port) {
+        reading = std::thread([this, port]() {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            std::string pending;
+            while (std::chrono::steady_clock::now() < deadline) {
+                httplib::Client client("127.0.0.1", port);
+                client.set_read_timeout(std::chrono::seconds(60));
+                bool connected = false;
+                const auto res = client.Get(
+                    "/models/sse",
+                    [&](const httplib::Response &r) {
+                        connected = true;
+                        std::lock_guard<std::mutex> lock(mutex);
+                        status = r.status;
+                        content_type = r.get_header_value("Content-Type");
+                        return true;
+                    },
+                    [&](const char *data, size_t length) {
+                        pending.append(data, length);
+                        size_t end;
+                        while ((end = pending.find("\n\n")) != std::string::npos) {
+                            const std::string line = pending.substr(0, end);
+                            pending.erase(0, end + 2);
+                            if (line.rfind("data: ", 0) == 0) {
+                                std::lock_guard<std::mutex> lock(mutex);
+                                events.push_back(json::parse(line.substr(6)));
+                                cv.notify_all();
+                            }
+                        }
+                        return true;
+                    });
+                if (connected) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::lock_guard<std::mutex> lock(mutex);
+            ended = true;
+            cv.notify_all();
+        });
+    }
+    // the first event that matches, waiting for it up to `seconds`
+    json await(const std::function<bool(const json &)> &match, int seconds = 30) {
+        std::unique_lock<std::mutex> lock(mutex);
+        json found;
+        cv.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            for (const auto &e : events) {
+                if (match(e)) {
+                    found = e;
+                    return true;
+                }
+            }
+            return ended;
+        });
+        return found;
+    }
+    bool await_end(int seconds) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(seconds), [&] { return ended; });
+    }
+    std::vector<json> snapshot() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return events;
+    }
+    ~ModelsSseReader() {
+        if (reading.joinable()) {
+            reading.join();
+        }
+    }
+};
+
+int free_loopback_port() {
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    listener.join();
+    return port;
+}
+
+bool is_status(const json &e, const char *status) {
+    return e.value("event", std::string()) == "status_change" && e.contains("data") &&
+           e.at("data").value("status", std::string()) == status;
+}
+
+// the position of the first event that matches, or the number of events
+size_t index_of(const std::vector<json> &events, const std::function<bool(const json &)> &match) {
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (match(events[i])) {
+            return i;
+        }
+    }
+    return events.size();
+}
+} // namespace
+
+TEST(CApiServer, ASingleModelServerReportsItsDownloadAndLoadOverModelsSse) {
+    // Since b12637 (#32398) a single-model server listens before it downloads and loads its model, and
+    // serves GET /models/sse meanwhile: /health is 503 while the model is on its way, and the stream
+    // carries the download's progress, its end, the load and the loaded model. The loopback server
+    // holds the download at half the file, so the client sees it in progress whatever the timing.
+    const std::string source = write_tiny_llama_gguf("jllama-c-api-sse-source");
+    ASSERT_FALSE(source.empty());
+    std::string bytes;
+    {
+        std::ifstream in(source, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    ASSERT_GT(bytes.size(), 2u);
+    HeldModelServer model_server(bytes);
+    ASSERT_GT(model_server.port, 0);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-sse-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(model_server.port) + "/model.gguf";
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "-m",     target.c_str(),   "--model-url", url.c_str(),
+                          "-c",           "64",     "-ngl",           "0",           "--host",
+                          "127.0.0.1",    "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        const json progress =
+            sse.await([](const json &e) { return e.value("event", std::string()) == "download_progress"; });
+        ASSERT_FALSE(progress.is_null()) << "no download progress before the model arrived";
+        EXPECT_EQ(sse.status, 200);
+        EXPECT_EQ(sse.content_type.rfind("text/event-stream", 0), 0u) << sse.content_type;
+        EXPECT_EQ(progress.value("model", std::string()), target) << progress.dump();
+        const json file = progress.at("data").at("progress").at(url);
+        EXPECT_EQ(file.at("total").get<size_t>(), bytes.size()) << progress.dump();
+        EXPECT_LE(file.at("done").get<size_t>(), bytes.size() / 2) << progress.dump();
+        {
+            httplib::Client client("127.0.0.1", port);
+            const auto health = client.Get("/health");
+            ASSERT_TRUE(health) << httplib::to_string(health.error());
+            EXPECT_EQ(health->status, 503) << "the server is ready before its model arrived: " << health->body;
+        }
+        model_server.release();
+        const json loaded = sse.await([](const json &e) { return is_status(e, "loaded"); });
+        ASSERT_FALSE(loaded.is_null()) << "the model was not reported loaded";
+        const auto events = sse.snapshot();
+        const size_t finished =
+            index_of(events, [](const json &e) { return e.value("event", std::string()) == "download_finished"; });
+        const size_t loading = index_of(events, [](const json &e) { return is_status(e, "loading"); });
+        const size_t done = index_of(events, [](const json &e) { return is_status(e, "loaded"); });
+        EXPECT_LT(finished, loading) << json(events).dump();
+        EXPECT_LT(loading, done) << json(events).dump();
+        EXPECT_EQ(index_of(events, [](const json &e) { return e.value("event", std::string()) == "download_failed"; }),
+                  events.size());
+        EXPECT_TRUE(loaded.at("data").contains("info")) << loaded.dump();
+        EXPECT_EQ(std::filesystem::file_size(target), bytes.size());
+        httplib::Client client("127.0.0.1", port);
+        const auto health = client.Get("/health");
+        ASSERT_TRUE(health) << httplib::to_string(health.error());
+        EXPECT_EQ(health->status, 200) << health->body;
+        // a client that comes after the load gets the last event replayed: the loaded model, by the
+        // id GET /models lists
+        {
+            ModelsSseReader late(port);
+            const json replayed = late.await([](const json &) { return true; });
+            ASSERT_FALSE(replayed.is_null());
+            EXPECT_TRUE(is_status(replayed, "loaded")) << replayed.dump();
+            const auto models = client.Get("/models");
+            ASSERT_TRUE(models) << httplib::to_string(models.error());
+            const std::string id = json::parse(models->body).at("data").at(0).at("id").get<std::string>();
+            EXPECT_EQ(replayed.value("model", std::string()), id);
+            EXPECT_EQ(replayed.at("data").at("info").value("id", std::string()), id) << replayed.dump();
+            // the stop ends both streams: the SSE clients do not hold it (the shutdown handler of
+            // patches/0006 stops them, as upstream's does)
+            auto stopped = std::make_shared<std::atomic<int>>(-1);
+            std::thread([server, stopped]() { stopped->store(jllama_server_stop(server)); }).detach();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            while (stopped->load() == -1 && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            ASSERT_EQ(stopped->load(), JLLAMA_STATUS_OK) << "the stop waited for the SSE clients";
+            EXPECT_TRUE(late.await_end(10)) << "the late SSE stream outlived the server";
+        }
+        EXPECT_TRUE(sse.await_end(10)) << "the SSE stream outlived the server";
+    }
+    std::error_code ec;
+    std::filesystem::remove(source, ec);
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(CApiServer, ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEnds) {
+    // The same flow over bytes that are no GGUF: the download finishes, the load fails, and the
+    // stream's last event is the model unloaded with the exit code before the server ends -- what
+    // upstream's README promises for a failed download or load. The server no longer runs afterwards.
+    const std::string bytes(4096, 'x');
+    HeldModelServer model_server(bytes);
+    ASSERT_GT(model_server.port, 0);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-sse-bad-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(model_server.port) + "/model.gguf";
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "-m",     target.c_str(),   "--model-url", url.c_str(),
+                          "-c",           "64",     "-ngl",           "0",           "--host",
+                          "127.0.0.1",    "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        ASSERT_FALSE(
+            sse.await([](const json &e) { return e.value("event", std::string()) == "download_progress"; }).is_null());
+        model_server.release();
+        const json unloaded = sse.await([](const json &e) { return is_status(e, "unloaded"); });
+        ASSERT_FALSE(unloaded.is_null()) << json(sse.snapshot()).dump();
+        EXPECT_EQ(unloaded.at("data").value("exit_code", 0), 1) << unloaded.dump();
+        const auto events = sse.snapshot();
+        EXPECT_EQ(index_of(events, [](const json &e) { return is_status(e, "loaded"); }), events.size());
+        EXPECT_LT(index_of(events, [](const json &e) { return is_status(e, "loading"); }),
+                  index_of(events, [](const json &e) { return is_status(e, "unloaded"); }));
+        EXPECT_TRUE(sse.await_end(15)) << "the SSE stream outlived the failed server";
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (jllama_server_is_running(server) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_FALSE(jllama_server_is_running(server)) << "a server whose model failed to load still runs";
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
 #endif // JLLAMA_HAS_NATIVE_SERVER
 
 // ---------------------------------------------------------------------------------------------------
@@ -11757,6 +12040,47 @@ TEST(CApiTokenizers, ABpeVocabularyAppliesItsMergesAndTheByteVocabularyHasNone) 
     std::error_code ec;
     std::filesystem::remove(merged_path, ec);
     std::filesystem::remove(bytes_path, ec);
+}
+
+TEST(CApiTokenizers, AnInkling2VocabularyTakesAWholeWordItHasAsOneTokenWithoutMerges) {
+    // b12641 (#32799) gives the "inkling2" pre-tokenizer ignore_merges, as Inkling 2's tokenizer.json
+    // says: a pre-tokenized word that is a token of the vocabulary is that token, whether or not a merge
+    // builds it. Here no merge does -- the bytes, then "hello" and "Ġworld" -- so "gpt-4o", the same
+    // regex without the flag, spells both words out byte by byte, as inkling2 did before.
+    const auto load_with_pre = [](const char *pre, const char *prefix) {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.pre_tokenizer = pre;
+        spec.unmerged_tokens = {"hello", "\xC4\xA0world"}; // Ġ: GPT-2's byte-level space
+        return write_tiny_llama_gguf(spec);
+    };
+    const std::string inkling_path = load_with_pre("inkling2", "jllama-bpe-inkling2");
+    const std::string gpt4o_path = load_with_pre("gpt-4o", "jllama-bpe-gpt4o");
+    jllama_model *inkling = load_tiny(inkling_path, {});
+    jllama_model *gpt4o = load_tiny(gpt4o_path, {});
+    ASSERT_NE(inkling, nullptr) << jllama_last_error();
+    ASSERT_NE(gpt4o, nullptr) << jllama_last_error();
+
+    const int hello = 256;
+    const int world = 257;
+    const std::string text = "hello world";
+    EXPECT_EQ(token_ids(inkling, text), (std::vector<int>{hello, world}));
+    EXPECT_EQ(token_ids(gpt4o, text).size(), text.size()) << "without the flag a word no merge builds is bytes";
+    // a word the vocabulary does not have stays bytes; " there" is one pre-tokenized word of six bytes
+    EXPECT_EQ(token_ids(inkling, "hello there"), (std::vector<int>{hello, ' ', 't', 'h', 'e', 'r', 'e'}));
+    // "helloworld" is one word, not "hello" + "world": the whole word is looked up, not its parts
+    EXPECT_EQ(token_ids(inkling, "helloworld").size(), 10u);
+    for (jllama_model *model : {inkling, gpt4o}) {
+        for (const std::string &round_trip : {text, std::string("hello there"), std::string("Hello, World!")}) {
+            EXPECT_EQ(detokenized(model, token_ids(model, round_trip)), round_trip);
+        }
+        EXPECT_FALSE(greedy_answer(model, 4).empty());
+    }
+    jllama_model_free(inkling);
+    jllama_model_free(gpt4o);
+    std::error_code ec;
+    std::filesystem::remove(inkling_path, ec);
+    std::filesystem::remove(gpt4o_path, ec);
 }
 
 TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
@@ -13341,17 +13665,20 @@ TEST(CApiSystemOne, AnInterruptedDecisionIsReportedAsInterrupted) {
     // upstream's handler returns its response untouched when the results are terminated -- status 200
     // and no body -- and the engine handed that out as an empty answer: jllama_model_interrupt (and
     // LlamaModel.close()) during jllama_systemone gave JLLAMA_STATUS_OK with "". A decision over a long
-    // state, one token per batch on one thread, takes long enough to be interrupted.
+    // state, one token per batch on one thread, takes long enough to be interrupted: upstream's wait
+    // looks at the stop flag once a second, so the decision has to outlast that first look. 40
+    // sentences (2837 tokens) took 2.3 s here and 0.68 s on a GitHub runner, which then answered before
+    // the look (main, run 45052971364); 160 take several seconds on either, and the test about one.
     tiny_model_spec spec = tiny_model_spec::wide(256, "jllama-c-api-decision-interrupt");
     spec.decision_type = "openjev";
-    spec.n_ctx_train = 4096;
+    spec.n_ctx_train = 16384;
     spec.n_layer = 2;
     const std::string path = write_tiny_llama_gguf(spec);
     ASSERT_FALSE(path.empty());
-    jllama_model *model = load_tiny(path, {"-c", "4096", "-t", "1", "-tb", "1", "-b", "1", "-ub", "1"});
+    jllama_model *model = load_tiny(path, {"-c", "16384", "-t", "1", "-tb", "1", "-b", "1", "-ub", "1"});
     ASSERT_NE(model, nullptr) << jllama_last_error();
     std::string state;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 160; ++i) {
         state += "I was charged twice for my order last week and nobody has replied. ";
     }
     const json request = {
@@ -14468,3 +14795,271 @@ TEST(CApiGraphReuse, AHybridSlidingWindowModelReusesItsGraphWithFlashAttention) 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
+
+namespace {
+// the text without the end-of-generation byte 4 at its end: write_tiny_llama_gguf(prefix, false, 4)
+// makes that byte the model's EOS, an ordinary byte token whose piece the answer keeps; a grammar
+// that is done leaves the model nothing else to write
+std::string without_eos_byte(std::string text) {
+    if (!text.empty() && text.back() == '\x04') {
+        text.pop_back();
+    }
+    return text;
+}
+
+// the single token of one character of the generator's byte vocabulary
+int single_token(jllama_model *model, const char *text) {
+    int *tokens = nullptr;
+    size_t count = 0;
+    EXPECT_EQ(jllama_tokenize(model, text, false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    const int token = count == 1 ? tokens[0] : -1;
+    jllama_tokens_free(tokens);
+    EXPECT_GE(token, 0) << "'" << text << "' is not one token";
+    return token;
+}
+
+std::string raw_under_grammar(jllama_model *model, const std::string &grammar, const json &logit_bias) {
+    json request = {{"prompt", "Hello there"}, {"temperature", 0}, {"n_predict", 8}, {"grammar", grammar}};
+    if (!logit_bias.is_null()) {
+        request["logit_bias"] = logit_bias;
+    }
+    Owned completion;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+        << grammar << ": " << jllama_last_error();
+    return completion.s != nullptr ? without_eos_byte(json::parse(completion.str()).at("content").get<std::string>())
+                                   : std::string();
+}
+} // namespace
+
+TEST(CApiGrammar, ATokenRuleTakesSetsAndRangesOfIdsAndItsTokensLeaveTheCharacterRules) {
+    // b12638 (#29307): a token rule takes several ids and inclusive ranges (<[1,5-9]>, negated
+    // !<[...]>), and a token a token rule names is no longer matched by a character rule -- [a-c] does
+    // not take the token "b" once the grammar names it. A logit bias makes the biased token the greedy
+    // choice wherever the grammar allows it, so each answer below is exact. At b12637 the sets did not
+    // parse (the request was refused) and [a-c] took "b": the last answer was "bbb".
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-grammar-token-sets", false, 4);
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const int a = single_token(model, "a");
+    const int b = single_token(model, "b");
+    const int c = single_token(model, "c");
+    const int x = single_token(model, "x");
+    const int z = single_token(model, "z");
+    ASSERT_EQ(b, a + 1);
+    ASSERT_EQ(c, a + 2);
+    const std::string range = std::to_string(a) + "-" + std::to_string(c);
+    const std::string set = std::to_string(x) + "," + std::to_string(z);
+
+    // a range and a set, the biased member of each taken
+    const std::string sets = "root ::= <[" + range + "]> <[" + set + "]>";
+    EXPECT_EQ(raw_under_grammar(model, sets, json::array({json::array({c, 100}), json::array({x, 100})})), "cx");
+    EXPECT_EQ(raw_under_grammar(model, sets, json::array({json::array({b, 100}), json::array({z, 100})})), "bz");
+    // without a bias the answer is still a member of each
+    const std::string free_answer = raw_under_grammar(model, sets, nullptr);
+    ASSERT_EQ(free_answer.size(), 2u) << free_answer;
+    EXPECT_NE(std::string("abc").find(free_answer[0]), std::string::npos) << free_answer;
+    EXPECT_NE(std::string("xz").find(free_answer[1]), std::string::npos) << free_answer;
+    // a negated set refuses the biased token it names
+    const std::string negated =
+        raw_under_grammar(model, "root ::= !<[" + range + "]>", json::array({json::array({b, 100})}));
+    ASSERT_FALSE(negated.empty());
+    EXPECT_EQ(std::string("abc").find(negated[0]), std::string::npos) << negated;
+    // the token a token rule names leaves the character rules: [a-c] takes a and c only
+    const std::string opaque = raw_under_grammar(model, "root ::= [a-c] [a-c] <[" + std::to_string(b) + "]>",
+                                                 json::array({json::array({b, 100})}));
+    ASSERT_EQ(opaque.size(), 3u) << opaque;
+    EXPECT_NE(opaque[0], 'b') << opaque;
+    EXPECT_NE(opaque[1], 'b') << opaque;
+    EXPECT_EQ(opaque[2], 'b') << opaque;
+    // and a grammar that does not name it keeps the token in the character rule
+    EXPECT_EQ(raw_under_grammar(model, "root ::= [a-c] [a-c] [a-c]", json::array({json::array({b, 100})})), "bbb");
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiChatTokens, AThinkingTagEndsTheReasoningOnlyAsItsTokenNotSpelledOut) {
+    // b12638 (#29307) parses the Qwen3-Coder format (also Qwen3.5, Nemotron Nano 3) by token: with
+    // the thinking tags control tokens of the vocabulary, as in those models, the reasoning ends at the
+    // token </think>, and the same characters written out are text. A grammar fixes what the model
+    // writes: the tags as tokens give reasoning "plan" and content "answer"; the end tag spelled out
+    // (the token </think> is named in an unused rule, so the character rule cannot take it) ends
+    // nothing, and the text keeps it. Parsed by text, at b12637, the second answer split like the first.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-chat-tokens", false, 4,
+                                                   {"<think>", "</think>", "<tool_call>", "</tool_call>"});
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- a Qwen3-Coder template: <tool_call> <function= <parameter= <think> -#}"
+                             "{%- for message in messages -%}"
+                             "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+    jllama_model *model = load_with_chat_template(path, tmpl);
+    ASSERT_NE(model, nullptr);
+    const int think = N_VOCAB;
+    const int end_think = N_VOCAB + 1;
+    const auto chat = [&](const std::string &grammar) {
+        const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                              {"temperature", 0},
+                              {"n_predict", 30},
+                              {"grammar", grammar}};
+        Owned response;
+        EXPECT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        return response.s != nullptr ? json::parse(response.str()).at("choices").at(0).at("message") : json();
+    };
+    const json tokens =
+        chat("root ::= <[" + std::to_string(think) + "]> \"plan\" <[" + std::to_string(end_think) + "]> \"answer\"");
+    EXPECT_EQ(tokens.value("reasoning_content", std::string()), "plan") << tokens.dump();
+    EXPECT_EQ(without_eos_byte(tokens.value("content", std::string())), "answer") << tokens.dump();
+    const json spelled = chat("root ::= <[" + std::to_string(think) + "]> \"plan</think>answer\"\nunused ::= <[" +
+                              std::to_string(end_think) + "]>");
+    const std::string text =
+        spelled.value("reasoning_content", std::string()) + spelled.value("content", std::string());
+    EXPECT_NE(text.find("plan</think>answer"), std::string::npos) << spelled.dump();
+    EXPECT_NE(without_eos_byte(spelled.value("content", std::string())), "answer") << spelled.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiChatTokens, AQwen3CoderToolCallStartsAtItsTokenAndIsParsedIntoTheCall) {
+    // The Qwen3-Coder format's tool calls since b12638 (#29307): the grammar opens a call at the token
+    // <tool_call> and closes it at </tool_call> (token rules over the vocabulary's control tokens), the
+    // argument between them by the parameter's schema. With tool_choice "required" and a logit bias on
+    // <tool_call>, the greedy model calls the one tool; a boolean parameter leaves it two answers, and
+    // a bias on the end-of-generation byte ends the answer after the call. The parser turns it into
+    // the OpenAI tool call with the boolean as its argument. (This holds the format the bump moved
+    // onto tokens; parsed by text it gave the same call.)
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-qwen3-coder-tools", false, 4,
+                                                   {"<think>", "</think>", "<tool_call>", "</tool_call>"});
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- a Qwen3-Coder template without thinking: <tool_call> <function= <parameter= -#}"
+                             "{%- for message in messages -%}"
+                             "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+    jllama_model *model = load_with_chat_template(path, tmpl);
+    ASSERT_NE(model, nullptr);
+    const int tool_call = N_VOCAB + 2;
+    const int eos = single_token(model, "\x04");
+    const json tool = {{"type", "function"},
+                       {"function",
+                        {{"name", "set"},
+                         {"description", "sets the flag"},
+                         {"parameters",
+                          {{"type", "object"},
+                           {"properties", {{"flag", {{"type", "boolean"}}}}},
+                           {"required", json::array({"flag"})}}}}}};
+    const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                          {"tools", json::array({tool})},
+                          {"tool_choice", "required"},
+                          {"temperature", 0},
+                          {"n_predict", 200}, // every byte is a token of its own: the call alone is about 60
+                          {"logit_bias", json::array({json::array({tool_call, 100}), json::array({eos, 100})})}};
+    Owned response;
+    ASSERT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json choice = json::parse(response.str()).at("choices").at(0);
+    EXPECT_EQ(choice.value("finish_reason", std::string()), "tool_calls") << choice.dump();
+    const json calls = choice.at("message").value("tool_calls", json::array());
+    ASSERT_EQ(calls.size(), 1u) << choice.dump();
+    EXPECT_EQ(calls.at(0).at("function").value("name", std::string()), "set") << choice.dump();
+    const json arguments = json::parse(calls.at(0).at("function").value("arguments", std::string("{}")));
+    ASSERT_TRUE(arguments.contains("flag")) << choice.dump();
+    EXPECT_TRUE(arguments.at("flag").is_boolean()) << choice.dump();
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiServerTools, GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles) {
+    // The embedded server's built-in tools (--tools, POST /tools): since b12640 (#32792) grep_search
+    // takes an offset, the number of matching lines to skip, searches the files of a directory in the
+    // order of their paths, and ends a full page of 100 matches with the offset to continue at. Two
+    // files give 150 matches: a.txt 90 (every second of its lines), b.txt 60. The first page is a.txt's
+    // 90 and b.txt's first 10, the second the other 50 of b.txt and no continuation. At b12639 the
+    // offset was ignored and the second call answered the first page again.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-grep-" + std::to_string(std::random_device{}()));
+    const std::filesystem::path data = dir / "data";
+    std::filesystem::create_directories(data);
+    {
+        std::ofstream b(data / "b.txt");
+        for (int i = 0; i < 60; ++i) {
+            b << "match b " << i << "\n";
+        }
+        std::ofstream a(data / "a.txt");
+        for (int i = 0; i < 90; ++i) {
+            a << "match a " << i << "\nother line\n";
+        }
+    }
+    const std::filesystem::path models = dir / "models";
+    std::filesystem::create_directories(models);
+    const std::string models_dir = models.string();
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "--host",           "127.0.0.1", "--port",     port_text.c_str(),
+                          "--models-dir", models_dir.c_str(), "--tools",   "grep_search"};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ASSERT_TRUE(health && health->status == 200);
+    const auto search = [&](const json &offset) {
+        json params = {{"path", data.string()}, {"pattern", "^match"}};
+        if (!offset.is_null()) {
+            params["offset"] = offset;
+        }
+        const json body = {{"tool", "grep_search"}, {"params", params}};
+        const auto res = client.Post("/tools", body.dump(), "application/json");
+        EXPECT_TRUE(res) << httplib::to_string(res.error());
+        if (!res) {
+            return std::string();
+        }
+        EXPECT_EQ(res->status, 200) << res->body;
+        const json answer = json::parse(res->body, nullptr, false);
+        return answer.is_object() ? answer.value("plain_text_response", std::string()) : res->body;
+    };
+    const auto count = [](const std::string &text, const std::string &what) {
+        size_t n = 0;
+        for (size_t pos = text.find(what); pos != std::string::npos; pos = text.find(what, pos + 1)) {
+            ++n;
+        }
+        return n;
+    };
+    const std::string first = search(nullptr);
+    EXPECT_NE(first.find("Total matches: 100"), std::string::npos) << first;
+    EXPECT_EQ(count(first, "match a "), 90u) << first;
+    EXPECT_EQ(count(first, "match b "), 10u) << first;
+    EXPECT_NE(first.find("match b 9\n"), std::string::npos) << first;
+    EXPECT_NE(first.find("Continue with offset=100"), std::string::npos) << first;
+    EXPECT_LT(first.find("match a 89"), first.find("match b 0")) << "the files are not in the order of their paths";
+
+    const std::string second = search(100);
+    EXPECT_NE(second.find("Total matches: 50"), std::string::npos) << second;
+    EXPECT_EQ(count(second, "match a "), 0u) << second;
+    EXPECT_EQ(count(second, "match b "), 50u) << second;
+    EXPECT_NE(second.find("match b 10\n"), std::string::npos) << second;
+    EXPECT_EQ(second.find("Continue with offset="), std::string::npos) << second;
+
+    // an offset past the last match finds none, and a negative one counts as 0
+    EXPECT_NE(search(150).find("Total matches: 0"), std::string::npos);
+    EXPECT_NE(search(-5).find("Total matches: 100"), std::string::npos);
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+}
+#endif // JLLAMA_HAS_NATIVE_SERVER

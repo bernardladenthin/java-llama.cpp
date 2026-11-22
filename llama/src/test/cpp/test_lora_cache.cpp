@@ -941,32 +941,34 @@ TEST(LoraCacheTwoAdapters, BothAdaptersApplyAndASlotFileMatchesThemByPathInEithe
         EXPECT_EQ(swapped.at("timings").at("cache_n").get<int>(), 0) << swapped.dump();
         jllama_model_free(reversed);
     }
-    // --lora-scaled reads FNAME:SCALE and splits on every colon, so an absolute path with a drive
-    // letter cannot be expressed (ModelParameters.addLoraScaledAdapter says so): relative paths.
+    // Another spelling of the same two files: <dir>/./<file>. --lora-scaled splits FNAME:SCALE at the
+    // last colon (patches/0045), so an absolute path with a drive letter is one item on Windows too --
+    // until 2026-11-22 this case took paths relative to the working directory, which do not exist
+    // when the temp directory is on another drive (C: against D: on the Windows runners).
+    const auto respelled = [](const std::string &path) {
+        const std::filesystem::path p(path);
+        return (p.parent_path() / "." / p.filename()).string();
+    };
+    const std::string alt_a = respelled(a);
+    const std::string alt_b = respelled(b);
+    ASSERT_NE(alt_a, a);
     std::error_code ec;
-    const std::string rel_a = std::filesystem::relative(a, std::filesystem::current_path(), ec).string();
-    const std::string rel_b = std::filesystem::relative(b, std::filesystem::current_path(), ec).string();
-    if (!rel_a.empty() && !rel_b.empty() && rel_a.find(':') == std::string::npos &&
-        rel_b.find(':') == std::string::npos) {
-        jllama_model *scaled = load_with(model_path, dir, {"--lora-scaled", rel_b + ":0.5," + rel_a + ":1"});
-        ASSERT_NE(scaled, nullptr);
-        const std::map<std::string, float> listed = listed_adapters(scaled);
-        EXPECT_EQ(listed, (std::map<std::string, float>{{rel_a, 1.0f}, {rel_b, 0.5f}}));
-        // both applied at their own scales from the load on: the answer of the pair set to them
-        EXPECT_EQ(fresh_answer_of(scaled), scaled_answer);
-        // The section names the paths the first model was given, and the match is by path: these are
-        // other spellings of the same files, so the file names adapters this server has not loaded,
-        // and the restore is refused -- the conservative answer, never a state reused under adapters
-        // it may not have been computed with.
-        Owned restored;
-        EXPECT_EQ(jllama_slot_action(scaled, JLLAMA_SLOT_RESTORE, 0, "pair.bin", &restored.s),
-                  JLLAMA_STATUS_INVALID_REQUEST);
-        EXPECT_NE(std::string(jllama_last_error()).find("which this server has not loaded"), std::string::npos)
-            << jllama_last_error();
-        jllama_model_free(scaled);
-    } else {
-        ADD_FAILURE() << "no relative path to the adapters from " << std::filesystem::current_path();
-    }
+    jllama_model *scaled = load_with(model_path, dir, {"--lora-scaled", alt_b + ":0.5," + alt_a + ":1"});
+    ASSERT_NE(scaled, nullptr) << jllama_last_error();
+    const std::map<std::string, float> listed = listed_adapters(scaled);
+    EXPECT_EQ(listed, (std::map<std::string, float>{{alt_a, 1.0f}, {alt_b, 0.5f}}));
+    // both applied at their own scales from the load on: the answer of the pair set to them
+    EXPECT_EQ(fresh_answer_of(scaled), scaled_answer);
+    // The section names the paths the first model was given, and the match is by path: these are
+    // other spellings of the same files, so the file names adapters this server has not loaded,
+    // and the restore is refused -- the conservative answer, never a state reused under adapters
+    // it may not have been computed with.
+    Owned restored;
+    EXPECT_EQ(jllama_slot_action(scaled, JLLAMA_SLOT_RESTORE, 0, "pair.bin", &restored.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("which this server has not loaded"), std::string::npos)
+        << jllama_last_error();
+    jllama_model_free(scaled);
     std::filesystem::remove(model_path, ec);
     std::filesystem::remove(a, ec);
     std::filesystem::remove(b, ec);

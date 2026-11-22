@@ -38,12 +38,16 @@ does not call common_init(): the host calls it before its parse, as llama_server
 2026-11-19 -- called after the parse it turned common_log's prefix and timestamps on again, so
 --no-log-prefix / --no-log-timestamps had no effect (CApiLogFile.TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect).
 
+Refreshed at b12637: #32398 serves /models/sse on a single-model server too, so
+server_run_instance's shutdown handler also stops the SSE clients (sse_stopping, a local declared
+before ctx_http like the others it captures); the hunk that guards it moved with it.
+
 Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
 embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
 does) -- once it has one, port native_server.cpp to it and drop the patch.
 
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index d14978286..97ad17901 100644
+index e022355..2b8b97a 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
 @@ -29,6 +29,53 @@
@@ -109,7 +113,7 @@ index d14978286..97ad17901 100644
  
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
-@@ -511,6 +560,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -508,6 +557,9 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
  
      // setup server instances manager
      std::optional<server_models_routes> models_routes;
@@ -119,7 +123,7 @@ index d14978286..97ad17901 100644
      try {
          models_routes.emplace(params, argc, argv);
      } catch (const std::exception & e) {
-@@ -587,14 +639,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
+@@ -584,14 +636,14 @@ static int server_run_router(common_params & params, int argc, char ** argv, con
      }
      ctx_http.is_ready.store(true);
  
@@ -136,22 +140,23 @@ index d14978286..97ad17901 100644
  
      try {
          models_routes->models.load_startup_models();
-@@ -655,6 +707,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
+@@ -658,6 +710,9 @@ static int server_run_instance(common_params & params, server_role & role, commo
      server_tools   tools;
  
      server_http_context ctx_http;
-+    // [jllama] declared after every local the shutdown handler captures (ctx_server, mcp_mgr), so
-+    // it clears the handler before any of them is destroyed
++    // [jllama] declared after every local the shutdown handler captures (ctx_server, mcp_mgr,
++    // sse_stopping), so it clears the handler before any of them is destroyed
 +    llama_server_shutdown_handler_reset shutdown_handler_reset;
      if (!ctx_http.init(params)) {
          SRV_ERR("%s", "failed to initialize HTTP server\n");
          return 1;
-@@ -707,11 +762,11 @@ static int server_run_instance(common_params & params, server_role & role, commo
- 
-     SRV_INF("%s", "model loaded\n");
+@@ -769,12 +824,12 @@ static int server_run_instance(common_params & params, server_role & role, commo
+         notify_status(SERVER_MODEL_STATUS_LOADED, data);
+     }
  
 -    shutdown_handler = [&](int) {
 +    llama_server_set_shutdown_handler([&](int) {
+         sse_stopping.store(true);
          mcp_mgr.shutdown();
          // this will unblock start_loop()
          ctx_server.terminate();
@@ -160,7 +165,7 @@ index d14978286..97ad17901 100644
  
      if (opts.install_signal_handlers) {
          server_install_signal_handlers();
-@@ -823,8 +878,49 @@ int llama_server(int argc, char ** argv) {
+@@ -885,8 +940,49 @@ int llama_server(int argc, char ** argv) {
      llama_backend_init();
      llama_numa_init(params.numa);
  

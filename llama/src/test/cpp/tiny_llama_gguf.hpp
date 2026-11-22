@@ -199,6 +199,12 @@ struct tiny_model_spec {
     // ("rwkv": escaped tokens, no special ones of its own).
     enum class tokenizer_kind { BYTES, BPE_MERGES, SENTENCEPIECE, SENTENCEPIECE_BYTES, UNIGRAM, RWKV };
     tokenizer_kind tokenizer = tokenizer_kind::BYTES;
+    // The BPE kinds (BYTES, BPE_MERGES): tokenizer.ggml.pre, which selects llama.cpp's pre-tokenizer
+    // and its flags ("inkling2": GPT-4o's regex, no BOS, ignore_merges since b12641), and normal tokens
+    // after the bytes and the merged ones that no merge builds -- in byte-level form, "Ġworld" for
+    // " world" -- which only a vocabulary with ignore_merges takes as a whole word.
+    std::string pre_tokenizer = "default";
+    std::vector<std::string> unmerged_tokens = {};
     // arch "domynedge" (Domyn Edge, b12568): per layer, 1 in swa_pattern is a sliding-window layer with
     // RoPE and heads of head_dim_swa, 0 a full-attention layer without RoPE (NoPE) and heads of head_dim;
     // n_rot_swa (-1: head_dim_swa) is how many dimensions of a sliding-window head RoPE rotates.
@@ -512,6 +518,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                 token_types.push_back(1);
             }
         }
+        for (const std::string &unmerged : spec.unmerged_tokens) {
+            tokens.push_back(unmerged);
+            token_types.push_back(1);
+        }
     }
     tokens.insert(tokens.end(), spec.special.begin(), spec.special.end());
     const int n_vocab = static_cast<int>(tokens.size());
@@ -551,7 +561,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);
     } else {
         gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
-        gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+        gguf_set_val_str(g, "tokenizer.ggml.pre", spec.pre_tokenizer.c_str());
         gguf_set_arr_str(g, "tokenizer.ggml.merges", merge_ptrs.data(), merge_ptrs.size());
         gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
         gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);

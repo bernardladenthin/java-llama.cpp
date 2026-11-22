@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12636](https://img.shields.io/badge/llama.cpp-%23b12636-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12636)  
+[![llama.cpp b12641](https://img.shields.io/badge/llama.cpp-%23b12641-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12641)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1027,7 +1027,7 @@ other model refuses them. VoxCPM2 speaks at 48 kHz and ships no predefined voice
 by a description in parentheses at the start of the text, or cloned from a speaker reference when its
 mmproj carries the AudioVAE encoder (it clones without the transcript and ignores
 `speakerReferenceText`). No VoxCPM2 conversion is in CI's model set; the C++ suite drives the pipeline
-over a random pair. **Hibiki** (b12636, Kyutai's full-duplex speech translation over Moshi) speaks while
+over a random pair. **Hibiki** (b12619, Kyutai's full-duplex speech translation over Moshi) speaks while
 it listens: llama.cpp's pipeline for it takes neither a text prompt nor a speaker reference and only
 streams PCM, so `TextToSpeech` cannot drive it (a synthesis is refused as an invalid request, read from
 upstream's code: no Hibiki conversion is in CI's set and the C++ suite has no generator for it);
@@ -1374,7 +1374,11 @@ Differences from `OpenAiCompatServer`: with the classic constructor it **loads i
 the arguments (an independent lifecycle, like `llama-server.exe`), it is **single-instance per
 process**, it serves the **WebUI** (in released jars — local `cmake` builds ship the empty-asset
 stub, so no UI there), and it is **not available on Android** (the upstream server needs
-`posix_spawn`). Readiness: poll `GET /health`. TLS: pass `--ssl-key-file` and `--ssl-cert-file`
+`posix_spawn`). Readiness: poll `GET /health`, which answers 503 while the model downloads or
+loads; since llama.cpp b12637 the server listens before it downloads its model, and `GET /models/sse`
+streams the download's progress, the load and the loaded model as server-sent events (a client that
+connects later gets the last event first; a failed download or load ends the stream with the model
+`unloaded` before the server stops). TLS: pass `--ssl-key-file` and `--ssl-cert-file`
 (BoringSSL is linked statically into every desktop library jar except `cpu-linux-s390x`, which ships
 without SSL; nothing to install). The same
 build fetches models from `https://` URLs (`--model-url`, `-hf`), verified against the OS
@@ -1402,7 +1406,8 @@ In attach mode the arguments carry only the HTTP-side flags (`--host`, `--port`,
 endpoint toggles `--metrics` / `--props` / `--slots`, `--slot-save-path`, the slot count — are set on
 the model's `ModelParameters` (`enableMetricsEndpoint()`, `enablePropsEndpoint()`,
 `enableSlotsEndpoint()` / `disableSlotsEndpoint()`), not in the attach arguments. The server reports
-healthy immediately (the model is already loaded), and the **caller keeps ownership of the model** —
+healthy immediately (the model is already loaded; `/models/sse`, a report of the download and load,
+is not served there), and the **caller keeps ownership of the model** —
 close the server before the model, never the other way around.
 
 #### Router mode — multi-model management
@@ -1720,6 +1725,11 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
     model.generate(inferParams);
 }
 ```
+
+The grammar is llama.cpp's GBNF. A token rule names tokens by id: `<[1000]>`, since llama.cpp b12638
+also several ids and inclusive ranges (`<[1000,1005-1010]>`) and their complement (`!<[1000-1010]>`). A
+token a token rule names is matched as that token only: once the grammar names `<[98]>`, a character
+rule such as `[a-c]` no longer takes token 98, even where its text would fit.
 
 ### Reactive integration (Reactor, RxJava, Kotlin Flow, Akka)
 

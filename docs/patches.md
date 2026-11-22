@@ -163,6 +163,10 @@ does not call common_init(): the host calls it before its parse, as llama_server
 2026-11-19 -- called after the parse it turned common_log's prefix and timestamps on again, so
 --no-log-prefix / --no-log-timestamps had no effect (CApiLogFile.TheLogPrefixAndTimestampOptionsOfTheArgvTakeEffect).
 
+Refreshed at b12637: #32398 serves /models/sse on a single-model server too, so
+server_run_instance's shutdown handler also stops the SSE clients (sse_stopping, a local declared
+before ctx_http like the others it captures); the hunk that guards it moved with it.
+
 Drop-check on every bump: none of this is upstream's yet. Read tools/server/server.cpp for an
 embedded mode of its own (no process signal handlers, an out-of-band shutdown, a parse the caller
 does) -- once it has one, port native_server.cpp to it and drop the patch.
