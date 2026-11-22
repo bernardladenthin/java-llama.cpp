@@ -58,6 +58,7 @@
 #include <random>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -6889,6 +6890,84 @@ TEST_F(CApiLfm3Audio, TheTranscriptionRouteAsksTheLfm3AsrPromptInTheLanguage) {
         << jllama_last_error();
     EXPECT_EQ(json::parse(answer.str()).at("choices").at(0).at("message").at("content").get<std::string>(), transcript)
         << answer.str();
+}
+
+TEST(CApiAudio, AStreamedTranscriptionCarriesTheTranscriptAndNotTheReasoning) {
+    // b12597 (#32571): the streamed deltas of /v1/audio/transcriptions are the parsed content of the
+    // answer, as the final event's text is; a reasoning part (Qwen3-ASR's "language ..." prefix) is not
+    // transcript. Until then every delta was the raw generated text. The generator's audio projector
+    // on the plain decoder with a template that opens a thinking block, and a reasoning budget of two
+    // tokens for every request (form fields reach the route as strings), make each answer a reasoning
+    // part, the forced end tag and the content. The model's end of generation is a byte of its own, so
+    // the '>' of the end tag does not end the answer (the byte vocabulary's default EOS is '>').
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-audio-asr";
+    spec.n_ctx_train = 512;
+    spec.eos = 4;
+    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string mmproj = write_tiny_audio_mmproj_gguf("jllama-c-api-audio-asr-mmproj");
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(mmproj.empty());
+    jllama_model *model = load_tiny(
+        path, {"--mmproj", mmproj, "-c", "512", "--chat-template", THINKING_TEMPLATE, "--reasoning-budget", "2"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::vector<float> tone(16000);
+    for (size_t i = 0; i < tone.size(); ++i) {
+        tone[i] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * static_cast<float>(i) / 16000.0f);
+    }
+    const std::vector<uint8_t> wav = jllama_tts::pcm_to_wav16_bytes(tone, 16000);
+    const auto transcribe = [&](httplib::Client &client, bool stream) {
+        const httplib::UploadFormDataItems items = {
+            {"file", std::string(wav.begin(), wav.end()), "clip.wav", "audio/wav"},
+            {"temperature", "0", "", ""},
+            {"max_tokens", "20", "", ""},
+            {"stream", stream ? "true" : "false", "", ""},
+        };
+        const auto response = client.Post("/v1/audio/transcriptions", items);
+        EXPECT_TRUE(response) << httplib::to_string(response.error());
+        EXPECT_EQ(response ? response->status : 0, 200) << (response ? response->body : std::string());
+        return response ? response->body : std::string();
+    };
+    std::string text;
+    std::string deltas;
+    int delta_events = 0;
+    json done;
+    {
+        AttachedServer attached(model);
+        ASSERT_NE(attached.server, nullptr);
+        httplib::Client client("127.0.0.1", attached.port);
+        client.set_read_timeout(std::chrono::seconds(60));
+        const json whole = json::parse(transcribe(client, false));
+        text = whole.at("text").get<std::string>();
+        std::istringstream sse(transcribe(client, true));
+        for (std::string line; std::getline(sse, line);) {
+            if (line.rfind("data: ", 0) != 0 || line == "data: [DONE]") {
+                continue;
+            }
+            const json event = json::parse(line.substr(6));
+            const std::string type = event.value("type", std::string());
+            if (type == "transcript.text.delta") {
+                deltas += event.at("delta").get<std::string>();
+                ++delta_events;
+            } else if (type == "transcript.text.done") {
+                done = event;
+            }
+        }
+    }
+    ASSERT_TRUE(done.is_object()) << "no transcript.text.done event";
+    EXPECT_FALSE(text.empty());
+    EXPECT_EQ(done.at("text").get<std::string>(), text);
+    EXPECT_EQ(deltas, text) << delta_events << " deltas";
+    EXPECT_EQ(deltas.find("</think>"), std::string::npos) << deltas;
+    // the answer had a reasoning part: more tokens were generated than the transcript holds
+    int *tokens = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tokenize(model, text.c_str(), false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    jllama_tokens_free(tokens);
+    EXPECT_GT(done.at("usage").at("output_tokens").get<size_t>(), count + 8) << done.dump();
+    jllama_model_free(model);
+    std::remove(path.c_str());
+    std::remove(mmproj.c_str());
 }
 
 TEST_F(CApiLfm3Audio, LiveTranscriptionHearsTheStreamedAudioAndCompletesTheItem) {

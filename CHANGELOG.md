@@ -315,7 +315,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12593** (from b12573, 20 upstream commits in five steps; master, pinned by commit
+- **llama.cpp b12600** (from b12573, 27 upstream commits in six steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -353,7 +353,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   model they are an invalid request with that reason, where they failed as a server error ("Failed to
   load image or audio file") before
   (`CApiSystemOne.SpokenInstructionsAreRefusedByEveryModelButLfm3D1OmniWithAudioInput`, red against the
-  old condition). b12593 changes upstream's Docker CI only. All 31 patches apply unchanged.
+  old condition). b12593 changes upstream's Docker CI only. b12594 stages Llama Voice's sources for
+  upstream's CMake and Docker UI builds too (#32680; `build-webui` builds with `BUILD_UI=OFF` and the
+  prebuilt `dist`, so it changes nothing here), b12595 fixes a flaky story of the WebUI's tests
+  (#32675; the WebUI still builds and embeds 291 assets, the npm license texts still match the
+  lockfile), b12596 lets Metal fuse a norm chain in either operand of `MUL`/`ADD` (#32300), and
+  b12597 streams only the parsed content of a transcription (#32571): the deltas of
+  `/v1/audio/transcriptions` with `stream` are the transcript, as the final event's text is, and a
+  reasoning part (Qwen3-ASR's "language ..." prefix) is not
+  (`CApiAudio.AStreamedTranscriptionCarriesTheTranscriptAndNotTheReasoning`: the generator's audio
+  projector on the decoder with a template that opens a thinking block and `--reasoning-budget 2`;
+  red against b12596's partial result, whose deltas were the raw text: `e</think>=eeeeeeeeee` for the
+  transcript `=eeeeeeeeee`). b12598 changes upstream's
+  OpenVINO CI, b12599 tunes HIP's `MMVQ` for RDNA1 (#32389), and b12600 adds Inkling 2 Mini, the
+  looped variant of Inkling 2 (#32694, architecture `inkling2_loop`). All 31 patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
