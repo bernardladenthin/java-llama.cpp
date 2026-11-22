@@ -441,6 +441,32 @@ TEST_F(CApi, AGrammarThatDoesNotParseIsTheCallersFaultOnEveryRequestPath) {
     expect_refused_on_every_path(model_, raw, chat, "failed to parse grammar");
 }
 
+TEST_F(CApi, AGrammarWhoseRepetitionEndsBeforeItBeginsIsRefusedWithItsReason) {
+    // b12604 (#32551): "a"{3,2} is refused while the grammar is parsed ("incorrect number of
+    // repetitions"). Before it, the number of optional repetitions, max - min, wrapped around and the
+    // parser added rules until the memory ran out. The parser prints its reason to stderr only, so the
+    // test reads it there: an allocation failure is a parse error too and would be refused the same way.
+    const json grammar = {{"grammar", "root ::= \"a\"{3,2}"}};
+    json raw = grammar;
+    raw["prompt"] = "Hi";
+    json chat = grammar;
+    chat["messages"] = json::array({json{{"role", "user"}, {"content", "Hi"}}});
+    testing::internal::CaptureStderr();
+    expect_refused_on_every_path(model_, raw, chat, "failed to parse grammar");
+    const std::string printed = testing::internal::GetCapturedStderr();
+    EXPECT_NE(printed.find("error parsing grammar: incorrect number of repetitions"), std::string::npos) << printed;
+    // a bound that is in order still constrains the answer
+    Owned answer;
+    ASSERT_EQ(jllama_completions(model_,
+                                 R"({"prompt":"Hi","n_predict":8,"temperature":0,"grammar":"root ::= \"a\"{2,3}"})",
+                                 &answer.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    // two or three a, then the end of generation, whose piece is the '>' of this byte vocabulary
+    const std::string content = json::parse(answer.str()).at("content").get<std::string>();
+    EXPECT_TRUE(std::regex_match(content, std::regex("a{2,3}>?"))) << answer.str();
+}
+
 // ---------------------------------------------------------------------------
 // The rest of LlamaModel through the C API (B.3). The model is random, so what is asserted is the
 // shape and the contract of every answer, never its content.
