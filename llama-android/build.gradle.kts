@@ -175,11 +175,19 @@ fun androidJar(): File {
             "No Android SDK: set ANDROID_HOME (or ANDROID_SDK_ROOT), or pass -PandroidJar=<android.jar>. " +
                 "The llama-android classes are compiled against the platform."
         )
+    // "android-36", and since the minor API levels also "android-36.1" or "android-37.0" (what
+    // sdkmanager installs "platforms;android-37.0" as): the major level decides the floor, the
+    // minor one breaks a tie
+    val platformName = Regex("""android-(\d+)(?:\.(\d+))?""")
     val platforms = File(sdk, "platforms").listFiles { dir -> File(dir, "android.jar").isFile }
-        ?.mapNotNull { dir -> dir.name.removePrefix("android-").toIntOrNull()?.let { api -> api to dir } }
-        ?.filter { it.first >= 28 }
+        ?.mapNotNull { dir ->
+            platformName.matchEntire(dir.name)?.let { m ->
+                Pair(m.groupValues[1].toInt(), m.groupValues[2].toIntOrNull() ?: 0) to dir
+            }
+        }
+        ?.filter { it.first.first >= 28 }
         ?: emptyList()
-    val newest = platforms.maxByOrNull { it.first }
+    val newest = platforms.maxWithOrNull(compareBy({ it.first.first }, { it.first.second }))
         ?: throw GradleException("No platform of API 28 or newer under $sdk/platforms (need its android.jar)")
     return File(newest.second, "android.jar")
 }

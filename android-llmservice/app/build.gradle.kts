@@ -32,12 +32,15 @@ val hasUploadKeystore: Boolean = !uploadStorePath.isNullOrBlank() && file(upload
 
 android {
     namespace = "net.ladenthin.android.llmservice"
-    // 37 (not 35): the AAR-metadata check fails otherwise — activity-compose 1.13.0 /
-    // androidx.core 1.18.0 / navigationevent 1.0.0 require compileSdk >= 36, and
-    // lifecycle-{viewmodel,runtime}-compose 2.11.1 require compileSdk >= 37. targetSdk is
-    // left at 35 on purpose (compileSdk widens the compile-time API surface; targetSdk
-    // opts into new runtime behavior and is bumped independently).
-    compileSdk = 37
+    // 37.1 (not 35): the AAR-metadata check fails otherwise — activity-compose 1.13.0 /
+    // androidx.core 1.18.0 / navigationevent 1.0.0 require compileSdk >= 36,
+    // lifecycle-{viewmodel,runtime}-compose 2.11.1 require compileSdk >= 37, and Compose 1.13
+    // (BOM 2026.11.01) requires the minor API level 37.1, which only the compileSdk block can
+    // name. targetSdk is left at 35 on purpose (compileSdk widens the compile-time API surface;
+    // targetSdk opts into new runtime behavior and is bumped independently).
+    compileSdk {
+        version = release(37) { minorApiLevel = 1 }
+    }
 
     defaultConfig {
         applicationId = "net.ladenthin.android.llmservice"

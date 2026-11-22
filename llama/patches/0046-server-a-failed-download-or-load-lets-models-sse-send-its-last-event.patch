@@ -1,0 +1,127 @@
+server : a failed download or load lets /models/sse send its last event
+
+A single-model server (b12637, #32398) serves GET /models/sse while it downloads and loads its model,
+and the README promises: "If the download or the loading fails, a status_change event with status
+unloaded is sent before the server exits." server_run_instance() notifies that event and calls
+clean_up() right after it, which stops the HTTP server. cpp-httplib asks a chunked stream for its next
+chunk only while the server is not stopping (write_content_chunked), so an event still queued for a
+client was dropped whenever the stream had not asked for it yet: the client saw "loading" and then the
+end of the stream. A failed load or download takes a millisecond, so this is a real race; macOS CI hit
+it (run 45073054816), and a 30 ms pause after every chunk makes it happen every time.
+
+Both failure paths now set sse_stopping and wait, at most 5 s, until every SSE client has ended its
+stream (server_models_sse::wait_for_clients, a count of the streams the handler started): a client
+sends what is queued and ends at its next poll of should_stop(), at most a second later. Only then
+does clean_up() stop the HTTP server. Without an SSE client nothing waits.
+
+The guards are CApiServer.ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEnds and
+CApiServer.ASingleModelServerWhoseDownloadFailsSaysSoOverModelsSseAndEnds in src/test/cpp/test_c_api.cpp
+(the last event is the model unloaded with exit code 1); with the 30 ms pause both are red without the
+patch and green with it.
+
+Drop-check on every bump: read the two failure paths of server_run_instance() in tools/server/server.cpp
+-- once the HTTP server is stopped only after the SSE clients have their last event, drop the patch.
+
+diff --git a/tools/server/server-models.h b/tools/server/server-models.h
+--- a/tools/server/server-models.h
++++ b/tools/server/server-models.h
+@@ -9,6 +9,7 @@
+ #include "server-queue.h"
+ 
+ #include <atomic>
++#include <chrono>
+ #include <deque>
+ #include <mutex>
+ #include <condition_variable>
+@@ -170,10 +171,20 @@
+     // handler for GET /models/sse, a client is disconnected once should_stop() returns true
+     server_http_context::handler_t make_handler(std::function<bool()> should_stop);
+ 
++    // [jllama] wait until every client has ended its stream, at most `timeout`; true when none is
++    // left. With should_stop() true, a client sends what was notified before and then ends, so
++    // this lets the last event reach the clients before the HTTP server stops: once stopped, the
++    // server no longer asks a stream for its next chunk.
++    bool wait_for_clients(std::chrono::milliseconds timeout);
++
+ private:
+     std::mutex      mutex;
+     json            last_event;
+     server_response queue;
++    // [jllama] the clients whose stream has not ended
++    std::mutex              clients_mutex;
++    std::condition_variable clients_cv;
++    size_t                  n_clients = 0;
+ };
+ 
+ struct server_models_routes;
+diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
+--- a/tools/server/server-models.cpp
++++ b/tools/server/server-models.cpp
+@@ -2016,7 +2016,17 @@
+                 pending = "data: " + safe_json_to_str(last_event) + "\n\n";
+             }
+         }
+-        res->next = [should_stop, sse_client, pending = std::move(pending), &req](std::string & output) mutable -> bool {
++        // [jllama] counted until the stream is done with it (wait_for_clients)
++        {
++            std::lock_guard<std::mutex> lk(clients_mutex);
++            ++n_clients;
++        }
++        std::shared_ptr<void> counted(nullptr, [this](void *) {
++            std::lock_guard<std::mutex> lk(clients_mutex);
++            --n_clients;
++            clients_cv.notify_all();
++        });
++        res->next = [should_stop, sse_client, counted, pending = std::move(pending), &req](std::string & output) mutable -> bool {
+             if (!pending.empty()) {
+                 output = std::move(pending);
+                 pending.clear();
+@@ -2035,6 +2045,11 @@
+     };
+ }
+ 
++bool server_models_sse::wait_for_clients(std::chrono::milliseconds timeout) {
++    std::unique_lock<std::mutex> lk(clients_mutex);
++    return clients_cv.wait_for(lk, timeout, [this] { return n_clients == 0; });
++}
++
+ //
+ // server_models_routes
+ //
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -748,6 +748,17 @@
+         llama_backend_free();
+     };
+ 
++    // [jllama] before a failed download or load stops the HTTP server: let the SSE clients send the
++    // events notified so far (the last is the model unloaded) and end. clean_up() stops the server
++    // right away, and a stream whose next chunk is not asked for any more drops what is still
++    // queued for it -- the unloaded event, which the README promises before the server exits.
++    auto drain_sse = [&sse, &sse_stopping]() {
++        sse_stopping.store(true);
++        if (!sse.wait_for_clients(std::chrono::seconds(5))) {
++            SRV_WRN("%s", "an SSE client did not end its stream within 5 s\n");
++        }
++    };
++
+     // start the HTTP server before downloading and loading the model to be able to serve /health and /models/sse requests
+     if (!ctx_http.start()) {
+         clean_up();
+@@ -778,6 +789,7 @@
+             SRV_ERR("failed to download model: %s\n", e.what());
+             notify("download_failed");
+             notify_status(SERVER_MODEL_STATUS_UNLOADED, {{"exit_code", 1}});
++            drain_sse();
+             clean_up();
+             ctx_http.join();
+             return 1;
+@@ -802,6 +814,7 @@
+ 
+     if (!ctx_server.load_model(params)) {
+         notify_status(SERVER_MODEL_STATUS_UNLOADED, {{"exit_code", 1}});
++        drain_sse();
+         clean_up();
+         ctx_http.join();
+         SRV_ERR("%s", "exiting due to model loading error\n");

@@ -14,11 +14,13 @@ require(jllamaBackend in listOf("cpu", "opencl")) { "Unknown jllamaBackend: $jll
 
 android {
     namespace = "net.ladenthin.llama.consumertest"
-    // 37 (not 35): kept in sync with android-llmservice's compileSdk bump (this fixture
+    // 37.1 (not 35): kept in sync with android-llmservice's compileSdk bump (this fixture
     // mirrors its plumbing, see .github/android-consumer-test's file header). Not
     // independently required today — this fixture has no Compose dependency and so
     // doesn't hit the AAR-metadata floor that forced android-llmservice's bump.
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 1 }
+    }
 
     defaultConfig {
         applicationId = "net.ladenthin.llama.consumertest"

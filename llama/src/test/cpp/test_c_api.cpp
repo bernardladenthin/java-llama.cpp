@@ -11921,6 +11921,10 @@ TEST(CApiServer, ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEn
     // The same flow over bytes that are no GGUF: the download finishes, the load fails, and the
     // stream's last event is the model unloaded with the exit code before the server ends -- what
     // upstream's README promises for a failed download or load. The server no longer runs afterwards.
+    // The load fails within a millisecond, and upstream stopped the HTTP server right after the
+    // notification, before the stream had sent it: the event was lost whenever the stream had not
+    // asked for its next chunk yet (macOS CI, run 45073054816; deterministic with a 30 ms pause after
+    // every chunk). patches/0046 lets the SSE clients send it and end first.
     const std::string bytes(4096, 'x');
     HeldModelServer model_server(bytes);
     ASSERT_GT(model_server.port, 0);
@@ -11955,6 +11959,91 @@ TEST(CApiServer, ASingleModelServerWhoseModelFailsToLoadSaysSoOverModelsSseAndEn
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     EXPECT_FALSE(jllama_server_is_running(server)) << "a server whose model failed to load still runs";
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(CApiServer, ASingleModelServerWhoseDownloadFailsSaysSoOverModelsSseAndEnds) {
+    // The other failure path of a single-model server: the model URL answers 404, held until the SSE
+    // client is connected. The stream reports the failed download and then the model unloaded with
+    // the exit code, and ends; the server no longer runs. The download fails at once, so without
+    // patches/0046 the two events raced the stop of the HTTP server as the failed load's do.
+    struct HeldNotFound {
+        httplib::Server http;
+        std::thread serving;
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool released = false;
+        int port = 0;
+        HeldNotFound() {
+            http.Get("/model.gguf", [this](const httplib::Request &, httplib::Response &res) {
+                std::unique_lock<std::mutex> lock(mutex);
+                cv.wait_for(lock, std::chrono::seconds(60), [this] { return released; });
+                res.status = 404;
+            });
+            port = http.bind_to_any_port("127.0.0.1");
+            serving = std::thread([this]() { http.listen_after_bind(); });
+            http.wait_until_ready();
+        }
+        void release() {
+            std::lock_guard<std::mutex> lock(mutex);
+            released = true;
+            cv.notify_all();
+        }
+        ~HeldNotFound() {
+            release();
+            http.stop();
+            serving.join();
+        }
+    } model_server;
+    const int model_port = model_server.port;
+    ASSERT_GT(model_port, 0);
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-sse-404-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string target = (dir / "downloaded.gguf").string();
+    const std::string url = "http://127.0.0.1:" + std::to_string(model_port) + "/model.gguf";
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server", "-m",     target.c_str(),   "--model-url", url.c_str(),
+                          "-c",           "64",     "-ngl",           "0",           "--host",
+                          "127.0.0.1",    "--port", port_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        const auto connected_by = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(sse.mutex);
+                if (sse.status != 0 || sse.ended) {
+                    break;
+                }
+            }
+            ASSERT_LT(std::chrono::steady_clock::now(), connected_by) << "the SSE client did not connect";
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        EXPECT_EQ(sse.status, 200);
+        model_server.release();
+        const json unloaded = sse.await([](const json &e) { return is_status(e, "unloaded"); });
+        ASSERT_FALSE(unloaded.is_null()) << json(sse.snapshot()).dump();
+        EXPECT_EQ(unloaded.at("data").value("exit_code", 0), 1) << unloaded.dump();
+        EXPECT_TRUE(sse.await_end(15)) << "the SSE stream outlived the failed server";
+        const auto events = sse.snapshot();
+        const size_t failed =
+            index_of(events, [](const json &e) { return e.value("event", std::string()) == "download_failed"; });
+        EXPECT_LT(failed, index_of(events, [](const json &e) { return is_status(e, "unloaded"); }))
+            << json(events).dump();
+        EXPECT_EQ(index_of(events, [](const json &e) { return is_status(e, "loading"); }), events.size())
+            << json(events).dump();
+        EXPECT_TRUE(is_status(events.back(), "unloaded")) << json(events).dump();
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (jllama_server_is_running(server) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_FALSE(jllama_server_is_running(server)) << "a server whose download failed still runs";
     EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
@@ -15050,11 +15139,13 @@ TEST(CApiServerTools, GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles) {
     const std::filesystem::path data = dir / "data";
     std::filesystem::create_directories(data);
     {
-        std::ofstream b(data / "b.txt");
+        // binary: the tool reads a file as bytes and keeps a '\r' in its line, so a text-mode
+        // stream on Windows would end every answered line with "\r\n"
+        std::ofstream b(data / "b.txt", std::ios::binary);
         for (int i = 0; i < 60; ++i) {
             b << "match b " << i << "\n";
         }
-        std::ofstream a(data / "a.txt");
+        std::ofstream a(data / "a.txt", std::ios::binary);
         for (int i = 0; i < 90; ++i) {
             a << "match a " << i << "\nother line\n";
         }
