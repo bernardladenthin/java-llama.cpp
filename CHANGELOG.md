@@ -315,8 +315,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12581** (from b12573, 8 upstream commits in two steps; master, pinned by commit before
-  upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
+- **llama.cpp b12586** (from b12573, 13 upstream commits in three steps; master, pinned by commit
+  before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
   at every step. b12580 adds `--ui-mcp-proxy-allow-private-urls` (#32633): the MCP CORS proxy of
@@ -328,8 +328,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   option). b12576 moves the Hadamard rotation of lightning-indexer keys into the model classes
   (#32653), b12577 loads `ffn_gate_up_exps.scale` for fused expert matrices and Inkling 2 passes its
   expert scales on (#32657), b12578 updates CUDA's `GATED_DELTA_NET` check (#32660), and b12579 focuses
-  the WebUI's chat form when the user types with nothing focused (#32570). All 31 patches apply
-  unchanged.
+  the WebUI's chat form when the user types with nothing focused (#32570). b12582 loads
+  highlight.js's languages on demand, so the embedded WebUI carries 291 assets instead of 96
+  (#32661; dist 8.1 MB instead of 7.6), b12584 passes `llama-tts`'s thread count to its projector
+  (#32664, the gap `TextToSpeech` had too, see "Fixed"), b12585 publishes Llama UI under a second npm
+  name (#32667) and b12586 searches message contents from the WebUI's search dialog (#32670). All 31
+  patches apply unchanged.
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
@@ -722,6 +726,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`TextToSpeech`'s thread count reached the backbone only.** The projector -- the speech pipeline's
+  own computation, and the llama contexts it builds itself (tiny-voca's stacks, VoxCPM2's residual LM,
+  YuE2's NAR layers) -- ran on the 4 threads `mtmd_context_params_default()` fixes, whatever
+  `TextToSpeech(model, mmproj, gpuLayers, threads)`, `jllama_tts_load` or `FfmTextToSpeech.load` was
+  given; upstream's own `llama-tts` had the same gap until b12584 (#32664). The projector takes the
+  engine's count now (`jllama_tts::build_tts_mtmd_params`; `TtsParams.TheProjectorComputesWithTheEngineThreadCount`,
+  red with the default left in place).
 - **Found by the fourth review round of 2026-11-19 (two reviews and a test-gap hunt), each red before
   its fix:**
   - **Two models loaded at the same time on two threads crashed the process** (a segmentation fault

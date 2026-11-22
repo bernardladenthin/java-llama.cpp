@@ -54,6 +54,20 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
 }
 
 // ---------------------------------------------------------------------------
+// The projector's context. mtmd_context_params_default() fixes its thread count at 4, and the
+// projector computes the audio -- and the llama contexts it builds itself (tiny-voca's stacks,
+// VoxCPM2's residual LM, YuE2's NAR layers) -- with it, so the engine's count has to be passed on:
+// llama-tts did not either until b12584 (#32664), and TextToSpeech's thread count reached the
+// backbone only. n_threads is the count build_tts_params resolved.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline mtmd_context_params build_tts_mtmd_params(int n_gpu_layers, int n_threads) {
+    mtmd_context_params params = mtmd_context_params_default();
+    params.use_gpu = n_gpu_layers != 0;
+    params.n_threads = n_threads;
+    return params;
+}
+
+// ---------------------------------------------------------------------------
 // Whether a pipeline clones a voice from a reference clip, which the projector's audio encoder
 // encodes (encode_speaker in tools/mtmd/mtmd-helper-gen.cpp). Read from the pipelines at b12541:
 // Qwen3-TTS, Pocket TTS, Chatterbox, Fish Audio S2, ZONOS3 and VoxCPM2 encode a clip; Kokoro and

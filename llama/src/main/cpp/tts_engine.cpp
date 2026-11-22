@@ -65,8 +65,7 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
         return nullptr;
     }
 
-    mtmd_context_params mtmd_params = mtmd_context_params_default();
-    mtmd_params.use_gpu = n_gpu_layers != 0;
+    mtmd_context_params mtmd_params = jllama_tts::build_tts_mtmd_params(n_gpu_layers, params.cpuparams.n_threads);
     if (mmproj_device && mmproj_device->empty()) {
         mtmd_params.use_gpu = false;
     } else if (mmproj_device) {

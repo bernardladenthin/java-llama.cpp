@@ -62,6 +62,24 @@ TEST(TtsParams, CarriesTheEngineSettings) {
 // or a pair that clones voices, goes on. The pair itself needs a TTS GGUF, which TtsIntegrationTest
 // loads; this pins the rule and the message without one.
 // ---------------------------------------------------------------------------
+TEST(TtsParams, TheProjectorComputesWithTheEngineThreadCount) {
+    // mtmd_context_params_default() says 4, so 1 and 7 are the counts that show whether the engine's
+    // reached the projector (red when build_tts_mtmd_params leaves the default).
+    ASSERT_EQ(mtmd_context_params_default().n_threads, 4);
+    const common_params one = jllama_tts::build_tts_params("m.gguf", 0, 1, 64);
+    const mtmd_context_params cpu = jllama_tts::build_tts_mtmd_params(0, one.cpuparams.n_threads);
+    EXPECT_EQ(cpu.n_threads, 1);
+    EXPECT_FALSE(cpu.use_gpu);
+    const common_params seven = jllama_tts::build_tts_params("m.gguf", 99, 7, 64);
+    const mtmd_context_params gpu = jllama_tts::build_tts_mtmd_params(99, seven.cpuparams.n_threads);
+    EXPECT_EQ(gpu.n_threads, 7);
+    EXPECT_TRUE(gpu.use_gpu);
+    // without a count the engine's default reaches the projector too
+    const common_params fallback = jllama_tts::build_tts_params("m.gguf", 0, 0, 64);
+    EXPECT_EQ(jllama_tts::build_tts_mtmd_params(0, fallback.cpuparams.n_threads).n_threads,
+              jllama_tts::TTS_DEFAULT_THREADS);
+}
+
 TEST(TtsSpeakerReference, NoReferenceIsAlwaysAccepted) {
     EXPECT_EQ(jllama_tts::speaker_reference_refusal(false, ""), "");
     EXPECT_EQ(jllama_tts::speaker_reference_refusal(true, ""), "");

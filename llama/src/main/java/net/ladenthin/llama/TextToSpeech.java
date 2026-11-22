@@ -49,7 +49,7 @@ public final class TextToSpeech implements AutoCloseable {
          * @param modelPath  path to the backbone GGUF
          * @param mmprojPath path to the mmproj GGUF
          * @param gpuLayers  layers to offload to the GPU
-         * @param threads    CPU threads for the backbone
+         * @param threads    CPU threads for the backbone and the projector
          * @return the native handle
          */
         long load(String modelPath, String mmprojPath, int gpuLayers, int threads);
@@ -162,7 +162,7 @@ public final class TextToSpeech implements AutoCloseable {
      * @param modelPath path to the backbone (text) GGUF
      * @param mmprojPath path to the mmproj GGUF (speaker encoder + code predictor + code2wav)
      * @param gpuLayers number of layers to offload to the GPU (0 = CPU only)
-     * @param threads CPU threads for the backbone (0 = a small default)
+     * @param threads CPU threads for the backbone and the projector (0 = a small default)
      */
     public TextToSpeech(String modelPath, String mmprojPath, int gpuLayers, int threads) {
         this(NATIVE_BACKEND, modelPath, mmprojPath, gpuLayers, threads);
@@ -175,7 +175,7 @@ public final class TextToSpeech implements AutoCloseable {
      * @param modelPath  path to the backbone (text) GGUF
      * @param mmprojPath path to the mmproj GGUF
      * @param gpuLayers  number of layers to offload to the GPU
-     * @param threads    CPU threads for the backbone
+     * @param threads    CPU threads for the backbone and the projector
      */
     TextToSpeech(Backend backend, String modelPath, String mmprojPath, int gpuLayers, int threads) {
         this.backend = backend;
