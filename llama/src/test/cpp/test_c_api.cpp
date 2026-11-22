@@ -2831,12 +2831,80 @@ TEST(CApiWeightScales, QwenNextScalesEveryProjectionOfItsDeltaNet) {
     expect_weight_scales_applied(tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next"));
 }
 
+TEST(CApiWeightScales, QwenNextScalesItsLegacyDeltaNetLayoutToo) {
+    // The legacy layout of Qwen3-Next's delta net (one ssm_in for queries, keys, values and the gate)
+    // multiplied ssm_in without the ssm_in.scale the generic pass loads, until build_lora_mm applied a
+    // weight's scale itself (b12622, #32669).
+    tiny_model_spec spec = tiny_model_spec::qwen3next("jllama-c-api-scales-qwen3next-legacy");
+    spec.qwen3next_legacy = true;
+    expect_weight_scales_applied(spec);
+}
+
 TEST(CApiWeightScales, Zaya1ScalesItsExperts) {
     // llama.cpp has loaded ffn_gate_up_exps.scale since b12577, but ZAYA1's graph passed no expert
     // scale on, so a scaled ZAYA1 computed its experts unscaled. Since b12622 (#32669) build_lora_mm
     // and build_lora_mm_id apply the scale a weight has, whatever the architecture's graph passes. The
     // generator's ZAYA1 writes a scale per expert next to both expert matrices.
     expect_weight_scales_applied(tiny_model_spec::zaya1("jllama-c-api-scales-zaya1"));
+}
+
+TEST(CApiWeightScales, EveryDecoderOfTheGeneratorAppliesItsScales) {
+    // Since b12622 (#32669) the scale of a weight is applied by build_lora_mm itself, so an
+    // architecture no longer has to pass it on: Gemma 4 (with its KV-shared layers and the output tied
+    // to the token embedding, which carries no scale -- llama.cpp refuses one there), Domyn Edge,
+    // Cohere2 (sliding window, tied output) and Qwen3-VL.
+    expect_weight_scales_applied(tiny_model_spec::gemma4(8, "jllama-c-api-scales-gemma4"));
+    expect_weight_scales_applied(tiny_model_spec::domyn_edge(8, "jllama-c-api-scales-domyn"));
+    expect_weight_scales_applied(tiny_model_spec::swa(16, "jllama-c-api-scales-cohere2"));
+    expect_weight_scales_applied(tiny_model_spec::qwen3vl("jllama-c-api-scales-qwen3vl"));
+}
+
+TEST(CApiWeightScales, AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting) {
+    // patches/0043. Without --spec-type draft-mtp llama.cpp skips the weights of an MTP block, and the
+    // generic pass that loads the scales loads one only next to a weight it has: the block's scales
+    // counted as tensors of the file nobody loaded, and the model did not load at all ("wrong number
+    // of tensors; expected 62, got 57") -- a model of the 18 architectures that skip an MTP block
+    // this way (hy_v3, DeepSeek, GLM, Qwen3.5, Qwen3-Next, ...) whose block carries scales, as an
+    // NVFP4 or FP8 conversion of the whole checkpoint does, unless it drafted with that block. The
+    // generator's HY-V3 carries a scale next to every matrix, the MTP block's projection included;
+    // loaded without MTP drafting it answers like the folded model.
+    expect_weight_scales_applied(tiny_model_spec::mtp("jllama-c-api-scales-hy-v3"));
+}
+
+TEST(CApiWeightScales, AnMtpBlockDraftsWithTheScaleOfItsProjection) {
+    // nextn.eh_proj.scale, which the generic pass loads for an MTP block: with --spec-type draft-mtp
+    // the scaled and the folded model draft the same tokens and accept the same of them -- the drafts
+    // come from the MTP block alone, the answer from the model either way.
+    tiny_model_spec spec = tiny_model_spec::mtp("jllama-c-api-scales-mtp-scaled");
+    spec.weight_scale = 2.0f;
+    const std::string scaled = write_tiny_llama_gguf(spec);
+    spec.prefix = "jllama-c-api-scales-mtp-folded";
+    spec.weight_scale_folded = true;
+    const std::string folded = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(scaled.empty());
+    ASSERT_FALSE(folded.empty());
+    const auto drafting = [](const std::string &path) {
+        jllama_model *model = load_tiny(path, {"--spec-type", "draft-mtp"});
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return json();
+        }
+        const std::string answer = greedy_answer(model, 48);
+        Owned metrics;
+        EXPECT_EQ(jllama_metrics(model, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        const json m = metrics.s != nullptr ? json::parse(metrics.str()) : json::object();
+        jllama_model_free(model);
+        return json{{"answer", answer},
+                    {"drafted", m.value("n_draft_tokens_total", -1)},
+                    {"accepted", m.value("n_draft_accepted_total", -1)}};
+    };
+    const json with_scale = drafting(scaled);
+    ASSERT_FALSE(with_scale.is_null());
+    EXPECT_GT(with_scale.at("drafted").get<int>(), 0) << with_scale.dump();
+    EXPECT_EQ(with_scale, drafting(folded));
+    std::error_code ignored;
+    std::filesystem::remove(scaled, ignored);
+    std::filesystem::remove(folded, ignored);
 }
 
 TEST(CApiControlVector, AControlVectorChangesTheAnswerOnlyOnTheLayersOfItsRange) {

@@ -1,0 +1,92 @@
+llama : the scales of a skipped weight are skipped with it
+
+llama_model_base::load_tensors loads the weight scales of every architecture in one generic pass (NVFP4's
+second scale, an FP8 checkpoint's per-tensor scale: "<matrix>.scale", "<matrix>.input_scale"), and loads
+a scale only next to a weight the architecture has. The weights of an MTP block are created with
+TENSOR_SKIP when the model is loaded without MTP drafting (llama_model_base::nextn_flags: no
+--spec-type draft-mtp), so they are null there, the pass loaded none of their scales, and the scales
+counted as tensors of the file nobody loaded: the model failed to load with "wrong number of tensors"
+(expected 62, got 57 for the test's HY-V3) -- any model of the 18 architectures that skip an MTP block
+that does not draft (17 through nextn_flags, xing4-0 in its own loader) whose block carries scales,
+unless it was loaded to draft with that block.
+
+The loader skips a skipped weight's scales with it now, and counts a skipped tensor once whoever skips
+it: nemotron-h creates its MTP block's expert scales itself with the block's flags, which would
+otherwise count them twice ("too many tensors").
+
+The guard is CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting in
+src/test/cpp/test_c_api.cpp (the generator's HY-V3 with a scale next to every matrix, loaded without
+MTP drafting, answers like the model with the scales folded into its weights; a failed load without
+the patch); CApiWeightScales.AnMtpBlockDraftsWithTheScaleOfItsProjection holds the block's scales when
+it drafts.
+
+Drop-check on every bump: read the generic scale pass of llama_model_base::load_tensors in
+src/llama-model.cpp and the skip branch of llama_model_loader::create_tensor in
+src/llama-model-loader.cpp -- once a skipped weight's scales are skipped with it, drop the patch.
+
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 808fb44d8..e0f92bb66 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1271,11 +1271,22 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+ 
+         // skip unused tensors
+         if (info.op == GGML_OP_NONE || (flags & TENSOR_SKIP)) {
+-            const size_t nbytes = ggml_nbytes(t_meta);
+-            LLAMA_LOG_WARN("model has unused tensor %s (size = %zu bytes) -- ignoring\n", tn.str().c_str(), nbytes);
+-
+-            size_data -= nbytes;
+-            n_created++;
++            skip_tensor(tn.str(), t_meta);
++
++            // The scales of a skipped weight (NVFP4's second scale, an FP8 input scale) go with it. The
++            // generic pass of llama_model_base::load_tensors loads a scale only next to a weight it has,
++            // so the scales of an MTP block loaded without MTP drafting counted as tensors of the file
++            // nobody loaded, and the model failed to load ("wrong number of tensors").
++            if (tn.suffix != nullptr && strcmp(tn.suffix, "weight") == 0) {
++                const std::string name = tn.str();
++                const std::string base = name.substr(0, name.size() - strlen("weight"));
++                for (const char * companion : {"scale", "input_scale"}) {
++                    const ggml_tensor * meta = get_tensor_meta((base + companion).c_str());
++                    if (meta != nullptr) {
++                        skip_tensor(base + companion, meta);
++                    }
++                }
++            }
+ 
+             return nullptr;
+         }
+@@ -1484,6 +1495,18 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+     return tensor;
+ }
+ 
++void llama_model_loader::skip_tensor(const std::string & name, const ggml_tensor * meta) {
++    // counted once, whoever skips it: an architecture may skip a weight's scale itself (nemotron-h's MTP block)
++    if (!skipped_tensors.insert(name).second) {
++        return;
++    }
++    const size_t nbytes = ggml_nbytes(meta);
++    LLAMA_LOG_WARN("model has unused tensor %s (size = %zu bytes) -- ignoring\n", name.c_str(), nbytes);
++
++    size_data -= nbytes;
++    n_created++;
++}
++
+ void llama_model_loader::done_getting_tensors(bool partial) const {
+     if (n_created > n_tensors) {
+         throw std::runtime_error(format("%s: too many tensors created; expected %d, got %d", __func__, n_tensors, n_created));
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+index ed59079a4..9e27065cc 100644
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -238,6 +238,10 @@ struct llama_model_loader {
+ 
+     void done_getting_tensors(bool partial = false) const;
+ 
++    // counts a tensor of the file that is not loaded, once whoever skips it
++    void skip_tensor(const std::string & name, const ggml_tensor * meta);
++    std::set<std::string> skipped_tensors;
++
+     void init_mappings(bool prefetch = true, llama_mlocks * mlock_mmaps = nullptr);
+ 
+     // byte range within a mapped file

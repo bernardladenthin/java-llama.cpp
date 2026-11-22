@@ -396,11 +396,6 @@ the log lock)
   that the frames arrive, with SmolVLM.
 
 **Upstream's, not patched here**
-- **Qwen3-Next's legacy delta-net layout ignores `ssm_in.scale`**: the layout (`ssm_in` instead of
-  `attn_qkv` + `attn_gate`) multiplies `ssm_in` without its `ssm_in.scale`, which the generic loader
-  reads (`build_qkvz` in `src/models/qwen3next.cpp`). Unreachable for a current conversion, which
-  writes `attn_qkv`; an NVFP4 or FP8 file in the old layout would be computed with the wrong
-  magnitude.
 - **Audio stacking** (measured at b12493 against the real Ultravox pair): llama.cpp stacks the 1500
   encoder frames of a chunk with `build_stack` (`mtmd-graph.cpp`), which pads with `GGML_PAD` -- a
   bit-mask rounding that is right only for a power of two -- and counts the embeddings first as

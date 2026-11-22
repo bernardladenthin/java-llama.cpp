@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**32 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**33 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -54,6 +54,7 @@ match a binary to this page.
 | 0040 | [`0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch`](#0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-onpatch) | common : closing a log sink does not turn a disabled log back on | 1 | 3 |
 | 0041 | [`0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch`](#0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threadspatch) | common : the log scope of the fit is safe for loads on several threads | 1 | 2 |
 | 0042 | [`0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch`](#0042-common-a-json-schema-whose-bounds-admit-no-value-is-refusedpatch) | common : a JSON schema whose bounds admit no value is refused | 1 | 3 |
+| 0043 | [`0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-it.patch`](#0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-itpatch) | llama : the scales of a skipped weight are skipped with it | 2 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1373,4 +1374,38 @@ src/test/cpp/test_c_api.cpp.
 
 Drop-check on every bump: read build_array, build_string and build_integer in common/json-schema.cpp --
 once they compare the two bounds themselves, drop the patch.
+```
+
+## 0043-llama-the-scales-of-a-skipped-weight-are-skipped-with-it.patch
+
+**Files (2):** `src/llama-model-loader.cpp`, `src/llama-model-loader.h`
+
+The patch's own header, verbatim:
+
+```text
+llama : the scales of a skipped weight are skipped with it
+
+llama_model_base::load_tensors loads the weight scales of every architecture in one generic pass (NVFP4's
+second scale, an FP8 checkpoint's per-tensor scale: "<matrix>.scale", "<matrix>.input_scale"), and loads
+a scale only next to a weight the architecture has. The weights of an MTP block are created with
+TENSOR_SKIP when the model is loaded without MTP drafting (llama_model_base::nextn_flags: no
+--spec-type draft-mtp), so they are null there, the pass loaded none of their scales, and the scales
+counted as tensors of the file nobody loaded: the model failed to load with "wrong number of tensors"
+(expected 62, got 57 for the test's HY-V3) -- any model of the 18 architectures that skip an MTP block
+that does not draft (17 through nextn_flags, xing4-0 in its own loader) whose block carries scales,
+unless it was loaded to draft with that block.
+
+The loader skips a skipped weight's scales with it now, and counts a skipped tensor once whoever skips
+it: nemotron-h creates its MTP block's expert scales itself with the block's flags, which would
+otherwise count them twice ("too many tensors").
+
+The guard is CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting in
+src/test/cpp/test_c_api.cpp (the generator's HY-V3 with a scale next to every matrix, loaded without
+MTP drafting, answers like the model with the scales folded into its weights; a failed load without
+the patch); CApiWeightScales.AnMtpBlockDraftsWithTheScaleOfItsProjection holds the block's scales when
+it drafts.
+
+Drop-check on every bump: read the generic scale pass of llama_model_base::load_tensors in
+src/llama-model.cpp and the skip branch of llama_model_loader::create_tensor in
+src/llama-model-loader.cpp -- once a skipped weight's scales are skipped with it, drop the patch.
 ```

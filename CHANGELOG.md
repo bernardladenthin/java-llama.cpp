@@ -806,6 +806,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **A model with weight scales and an MTP block did not load without MTP drafting.** llama.cpp loads
+  the weight scales of NVFP4 and FP8 conversions (`<matrix>.scale`, `<matrix>.input_scale`) next to the
+  weights an architecture has, and skips the weights of an MTP block unless the model drafts with it
+  (`--spec-type draft-mtp`): the block's scales counted as tensors nobody loaded, and the load failed
+  with "wrong number of tensors" -- for every architecture that skips an MTP block this way (18 at
+  b12631: HY-V3, DeepSeek, GLM, Qwen3.5, Qwen3-Next, ...) whose block carries scales. The loader skips
+  a skipped weight's scales with it now (new `patches/0043`;
+  `CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting`, a failed load without it). The
+  weight-scale tests cover Gemma 4, Domyn Edge, Cohere2, Qwen3-VL, the MTP block's projection and
+  Qwen3-Next's legacy `ssm_in` layout too, which llama.cpp b12622 (#32669) scales since it applies a
+  weight's scale in `build_lora_mm` itself (the TODO entry for that layout is gone).
 - **A JSON schema no value satisfies was answered against it, or failed without its reason.** llama.cpp
   read `minItems`/`maxItems`, `minLength`/`maxLength` and an integer's `minimum`/`maximum` without
   comparing them and wrote them into the grammar as they came: `minItems 2 / maxItems 1` was answered

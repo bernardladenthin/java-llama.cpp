@@ -178,11 +178,15 @@ struct tiny_model_spec {
     // <matrix>.scale next to a weight matrix, one value ({1}) or one per expert ({n_expert}), by which
     // llama.cpp multiplies the matrix's product (build_lora_mm). Written next to every matrix that has
     // one in llama.cpp's generic loader -- attention, feed-forward, experts, shared experts, the
-    // recurrent in/out projections, the output -- when weight_scale is not 0. With
+    // recurrent in/out projections, the MTP block's projection, the output unless it is the token
+    // embedding -- when weight_scale is not 0. With
     // weight_scale_folded the matrices hold their weights times the scale instead and no scale tensor
     // is written: the same random draws, so the two files are one model written two ways.
     float weight_scale = 0.0f;
     bool weight_scale_folded = false;
+    // qwen3next only: the legacy layout of the delta net, one ssm_in for the queries, keys, values and
+    // the gate, where a current conversion writes attn_qkv and attn_gate
+    bool qwen3next_legacy = false;
     // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
     // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
     // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
@@ -603,7 +607,8 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     if (!sentencepiece) {
         confine_output_to_ascii(output); // token ids are bytes there; every SentencePiece piece is printable
     }
-    if (!cohere2 && spec.weight_scale != 0.0f) {
+    // llama.cpp refuses an output scale on a tied output ("output scales require a separate output weight")
+    if (!cohere2 && !gemma4 && spec.weight_scale != 0.0f) {
         if (spec.weight_scale_folded) {
             for (int64_t i = 0; i < ggml_nelements(output); ++i) {
                 static_cast<float *>(output->data)[i] *= spec.weight_scale;
@@ -723,8 +728,12 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "post_attention_norm.weight", {spec.n_embd}, 1.0f);
             if (il % 2 == 0) { // the gated delta net
-                matrix(to, p + "attn_qkv.weight", {spec.n_embd, 3 * GDN_INNER});
-                matrix(to, p + "attn_gate.weight", {spec.n_embd, GDN_INNER});
+                if (spec.qwen3next_legacy) {
+                    matrix(to, p + "ssm_in.weight", {spec.n_embd, 4 * GDN_INNER});
+                } else {
+                    matrix(to, p + "attn_qkv.weight", {spec.n_embd, 3 * GDN_INNER});
+                    matrix(to, p + "attn_gate.weight", {spec.n_embd, GDN_INNER});
+                }
                 add_random_tensor(to, ctx, rng, p + "ssm_conv1d.weight", {SSM_CONV, 3 * GDN_INNER}, 0.1f);
                 add_random_tensor(to, ctx, rng, p + "ssm_dt.bias", {GDN_HEADS}, 1.0f);
                 ggml_tensor *ssm_a = add_random_tensor(to, ctx, rng, p + "ssm_a", {GDN_HEADS}, 1.0f);
@@ -757,7 +766,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
         }
         if (il >= spec.n_layer) {
-            add_random_tensor(to, ctx, rng, p + "nextn.eh_proj.weight", {2 * spec.n_embd, spec.n_embd}, 0.1f);
+            matrix(to, p + "nextn.eh_proj.weight", {2 * spec.n_embd, spec.n_embd});
             add_random_tensor(to, ctx, rng, p + "nextn.enorm.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "nextn.hnorm.weight", {spec.n_embd}, 1.0f);
         }
