@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12668](https://img.shields.io/badge/llama.cpp-%23b12668-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12668)  
+[![llama.cpp b12669](https://img.shields.io/badge/llama.cpp-%23b12669-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12669)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1068,7 +1068,16 @@ int chunks = LlamaQuantizer.computeImportanceMatrix("model-f16.gguf", "calibrati
 // inputs are GGUF or the legacy binary format, and "true" as a third argument writes the latter.
 LlamaQuantizer.mergeImportanceMatrices(
         Arrays.asList("model.code.imatrix.gguf", "model.prose.imatrix.gguf"), "model.imatrix.gguf");
+// A target instead of a type (llama-quantize --target-bpw / --target-size): llama.cpp picks the
+// type of every tensor from the importance matrix, which these need, so that the file reaches it.
+LlamaQuantizer.quantizeToBitsPerWeight("model-f16.gguf", "model-3.5bpw.gguf", 3.5, "model.imatrix.gguf");
+LlamaQuantizer.quantizeToSize("model-f16.gguf", "model-4gb.gguf", 4L << 30, "model.imatrix.gguf");
 ```
+
+The target search runs on the CPU, evaluates several types for every tensor and takes longer than a
+quantization to one type; the file names the type `llama-quantize` starts from (for bits per weight
+the first type whose own are not below the target, for a size F16), its tensors the types the search
+chose.
 
 ### Raw JSON Endpoints
 

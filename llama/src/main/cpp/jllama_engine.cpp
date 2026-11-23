@@ -27,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <clocale>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1941,11 +1942,23 @@ std::string json_schema_to_grammar_text(const std::string &schema_json) {
 
 namespace {
 
+// What an importance matrix gives the quantizer besides the importance itself: the mean activation
+// of every column (.in_sum, which upstream's llama-imatrix writes; the files of jllama_imatrix carry
+// none) and the per-tensor statistics with their schema (.stats, b12669). llama.cpp's target search
+// reads both when they are there.
+struct imatrix_side_data {
+    std::map<std::string, std::vector<float>> activations;
+    std::map<std::string, std::vector<float>> statistics;
+    std::vector<std::string> schema;
+};
+
 // The importance of every weight column, per tensor, from an imatrix file (llama-imatrix's GGUF
 // format or the legacy binary one): what upstream's tools/quantize computes from the same loader
-// before it calls llama_model_quantize. Throws when the file cannot be used.
+// before it calls llama_model_quantize, and with `side` the rest of what it passes. Throws when the
+// file cannot be used.
 std::map<std::string, std::vector<float>> load_importance_matrix(const std::string &path, int32_t &chunk_count,
-                                                                 std::string &dataset) {
+                                                                 std::string &dataset,
+                                                                 imatrix_side_data *side = nullptr) {
     common_imatrix loaded;
     if (!common_imatrix_load(path, loaded)) {
         throw std::runtime_error("failed to load the importance matrix '" + path + "'");
@@ -1978,6 +1991,26 @@ std::map<std::string, std::vector<float>> load_importance_matrix(const std::stri
                 values[i] = n_call > 0 ? entry.sums[i] / static_cast<float>(n_call) : entry.sums[i];
             }
         }
+        if (side != nullptr && !entry.activations.empty() && entry.activations.size() == entry.sums.size()) {
+            // divided by the counts as the sums are (load_imatrix in upstream's tools/quantize)
+            std::vector<float> &mean = side->activations[name];
+            mean.resize(entry.activations.size());
+            const int64_t n_counts = static_cast<int64_t>(entry.counts.size());
+            const int64_t per_count = loaded.is_legacy || n_counts == 0 ? static_cast<int64_t>(mean.size())
+                                                                        : static_cast<int64_t>(mean.size()) / n_counts;
+            for (size_t i = 0; i < mean.size(); ++i) {
+                const int64_t j = loaded.is_legacy ? 0 : static_cast<int64_t>(i) / per_count;
+                const float count = entry.counts.empty() ? 0.0f : static_cast<float>(entry.counts[j]);
+                mean[i] =
+                    count > 0.0f ? entry.activations[i] / count : (loaded.is_legacy ? entry.activations[i] : 0.0f);
+            }
+        }
+        if (side != nullptr && !entry.stats.empty()) {
+            side->statistics[name] = entry.stats;
+        }
+    }
+    if (side != nullptr) {
+        side->schema = loaded.stats_schema;
     }
     if (data.empty()) {
         throw std::runtime_error("the importance matrix '" + path + "' holds no entries");
@@ -2015,8 +2048,10 @@ llama_model_kv_override int_override(const char *key, int64_t value) {
 
 } // namespace
 
-void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
-              bool allow_requantize, const std::string &imatrix_path) {
+namespace {
+
+void quantize_impl(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
+                   bool allow_requantize, const std::string &imatrix_path, const quantize_target *target) {
     // Idempotent; intentionally never paired with llama_backend_free here -- a model loaded in the
     // same process shares the backend and must not have it freed underneath it.
     llama_backend_init();
@@ -2024,20 +2059,50 @@ void quantize(const std::string &input_path, const std::string &output_path, int
     qparams.ftype = static_cast<llama_ftype>(ftype);
     qparams.nthread = nthread;
     qparams.allow_requantize = allow_requantize;
+    if (target != nullptr) {
+        qparams.target_bpw = target->bits_per_weight > 0.0 ? static_cast<float>(target->bits_per_weight) : -1.0f;
+        qparams.target_size = target->size_bytes > 0 ? target->size_bytes : -1;
+        // no state_file: llama.cpp then keeps no .bpw_state file of the search (a file next to the
+        // working directory, under the model's name) -- a library call has no Ctrl-C to resume from
+    }
 
-    // all three outlive the call below, which reads them through qparams
+    // all of them outlive the call below, which reads them through qparams
     std::map<std::string, std::vector<float>> importance;
     std::vector<llama_model_imatrix_data> imatrix;
+    imatrix_side_data side;
+    std::vector<llama_model_imatrix_data> activations;
+    std::vector<llama_model_imatrix_data> statistics;
+    std::vector<const char *> schema;
     std::vector<llama_model_kv_override> overrides;
     if (!imatrix_path.empty()) {
         int32_t chunk_count = 0;
         std::string dataset;
-        importance = load_importance_matrix(imatrix_path, chunk_count, dataset);
+        importance = load_importance_matrix(imatrix_path, chunk_count, dataset, &side);
         for (const auto &[name, values] : importance) {
             imatrix.push_back({name.c_str(), values.data(), values.size()});
         }
         imatrix.push_back({nullptr, nullptr, 0}); // the terminator llama_model_quantize reads up to
         qparams.imatrix = imatrix.data();
+        // the side data as upstream's llama-quantize passes it (b12669); only a target reads it
+        if (!side.activations.empty()) {
+            for (const auto &[name, values] : side.activations) {
+                activations.push_back({name.c_str(), values.data(), values.size()});
+            }
+            activations.push_back({nullptr, nullptr, 0});
+            qparams.activations = activations.data();
+        }
+        if (!side.statistics.empty()) {
+            for (const auto &[name, values] : side.statistics) {
+                statistics.push_back({name.c_str(), values.data(), values.size()});
+            }
+            statistics.push_back({nullptr, nullptr, 0});
+            qparams.statistics = statistics.data();
+            for (const auto &name : side.schema) {
+                schema.push_back(name.c_str());
+            }
+            schema.push_back(nullptr);
+            qparams.stats_schema = schema.data();
+        }
         // The metadata upstream's llama-quantize records in the output, under the same keys -- the
         // file names, not the paths (upstream since #32000): the output is a file people publish,
         // and a path names the directories of the machine it was made on. A matrix another tool
@@ -2078,10 +2143,69 @@ void quantize(const std::string &input_path, const std::string &output_path, int
         }
         throw std::runtime_error(
             "Quantization of '" + input_path + "' failed with code " + std::to_string(rc) +
-            (imatrix_path.empty() && needs_imatrix
+            (target != nullptr ? " (for a target, the size the tensors with a fixed type take may leave too little "
+                                 "for the others; see the log)"
+             : imatrix_path.empty() && needs_imatrix
                  ? " (the IQ1, IQ2, IQ3_XS, IQ3_XXS and Q2_K_S file types need an importance matrix)"
                  : ""));
     }
+}
+
+} // namespace
+
+void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
+              bool allow_requantize, const std::string &imatrix_path) {
+    quantize_impl(input_path, output_path, ftype, nthread, allow_requantize, imatrix_path, nullptr);
+}
+
+std::string quantize_target_refusal(const quantize_target &target, const std::string &imatrix_path) {
+    const bool has_bpw = !(target.bits_per_weight < 0.0); // a NaN counts as given, and is refused below
+    const bool has_size = target.size_bytes >= 0;
+    if (has_bpw == has_size) {
+        return "exactly one target is needed: bits per weight or a file size";
+    }
+    if (has_bpw &&
+        !(std::isfinite(target.bits_per_weight) && target.bits_per_weight > 0.0 && target.bits_per_weight <= 16.0)) {
+        return "the target bits per weight must be above 0 and at most 16, not " +
+               std::to_string(target.bits_per_weight);
+    }
+    if (has_size && target.size_bytes == 0) {
+        return "the target file size must be above 0 bytes";
+    }
+    if (imatrix_path.empty()) {
+        return "a quantization to a target needs an importance matrix";
+    }
+    return "";
+}
+
+int quantize_target_ftype(const quantize_target &target) {
+    if (target.bits_per_weight <= 0.0) {
+        return LLAMA_FTYPE_MOSTLY_F16;
+    }
+    // upstream's get_ftype: std::map::lower_bound, the first type whose bits per weight are not below
+    static const std::pair<double, llama_ftype> by_bpw[] = {
+        {1.5625, LLAMA_FTYPE_MOSTLY_IQ1_S},   {1.7500, LLAMA_FTYPE_MOSTLY_IQ1_M},  {2.0625, LLAMA_FTYPE_MOSTLY_IQ2_XXS},
+        {2.3125, LLAMA_FTYPE_MOSTLY_IQ2_XS},  {2.5625, LLAMA_FTYPE_MOSTLY_IQ2_S},  {2.6250, LLAMA_FTYPE_MOSTLY_Q2_K},
+        {3.0625, LLAMA_FTYPE_MOSTLY_IQ3_XXS}, {3.4375, LLAMA_FTYPE_MOSTLY_Q3_K_M}, {4.2500, LLAMA_FTYPE_MOSTLY_IQ4_XS},
+        {4.5000, LLAMA_FTYPE_MOSTLY_Q4_K_M},  {5.5000, LLAMA_FTYPE_MOSTLY_Q5_K_M}, {6.5625, LLAMA_FTYPE_MOSTLY_Q6_K},
+        {8.5000, LLAMA_FTYPE_MOSTLY_Q8_0},    {16.0000, LLAMA_FTYPE_MOSTLY_F16},
+    };
+    for (const auto &[bpw, ftype] : by_bpw) {
+        if (static_cast<float>(bpw) >= static_cast<float>(target.bits_per_weight)) {
+            return ftype;
+        }
+    }
+    return LLAMA_FTYPE_MOSTLY_F16;
+}
+
+void quantize_to_target(const std::string &input_path, const std::string &output_path, int nthread,
+                        bool allow_requantize, const std::string &imatrix_path, const quantize_target &target) {
+    const std::string refusal = quantize_target_refusal(target, imatrix_path);
+    if (!refusal.empty()) {
+        throw std::invalid_argument(refusal);
+    }
+    quantize_impl(input_path, output_path, quantize_target_ftype(target), nthread, allow_requantize, imatrix_path,
+                  &target);
 }
 
 } // namespace jllama::engine

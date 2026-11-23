@@ -10,6 +10,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Quantization to a target** (llama.cpp b12669): `LlamaQuantizer.quantizeToBitsPerWeight` and
+  `quantizeToSize` quantize a GGUF file to an average number of bits per weight or a file size, as
+  `llama-quantize --target-bpw` / `--target-size` do: llama.cpp picks the type of every tensor so that
+  the file reaches the target at the lowest error it estimates from the importance matrix, which these
+  methods require. The C API has it as `jllama_quantize_target` (a target out of range or without a
+  matrix is `JLLAMA_STATUS_INVALID_ARGUMENT` with its reason), `llama-ffm` as
+  `Jllama.quantizeToBitsPerWeight` / `quantizeToSize`. The matrix's mean activations and statistics
+  (`.in_sum`, `.stats`, which upstream's `llama-imatrix` writes) reach the search as they do from
+  upstream's tool; no `.bpw_state` file of the search is kept. `CApiEnumSweep` holds it on the wide
+  random model -- 3, 4.5 and 6 bits per weight land at 2.98, 4.49 and 5.95 and name IQ3_XXS, Q4_K_M
+  and Q6_K, a third of the F16 file's size is kept and names F16, every result loads and answers, red
+  without the target reaching the quantizer -- and `QuantizerIntegrationTest` on CI's draft model.
 - **More of llama.cpp's request and sampler options.** `Sampler.ADAPTIVE_P` and `Sampler.TOP_N_SIGMA`
   (upstream's sampler names `adaptive_p` and `top_n_sigma`, which the enum lacked) with
   `InferenceParameters.withAdaptiveTarget` / `withAdaptiveDecay` for the adaptive-p sampler (the
@@ -358,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12668** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12669** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -406,7 +418,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   every matrix multiplication; the temporary environment variable `LLAMA_MOE_AMAX_SKIP` swaps the
   amax rescaling of the MoE down projection of Mistral 4, Mellum, Flint and Laguna for a BF16
   operand (upstream measured +22 % to +25 % token generation on M2 Ultra and M5 Max). The CPU
-  library builds the same graphs as before; the MoE, weight-scale and trainer cases pass unchanged.
+  library builds the same graphs as before; the MoE, weight-scale and trainer cases pass unchanged. b12669
+  lets the quantizer aim at a target instead of a type (#15550; "Added" above): with an importance
+  matrix it scores the candidate types of every tensor and picks the mix that reaches the bits per
+  weight or the file size asked for. `patches/0028` was rewritten by hand: the output is opened in a
+  lambda of its own now, which still takes the narrow name, and the patch passes it through
+  `std::filesystem::u8path()` there. A quantization to a type writes the same files as before.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds

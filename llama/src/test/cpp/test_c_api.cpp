@@ -59,6 +59,7 @@
 #include <ostream>
 #include <random>
 #include <regex>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <string>
@@ -9715,6 +9716,137 @@ TEST_F(CApiEnumSweep, AnImportanceMatrixThatCannotBeUsedIsRefusedByName) {
     // an empty path is no matrix, as null is
     EXPECT_EQ(jllama_quantize_imatrix(path_.c_str(), out.c_str(), 15, 1, false, ""), JLLAMA_STATUS_OK)
         << jllama_last_error();
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+}
+
+// The bits per weight of a GGUF file, as llama.cpp's target search counts them: the bytes of every
+// tensor over its elements (metadata not counted), and the file type the file names.
+struct gguf_bits {
+    double bits_per_weight = 0.0;
+    int file_type = -1;
+    std::set<int> tensor_types;
+};
+
+gguf_bits read_gguf_bits(const std::string &file) {
+    gguf_bits bits;
+    ggml_context *meta = nullptr;
+    gguf_init_params params = {true, &meta};
+    gguf_context *g = gguf_init_from_file(file.c_str(), params);
+    if (g == nullptr) {
+        return bits;
+    }
+    double bytes = 0.0;
+    double elements = 0.0;
+    for (ggml_tensor *t = ggml_get_first_tensor(meta); t != nullptr; t = ggml_get_next_tensor(meta, t)) {
+        bytes += static_cast<double>(ggml_nbytes(t));
+        elements += static_cast<double>(ggml_nelements(t));
+        bits.tensor_types.insert(static_cast<int>(t->type));
+    }
+    bits.bits_per_weight = elements > 0.0 ? 8.0 * bytes / elements : 0.0;
+    const int64_t key = gguf_find_key(g, "general.file_type");
+    if (key >= 0) {
+        bits.file_type = static_cast<int>(gguf_get_val_u32(g, key));
+    }
+    gguf_free(g);
+    ggml_free(meta);
+    return bits;
+}
+
+TEST_F(CApiEnumSweep, ATargetOfBitsPerWeightIsReachedAndTheModelAnswers) {
+    // llama.cpp b12669 (#15550): with a target the quantizer picks the type of every tensor itself.
+    // The file names the type llama-quantize starts from (the first whose bits per weight are not
+    // below the target), and the tensors land near the target -- 3, 4.5 and 6 bits per weight give three
+    // different mixes, each just below its target.
+    struct expected {
+        double bpw;
+        int file_type;
+    };
+    double previous = 0.0;
+    for (const expected &target : {expected{3.0, 23}, expected{4.5, 15}, expected{6.0, 18}}) {
+        SCOPED_TRACE("target " + std::to_string(target.bpw) + " bpw");
+        const std::string out = path_ + ".target-bpw.gguf";
+        ASSERT_EQ(jllama_quantize_target(path_.c_str(), out.c_str(), 1, false, imatrix_.c_str(), target.bpw, -1),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const gguf_bits bits = read_gguf_bits(out);
+        EXPECT_EQ(bits.file_type, target.file_type);
+        EXPECT_GT(bits.bits_per_weight, previous) << "a larger target gives a larger file";
+        // measured 2.98, 4.49 and 5.95: the search stays below the target, by less than a step
+        EXPECT_LE(bits.bits_per_weight, target.bpw + 0.05);
+        EXPECT_GE(bits.bits_per_weight, target.bpw - 0.5);
+        previous = bits.bits_per_weight;
+        jllama_model *model = load_tiny(out, {});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned completion;
+        EXPECT_EQ(jllama_completions(model, R"({"prompt":"Hello there","temperature":0,"n_predict":4})", &completion.s),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        jllama_model_free(model);
+        std::error_code ec;
+        std::filesystem::remove(out, ec);
+    }
+}
+
+TEST_F(CApiEnumSweep, ATargetSizeIsKeptAndTheFileNamesF16) {
+    // A size target starts from F16, as llama-quantize does: without the target reaching the
+    // quantizer the output would be F16 throughout, twice the size asked for.
+    const std::string f16 = path_ + ".target-f16.gguf";
+    ASSERT_EQ(jllama_quantize(path_.c_str(), f16.c_str(), 1, 1, false), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    const auto f16_size = static_cast<int64_t>(std::filesystem::file_size(f16, ec));
+    ASSERT_GT(f16_size, 0);
+    const int64_t target = f16_size / 3;
+    const std::string out = path_ + ".target-size.gguf";
+    ASSERT_EQ(jllama_quantize_target(path_.c_str(), out.c_str(), 1, false, imatrix_.c_str(), -1.0, target),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const auto size = static_cast<int64_t>(std::filesystem::file_size(out, ec));
+    // measured 525408 bytes for a target of 526976 (F16 1580928)
+    EXPECT_LE(size, target + target / 100) << "F16 was " << f16_size;
+    EXPECT_GE(size, target - target / 5) << "F16 was " << f16_size;
+    const gguf_bits bits = read_gguf_bits(out);
+    EXPECT_EQ(bits.file_type, 1);
+    EXPECT_GT(bits.tensor_types.size(), 1u) << "the search keeps F32 norms next to the quantized weights";
+    jllama_model *model = load_tiny(out, {});
+    EXPECT_NE(model, nullptr) << jllama_last_error();
+    if (model != nullptr) {
+        jllama_model_free(model);
+    }
+    std::filesystem::remove(out, ec);
+    std::filesystem::remove(f16, ec);
+}
+
+TEST_F(CApiEnumSweep, ATargetThatCannotBeQuantizedToIsRefusedWithItsReason) {
+    const std::string out = path_ + ".bad-target.gguf";
+    struct refused {
+        const char *imatrix;
+        double bpw;
+        int64_t size;
+        const char *reason;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::string im = imatrix_;
+    for (const refused &r :
+         {refused{im.c_str(), 4.0, 1000, "exactly one target"}, refused{im.c_str(), -1.0, -1, "exactly one target"},
+          refused{im.c_str(), 0.0, -1, "above 0 and at most 16"},
+          refused{im.c_str(), 16.5, -1, "above 0 and at most 16"},
+          refused{im.c_str(), nan, -1, "above 0 and at most 16"}, refused{im.c_str(), -1.0, 0, "above 0 bytes"},
+          refused{nullptr, 4.0, -1, "needs an importance matrix"},
+          refused{"", -1.0, 1000, "needs an importance matrix"}}) {
+        SCOPED_TRACE(r.reason);
+        EXPECT_EQ(jllama_quantize_target(path_.c_str(), out.c_str(), 1, false, r.imatrix, r.bpw, r.size),
+                  JLLAMA_STATUS_INVALID_ARGUMENT);
+        EXPECT_NE(std::string(jllama_last_error()).find(r.reason), std::string::npos) << jllama_last_error();
+        std::error_code ec;
+        EXPECT_FALSE(std::filesystem::exists(out, ec));
+    }
+    EXPECT_EQ(jllama_quantize_target(nullptr, out.c_str(), 1, false, imatrix_.c_str(), 4.0, -1),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    // a matrix that cannot be read is the quantizer's error, as for a file type
+    EXPECT_EQ(jllama_quantize_target(path_.c_str(), out.c_str(), 1, false, "/nonexistent/imatrix.gguf", 4.0, -1),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("importance matrix"), std::string::npos) << jllama_last_error();
     std::error_code ec;
     std::filesystem::remove(out, ec);
 }

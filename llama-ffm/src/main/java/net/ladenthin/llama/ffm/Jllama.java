@@ -287,6 +287,77 @@ public final class Jllama {
     }
 
     /**
+     * Quantises a GGUF file to an average number of bits per weight, as
+     * {@code LlamaQuantizer.quantizeToBitsPerWeight} does: llama.cpp picks the type of every tensor
+     * from the importance matrix, which is required.
+     *
+     * @param inputPath the model to read
+     * @param outputPath the model to write
+     * @param bitsPerWeight the average bits per weight, above 0 and at most 16
+     * @param importanceMatrixPath the importance matrix of this model
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param allowRequantize whether an already quantised tensor may be quantised again
+     * @throws IllegalArgumentException when the target is out of range
+     * @throws LlamaException when the quantisation fails
+     */
+    public static void quantizeToBitsPerWeight(
+            String inputPath,
+            String outputPath,
+            double bitsPerWeight,
+            String importanceMatrixPath,
+            int nthread,
+            boolean allowRequantize) {
+        quantizeTarget(inputPath, outputPath, importanceMatrixPath, nthread, allowRequantize, bitsPerWeight, -1L);
+    }
+
+    /**
+     * Quantises a GGUF file to a file size in bytes, as {@code LlamaQuantizer.quantizeToSize} does:
+     * llama.cpp picks the type of every tensor from the importance matrix, which is required.
+     *
+     * @param inputPath the model to read
+     * @param outputPath the model to write
+     * @param sizeBytes the file size, above 0
+     * @param importanceMatrixPath the importance matrix of this model
+     * @param nthread the threads to use, {@code 0} for the default
+     * @param allowRequantize whether an already quantised tensor may be quantised again
+     * @throws IllegalArgumentException when the target is not above 0
+     * @throws LlamaException when the quantisation fails
+     */
+    public static void quantizeToSize(
+            String inputPath,
+            String outputPath,
+            long sizeBytes,
+            String importanceMatrixPath,
+            int nthread,
+            boolean allowRequantize) {
+        quantizeTarget(inputPath, outputPath, importanceMatrixPath, nthread, allowRequantize, -1.0, sizeBytes);
+    }
+
+    private static void quantizeTarget(
+            String inputPath,
+            String outputPath,
+            String importanceMatrixPath,
+            int nthread,
+            boolean allowRequantize,
+            double bitsPerWeight,
+            long sizeBytes) {
+        Objects.requireNonNull(inputPath, "inputPath");
+        Objects.requireNonNull(outputPath, "outputPath");
+        Objects.requireNonNull(importanceMatrixPath, "importanceMatrixPath");
+        try (Arena arena = Arena.ofConfined()) {
+            call(
+                    JllamaNative.QUANTIZE_TARGET,
+                    cString(arena, inputPath),
+                    cString(arena, outputPath),
+                    nthread,
+                    allowRequantize,
+                    cString(arena, importanceMatrixPath),
+                    bitsPerWeight,
+                    sizeBytes);
+        }
+    }
+
+    /**
      * Runs a fine-tuning job from the trainer's JSON configuration (the keys {@code LlamaTrainer}
      * writes, see the core's {@code TrainingField}).
      *

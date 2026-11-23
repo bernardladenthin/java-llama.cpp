@@ -49,6 +49,12 @@ public class QuantizerIntegrationTest {
      */
     private static final long MIN_PARAMETERS_FOR_SIZE_CHECK = 100_000_000L;
 
+    /**
+     * What a GGUF file holds besides its tensors -- the vocabulary and the other metadata -- which a
+     * target of bits per weight does not count; the draft model's is about 1 MB.
+     */
+    private static final long METADATA_SLACK_BYTES = 4_000_000L;
+
     /** The file types llama.cpp does not count as quantized ({@code llama_ftype_name}); the rest are. */
     private static final java.util.List<String> UNQUANTIZED_FTYPES = java.util.Arrays.asList("all F32", "F16", "BF16");
 
@@ -237,6 +243,94 @@ public class QuantizerIntegrationTest {
                 0,
                 true,
                 legacy.toString());
+    }
+
+    /** A small importance matrix of the draft model: four chunks of 64 tokens of a short program. */
+    private static Path draftImportanceMatrix(String name) throws Exception {
+        Path text = tempDir.resolve(name + ".txt");
+        StringBuilder words = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            words.append("def add(a, b):\n    return a + b\n\nprint(add(")
+                    .append(i)
+                    .append(", 1))\n\n");
+        }
+        Files.write(text, words.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Path imatrix = tempDir.resolve(name + ".imatrix.gguf");
+        LlamaQuantizer.computeImportanceMatrix(
+                TestConstants.DRAFT_MODEL_PATH, text.toString(), imatrix.toString(), 64, 4, 0, 0, null);
+        return imatrix;
+    }
+
+    /**
+     * llama.cpp b12669: a target instead of a type. The file is held to the bits per weight asked for
+     * (with the slack of its metadata, which the target does not count), and to the size asked for,
+     * and both load and answer.
+     */
+    @Test
+    public void quantizeToATarget_reachesItAndTheModelLoads() throws Exception {
+        assumeDraftModel();
+        long parameters = draftModelMeta().getNParams();
+        Path imatrix = draftImportanceMatrix("target");
+
+        Path byBits = tempDir.resolve("draft-3.5bpw.gguf");
+        LlamaQuantizer.quantizeToBitsPerWeight(
+                TestConstants.DRAFT_MODEL_PATH, byBits.toString(), 3.5, imatrix.toString(), 0, true);
+        long weightBytes = parameters * 35L / 80L;
+        long bitsSize = Files.size(byBits);
+        assertTrue(
+                bitsSize <= weightBytes + METADATA_SLACK_BYTES && bitsSize >= weightBytes * 4 / 5,
+                "3.5 bits per weight of " + parameters + " parameters are about " + weightBytes
+                        + " bytes, the file has " + bitsSize);
+
+        long target = bitsSize * 4 / 5;
+        Path bySize = tempDir.resolve("draft-by-size.gguf");
+        LlamaQuantizer.quantizeToSize(
+                TestConstants.DRAFT_MODEL_PATH, bySize.toString(), target, imatrix.toString(), 0, true);
+        long size = Files.size(bySize);
+        assertTrue(
+                size <= target + target / 100 && size >= target * 4 / 5, "asked for " + target + " bytes, got " + size);
+
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        for (Path output : Arrays.asList(byBits, bySize)) {
+            try (LlamaModel model = new LlamaModel(new ModelParameters()
+                    .setModel(output.toString())
+                    .setCtxSize(128)
+                    .setGpuLayers(gpuLayers)
+                    .setFit(false))) {
+                assertNotNull(model.complete(new InferenceParameters("def main():").withNPredict(4)));
+            }
+        }
+    }
+
+    @Test
+    public void quantizeToATarget_outOfRangeOrWithoutAMatrix_isRefusedBeforeTheNativeCall() {
+        assumeDraftModel(); // gates on the native lib being present in this environment
+        String output = tempDir.resolve("never-target.gguf").toString();
+        String imatrix = tempDir.resolve("unused.imatrix.gguf").toString();
+        for (double bits : new double[] {0.0, -1.0, 16.5, Double.NaN, Double.POSITIVE_INFINITY}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> LlamaQuantizer.quantizeToBitsPerWeight(
+                            TestConstants.DRAFT_MODEL_PATH, output, bits, imatrix));
+            assertTrue(e.getMessage().contains("bitsPerWeight"), e.getMessage());
+        }
+        for (long bytes : new long[] {0L, -1L}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> LlamaQuantizer.quantizeToSize(TestConstants.DRAFT_MODEL_PATH, output, bytes, imatrix));
+            assertTrue(e.getMessage().contains("sizeBytes"), e.getMessage());
+        }
+        assertThrows(
+                NullPointerException.class,
+                () -> LlamaQuantizer.quantizeToBitsPerWeight(
+                        TestConstants.DRAFT_MODEL_PATH, output, 4.0, (String) null));
+        // the native side names a matrix it cannot read
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.quantizeToSize(
+                        TestConstants.DRAFT_MODEL_PATH, output, 1_000_000L, imatrix, 0, true));
+        assertTrue(e.getMessage().contains("importance matrix"), e.getMessage());
+        assertTrue(!Files.exists(tempDir.resolve("never-target.gguf")), "a refused quantization left a file behind");
     }
 
     @Test

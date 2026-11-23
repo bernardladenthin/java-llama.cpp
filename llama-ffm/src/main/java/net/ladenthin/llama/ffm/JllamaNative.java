@@ -6,6 +6,7 @@ package net.ladenthin.llama.ffm;
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
@@ -95,6 +96,10 @@ final class JllamaNative {
     static final MethodHandle QUANTIZE_IMATRIX = downcall(
             "jllama_quantize_imatrix",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_BOOLEAN, ADDRESS));
+    static final MethodHandle QUANTIZE_TARGET = downcall(
+            "jllama_quantize_target",
+            FunctionDescriptor.of(
+                    JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_BOOLEAN, ADDRESS, JAVA_DOUBLE, JAVA_LONG));
     static final MethodHandle FINETUNE = downcall("jllama_finetune", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     static final MethodHandle SET_CPU_MOE_BATCHED =
             downcall("jllama_set_cpu_moe_batched", FunctionDescriptor.of(JAVA_INT, JAVA_BOOLEAN));

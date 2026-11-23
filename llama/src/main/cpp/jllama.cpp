@@ -1449,6 +1449,23 @@ Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstr
 }
 
 // Like quantizeNative above: LlamaQuantizer is not in jllama.h, so the C linkage is said here.
+extern "C" JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeTargetNative(
+    JNIEnv *env, jclass, jstring jinput, jstring joutput, jint nthread, jboolean allowRequantize, jstring jimatrix,
+    jdouble targetBpw, jlong targetSize) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> void {
+        const std::string input_path = parse_jstring(env, jinput);
+        const std::string output_path = parse_jstring(env, joutput);
+        const std::string imatrix_path = parse_jstring(env, jimatrix);
+        const jllama_status status = jllama_quantize_target(
+            input_path.c_str(), output_path.c_str(), static_cast<int>(nthread), allowRequantize == JNI_TRUE,
+            imatrix_path.c_str(), static_cast<double>(targetBpw), static_cast<int64_t>(targetSize));
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
+        }
+    });
+}
+
+// Like quantizeNative above: LlamaQuantizer is not in jllama.h, so the C linkage is said here.
 extern "C" JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaQuantizer_computeImportanceMatrixNative(
     JNIEnv *env, jclass, jstring jmodel, jstring jtext, jstring joutput, jint chunkSize, jint maxChunks, jint nthread,
     jint gpuLayers, jobject progress) {

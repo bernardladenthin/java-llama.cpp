@@ -930,6 +930,12 @@ red without the patch, green with it.
 Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
 without it on a Windows job.
+
+Refreshed at b12669 (#15550, the quantizer that picks the types to reach a target size): upstream
+rewrote llama-quant.cpp, the output stream moved into a new_ofstream lambda and <filesystem> is no
+longer included; the patch includes it after <exception> and opens the stream there, same + line.
+The new bpw state file (llama_model_quantize_params::state_file) also opens narrow paths; this
+library passes none, so the quantizer writes no state file.
 ```
 
 ## 0029-server-media-file-reads-utf8.patch
