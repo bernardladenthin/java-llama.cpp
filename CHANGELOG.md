@@ -942,6 +942,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **The Windows x86-64 CPU build (`cpu-windows-x86-64`) never finished since 2026-11-22.** Its job took the
+  clang Visual Studio ships (22.1.3) from that day, because the STL of MSVC 14.52 refuses the image's
+  LLVM 20.1.8; with it the build compiled every file and then never linked `ggml.dll` and
+  `ggml-cpu-sapphirerapids.dll`, and stood still until the job was cancelled (37 min in run
+  45052971364, 5 h 51 min in run 45157679242), while the static test build with the same clang passed.
+  Both plain-clang Windows jobs now install LLVM 22.1.8 from Chocolatey, the toolchain upstream's
+  `windows-cpu` release job builds the same modular CPU-variants configuration with, check that it is
+  the clang on `PATH`, and give the build step 90 minutes. The hang could not be reproduced off
+  Windows (clang 22 compiles and sccache passes the 13.5 MB WebUI table in seconds on Linux); the next
+  CI run is the proof.
 - **`ZonosTtsIntegrationTest.everyListedVoiceSpeaks` timed out on every macOS job.** The contract's voice
   test synthesizes once per predefined voice under a 10-minute limit for the whole test; CI's ZONOS3 Mini
   lists 27 voices of 150 to 320 prompt rows each, about 34 s apiece on the macOS CPU runners (939 s on
