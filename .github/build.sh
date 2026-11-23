@@ -157,12 +157,7 @@ if [ "${USE_CACHE:-true}" = "true" ] && command -v sccache >/dev/null 2>&1 \
   # C/CXX launchers do not reach -- the Linux ROCm job's stats table counted 2 requests (both
   # C/C++) for a 2:50 h build of 27 GPU targets. sccache 0.18.0 caches clang's HIP compiles
   # (measured in Docker with TheRock's clang 23, the job's 10.0.0 wheels and a WebDAV backend:
-  # 157/157 hits on the second build, 310 s -> 10 s for one target). One caveat, local only: with
-  # the *disk* backend sccache's preprocessor cache mode reads clang's -E output as text, and with
-  # --offload-compress that output is a compressed bundle -- some TUs then fail with "Failed to
-  # parse included file path" (mozilla/sccache#2788, unmerged). That mode exists only for the disk
-  # backend, so CI over Depot never takes that path; a local disk-cache build sets
-  # SCCACHE_DIRECT=false.
+  # 157/157 hits on the second build, 310 s -> 10 s for one target).
   case " $* " in
     *" -DGGML_HIP=ON "* | *" -DGGML_HIP=1 "* | *" -DGGML_HIP=on "*)
       LAUNCH="$LAUNCH -DCMAKE_HIP_COMPILER_LAUNCHER=sccache"
