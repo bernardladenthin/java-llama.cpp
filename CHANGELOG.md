@@ -358,13 +358,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12655** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12656** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
   b12654 regenerates the Qwen3.6-27B snapshot of upstream's own tests (#32845), which this project
   does not build. b12655 silences the warnings of the vendored KleidiAI sources (#32605), which no
-  build here enables (`GGML_CPU_KLEIDIAI` stays off). All 36 patches apply unchanged.
+  build here enables (`GGML_CPU_KLEIDIAI` stays off). b12656 gives every collapsible of the WebUI the
+  same height transition (#32873) and moves Llama UI to 0.6.0, its own version only: the npm license
+  texts still match the lockfile, and the WebUI builds from CI's sparse checkout with npm 11 and embeds
+  291 assets. All 36 patches apply unchanged.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
