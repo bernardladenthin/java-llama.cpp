@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b12673**
+Current llama.cpp pinned version: **b12674**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -1008,6 +1008,15 @@ vendor runtime.
 | `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `Linux/x86_64/openvino/libggml-openvino.so` |
 | `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `Windows/x86_64/openvino/ggml-openvino.dll` |
 
+**No OpenCL build downloads Qualcomm's Adreno binary kernel library.** Since b12674 (#31759)
+ggml-opencl fetches `adreno-opencl-kernels.dll` from the Qualcomm Software Center on every Windows
+ARM64 configure and copies it with its license next to the executables
+(`GGML_OPENCL_ADRENO_BIN_KERNELS_FETCH`, default ON). `llama/CMakeLists.txt` forces it OFF, as
+upstream's own opencl-adreno release job does: the DLL is proprietary, under Qualcomm's license, and
+a module directory holds its one module (`merge-native-artifacts.sh` refuses anything else).
+`GGML_OPENCL_USE_ADRENO_BIN_KERNELS` stays at upstream's ON, so the three OpenCL modules load the
+library by name when a user has it on the search path and run their builtin kernels otherwise.
+
 **ROCm comes from TheRock, and the version and GPU targets follow upstream.** Since ROCm 7.14 AMD
 builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both ROCm jobs install
 its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-next/`) exactly as
@@ -1291,7 +1300,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12673`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12674`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -3032,7 +3041,7 @@ the parameterized `CApiVocabOnly` case expands to 22 instances and `MoeRepack` t
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12673`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12674`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

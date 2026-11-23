@@ -328,6 +328,16 @@ endif()
 # rdma-core cannot turn this back on unnoticed.
 set(GGML_RPC      ON  CACHE BOOL "" FORCE)
 set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
+# OpenCL: no download of Qualcomm's Adreno binary kernel library at configure time. Since b12674
+# (#31759) ggml-opencl fetches adreno-opencl-kernels.dll from the Qualcomm Software Center on every
+# Windows ARM64 configure (GGML_OPENCL_ADRENO_BIN_KERNELS_FETCH, default ON) and copies it with its
+# license next to the executables. It is a proprietary binary under Qualcomm's own license, which
+# no natives jar ships (a module directory holds its one module, merge-native-artifacts.sh refuses
+# anything else); a configure must not reach the network for it, and upstream's own opencl-adreno
+# release job turns the fetch off too. GGML_OPENCL_USE_ADRENO_BIN_KERNELS stays at upstream's ON:
+# the module loads the library by name when a user puts it on the search path, and runs its builtin
+# kernels without it.
+set(GGML_OPENCL_ADRENO_BIN_KERNELS_FETCH OFF CACHE BOOL "" FORCE)
 # b9305 removed the top-level LLAMA_BUILD_WEBUI -> LLAMA_BUILD_UI shim; set the
 # new name directly. (The old name no longer forwards at top level; the shim
 # survives in ui/apps/chat/CMakeLists.txt (tools/ui/ before b12453) but that subdir is not configured in
@@ -356,8 +366,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12673)
-set(JLLAMA_GIT_COMMIT "8355b886250efcb490dec7431c3c0ec1463277a5")   # the commit the number b12673 names (not tagged yet; the commit stays the pin)
+set(JLLAMA_GIT_TAG    b12674)
+set(JLLAMA_GIT_COMMIT "fd24ee26ade8e39a1722aac1b08976fec29f5e17")   # the commit the number b12674 names (not tagged yet; the commit stays the pin)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
