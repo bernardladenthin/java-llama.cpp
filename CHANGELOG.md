@@ -358,7 +358,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12658** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12659** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -377,7 +377,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `RpcServer` serves the next client afterwards; two new cases of `test_rpc_comm.cpp` hold that (a
   read past its tensor and an element count that overflows, both a `GGML_ASSERT` of the server at
   b12657). `patches/0015` was refreshed: the server's code moved by some 200 lines and one hunk split
-  in two, the `+`/`-` lines are unchanged. The other 35 patches apply unchanged.
+  in two, the `+`/`-` lines are unchanged. The other 35 patches apply unchanged. b12659 brings Intel's
+  round of OpenVINO work (#32861): an `ARGMAX` translator, the RoPE angle kept in F32 under the F16
+  hint, a compiled-model cache of several shapes instead of one, consecutive `SET_ROWS` writes as one
+  scatter, the speculative-decoding buffers kept on the device, and static NPU graphs that keep a
+  fixed token count (GATED_DELTA_NET models translate again there). The module builds against the
+  OpenVINO 2026.4.1 that CI installs (built here against PyPI's wheel of that release; its
+  dependencies pass `verify-native-deps.py` as before). Upstream still pins that release, so CI's
+  install steps are unchanged. Not measured on an Intel accelerator.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
