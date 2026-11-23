@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**36 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**37 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -58,6 +58,7 @@ match a binary to this page.
 | 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
 | 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
 | 0046 | [`0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch`](#0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-eventpatch) | server : a failed download or load lets /models/sse send its last event | 3 | 7 |
+| 0047 | [`0047-llama-the-target-quantizers-eigenvalue-threshold-builds-with-msvc.patch`](#0047-llama-the-target-quantizers-eigenvalue-threshold-builds-with-msvcpatch) | llama : the target quantizer's eigenvalue threshold builds with MSVC | 1 | 1 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1530,4 +1531,35 @@ patch and green with it.
 
 Drop-check on every bump: read the two failure paths of server_run_instance() in tools/server/server.cpp
 -- once the HTTP server is stopped only after the SSE clients have their last event, drop the patch.
+```
+
+## 0047-llama-the-target-quantizers-eigenvalue-threshold-builds-with-msvc.patch
+
+**Files (1):** `src/llama-quant.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : the target quantizer's eigenvalue threshold builds with MSVC
+
+llama.cpp b12669 (#15550, quantization to a target size or bits per weight) declares, inside the [&]
+lambda randomized_svd_condition_number of target_bpw_type() (src/llama-quant.cpp), a
+`constexpr float eps_eig = EPSILON;` whose initializer is EPSILON, a constexpr local of the enclosing
+function. GCC and clang read it without a capture; MSVC 14.52 refuses the whole translation unit with
+error C2131 ("expression did not evaluate to a constant ... reading a value that is unknown during
+constant evaluation"), so the MSVC build of llama, and with it build-windows-x86_64-msvc and its Java
+suite, failed (run 45233019300). Upstream's own Windows builds compile llama with clang (windows-cpu)
+or build only a ggml backend with cl.exe (windows-cuda), so no upstream job compiles this file with
+MSVC.
+
+The patch makes eps_eig a plain const initialized from EPSILON at run time, the same value; it is used
+only in run-time comparisons. Nothing else of the file reads an enclosing local in a constant
+expression.
+
+The guard is the MSVC build itself (build-windows-x86_64-msvc, release-gating); GCC and clang compile
+the file either way, so no test of another platform can turn red without it.
+
+Drop-check on every bump: grep -n "constexpr float eps_eig" src/llama-quant.cpp -- a hit with
+EPSILON as its initializer means the MSVC failure is still there; gone, or initialized from a
+literal, means upstream fixed it: drop the patch.
 ```

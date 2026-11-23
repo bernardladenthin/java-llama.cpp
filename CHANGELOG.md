@@ -986,6 +986,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **The MSVC build of llama compiles again** (`patches/0047`). llama.cpp b12669's target quantizer
+  reads a `constexpr` local of its function in a constant expression inside a lambda, which GCC and clang
+  accept and MSVC 14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in
+  run 45233019300. The value is now a plain `const` initialised from the same constant.
 - **The Windows x86-64 CPU build (`cpu-windows-x86-64`) never finished since 2026-11-22.** Its job took the
   clang Visual Studio ships (22.1.3) from that day, because the STL of MSVC 14.52 refuses the image's
   LLVM 20.1.8; with it the build compiled every file and then never linked `ggml.dll` and

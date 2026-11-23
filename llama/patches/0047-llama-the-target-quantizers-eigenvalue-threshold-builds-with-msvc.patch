@@ -1,0 +1,37 @@
+llama : the target quantizer's eigenvalue threshold builds with MSVC
+
+llama.cpp b12669 (#15550, quantization to a target size or bits per weight) declares, inside the [&]
+lambda randomized_svd_condition_number of target_bpw_type() (src/llama-quant.cpp), a
+`constexpr float eps_eig = EPSILON;` whose initializer is EPSILON, a constexpr local of the enclosing
+function. GCC and clang read it without a capture; MSVC 14.52 refuses the whole translation unit with
+error C2131 ("expression did not evaluate to a constant ... reading a value that is unknown during
+constant evaluation"), so the MSVC build of llama, and with it build-windows-x86_64-msvc and its Java
+suite, failed (run 45233019300). Upstream's own Windows builds compile llama with clang (windows-cpu)
+or build only a ggml backend with cl.exe (windows-cuda), so no upstream job compiles this file with
+MSVC.
+
+The patch makes eps_eig a plain const initialized from EPSILON at run time, the same value; it is used
+only in run-time comparisons. Nothing else of the file reads an enclosing local in a constant
+expression.
+
+The guard is the MSVC build itself (build-windows-x86_64-msvc, release-gating); GCC and clang compile
+the file either way, so no test of another platform can turn red without it.
+
+Drop-check on every bump: grep -n "constexpr float eps_eig" src/llama-quant.cpp -- a hit with
+EPSILON as its initializer means the MSVC failure is still there; gone, or initialized from a
+literal, means upstream fixed it: drop the patch.
+
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -1672,7 +1672,9 @@
+         constexpr int64_t target_rank = 25;
+         constexpr int64_t k = 20;   // 20th singular value for condition number estimation
+         constexpr float eps_norm = 1e-8f;
+-        constexpr float eps_eig = EPSILON;
++        // [jllama] not constexpr: MSVC cannot read EPSILON, a constexpr local of the enclosing function, in a
++        // constant expression inside this [&] lambda (C2131); the value is the same
++        const float eps_eig = static_cast<float>(EPSILON);
+         constexpr int jacobi_sweeps = 20;
+         if (total_rows_sampled < 1 || n_per_row < 1) { return INFINITE; }
+ 
