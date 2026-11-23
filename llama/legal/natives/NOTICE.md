@@ -57,8 +57,8 @@ texts are not needed here.
 | oneMKL SYCL BLAS headers | Deep Learning Essentials 2026.2.0 | sycl modules (yes) | LicenseRef-Intel-Simplified-Software-License | `(not shipped)` | (text ships only in the Intel installer) |
 | DPC++ SYCL headers + dpct helpers (LLVM-derived) | DLE 2026.2.0 | sycl modules | Apache-2.0 WITH LLVM-exception | `(not shipped)` | - |
 | Level Zero headers | 1.34.0 | sycl modules (yes) | MIT | `(not shipped)` | - |
-| Vulkan-Headers (vulkan.hpp) | SDK 1.4.350.0 (Windows); Ubuntu libvulkan-dev (Linux) | vulkan-{linux;windows}-{x86-64;aarch64} (Linux header version differs) | Apache-2.0 OR MIT | `vulkan-headers` | https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.350.0/LICENSE.md |
-| SPIRV-Headers (spirv.hpp) | SDK 1.4.350.0 / Ubuntu spirv-headers | vulkan modules | MIT-style Khronos | `spirv-headers` | https://github.com/KhronosGroup/SPIRV-Headers/blob/vulkan-sdk-1.4.350.0/LICENSE |
+| Vulkan-Headers (vulkan.hpp) | SDK 1.4.357.0 (Windows); Ubuntu libvulkan-dev (Linux) | vulkan-{linux;windows}-{x86-64;aarch64} (Linux header version differs) | Apache-2.0 OR MIT | `vulkan-headers` | https://github.com/KhronosGroup/Vulkan-Headers/blob/vulkan-sdk-1.4.357.0/LICENSE.md |
+| SPIRV-Headers (spirv.hpp) | SDK 1.4.357.0 / Ubuntu spirv-headers | vulkan modules | MIT-style Khronos | `spirv-headers` | https://github.com/KhronosGroup/SPIRV-Headers/blob/vulkan-sdk-1.4.357.0/LICENSE |
 | OpenCL-Headers | v2026.05.29 (opencl jars); vcpkg / Ubuntu (openvino jars) | opencl-android-aarch64 + opencl-windows-{x86-64;aarch64} + openvino modules | Apache-2.0 | `opencl-headers` | https://github.com/KhronosGroup/OpenCL-Headers/blob/v2026.05.29/LICENSE |
 | OpenCL-ICD-Loader | v2026.05.29 | linked dynamically only; device/driver provides it; not shipped | Apache-2.0 | `(not shipped)` | - |
 | OpenCL-CLHPP (CL/opencl.hpp via OpenVINO ocl.hpp) | vcpkg opencl port (Windows) / Ubuntu opencl-clhpp-headers (Linux) | openvino modules (version) | Apache-2.0 | `opencl-clhpp` | https://github.com/KhronosGroup/OpenCL-CLHPP/blob/v2026.05.29/LICENSE.txt |
