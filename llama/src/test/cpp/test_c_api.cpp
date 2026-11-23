@@ -1802,6 +1802,95 @@ TEST_F(CApi, ARawCompletionWithMessagesRefusesTheChatOnlyFields) {
     EXPECT_EQ(jllama_completions(model_, allowed.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
 }
 
+TEST(CApiTemplate, AToolCallWhoseArgumentsWereCutOffIsTheCallersFaultAndTheHistoryWithoutItIsRendered) {
+    // b12663 (#32738) makes the WebUI drop a tool call that Stop cut off mid-stream, with the tool result
+    // that answers it, from the next request: for a template that reads a call's arguments as an object,
+    // the server parses every call's arguments as JSON and refuses the whole request when one does not
+    // parse (and an empty string is no JSON either, which is why the WebUI sends a call without
+    // arguments as "{}"). This holds the server's half: such a history is the caller's fault on the
+    // template and the chat path, the model answers the next request, and the history the WebUI sends
+    // instead is rendered.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-cut-tool-call");
+    ASSERT_FALSE(path.empty());
+    // reading `arguments.arg` makes the template one with object arguments (common/jinja/caps.cpp)
+    const std::string tmpl = "{%- for message in messages -%}"
+                             "{%- if message.tool_calls -%}"
+                             "{%- for tc in message.tool_calls -%}<call {{ tc.function.name }}:"
+                             "{{ tc.function.arguments.arg }}>{%- endfor -%}"
+                             "{%- else -%}<{{ message.role }}>{{ message.content }}{%- endif -%}"
+                             "{%- endfor -%}"
+                             "{%- if tools -%}[{{ tools[0].function.name }}]{%- endif -%}"
+                             "{%- if add_generation_prompt -%}<assistant>{%- endif -%}";
+    const std::vector<std::string> args = {"jllama", "-m",   path, "-c",          "128", "--chat-template",
+                                           tmpl,     "-ngl", "0",  "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *model = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &model), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    const auto history = [](const char *arguments, bool with_call) {
+        json messages = json::array({json{{"role", "user"}, {"content", "Hi"}}});
+        if (with_call) {
+            messages.push_back(json{
+                {"role", "assistant"},
+                {"content", nullptr},
+                {"tool_calls", json::array({json{{"type", "function"},
+                                                 {"id", "c1"},
+                                                 {"function", json{{"name", "lookup"}, {"arguments", arguments}}}}})}});
+            messages.push_back(json{{"role", "tool"}, {"tool_call_id", "c1"}, {"content", "found"}});
+        } else {
+            messages.push_back(json{{"role", "assistant"}, {"content", ""}});
+        }
+        messages.push_back(json{{"role", "user"}, {"content", "next"}});
+        return json{
+            {"messages", messages},
+            {"tools",
+             json::array({json{{"type", "function"},
+                               {"function", json{{"name", "lookup"}, {"parameters", json{{"type", "object"}}}}}}})},
+            {"n_predict", 1},
+            {"temperature", 0}};
+    };
+
+    Owned whole;
+    ASSERT_EQ(jllama_apply_template(model, history(R"({"arg":"x"})", true).dump().c_str(), &whole.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(whole.str().find("<call lookup:x>"), std::string::npos) << whole.str();
+
+    for (const char *cut : {R"({"arg":"x)", R"({"arg)", ""}) {
+        SCOPED_TRACE(std::string("arguments ") + cut);
+        const std::string request = history(cut, true).dump();
+        Owned prompt;
+        EXPECT_EQ(jllama_apply_template(model, request.c_str(), &prompt.s), JLLAMA_STATUS_INVALID_REQUEST);
+        EXPECT_NE(std::string(jllama_last_error()).find("Failed to parse tool call arguments as JSON"),
+                  std::string::npos)
+            << jllama_last_error();
+        Owned answer;
+        EXPECT_EQ(jllama_chat_completions(model, request.c_str(), &answer.s), JLLAMA_STATUS_INVALID_REQUEST);
+    }
+
+    // what the WebUI sends instead: the call and its result dropped, or a call without arguments as "{}"
+    Owned dropped;
+    ASSERT_EQ(jllama_apply_template(model, history("", false).dump().c_str(), &dropped.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(dropped.str(), "<user>Hi<assistant><user>next[lookup]<assistant>");
+    // and the model answers (without tools: a random model's answer is no tool call)
+    json plain = history("", false);
+    plain.erase("tools");
+    Owned answer;
+    ASSERT_EQ(jllama_chat_completions(model, plain.dump().c_str(), &answer.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(answer.str()).value("object", std::string()), "chat.completion") << answer.str();
+    Owned empty;
+    EXPECT_EQ(jllama_apply_template(model, history("{}", true).dump().c_str(), &empty.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(empty.str().find("<call lookup:>"), std::string::npos) << empty.str();
+
+    jllama_model_free(model);
+    std::remove(path.c_str());
+}
+
 TEST(CApiTemplate, AChatTemplateMayChainComparisonsAndUnpackArguments) {
     // Jinja since b12309 (upstream #32072): `a < b < c` is one chained comparison, and a call may
     // unpack a list or a dict into its arguments. A template that uses either failed to parse
