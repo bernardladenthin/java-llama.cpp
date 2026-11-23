@@ -95,11 +95,17 @@ declaration of ggml_backend_rpc_start_server() in ggml-rpc.h over several lines,
 of the hunk that declares the stop and listening functions after it. Only context moved; the
 + and - lines are unchanged, 24 hunks.
 
+Refreshed at b12658 (#32651, "rpc : typed request helpers and a single validation step on the
+server"): upstream moved every fixed-size command to typed helpers and one validation step,
+which shifted the server's code by some 200 lines and split one hunk in two. The + and - lines
+are unchanged; the wire format is too (protocol 10.0.2), so a client and a server of b12657
+and b12658 still speak to each other.
+
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 00f9659cb..23c97199d 100644
+index e99b48c5b..0dd0cd90c 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -1196,6 +1196,11 @@ static void add_rpc_devices(const std::string & servers) {
+@@ -1200,6 +1200,11 @@ static void add_rpc_devices(const std::string & servers) {
      }
      for (const auto & server : rpc_servers) {
          auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
@@ -112,7 +118,7 @@ index 00f9659cb..23c97199d 100644
      }
  }
 diff --git a/ggml/include/ggml-rpc.h b/ggml/include/ggml-rpc.h
-index da1d4e1f1..cc6c74054 100644
+index 062d5004e..d8254184b 100644
 --- a/ggml/include/ggml-rpc.h
 +++ b/ggml/include/ggml-rpc.h
 @@ -31,6 +31,11 @@ GGML_BACKEND_API void ggml_backend_rpc_start_server(
@@ -128,10 +134,10 @@ index da1d4e1f1..cc6c74054 100644
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
  GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
-index e4a84cb0c..58482bf63 100644
+index 6197f01c2..4f94a9234 100644
 --- a/ggml/src/ggml-rpc/ggml-rpc.cpp
 +++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
-@@ -1392,6 +1392,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
+@@ -1439,6 +1439,10 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
          /* .name       = */ dev_name,
      };
      auto reg = ggml_backend_rpc_add_server(endpoint);
@@ -142,7 +148,7 @@ index e4a84cb0c..58482bf63 100644
      LOG_DBG("[%s] %s\n", __func__, dev_name.c_str());
      ggml_backend_t backend = new ggml_backend {
          /* .guid    = */ ggml_backend_rpc_guid(),
-@@ -1423,12 +1427,37 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device,
+@@ -1467,6 +1471,31 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device,
      *total = response.total_mem;
  }
  
@@ -173,6 +179,9 @@ index e4a84cb0c..58482bf63 100644
 +
  // RPC server-side implementation
  
+ // ggml_nbytes on the wire values, false if it overflows
+@@ -1557,8 +1586,8 @@ static bool rpc_check_node(const ggml_tensor * node) {
+ 
  class rpc_server {
  public:
 -    rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
@@ -182,7 +191,7 @@ index e4a84cb0c..58482bf63 100644
          stored_graphs.resize(backends.size());
          comm_states.resize(backends.size());
      }
-@@ -1499,6 +1528,7 @@ private:
+@@ -1625,6 +1654,7 @@ private:
  
      std::vector<ggml_backend_t> backends;
      const char * cache_dir;
@@ -190,7 +199,7 @@ index e4a84cb0c..58482bf63 100644
      std::unordered_set<ggml_backend_buffer_t> buffers;
      // computed graphs cached per backend, keyed by uid
      std::vector<std::unordered_map<uint64_t, stored_graph>> stored_graphs;
-@@ -2349,7 +2379,8 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2317,7 +2347,8 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
  
      // Rank 0 listens and accepts world-1 peers; every other rank connects back to it.
      if (request.rank == 0) {
@@ -200,7 +209,7 @@ index e4a84cb0c..58482bf63 100644
          if (srv == nullptr) {
              LOG_ERROR("[%s] failed to listen on comm port %u\n", __func__, request.port);
              return true;
-@@ -2358,9 +2389,10 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2326,9 +2357,10 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
          // Each peer sends its rank because peers may connect in any order.
          state.peers.resize(request.world - 1);
          for (uint32_t i = 1; i < request.world; i++) {
@@ -213,7 +222,7 @@ index e4a84cb0c..58482bf63 100644
                  !peer->recv_data(&peer_rank, sizeof(peer_rank)) ||
                  peer_rank == 0 || peer_rank >= request.world || state.peers[peer_rank - 1] != nullptr) {
                  LOG_ERROR("[%s] bad peer connection (rank %u)\n", __func__, peer_rank);
-@@ -2373,9 +2405,9 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2341,9 +2373,9 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
          const std::string host(request.host, strnlen(request.host, sizeof(request.host)));
          socket_ptr peer;
          // rank 0 may not be listening yet, retry for a few seconds
@@ -226,7 +235,7 @@ index e4a84cb0c..58482bf63 100644
                  std::this_thread::sleep_for(std::chrono::milliseconds(50));
              }
          }
-@@ -2383,7 +2415,7 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
+@@ -2351,7 +2383,7 @@ bool rpc_server::comm_init(const rpc_msg_comm_init_req & request, rpc_msg_comm_i
              LOG_ERROR("[%s] failed to connect to peer %s:%u\n", __func__, host.c_str(), request.port);
              return true;
          }
@@ -235,7 +244,7 @@ index e4a84cb0c..58482bf63 100644
              !peer->send_data(&request.rank, sizeof(request.rank)) || !peer->flush()) {
              return true;
          }
-@@ -2658,8 +2690,8 @@ rpc_server::~rpc_server() {
+@@ -2652,8 +2684,8 @@ static bool rpc_serve(const socket_ptr & sock, rpc_server & server, handler_t ha
  }
  
  static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
@@ -246,7 +255,7 @@ index e4a84cb0c..58482bf63 100644
      uint8_t cmd;
      if (!sock->recv_data(&cmd, 1)) {
          return;
-@@ -2985,6 +3017,25 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
+@@ -2752,6 +2784,25 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
      }
  }
  
@@ -272,7 +281,7 @@ index e4a84cb0c..58482bf63 100644
  void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
      if (n_devices == 0 || devices == nullptr) {
-@@ -2992,6 +3043,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2759,6 +2810,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          return;
      }
      std::vector<ggml_backend_t> backends;
@@ -285,7 +294,7 @@ index e4a84cb0c..58482bf63 100644
      LOG_INFO("Starting RPC server v%d.%d.%d\n",
          RPC_PROTO_MAJOR_VERSION,
          RPC_PROTO_MINOR_VERSION,
-@@ -3008,6 +3065,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2775,6 +2832,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
          auto backend = ggml_backend_dev_init(dev, nullptr);
          if (!backend) {
              LOG_ERROR("Failed to create backend for device %s\n", dev->iface.get_name(dev));
@@ -293,7 +302,7 @@ index e4a84cb0c..58482bf63 100644
              return;
          }
          backends.push_back(backend);
-@@ -3023,6 +3081,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2790,6 +2848,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
      std::string host;
      int port;
      if (!parse_endpoint(endpoint, host, port)) {
@@ -301,7 +310,7 @@ index e4a84cb0c..58482bf63 100644
          return;
      }
  
-@@ -3033,27 +3092,54 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
+@@ -2800,27 +2859,54 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
  #endif // GGML_RPC_RDMA
      if (!rpc_transport_init()) {
          LOG_ERROR("Failed to initialize RPC transport\n");
@@ -364,7 +373,7 @@ index e4a84cb0c..58482bf63 100644
  }
  
  static const char * ggml_backend_rpc_device_get_name(ggml_backend_dev_t dev) {
-@@ -3330,6 +3416,8 @@ static bool ggml_backend_rpc_comm_allreduce_tensor(void * comm_ctx_v, ggml_tenso
+@@ -3092,6 +3178,8 @@ static bool ggml_backend_rpc_comm_allreduce_tensor(void * comm_ctx_v, ggml_tenso
      return true;
  }
  
@@ -373,7 +382,7 @@ index e4a84cb0c..58482bf63 100644
  static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const char * name) {
      if (std::strcmp(name, "ggml_backend_rpc_add_server") == 0) {
          return (void *)ggml_backend_rpc_add_server;
-@@ -3346,6 +3434,18 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
+@@ -3108,6 +3196,18 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
      if (std::strcmp(name, "ggml_backend_comm_allreduce_tensor") == 0) {
          return (void *)ggml_backend_rpc_comm_allreduce_tensor;
      }

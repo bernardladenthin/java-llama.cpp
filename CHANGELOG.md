@@ -358,7 +358,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12657** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12658** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -369,7 +369,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   texts still match the lockfile, and the WebUI builds from CI's sparse checkout with npm 11 and embeds
   291 assets. b12657 lets the CUDA module quantize a block of zeros for its few-row matrix
   multiplication (#32566): the scale was `127 / 0`, and the quantized values of such a block were
-  `0 * inf`; both are 0 now. Not measured here, no CI job has a GPU. All 36 patches apply unchanged.
+  `0 * inf`; both are 0 now. Not measured here, no CI job has a GPU. b12658 gives the RPC server one
+  validation step for what a client sends (#32651; wire format and protocol 10.0.2 unchanged, so both
+  ends of a b12657 and a b12658 jar still speak to each other): a request outside its tensor, a tensor
+  ggml would assert on, a graph whose nodes are out of order and an allocation of a client-given size
+  that fails are refused and end the connection, where several of them ended the server's process.
+  `RpcServer` serves the next client afterwards; two new cases of `test_rpc_comm.cpp` hold that (a
+  read past its tensor and an element count that overflows, both a `GGML_ASSERT` of the server at
+  b12657). `patches/0015` was refreshed: the server's code moved by some 200 lines and one hunk split
+  in two, the `+`/`-` lines are unchanged. The other 35 patches apply unchanged.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
