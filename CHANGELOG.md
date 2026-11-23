@@ -346,7 +346,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12644** (from b12573, 71 upstream commits in twenty-one steps; master, pinned by commit
+- **llama.cpp b12651** (from b12573, 78 upstream commits in twenty-two steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -492,6 +492,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   order of the operations: measured with every generated pipeline whose audio goes through it
   (ZONOS3, tiny-voca, LFM3-Audio, Qwen3-TTS cloning a voice, the Ultravox, qwen3a and lfm3a encoders),
   the WAV of every synthesis and the probabilities of every heard clip are bit for bit those of b12643.
+  b12645 gives LFM2.5-VL's template LFM2.5's parser (#32843): its tool list follows `List of tools: `
+  without a `[`, which the detection looked for, so the template got the generic parser and an answer
+  with a call such as `[toggle(enabled=True)]` failed its parse; now the call is read and its Python
+  literals (`True`, `None`) become JSON (`Lfm25VlToolCalls`, red at b12644). b12646 gives
+  `ggml_backend_tensor_memset` a fallback for a buffer without a memset of its own (#32574), which the
+  KV cache and the recurrent state now clear through, and the RPC server no longer refuses such a
+  buffer; every buffer the CI jobs use (CPU, RPC over the CPU) has its own. b12650 takes an Inkling
+  tool call's name from its JSON (#32833): a call written without the name before
+  `<|content_invoke_tool_json|>`, with another name there, of a tool that was not offered or with
+  spaces in its JSON is read as a call, and the grammar of `tool_choice` `auto` lets the text through
+  until the tool token and constrains the call after it, where a lazy grammar waited for a header
+  followed by a name (`InklingToolCalls` over Inkling 2 Small's template, three cases red at b12644).
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's

@@ -1795,3 +1795,388 @@ TEST(LazyToolGrammar, ToolChoiceNoneGetsNoGrammar) {
     const common_chat_params params = llama32_params_with_a_tool(COMMON_CHAT_TOOL_CHOICE_NONE);
     EXPECT_TRUE(params.grammar.empty()) << params.grammar;
 }
+
+// ============================================================
+// LFM2.5-VL tool calls (llama.cpp b12645, #32843)
+//
+//   LFM2.5-VL's template lists the tools as `"List of tools: " + (tools | tojson)`, while the
+//   detection of LFM2.5's parser looked for the text `List of tools: [`, so the template got
+//   the generic parser, which neither reads Python literals (`True`, `None`) as JSON nor knows
+//   the call markers. The template is LFM2.5-VL's, verbatim from upstream's
+//   models/templates/LFM2.5-VL.jinja (the one upstream's own test uses).
+// ============================================================
+
+namespace {
+
+constexpr const char *LFM25_VL_TEMPLATE = R"LFM25VL({{- bos_token -}}
+{%- set keep_past_thinking = keep_past_thinking | default(false) -%}
+
+{%- macro format_arg_value(arg_value) -%}
+    {%- if arg_value is string -%}
+        {{- '"' + arg_value + '"' -}}
+    {%- elif arg_value is mapping -%}
+        {{- arg_value | tojson -}}
+    {%- else -%}
+        {{- arg_value | string -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro parse_content(content) -%}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- else -%}
+        {%- set _ns = namespace(result="") -%}
+        {%- for item in content -%}
+            {%- if item.type == "image" -%}
+                {%- set _ns.result = _ns.result + "<image>" -%}
+            {%- elif item.type == "text" -%}
+                {%- set _ns.result = _ns.result + item.text -%}
+            {%- else -%}
+                {%- set _ns.result = _ns.result + item | tojson -%}
+            {%- endif -%}
+        {%- endfor -%}
+        {{- _ns.result -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_tool_calls(tool_calls) -%}
+    {%- set tool_calls_ns = namespace(tool_calls=[]) -%}
+    {%- for tool_call in tool_calls -%}
+        {%- set func_name = tool_call.function.name -%}
+        {%- set func_args = tool_call.function.arguments -%}
+        {%- set args_ns = namespace(arg_strings=[]) -%}
+        {%- for arg_name, arg_value in func_args.items() -%}
+            {%- set args_ns.arg_strings = args_ns.arg_strings + [arg_name + "=" + format_arg_value(arg_value)] -%}
+        {%- endfor -%}
+        {%- set tool_calls_ns.tool_calls = tool_calls_ns.tool_calls + [func_name + "(" + (args_ns.arg_strings | join(", ")) + ")"] -%}
+    {%- endfor -%}
+    {{- "<|tool_call_start|>[" + (tool_calls_ns.tool_calls | join(", ")) + "]<|tool_call_end|>" -}}
+{%- endmacro -%}
+
+{%- set ns = namespace(system_prompt="", last_assistant_index=-1) -%}
+{%- if messages[0].role == "system" -%}
+    {%- if messages[0].content is defined -%}
+        {%- set ns.system_prompt = parse_content(messages[0].content) -%}
+    {%- endif -%}
+    {%- set messages = messages[1:] -%}
+{%- endif -%}
+{%- if tools -%}
+    {%- set ns.system_prompt = ns.system_prompt + ("\n\n" if ns.system_prompt else "") + "Today's date: " + strftime_now("%Y-%m-%d") + "\n\nList of tools: " + (tools | tojson) -%}
+{%- endif -%}
+{%- if ns.system_prompt -%}
+    {{- "<|im_start|>system\n" + ns.system_prompt + "<|im_end|>\n" -}}
+{%- endif -%}
+{%- for message in messages -%}
+    {%- if message.role == "assistant" -%}
+        {%- set ns.last_assistant_index = loop.index0 -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- for message in messages -%}
+    {{- "<|im_start|>" + message.role + "\n" -}}
+    {%- if message.role == "assistant" -%}
+        {%- generation -%}
+        {%- if message.thinking is defined and (keep_past_thinking or loop.index0 == ns.last_assistant_index) -%}
+            {{- "<think>" + message.thinking + "</think>" -}}
+        {%- endif -%}
+        {%- if message.tool_calls is defined -%}
+            {{- render_tool_calls(message.tool_calls) -}}
+        {%- endif -%}
+        {%- if message.content is defined -%}
+            {%- set content = parse_content(message.content) -%}
+            {%- if not keep_past_thinking and loop.index0 != ns.last_assistant_index -%}
+                {%- if "</think>" in content -%}
+                    {%- set content = content.split("</think>")[-1] | trim -%}
+                {%- endif -%}
+            {%- endif -%}
+            {{- content + ("" if (continue_final_message and loop.last) else "<|im_end|>\n") -}}
+        {%- endif -%}
+        {%- endgeneration -%}
+    {%- else %}
+        {%- if message.content is defined -%}
+            {{- parse_content(message.content) + "<|im_end|>\n" -}}
+        {%- endif -%}
+    {%- endif %}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- "<|im_start|>assistant\n" -}}
+{%- endif -%}
+)LFM25VL";
+
+// A tool of the name `name` with one argument `arg` of the JSON type `type`.
+common_chat_tool tool_with_one_argument(const std::string &name, const std::string &arg, const std::string &type) {
+    common_chat_tool tool;
+    tool.name = name;
+    tool.description = "a test tool";
+    tool.parameters =
+        R"({"type":"object","properties":{")" + arg + R"(":{"type":")" + type + R"("}},"required":[")" + arg + R"("]})";
+    return tool;
+}
+
+// The chat parameters of a request with one user message and `tools` under `choice`.
+common_chat_params params_with_tools(const char *tmpl, const char *bos, const std::vector<common_chat_tool> &tools,
+                                     common_chat_tool_choice choice) {
+    common_chat_templates_ptr tmpls = common_chat_templates_init(nullptr, tmpl, bos);
+    common_chat_msg user;
+    user.role = "user";
+    user.content = "Hey";
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.tools = tools;
+    inputs.tool_choice = choice;
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
+    return common_chat_templates_apply(tmpls.get(), inputs);
+}
+
+// Parses `output` the way the server parses a finished answer under `params`.
+common_chat_msg parse_answer(const common_chat_params &params, const std::string &output) {
+    common_chat_parser_params parser_params(params);
+    parser_params.parser = params.parser;
+    return common_chat_parse(common_chat_input(output), /*is_partial=*/false, parser_params);
+}
+
+common_chat_params lfm25_vl_params() {
+    return params_with_tools(LFM25_VL_TEMPLATE, "<|startoftext|>",
+                             {tool_with_one_argument("toggle", "enabled", "boolean"),
+                              tool_with_one_argument("set_config", "config", "object")},
+                             COMMON_CHAT_TOOL_CHOICE_AUTO);
+}
+
+} // namespace
+
+TEST(Lfm25VlToolCalls, APythonicCallIsReadWithItsPythonLiteralsAsJson) {
+    const common_chat_params params = lfm25_vl_params();
+    EXPECT_EQ(params.generation_prompt, "<|im_start|>assistant\n");
+
+    const common_chat_msg toggle = parse_answer(params, "<|tool_call_start|>[toggle(enabled=True)]<|tool_call_end|>");
+    ASSERT_EQ(toggle.tool_calls.size(), 1u) << "content: " << toggle.content;
+    EXPECT_EQ(toggle.tool_calls[0].name, "toggle");
+    EXPECT_EQ(json::parse(toggle.tool_calls[0].arguments), json::parse(R"({"enabled": true})"));
+    EXPECT_EQ(toggle.content, "");
+
+    const common_chat_msg config = parse_answer(
+        params, R"(<|tool_call_start|>[set_config(config={"enabled": True, "note": None})]<|tool_call_end|>)");
+    ASSERT_EQ(config.tool_calls.size(), 1u) << "content: " << config.content;
+    EXPECT_EQ(config.tool_calls[0].name, "set_config");
+    EXPECT_EQ(json::parse(config.tool_calls[0].arguments),
+              json::parse(R"({"config": {"enabled": true, "note": null}})"));
+}
+
+TEST(Lfm25VlToolCalls, AMarkdownLinkStaysContent) {
+    // The control: brackets that are no call do not become one.
+    const std::string text = "Use this format: [link text](url). Example: [Wikipedia](https://www.wikipedia.org).";
+    const common_chat_msg msg = parse_answer(lfm25_vl_params(), text);
+    EXPECT_TRUE(msg.tool_calls.empty());
+    EXPECT_EQ(msg.content, text);
+}
+
+// ============================================================
+// Inkling tool calls take the name in the JSON (llama.cpp b12650, #32833)
+//
+//   An Inkling turn writes a call as `<|message_model|>NAME<|content_invoke_tool_json|>
+//   {"name":"NAME","args":{...}}<|end_message|>`. Until b12650 the parser required NAME before
+//   the token to be the name of an offered tool and the JSON to start with exactly that name,
+//   so a call the research model writes without NAME, a NAME that differs from the JSON's, a
+//   tool that was not offered and JSON with spaces were not read as calls. Now the call takes
+//   the name in the JSON. The template is Inkling 2 Small's, verbatim from upstream's
+//   models/templates/thinkingmachines-Inkling-2-Small.jinja (the one upstream's own test uses);
+//   the model writes the first header itself.
+// ============================================================
+
+namespace {
+
+constexpr const char *INKLING2_TEMPLATE =
+    R"INKLING2({%- set effort_map = {"none": 0.0, "minimal": 0.1, "low": 0.2, "medium": 0.7, "high": 0.9, "xhigh": 0.99, "max": 0.99} -%}
+{%- set role_token = {"user": "<|message_user|>", "assistant": "<|message_model|>", "system": "<|message_system|>", "tool": "<|message_tool|>"} -%}
+
+{%- macro emit_thinking_effort() -%}
+    {%- set eff = reasoning_effort if reasoning_effort is defined and reasoning_effort is not none else 0.9 -%}
+    {%- if eff is string -%}
+        {%- set key = eff | trim -%}
+        {%- if key not in effort_map -%}
+            {{- raise_exception("Unknown reasoning_effort: " ~ eff) -}}
+        {%- endif -%}
+        {%- set num = effort_map[key] -%}
+    {%- else -%}
+        {%- set num = eff | float -%}
+    {%- endif -%}
+    {%- if num < 0.0 or num > 0.99 -%}
+        {{- raise_exception("reasoning_effort must be in [0.0, 0.99]") -}}
+    {%- endif -%}
+    {{- "<|message_system|><|content_text|>Thinking effort level: " -}}
+    {%- if num == 0.0 -%}0{%- else -%}{{ num }}{%- endif -%}
+    {{- "<|end_message|>" -}}
+{%- endmacro -%}
+
+{%- if tools -%}
+    {%- set tool_state = namespace(specs=[]) -%}
+    {%- for tool in tools -%}
+        {%- set fn = tool.function if tool.function is defined else tool -%}
+        {%- set spec = {
+            "description": (fn.description if fn.description is defined and fn.description else ""),
+            "name": fn.name,
+            "parameters": (fn.parameters if fn.parameters is defined and fn.parameters else {}),
+            "type": (tool.type if tool.type is defined and tool.type else "function"),
+        } -%}
+        {%- set tool_state.specs = tool_state.specs + [spec] -%}
+    {%- endfor -%}
+    {{- "<|message_system|>tool_declare<|content_xml|>" -}}
+    {{- tool_state.specs | tojson(sort_keys=true, separators=(",", ":")) -}}
+    {{- "<|end_message|>" -}}
+{%- endif -%}
+
+{%- set state = namespace(effort_emitted=false) -%}
+{%- for message in messages -%}
+    {%- if message.role not in role_token -%}
+        {{- raise_exception("Unknown message role: " ~ message.role) -}}
+    {%- endif -%}
+    {%- if not state.effort_emitted and message.role != "system" -%}
+        {{- emit_thinking_effort() -}}
+        {%- set state.effort_emitted = true -%}
+    {%- endif -%}
+
+    {%- set header = namespace(text=role_token[message.role]) -%}
+    {%- if message.role == "tool" -%}
+        {%- if message.name is defined and message.name -%}
+            {%- set header.text = header.text ~ message.name -%}
+        {%- elif message.tool_call_id is defined and message.tool_call_id -%}
+            {%- for prev in messages -%}
+                {%- if prev.role == "assistant" and prev.tool_calls -%}
+                    {%- for tc in prev.tool_calls -%}
+                        {%- if tc.id is defined and tc.id == message.tool_call_id and tc.function.name is defined -%}
+                            {%- set header.text = header.text ~ tc.function.name -%}
+                        {%- endif -%}
+                    {%- endfor -%}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- endif -%}
+    {%- elif message.role == "assistant" and message.name is defined and message.name -%}
+        {%- set header.text = header.text ~ message.name -%}
+    {%- endif -%}
+    {%- set rtok = header.text -%}
+
+    {%- if message.role == "assistant" and message.reasoning_content is defined and message.reasoning_content -%}
+        {{- rtok ~ "<|content_thinking|>" ~ message.reasoning_content ~ "<|end_message|>" -}}
+    {%- endif -%}
+
+    {%- if message.content is string and (message.content or not (message.role == "assistant" and (message.tool_calls or message.reasoning_content))) -%}
+        {{- rtok ~ "<|content_text|>" ~ message.content ~ "<|end_message|>" -}}
+    {%- elif message.content -%}
+        {%- for part in message.content -%}
+            {%- if part is string -%}
+                {{- rtok ~ "<|content_text|>" ~ part ~ "<|end_message|>" -}}
+            {%- elif part.type is not defined or part.type in ("text", "input_text") -%}
+                {%- set text_part = (part.text if part.text is defined and part.text is string else "") -%}
+                {{- rtok ~ "<|content_text|>" ~ text_part ~ "<|end_message|>" -}}
+            {%- elif part.type in ("image", "input_image", "image_url") -%}
+                {%- if message.role not in ("user", "tool") -%}
+                    {{- raise_exception("Image content is only supported for user and tool messages") -}}
+                {%- endif -%}
+                {{- rtok ~ "<|content_image|><|unused_200054|><|end_message|>" -}}
+            {%- elif part.type in ("audio", "input_audio", "audio_url") -%}
+                {{- raise_exception("Inkling 2 does not accept audio input") -}}
+            {%- else -%}
+                {{- raise_exception("Unsupported content part type: " ~ part.type) -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+
+    {%- if message.role == "assistant" and message.tool_calls -%}
+        {%- for tc in message.tool_calls -%}
+            {%- set fn = tc.function -%}
+            {%- if fn.name is not defined or fn.name is not string -%}
+                {{- raise_exception("tool call function name must be a string") -}}
+            {%- endif -%}
+            {%- if message.name is defined and message.name and message.name != fn.name -%}
+                {{- raise_exception("assistant name " ~ message.name ~ " does not match its tool call " ~ fn.name) -}}
+            {%- endif -%}
+            {%- set args = fn.arguments if fn.arguments is defined and fn.arguments else {} -%}
+            {%- if args is string -%}
+                {{- raise_exception("tool call arguments must be a parsed object, not a JSON string; canonicalize upstream") -}}
+            {%- endif -%}
+            {%- if args is not mapping -%}
+                {{- raise_exception("tool call arguments must be an object") -}}
+            {%- endif -%}
+            {{- "<|message_model|>" ~ fn.name ~ "<|content_invoke_tool_json|>" -}}
+            {{- '{"name":' ~ (fn.name | tojson(sort_keys=true, separators=(",", ":"))) ~ ',"args":' -}}
+            {{- "{" -}}
+            {%- for key, value in args | dictsort(case_sensitive=true) -%}
+                {{- (key | tojson) ~ ":" ~ (value | tojson(separators=(",", ":"))) -}}
+                {%- if not loop.last -%},{%- endif -%}
+            {%- endfor -%}
+            {{- "}}<|end_message|>" -}}
+        {%- endfor -%}
+    {%- endif -%}
+
+    {%- if message.role == "assistant" -%}
+        {{- "<|content_model_end_sampling|>" -}}
+    {%- endif -%}
+{%- endfor -%}
+
+{%- if not state.effort_emitted -%}
+    {{- emit_thinking_effort() -}}
+{%- endif -%}
+)INKLING2";
+
+const std::string INKLING_HEADER = "<|message_model|>";
+const std::string INKLING_END = "<|end_message|>";
+
+common_chat_params inkling_params(common_chat_tool_choice choice) {
+    return params_with_tools(INKLING2_TEMPLATE, "", {tool_with_one_argument("special_function", "arg1", "integer")},
+                             choice);
+}
+
+void expect_one_call(const common_chat_msg &msg, const std::string &name, const std::string &arguments) {
+    ASSERT_EQ(msg.tool_calls.size(), 1u) << "content: " << msg.content;
+    EXPECT_EQ(msg.tool_calls[0].name, name);
+    EXPECT_EQ(json::parse(msg.tool_calls[0].arguments), json::parse(arguments));
+}
+
+} // namespace
+
+TEST(InklingToolCalls, TextIsContentAndACallWithItsNameIsACall) {
+    // The controls: what the parser read before, with the grammar upstream builds for the call.
+    const common_chat_params params = inkling_params(COMMON_CHAT_TOOL_CHOICE_AUTO);
+    EXPECT_FALSE(params.grammar.empty());
+
+    const common_chat_msg text = parse_answer(params, INKLING_HEADER + "<|content_text|>Hello" + INKLING_END);
+    EXPECT_TRUE(text.tool_calls.empty());
+    EXPECT_EQ(text.content, "Hello");
+
+    expect_one_call(
+        parse_answer(
+            params, INKLING_HEADER +
+                        R"(special_function<|content_invoke_tool_json|>{"name":"special_function","args":{"arg1":1}})" +
+                        INKLING_END),
+        "special_function", R"({"arg1":1})");
+}
+
+TEST(InklingToolCalls, TheCallTakesTheNameInTheJson) {
+    expect_one_call(
+        parse_answer(inkling_params(COMMON_CHAT_TOOL_CHOICE_AUTO),
+                     INKLING_HEADER +
+                         R"(special<|content_invoke_tool_json|>{"name":"special_function","args":{"arg1":1}})" +
+                         INKLING_END),
+        "special_function", R"({"arg1":1})");
+}
+
+TEST(InklingToolCalls, ACallWithoutANameBeforeTheTokenIsReadUnderAutoAndRequired) {
+    for (const common_chat_tool_choice choice : {COMMON_CHAT_TOOL_CHOICE_AUTO, COMMON_CHAT_TOOL_CHOICE_REQUIRED}) {
+        SCOPED_TRACE(choice == COMMON_CHAT_TOOL_CHOICE_AUTO ? "auto" : "required");
+        expect_one_call(
+            parse_answer(inkling_params(choice),
+                         INKLING_HEADER +
+                             R"(<|content_invoke_tool_json|>{"name":"special_function","args":{"arg1":1}})" +
+                             INKLING_END),
+            "special_function", R"({"arg1":1})");
+    }
+}
+
+TEST(InklingToolCalls, ACallOfAToolThatWasNotOfferedIsReadWithSpacesInItsJson) {
+    expect_one_call(
+        parse_answer(inkling_params(COMMON_CHAT_TOOL_CHOICE_AUTO),
+                     INKLING_HEADER +
+                         R"(unknown_tool<|content_invoke_tool_json|>{"name": "unknown_tool", "args": {"arg1": 1}})" +
+                         INKLING_END),
+        "unknown_tool", R"({"arg1": 1})");
+}
