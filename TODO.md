@@ -472,8 +472,8 @@ aarch64 (CI builds and runs it).
   the Windows nvcc command line (#2470, fixed by #2811 since 0.18.0) is untested: try
   `-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` in `build.bat` on a branch, with the existing uncached
   retry as the fallback, and read two runs (the first fills the cache).
-- **Upstream sccache, open on their side:** mozilla/sccache#2809 (the `-virtual` arch fix, not ours)
-  and #2788 (`--offload-compress` in preprocessor cache mode; a nudge after the release).
+- **Upstream sccache, open on their side:** mozilla/sccache#2809 (the `-virtual` arch fix, not ours;
+  not in 0.20.0).
 
 ### RPC backend — follow-ups
 

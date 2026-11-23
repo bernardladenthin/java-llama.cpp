@@ -43,6 +43,7 @@
 #include <iterator>
 #include <map>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <clocale>
 #include <condition_variable>
@@ -76,6 +77,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -12048,6 +12050,158 @@ TEST(CApiServer, ASingleModelServerWhoseDownloadFailsSaysSoOverModelsSseAndEnds)
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+#ifndef _WIN32
+TEST(CApiServer, ARouterCancelsTheLoadOfAModelWhoseWorkerHasNotComeUpAndCanLoadItAgain) {
+    // b12652 (#32225) gives the WebUI a button that cancels a model's load: it posts /models/unload
+    // while the model is loading, and waits on /models/sse for the model to go down. This is the router's
+    // side of it in the embedded server: the worker -- here a script that never comes up, set through
+    // jllama_server_set_worker_command (patches/0008) -- is force-killed, the stream reports the model
+    // unloaded, the worker process is gone, and a second load starts a new worker, which the server's
+    // stop ends too. No model is loaded: the file in --models-dir only gives the router a model to list.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-cancel-" + std::to_string(std::random_device{}()));
+    const std::filesystem::path models = dir / "models";
+    std::filesystem::create_directories(models);
+    const std::string generated = write_tiny_llama_gguf("jllama-c-api-cancel");
+    std::filesystem::copy_file(generated, models / "tiny.gguf");
+    std::filesystem::remove(generated);
+    const std::filesystem::path pids = dir / "pids";
+    const std::filesystem::path worker = dir / "worker.sh";
+    {
+        std::ofstream script(worker, std::ios::binary);
+        script << "#!/bin/sh\necho $$ >> '" << pids.string() << "'\nexec sleep 60\n";
+    }
+    std::filesystem::permissions(worker, std::filesystem::perms::owner_all);
+    ASSERT_EQ(jllama_server_set_worker_command(worker.string().c_str()), JLLAMA_STATUS_OK);
+    // the worker command is the process's; a later test in this process must not spawn the script
+    struct ResetWorkerCommand {
+        const std::filesystem::path &dir;
+        ~ResetWorkerCommand() {
+            jllama_server_set_worker_command("");
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+    } reset_worker_command{dir};
+
+    // the pids the workers wrote, waiting until there are `count`
+    const auto worker_pids = [&](size_t count) {
+        std::vector<pid_t> found;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (std::chrono::steady_clock::now() < deadline) {
+            found.clear();
+            std::ifstream in(pids);
+            for (long pid; in >> pid;) {
+                found.push_back(static_cast<pid_t>(pid));
+            }
+            if (found.size() >= count) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return found;
+    };
+    const auto gone = [](pid_t pid, int seconds) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return false;
+    };
+
+    const int port = free_loopback_port();
+    const std::string port_text = std::to_string(port);
+    const std::string models_dir = models.string();
+    const char *argv[] = {"llama-server",    "--host",       "127.0.0.1",       "--port",
+                          port_text.c_str(), "--models-dir", models_dir.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(7, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    {
+        ModelsSseReader sse(port);
+        // on every way out of this block, a failed assertion included, the server stops before the
+        // reader waits for the end of its stream (and a worker left behind ends with its sleep)
+        struct StopOnExit {
+            jllama_server *&server;
+            ~StopOnExit() {
+                if (server != nullptr) {
+                    jllama_server_stop(server);
+                }
+            }
+        } stop_on_exit{server};
+        httplib::Client client("127.0.0.1", port);
+        client.set_read_timeout(std::chrono::seconds(30));
+        // the model's entry of GET /models, once the router answers
+        const auto entry = [&]() {
+            const auto res = client.Get("/models");
+            if (!res || res->status != 200) {
+                return json();
+            }
+            const json listed = json::parse(res->body); // the loop must not run over a temporary's member
+            for (const auto &m : listed.at("data")) {
+                if (m.value("id", std::string()) == "tiny") {
+                    return json(m);
+                }
+            }
+            return json();
+        };
+        const auto listed_by = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (entry().is_null()) {
+            ASSERT_LT(std::chrono::steady_clock::now(), listed_by) << "the router never listed the model";
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        const auto post = [&](const char *path) {
+            const auto res = client.Post(path, R"({"model":"tiny"})", "application/json");
+            return res ? res->status : -1;
+        };
+        // the router reports a load it starts as model_status and a worker's exit as status_change; the
+        // WebUI reads both
+        const auto status_of = [](const json &e, const char *status) {
+            const std::string event = e.value("event", std::string());
+            return e.value("model", std::string()) == "tiny" && (event == "model_status" || event == "status_change") &&
+                   e.contains("data") && e.at("data").value("status", std::string()) == status;
+        };
+
+        ASSERT_EQ(post("/models/load"), 200);
+        ASSERT_FALSE(sse.await([&](const json &e) { return status_of(e, "loading"); }).is_null())
+            << json(sse.snapshot()).dump();
+        const std::vector<pid_t> first = worker_pids(1);
+        ASSERT_EQ(first.size(), 1u) << "the router started no worker";
+        EXPECT_EQ(kill(first[0], 0), 0) << "the worker is not running";
+        EXPECT_EQ(entry().at("status").value("value", std::string()), "loading") << entry().dump();
+
+        // at once: a worker that is not loading is asked to exit and killed only after its stop timeout,
+        // 10 s by default
+        ASSERT_EQ(post("/models/unload"), 200);
+        const json unloaded = sse.await([&](const json &e) { return status_of(e, "unloaded"); }, 5);
+        ASSERT_FALSE(unloaded.is_null()) << json(sse.snapshot()).dump();
+        EXPECT_TRUE(gone(first[0], 5)) << "the cancelled worker still runs";
+        const json after = entry();
+        EXPECT_EQ(after.at("status").value("value", std::string()), "unloaded") << after.dump();
+        EXPECT_EQ(post("/models/unload"), 400) << "a model that is not running cannot be unloaded";
+
+        // the cancel leaves the model loadable
+        ASSERT_EQ(post("/models/load"), 200);
+        const std::vector<pid_t> both = worker_pids(2);
+        ASSERT_EQ(both.size(), 2u) << "the second load started no worker";
+        const pid_t second = both[1];
+        EXPECT_NE(second, first[0]);
+        const auto loading_again_by = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (entry().at("status").value("value", std::string()) != "loading") {
+            ASSERT_LT(std::chrono::steady_clock::now(), loading_again_by) << entry().dump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        EXPECT_EQ(kill(second, 0), 0) << "the second worker is not running";
+
+        EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+        server = nullptr;
+        EXPECT_TRUE(gone(second, 30)) << "the server's stop left the loading worker running";
+        EXPECT_TRUE(sse.await_end(15)) << "the SSE stream outlived the server";
+    }
+}
+#endif // _WIN32
 #endif // JLLAMA_HAS_NATIVE_SERVER
 
 // ---------------------------------------------------------------------------------------------------

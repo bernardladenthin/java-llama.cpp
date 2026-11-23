@@ -164,7 +164,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   backend of the pinned llama.cpp, 26 compiles cold and 26 of 26 hits warm (30 s and 1 s), the probe
   of `build.sh` passing for `cc`, `clang` and `g++`, and the stats lines `build.sh` / `build.bat`
   parse unchanged. It still refuses a TU with `-Xclang -flto-visibility-public-std`, so the plain-clang
-  Windows jobs keep `msvc-runtime-gnu-clang.cmake`.
+  Windows jobs keep `msvc-runtime-gnu-clang.cmake`. It reads the compressed `-E` output of a HIP
+  compile with `--offload-compress` in its preprocessor cache mode (mozilla/sccache#2788), which a
+  local build with the disk backend used to fail on; `build.sh` no longer advises `SCCACHE_DIRECT=false`.
 - **Build images, pinned by digest as before:** dockcross `android-arm64`, `android-x86_64` and
   `manylinux_2_28-x64` from `20261028-1173e18` to `20261117-2eda373`. Between the two, dockcross
   changed only its own CI (`actions/checkout` v7), so the images are the same toolchains (NDK r30,
@@ -346,7 +348,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12644** (from b12573, 71 upstream commits in twenty-one steps; master, pinned by commit
+- **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
   from CI's sparse checkout (`ui/apps/chat`, `ui/lib/ui`, `scripts`) with npm 11 and embeds 96 assets
@@ -492,6 +494,25 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   order of the operations: measured with every generated pipeline whose audio goes through it
   (ZONOS3, tiny-voca, LFM3-Audio, Qwen3-TTS cloning a voice, the Ultravox, qwen3a and lfm3a encoders),
   the WAV of every synthesis and the probabilities of every heard clip are bit for bit those of b12643.
+  b12645 gives LFM2.5-VL's template LFM2.5's parser (#32843): its tool list follows `List of tools: `
+  without a `[`, which the detection looked for, so the template got the generic parser and an answer
+  with a call such as `[toggle(enabled=True)]` failed its parse; now the call is read and its Python
+  literals (`True`, `None`) become JSON (`Lfm25VlToolCalls`, red at b12644). b12646 gives
+  `ggml_backend_tensor_memset` a fallback for a buffer without a memset of its own (#32574), which the
+  KV cache and the recurrent state now clear through, and the RPC server no longer refuses such a
+  buffer; every buffer the CI jobs use (CPU, RPC over the CPU) has its own. b12650 takes an Inkling
+  tool call's name from its JSON (#32833): a call written without the name before
+  `<|content_invoke_tool_json|>`, with another name there, of a tool that was not offered or with
+  spaces in its JSON is read as a call, and the grammar of `tool_choice` `auto` lets the text through
+  until the tool token and constrains the call after it, where a lazy grammar waited for a header
+  followed by a name (`InklingToolCalls` over Inkling 2 Small's template, three cases red at b12644).
+  b12652 gives the WebUI a button that cancels a model's load (#32225; only `ui/` changed, and the npm
+  license texts still match the lockfile; it builds with npm 11 and embeds 291 assets): it posts
+  `/models/unload` while the model is loading. A C API case holds the router's side in the embedded
+  server: with a worker that never comes up (`jllama_server_set_worker_command`), the unload kills it
+  within 5 s instead of the 10 s stop timeout of a running worker, `/models/sse` reports the model
+  unloaded, and a second load starts a new worker, which the server's stop ends too (POSIX; red with
+  the router's force-kill of a loading worker removed).
 - **llama.cpp b12521** (from b12515, 6 upstream commits; master, pinned by commit before upstream
   tags it). The ZAYA1 architecture (Zyphra's 8B, #32071: CCA attention with a recurrent
   convolution state and a delayed value head, a top-1 router that can skip the experts), the CPU's
