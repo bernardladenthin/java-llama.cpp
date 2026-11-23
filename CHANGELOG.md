@@ -915,6 +915,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`ZonosTtsIntegrationTest.everyListedVoiceSpeaks` timed out on every macOS job.** The contract's voice
+  test synthesizes once per predefined voice under a 10-minute limit for the whole test; CI's ZONOS3 Mini
+  lists 27 voices of 150 to 320 prompt rows each, about 34 s apiece on the macOS CPU runners (939 s on
+  2026-11-16, 925 s on 2026-11-23), and 26 s for all of them on a 4-core Linux machine. The budget is per
+  voice now (2 minutes, `assertTimeout` naming the voice), under a 60-minute limit for the test.
 - **`CApiServer.ARouterCancelsTheLoadOfAModelWhoseWorkerHasNotComeUpAndCanLoadItAgain` could miss the
   load it cancels.** The router replays no `/models/sse` event, and the test posted `/models/load` without
   waiting for its stream to answer, so a reader that connected a moment later never saw `loading` (the
