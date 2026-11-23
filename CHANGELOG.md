@@ -915,6 +915,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **`CApiServer.ARouterCancelsTheLoadOfAModelWhoseWorkerHasNotComeUpAndCanLoadItAgain` could miss the
+  load it cancels.** The router replays no `/models/sse` event, and the test posted `/models/load` without
+  waiting for its stream to answer, so a reader that connected a moment later never saw `loading` (the
+  macOS 15 job of the Publish run of 2026-11-23). The test waits for the stream now
+  (`ModelsSseReader::await_connected`, which the failed-load case uses as well); with the reader held back
+  300 ms it fails as on macOS without the wait and passes with it.
 - **A single-model server whose download or load failed could end its `/models/sse` stream without
   the last event.** llama.cpp promises a `status_change` to `unloaded` (with the exit code) before the
   server exits, and notified it -- then stopped the HTTP server at once, and cpp-httplib asks a stream

@@ -11745,6 +11745,7 @@ struct ModelsSseReader {
                         std::lock_guard<std::mutex> lock(mutex);
                         status = r.status;
                         content_type = r.get_header_value("Content-Type");
+                        cv.notify_all();
                         return true;
                     },
                     [&](const char *data, size_t length) {
@@ -11770,6 +11771,13 @@ struct ModelsSseReader {
             ended = true;
             cv.notify_all();
         });
+    }
+    // whether the stream has answered, waiting for it up to `seconds`: the server registers a client
+    // before it answers, so from then on every event reaches this reader
+    bool await_connected(int seconds = 30) {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(seconds), [&] { return status != 0 || ended; });
+        return status != 0;
     }
     // the first event that matches, waiting for it up to `seconds`
     json await(const std::function<bool(const json &)> &match, int seconds = 30) {
@@ -12015,17 +12023,7 @@ TEST(CApiServer, ASingleModelServerWhoseDownloadFailsSaysSoOverModelsSseAndEnds)
     ASSERT_EQ(jllama_server_start(13, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
     {
         ModelsSseReader sse(port);
-        const auto connected_by = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-        for (;;) {
-            {
-                std::lock_guard<std::mutex> lock(sse.mutex);
-                if (sse.status != 0 || sse.ended) {
-                    break;
-                }
-            }
-            ASSERT_LT(std::chrono::steady_clock::now(), connected_by) << "the SSE client did not connect";
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
+        ASSERT_TRUE(sse.await_connected()) << "the SSE client did not connect";
         EXPECT_EQ(sse.status, 200);
         model_server.release();
         const json unloaded = sse.await([](const json &e) { return is_status(e, "unloaded"); });
@@ -12164,6 +12162,9 @@ TEST(CApiServer, ARouterCancelsTheLoadOfAModelWhoseWorkerHasNotComeUpAndCanLoadI
                    e.contains("data") && e.at("data").value("status", std::string()) == status;
         };
 
+        // the router replays no event, so the stream must be open before the load: a load posted earlier
+        // was missed by a reader that connected a moment later (the macOS 15 job of run 45157679242)
+        ASSERT_TRUE(sse.await_connected()) << "the SSE client never connected";
         ASSERT_EQ(post("/models/load"), 200);
         ASSERT_FALSE(sse.await([&](const json &e) { return status_of(e, "loading"); }).is_null())
             << json(sse.snapshot()).dump();
