@@ -15371,6 +15371,65 @@ TEST(CApiChatTokens, AQwen3CoderToolCallStartsAtItsTokenAndIsParsedIntoTheCall) 
 }
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiServerTools, TheShellToolAsksForADescriptionFirstAndRunsWithoutOne) {
+    // b12667 (#32894): exec_shell_command's schema asks for a short `description` of the command, as its
+    // first and a required property, so that a client can show it while the call streams; the tool
+    // ignores it, and a call without it still runs. At b12666 the schema had no such property.
+    const std::filesystem::path models =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-shell-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(models);
+    const std::string models_dir = models.string();
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const char *argv[] = {"llama-server",     "--host",          "127.0.0.1",
+                          "--port",           port_text.c_str(), "--models-dir",
+                          models_dir.c_str(), "--tools",         "exec_shell_command"};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ASSERT_TRUE(health && health->status == 200);
+
+    const auto listed = client.Get("/tools");
+    ASSERT_TRUE(listed && listed->status == 200) << (listed ? listed->body : httplib::to_string(listed.error()));
+    // ordered: the order of the properties is the point
+    const auto tools = nlohmann::ordered_json::parse(listed->body);
+    nlohmann::ordered_json parameters;
+    for (const auto &tool : tools) {
+        if (tool.value("tool", std::string()) == "exec_shell_command") {
+            parameters = tool.at("definition").at("function").at("parameters");
+        }
+    }
+    ASSERT_TRUE(parameters.is_object()) << listed->body;
+    ASSERT_FALSE(parameters.at("properties").empty()) << parameters.dump();
+    EXPECT_EQ(parameters.at("properties").begin().key(), "description") << parameters.dump();
+    const auto required = parameters.at("required");
+    EXPECT_NE(std::find(required.begin(), required.end(), "description"), required.end()) << parameters.dump();
+    EXPECT_NE(std::find(required.begin(), required.end(), "command"), required.end()) << parameters.dump();
+
+    // the tool still runs a call without the description
+    const json body = {{"tool", "exec_shell_command"}, {"params", {{"command", "echo jllama-shell-tool"}}}};
+    const auto ran = client.Post("/tools", body.dump(), "application/json");
+    ASSERT_TRUE(ran) << httplib::to_string(ran.error());
+    EXPECT_EQ(ran->status, 200) << ran->body;
+    EXPECT_NE(ran->body.find("jllama-shell-tool"), std::string::npos) << ran->body;
+
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ignored;
+    std::filesystem::remove_all(models, ignored);
+}
+
 TEST(CApiServerTools, GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles) {
     // The embedded server's built-in tools (--tools, POST /tools): since b12640 (#32792) grep_search
     // takes an offset, the number of matching lines to skip, searches the files of a directory in the
