@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12672** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12673** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -433,7 +433,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (no Mac), the macOS Metal Java tests run it. b12672 gives Metal NVFP4 (#32825): mat-vec, MUL_MAT_ID,
   mul_mm and tensor-op kernels, get_rows and cpy, so an NVFP4 model runs on the GPU of
   `metal-macos-aarch64` instead of falling back to the CPU; the CPU and the other backends are
-  unchanged.
+  unchanged. b12673 removes the WebUI's Matte theme and its "Light surfaces" setting (#32906): Paper
+  is the only light theme. No npm package changed; the npm license texts still match the lockfile,
+  and the WebUI builds from CI's sparse checkout with npm 11 and embeds 291 assets.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
