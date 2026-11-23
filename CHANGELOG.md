@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12670** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12671** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -428,7 +428,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   by an index per key, added to the mask in F32), with a reference implementation on the CPU that the
   CPU backend does not offer yet (`supports_op` answers no for it), and no llama.cpp graph uses it
   yet. Without the bias the CPU computes the mask as before (`slope * mask`); the flash attention
-  cases pass unchanged.
+  cases pass unchanged. b12671 batches the rows of Metal's
+  `CONCAT` and copies them in vector chunks (#32824), only in `metal-macos-aarch64`; not measured here
+  (no Mac), the macOS Metal Java tests run it.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
