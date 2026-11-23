@@ -32,9 +32,9 @@ fi
 #
 # SCCACHE_DL_VERSION is overridable per-job, so a container that crashes one sccache build can
 # try another without editing this script (the in-container panic that stalled phase 2 was on
-# v0.8.2; v0.19.0 is the default). A wrong/unavailable version just fails
+# v0.8.2; v0.20.0 is the default). A wrong/unavailable version just fails
 # the `curl -f` and falls back to an uncached build, so bumping it can never red a build.
-SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.19.0}"
+SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.20.0}"
 case "$(uname -m)" in
   x86_64)        SCCACHE_DL_ARCH="x86_64" ;;
   aarch64|arm64) SCCACHE_DL_ARCH="aarch64" ;;
@@ -49,10 +49,10 @@ if [ "${USE_CACHE:-true}" = "true" ] && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE
   # publishes next to the release assets); another SCCACHE_DL_VERSION brings its own through
   # SCCACHE_DL_SHA256, and without a known hash the fetch is refused rather than trusted.
   case "${SCCACHE_DL_VERSION}-${SCCACHE_DL_ARCH}" in
+    0.20.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-c3c5db9cd7e3be12b7bab350d8fe8ae7dcfb7269d5432b269e0dffa1a87c6ed2}" ;;
+    0.20.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-1bd78037804baeb9655f6baf8791f99c43388fae6d6b16944d3d93542fa5711a}" ;;
     0.19.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-aa73c7270c997894038c0d8f0d297865f57569e1687883322bc431713d4bb9dd}" ;;
     0.19.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-3e47fc4a71b1ddd1b4294a0de9d34498922fdf41e3cd0bda5df3954e3d6deb9d}" ;;
-    0.18.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89}" ;;
-    0.18.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a}" ;;
     *)              SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-}" ;;
   esac
   if [ -z "$SCCACHE_DL_SHA256" ]; then

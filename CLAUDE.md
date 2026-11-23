@@ -639,7 +639,7 @@ was ggml's default arch list, whose PTX-only `90-virtual` makes nvcc run a ptxas
 `-o` (mozilla/sccache#2862, fix PR #2809); the list this project passes since 2026-10-11 (every arch
 `-real`, only `121-virtual` PTX-only) does not hit it -- measured in `nvidia/cuda:13.4.3` with b11815:
 108/108 hits warm with sccache 0.18.0, while ggml's list fails as CI did. The "signal 126" was sccache
-printing an exit code as a signal, fixed in 0.19.0 (mozilla/sccache#2932), which is the pinned version
+printing an exit code as a signal, fixed in 0.19.0 (mozilla/sccache#2932); 0.20.0 is the pinned version
 now. Either way CI keeps the **full arch set on every run** (release-safe everywhere), never a
 reduced arch set; the cache is what makes it affordable.
 
@@ -855,7 +855,7 @@ Windows-specific wiring (the rest is the natives-jar wiring, see "Natives jars" 
    (`OpenCL.lib`), then delegates to `build.bat` with `-DOpenCL_INCLUDE_DIR`/`-DOpenCL_LIBRARY`
    (the Windows analogue of `build_opencl_android.sh`).
 3. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
-   sccache v0.19.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
+   sccache v0.20.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
    - `build-windows-x86_64` — **modular CPU, plain clang** (`-DJLLAMA_BACKEND_DL=ON
      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`; no `-DBUILD_TESTING` --
      `test-cpp-windows-x86_64` builds the static library with the tests, same compiler).
@@ -884,7 +884,7 @@ ignores compiler launchers.
 
 **The plain-clang jobs cache because of `llama/cmake/msvc-runtime-gnu-clang.cmake`.** sccache refuses
 any TU carrying an `-Xclang` argument it does not know (`Can't handle UnknownFlag arguments with
--Xclang`; 0.18.0 and 0.19.0), and CMake's `Platform/Windows-Clang.cmake` implements
+-Xclang`; 0.18.0 to 0.20.0), and CMake's `Platform/Windows-Clang.cmake` implements
 `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` (the hybrid CRT every Windows job sets) for clang with the
 GNU front end as `-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt` -- and
 `-flto-visibility-public-std` is the one sccache does not know (`--dependent-lib` and llama.cpp's own
@@ -1420,7 +1420,7 @@ kept per job on purpose, since at workflow level the token would reach every job
 running third-party actions — and, for dockcross,
 `DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` — the
 dockcross wrapper only forwards host env it is explicitly told to via `-e`. The fetched sccache
-version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.19.0**; overridable per-job
+version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.20.0**; overridable per-job
 to try a different build against a container that crashed another). **Windows** is handled
 separately (the Visual Studio generator ignores `CMAKE_*_COMPILER_LAUNCHER`): see
 "Windows native classifiers" below — the **default** Windows CPU JAR now uses the **Ninja
