@@ -167,6 +167,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Windows jobs keep `msvc-runtime-gnu-clang.cmake`. It reads the compressed `-E` output of a HIP
   compile with `--offload-compress` in its preprocessor cache mode (mozilla/sccache#2788), which a
   local build with the disk backend used to fail on; `build.sh` no longer advises `SCCACHE_DIRECT=false`.
+- **Atmosphere 4.0.78** for `llama-atmosphere-agent` (its 288 tests pass, the model-backed ones skip
+  without a model as before), **animal-sniffer-annotations 1.29.2** in the core, and the **Vulkan SDK
+  1.4.357.0** for the Windows x86-64 Vulkan module (from 1.4.350.0), upstream's version since b10211
+  (#26303) and the one the Windows arm64 Vulkan job already installed. The license record of the
+  Vulkan and SPIR-V headers follows: Vulkan-Headers' `LICENSE.md` at `vulkan-sdk-1.4.357.0` (the
+  copyright years and one sentence of its note changed, the two license texts did not).
 - **Build images, pinned by digest as before:** dockcross `android-arm64`, `android-x86_64` and
   `manylinux_2_28-x64` from `20261028-1173e18` to `20261117-2eda373`. Between the two, dockcross
   changed only its own CI (`actions/checkout` v7), so the images are the same toolchains (NDK r30,
@@ -226,6 +232,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   stays a pull request of its own), on Saturday, so a week of updates is one merge and one run of
   the pipeline on `main`. `common/check-dependabot` in `repository-checks` holds the file to that
   rule, and every action and reusable workflow of bernardladenthin/actions is pinned at v1.2.1.
+- **bernardladenthin/actions v1.2.3.** Every action and reusable workflow of it is pinned at v1.2.3
+  (from v1.2.2), a release of newer pins only: actions/setup-java v6.3.0 in its composite actions,
+  github/codeql-action v4.39.4 and google/osv-scanner-action v2.7.1 in its reusable workflows, and
+  Gradle 9.9.2 as the default of `java/verify-signing-key-gradle`.
 - **bernardladenthin/actions v1.2.2.** The snapshot publication no longer deletes the `snapshot` tag
   when GitHub refuses the workflow token the move (a 403 after a change to a workflow file): the
   tag stays where it is, the run warns with the command that moves it, and the pre-release is
