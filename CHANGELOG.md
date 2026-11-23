@@ -358,7 +358,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12667** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12668** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -401,7 +401,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   checkout with npm 11 and embeds 291 assets. b12667 has the built-in `exec_shell_command` tool of the
   embedded server ask for a short `description` of the command, as its first and a required argument
   (#32894): a client can show it while the call streams, the tool ignores it, and a call without it
-  still runs (`CApiServerTools`, red at b12666).
+  still runs (`CApiServerTools`, red at b12666). b12668 lets Metal multiply with a BF16 or F32
+  second operand (`MUL_MAT`, `MUL_MAT_ID`, #32677) and hands the precision policy the weight of
+  every matrix multiplication; the temporary environment variable `LLAMA_MOE_AMAX_SKIP` swaps the
+  amax rescaling of the MoE down projection of Mistral 4, Mellum, Flint and Laguna for a BF16
+  operand (upstream measured +22 % to +25 % token generation on M2 Ultra and M5 Max). The CPU
+  library builds the same graphs as before; the MoE, weight-scale and trainer cases pass unchanged.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
