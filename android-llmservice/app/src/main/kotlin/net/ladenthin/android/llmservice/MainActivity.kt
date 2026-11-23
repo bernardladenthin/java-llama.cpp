@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Edge-to-edge is forced on Android 15 (targetSdk 35); enable it explicitly on every version
+        // Edge-to-edge is forced from Android 15 on (targetSdk 35+); enable it explicitly on every version
         // so window-inset handling is consistent. The bottom log strip then pads itself above the
         // system navigation bar (see LogStrip) instead of being drawn behind it.
         enableEdgeToEdge()

@@ -25,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "net.ladenthin.llama.consumertest"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36 // in step with android-llmservice
         versionCode = 1
         versionName = "1.0"
         // arm64 = real devices; x86_64 = the CI emulator (and x86_64 Android hardware).

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Pinned by digest (tag 20261028-1173e18, the manifest Docker Hub served for it on 2026-11-09);
+# Pinned by digest (tag 20261117-2eda373, the manifest Docker Hub served for it on 2026-11-22);
 # the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
-DEFAULT_DOCKCROSS_IMAGE=dockcross/android-x86_64@sha256:e76fde8b35c6515a5532fa31724d11db5694b5286e4176c192d8a7709e2c75ca
+DEFAULT_DOCKCROSS_IMAGE=dockcross/android-x86_64@sha256:459efd753d7660485675da91a58b288a9ac7f0a05283354aacaec3b3eb03f279
 
 #------------------------------------------------------------------------------
 # Helpers

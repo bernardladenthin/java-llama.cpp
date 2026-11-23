@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 -->
 <resources>
     <!-- app_name is the product label; intentionally NOT translated (same in every locale). -->
-    <string name="app_name">LLM Service</string>
+    <string name="app_name" translatable="false">LLM Service</string>
 
     <string name="intro_pick_model">Pick a GGUF model file to chat privately, fully on your device. An instruct/chat model works best.</string>
     <string name="action_choose_model">Choose model</string>
