@@ -358,7 +358,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12665** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12666** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -396,7 +396,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   arguments are `JLLAMA_STATUS_INVALID_REQUEST` on the template and the chat path, the model answers
   the next request, and the history the WebUI sends instead renders. b12664 unmounts a closed
   collapsible's body after one transition (#32881), and b12665 sets code in messages at the size of
-  the text around it (#32892).
+  the text around it (#32892). b12666 shows an agentic reply of the WebUI as one grouped "Agent
+  Trace" of its tool calls (#32879); no npm package changed, and the WebUI builds from CI's sparse
+  checkout with npm 11 and embeds 291 assets.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
