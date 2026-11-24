@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12688** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12719** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -495,6 +495,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   out with the other two libraries (without it the build fails: "Could not load
   ../../lib/harness/src/index.ts"), and the license check reads its imports, of which it has none.
   The WebUI builds and embeds its 291 assets, its unit tests pass (929) and the license texts match.
+  b12694 keeps the BPE merges as string views (#32859): the same tokens as before for Llama 3.2,
+  Qwen3-TTS, SmolVLM and LFM3-Audio over 655 KB of mixed text, 15 to 33 % faster for three of them.
+  b12696 and b12701 change Inkling 2's graph (the row clip as an L2 norm, #32940; the depth mix with
+  the scores first, #32855): a generated Inkling 2 model (`write_tiny_inkling2_gguf`, new) answers
+  with probabilities within 3.4e-5 of b12695's, and three new C API cases hold its hybrid memory
+  (`-ub 1`, two slots at once, a restored slot). b12699 restores a prompt from the host-memory
+  cache after clearing the idle slots when a unified KV cache had no room for it (#30997; new case
+  `CApiPromptCache.AUnifiedCacheRestoresAPromptAfterClearingTheIdleSlots`, red before). b12700
+  makes the WebUI a plain chat unless the server offers built-in tools or the MCP proxy
+  (`--agent`, #32949), which an attached `NativeServer` does not. b12704 lets Vulkan's
+  cooperative-matrix gated delta net replay a rejected draft (#32721; the 98 GATED_DELTA_NET cases
+  pass on lavapipe). b12707 pauses the CPU threadpool after a graph split across several backends,
+  so its workers stop spinning while a GPU or an RPC server finishes (#32378; without OpenMP, as
+  every shipped build is). b12708 passes an MCP tool's image and audio parts on as data URIs (#32064;
+  new case over a stand-in MCP server, red before). b12709 adds SVE dot products for Q5_0 and Q5_1
+  (#30867) and b12711 repacks Q4_0 and Q8_0 on ARM cores without dotprod (#32142), both checked under
+  qemu-aarch64 against the reference, the second through both paths of `patches/0022`, whose test now
+  runs Q8_0 too. b12714 bumps the WebUI to 0.2.0, which can name its server in a `config.json`
+  (#32945); the license texts were regenerated for the new lockfile and lost `rehype-highlight`,
+  which the app has not imported since b12582. The other steps change backends this project builds
+  but cannot run here (HIP, CUDA, Metal) or does not build (WebGPU, SpacemiT), the WebUI's styling,
+  upstream's conversion script, CI or docs.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
