@@ -884,6 +884,128 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     return ok ? path : std::string();
 }
 
+// Inkling 2 (arch "inkling2", b12406, #32217): a hybrid of sliding-window and full attention without RoPE --
+// a learned relative-position bias carries the positions --, short causal convolutions over K, V, the
+// attention output and the feed-forward output whose last inputs live in a recurrent state per
+// sequence, attention over the depth (each layer mixes the outputs of the earlier blocks with learned
+// queries), and a mixture of experts with a sigmoid router. The hyperparameters are those of
+// upstream's own architecture test (tests/test-llama-archs.cpp) with the widths made small: three
+// layers, sliding / full / sliding, a window of n_swa positions, blocks of two layers, a convolution
+// of four taps, four experts of which two answer. The vocabulary is the GPT-2 byte tokens, and the
+// embedding and output carry two padding rows past it, as the converter writes them.
+inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-inkling2", int n_swa = 8) {
+    constexpr int EMBD = 32, N_HEAD_A = 4, N_HEAD_KV_A = 2, HEAD = 8, FF_EXP = 16, N_LAYER_A = 3;
+    constexpr int N_EXPERT_A = 4, N_EXPERT_USED_A = 2, N_REL = 4, REL_EXTENT = 16, N_CONV = 4, VOCAB_PAD = 2;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(29);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "inkling2";
+    const bool swa[N_LAYER_A] = {true, false, true};
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 2048);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), EMBD);
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER_A);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF_EXP);
+    gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), FF_EXP);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD_A);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV_A);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
+    gguf_set_val_f32(g, (a + ".attention.qk_clip").c_str(), 0.25f);
+    gguf_set_val_u32(g, (a + ".attention.relative_length").c_str(), N_REL);
+    gguf_set_val_u32(g, (a + ".attention.relative_extent").c_str(), REL_EXTENT);
+    gguf_set_val_f32(g, (a + ".attention.relative_clip").c_str(), 0.1f);
+    gguf_set_val_u32(g, (a + ".attention.log_scale_floor").c_str(), 4);
+    gguf_set_val_f32(g, (a + ".attention.log_scale_alpha").c_str(), 0.1f);
+    gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(n_swa));
+    gguf_set_arr_data(g, (a + ".attention.sliding_window_pattern").c_str(), GGUF_TYPE_BOOL, swa, N_LAYER_A);
+    gguf_set_val_u32(g, (a + ".attn_res.block_size").c_str(), 2);
+    gguf_set_val_u32(g, (a + ".shortconv.l_cache").c_str(), N_CONV);
+    gguf_set_val_f32(g, (a + ".activation.situ_beta").c_str(), 0.2f);
+    gguf_set_val_f32(g, (a + ".activation.situ_linear_beta").c_str(), 0.3f);
+    gguf_set_val_f32(g, (a + ".expert_weights_scale").c_str(), 8.0f);
+    gguf_set_val_f32(g, (a + ".final_logit_softcapping").c_str(), 30.0f);
+    gguf_set_val_u32(g, (a + ".expert_count").c_str(), N_EXPERT_A);
+    gguf_set_val_u32(g, (a + ".expert_used_count").c_str(), N_EXPERT_USED_A);
+
+    std::vector<std::string> tokens = byte_tokens();
+    std::vector<int32_t> token_types(tokens.size(), 1);
+    const int n_vocab = static_cast<int>(tokens.size());
+    gguf_set_val_u32(g, (a + ".vocab_size").c_str(), static_cast<uint32_t>(n_vocab + VOCAB_PAD));
+    gguf_set_val_u32(g, (a + ".vocab_size_unpadded").c_str(), static_cast<uint32_t>(n_vocab));
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merges[] = {"Ġ Ġ"}; // never applies
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", '>');
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    // a per-channel scale near one: the clips and the norms multiply by these
+    auto near_one = [&](const std::string &name, std::initializer_list<int64_t> ne) {
+        ggml_tensor *t = add_random_tensor(g, ctx, rng, name, ne, 0.1f);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            static_cast<float *>(t->data)[i] += 1.0f;
+        }
+    };
+    const int n_vocab_padded = n_vocab + VOCAB_PAD;
+    add_random_tensor(g, ctx, rng, "token_embd.weight", {EMBD, n_vocab_padded}, 0.1f);
+    add_random_tensor(g, ctx, rng, "token_embd_norm.weight", {EMBD}, 1.0f);
+    ggml_tensor *output = add_random_tensor(g, ctx, rng, "output.weight", {EMBD, n_vocab_padded}, 0.1f);
+    confine_output_to_ascii(output);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {EMBD}, 1.0f);
+    add_random_tensor(g, ctx, rng, "output_res_query.weight", {EMBD}, 1.0f);
+    for (int il = 0; il < N_LAYER_A; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        const int extent = swa[il] ? n_swa : REL_EXTENT;
+        add_random_tensor(g, ctx, rng, p + "attn_q.weight", {EMBD, HEAD * N_HEAD_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_k.weight", {EMBD, HEAD * N_HEAD_KV_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_v.weight", {EMBD, HEAD * N_HEAD_KV_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_output.weight", {HEAD * N_HEAD_A, EMBD}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_gate.weight", {EMBD, HEAD * N_HEAD_A}, 0.1f);
+        near_one(p + "attn_q_clip.weight", {HEAD, N_HEAD_A});
+        add_random_tensor(g, ctx, rng, p + "attn_sink_proj.weight", {EMBD, N_HEAD_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_rel.weight", {EMBD, N_REL * N_HEAD_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_rel_bias.weight", {N_REL, extent}, 0.5f);
+        near_one(p + "attn_rel_clip.weight", {N_REL, N_HEAD_A});
+        add_random_tensor(g, ctx, rng, p + "attn_k_conv.weight", {N_CONV, HEAD * N_HEAD_KV_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_v_conv.weight", {N_CONV, HEAD * N_HEAD_KV_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_post_conv.weight", {N_CONV, EMBD}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_post_conv.weight", {N_CONV, EMBD}, 0.1f);
+        if (swa[il]) {
+            add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {EMBD}, 1.0f);
+        } else {
+            add_random_tensor(g, ctx, rng, p + "attn_q_inp_norm.weight", {EMBD}, 1.0f);
+            add_random_tensor(g, ctx, rng, p + "attn_k_inp_norm.weight", {EMBD}, 1.0f);
+            add_random_tensor(g, ctx, rng, p + "attn_v_inp_norm.weight", {EMBD}, 1.0f);
+            add_random_tensor(g, ctx, rng, p + "attn_k_conv_proj.weight", {EMBD, N_CONV * N_HEAD_KV_A}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_v_conv_proj.weight", {EMBD, N_CONV * N_HEAD_KV_A}, 0.1f);
+        }
+        if (il > 0) {
+            add_random_tensor(g, ctx, rng, p + "attn_res_query.weight", {EMBD, swa[il] ? 1 : 3}, 0.5f);
+        }
+        add_random_tensor(g, ctx, rng, p + "ffn_res_query.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {EMBD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_gate_inp.weight", {EMBD, N_EXPERT_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_gate_up_exps.weight", {EMBD, 2 * FF_EXP, N_EXPERT_A}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_down_exps.weight", {FF_EXP, EMBD, N_EXPERT_A}, 0.1f);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
 // A control vector for write_tiny_llama_gguf()'s default model, in the format llama.cpp's
 // cvector-generator writes (general.architecture "controlvector", one F32 direction.<layer> of n_embd
 // per layer, layers counted from 1). llama.cpp adds direction.<il> times the scale to the output of

@@ -4601,6 +4601,178 @@ TEST(CApiZaya1, TwoSlotsAtOnceAnswerAsEachAlone) {
     std::filesystem::remove(path, ignored);
 }
 
+// Inkling 2 (b12406, #32217) through the server, on the random model of write_tiny_inkling2_gguf(): a
+// hybrid memory of KV rows with their relative positions (the attention has no RoPE; a learned bias
+// over the distance carries the positions) and a recurrent state per sequence (the last three inputs
+// of each of its four short convolutions). A prompt longer than the sliding window of eight positions
+// reaches the window's edge, the relative bias of both layer types and the convolution state.
+namespace {
+// The log-probabilities of the top tokens of every step of a completion.
+std::vector<double> top_logprobs_of(const json &response) {
+    std::vector<double> out;
+    const json &steps = response.at("completion_probabilities");
+    for (size_t s = 0; s < steps.size(); ++s) {
+        const json &top = steps[s].at("top_logprobs");
+        for (size_t t = 0; t < top.size(); ++t) {
+            out.push_back(top[t].at("logprob").get<double>());
+        }
+    }
+    return out;
+}
+
+std::string inkling2_request(const std::string &prompt, int n_predict) {
+    return json{{"prompt", prompt}, {"n_predict", n_predict}, {"temperature", 0},
+                {"n_probs", 3},     {"ignore_eos", true},     {"cache_prompt", false}}
+        .dump();
+}
+} // namespace
+
+TEST(CApiInkling2, AnInkling2ModelAnswersAndRestoresItsHybridState) {
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2");
+    ASSERT_FALSE(path.empty());
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-slots-inkling2-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directories(dir));
+    jllama_model *model = load_tiny(path, {"--slot-save-path", dir.string()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(meta.str()).at("architecture").get<std::string>(), "inkling2") << meta.str();
+
+    // an answer compared with another is computed over the same cached prefix (F272)
+    const auto answer = [model]() {
+        Owned completion;
+        const std::string request = R"({"prompt":"Hello there, how are you","temperature":0,"n_predict":16})";
+        EXPECT_EQ(jllama_completions(model, request.c_str(), &completion.s), JLLAMA_STATUS_OK) << jllama_last_error();
+        return completion.s != nullptr ? json::parse(completion.str()) : json::object();
+    };
+    const auto timing = [](const json &response, const char *key) { return response.at("timings").at(key).get<int>(); };
+    const json first = answer();
+    EXPECT_FALSE(first.at("content").get<std::string>().empty());
+    const json second = answer();
+    const json third = answer();
+    EXPECT_GT(timing(second, "cache_n"), 0) << second.dump();
+    EXPECT_EQ(timing(third, "cache_n"), timing(second, "cache_n")) << third.dump();
+    EXPECT_EQ(timing(third, "prompt_n"), timing(second, "prompt_n")) << third.dump();
+    EXPECT_EQ(second.at("content"), third.at("content"));
+
+    Owned saved;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_SAVE, 0, "inkling2.bin", &saved.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json saved_json = json::parse(saved.str());
+    EXPECT_GT(saved_json.at("n_written").get<size_t>(), 0u);
+    Owned erased;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_ERASE, 0, nullptr, &erased.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    Owned restored;
+    ASSERT_EQ(jllama_slot_action(model, JLLAMA_SLOT_RESTORE, 0, "inkling2.bin", &restored.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json restored_json = json::parse(restored.str());
+    EXPECT_EQ(restored_json.at("n_read").get<size_t>(), saved_json.at("n_written").get<size_t>()) << restored.str();
+    const json after_restore = answer();
+    EXPECT_EQ(timing(after_restore, "cache_n"), timing(third, "cache_n")) << after_restore.dump();
+    EXPECT_EQ(timing(after_restore, "prompt_n"), timing(third, "prompt_n")) << after_restore.dump();
+    EXPECT_EQ(after_restore.at("content"), third.at("content"));
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove_all(dir, ignored);
+}
+
+TEST(CApiInkling2, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
+    // Evaluated whole, the convolutions read the previous inputs from the batch and every query sees
+    // its keys in one attention; one token at a time (-ub 1) they come from the recurrent state and
+    // the KV rows the steps before left, with their relative positions. The same computation, so the
+    // probabilities agree up to rounding. The values are recorded (--gtest_output=xml) so that two
+    // llama.cpp versions can be compared.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-ubatch");
+    ASSERT_FALSE(path.empty());
+    std::vector<std::vector<double>> answers;
+    std::vector<std::string> texts;
+    for (const std::vector<std::string> extra : {std::vector<std::string>{}, std::vector<std::string>{"-ub", "1"}}) {
+        jllama_model *model = load_tiny(path, extra);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(
+            jllama_completions(model, inkling2_request("Yellow paint, how are you today", 6).c_str(), &response.s),
+            JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json parsed = json::parse(response.str());
+        answers.push_back(top_logprobs_of(parsed));
+        texts.push_back(parsed.at("content").get<std::string>());
+        jllama_model_free(model);
+    }
+    EXPECT_EQ(texts[0], texts[1]);
+    ASSERT_EQ(answers[0].size(), 18u); // 6 steps of 3
+    ASSERT_EQ(answers[1].size(), answers[0].size());
+    std::string recorded;
+    for (size_t i = 0; i < answers[0].size(); ++i) {
+        EXPECT_NEAR(answers[0][i], answers[1][i], 1e-3) << i;
+        char value[32];
+        std::snprintf(value, sizeof(value), "%s%.6f", i == 0 ? "" : " ", answers[0][i]);
+        recorded += value;
+    }
+    RecordProperty("logprobs", recorded);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiInkling2, TwoSlotsAtOnceAnswerAsEachAlone) {
+    // Two requests on two slots are decoded in one batch, each with its own convolution state, KV
+    // rows and relative positions. A state or a row read from the other sequence changes the
+    // probabilities of an answer.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-slots");
+    ASSERT_FALSE(path.empty());
+    // the same last tokens: what tells the answers apart has to come through the attention and the state
+    const std::vector<std::string> prompts = {"Hello there, how are you", "Yellow paint, how are you"};
+    std::vector<std::vector<double>> alone;
+    {
+        jllama_model *model = load_tiny(path, {"-c", "256"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        for (const std::string &prompt : prompts) {
+            Owned response;
+            ASSERT_EQ(jllama_completions(model, inkling2_request(prompt, 4).c_str(), &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            alone.push_back(top_logprobs_of(json::parse(response.str())));
+        }
+        jllama_model_free(model);
+    }
+    ASSERT_EQ(alone[0].size(), 12u); // 4 steps of 3
+    ASSERT_EQ(alone[1].size(), 12u);
+    double apart = 0.0;
+    for (size_t i = 0; i < alone[0].size(); ++i) {
+        apart = std::max(apart, std::fabs(alone[0][i] - alone[1][i]));
+    }
+    EXPECT_GT(apart, 1e-3) << "the two prompts are answered with other probabilities";
+
+    jllama_model *model = load_tiny(path, {"-c", "256", "-np", "2"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::vector<Owned> together(prompts.size());
+    std::vector<jllama_status> status(prompts.size(), JLLAMA_STATUS_ERROR);
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < prompts.size(); ++i) {
+        threads.emplace_back([&, i]() {
+            status[i] = jllama_completions(model, inkling2_request(prompts[i], 4).c_str(), &together[i].s);
+        });
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    for (size_t p = 0; p < prompts.size(); ++p) {
+        ASSERT_EQ(status[p], JLLAMA_STATUS_OK) << p;
+        const std::vector<double> got = top_logprobs_of(json::parse(together[p].str()));
+        ASSERT_EQ(got.size(), alone[p].size()) << p;
+        for (size_t i = 0; i < got.size(); ++i) {
+            EXPECT_NEAR(got[i], alone[p][i], 1e-3) << "prompt " << p << ", value " << i;
+        }
+    }
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 // Gemma 4 through the server (b12588, #32342). The server decodes the slots that are busy at the same
 // time in one batch; with a batch of 8 tokens a prompt of a slot is evaluated in pieces, the piece
 // before its last with no output, while the other slots generate -- sequences with other numbers of
