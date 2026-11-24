@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12682** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12683** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -476,6 +476,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `log(1 + exp(x))` rounded to 0, and the Metal, OpenCL and Vulkan shaders use a range-reduced
   `log1p`. The recurrent, Qwen3.5, mixture-of-experts and trainer cases of the C API pass, and so do
   upstream's softplus cases on lavapipe, the new one with negative inputs included (13 of 13).
+  b12683 lets the RPC server reuse one context for the tensors of every request (#32896) instead
+  of creating one per request; `patches/0015` was refreshed for it (only the context of its
+  constructor hunk moved), the wire format is unchanged, and the 52 RPC cases of the C++ suite pass
+  (the loopback math, the stop, COMM_INIT with its peers, the requests the server refuses).
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds

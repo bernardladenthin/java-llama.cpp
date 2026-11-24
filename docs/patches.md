@@ -370,6 +370,11 @@ server"): upstream moved every fixed-size command to typed helpers and one valid
 which shifted the server's code by some 200 lines and split one hunk in two. The + and - lines
 are unchanged; the wire format is too (protocol 10.0.2), so a client and a server of b12657
 and b12658 still speak to each other.
+
+Refreshed at b12683 (#32896, "rpc : reuse one context for request tensors on the server"): the
+server's constructor creates that context after the vectors it sizes, the trailing context of
+the hunk that adds the bind address to the constructor. Only context moved; the + and - lines
+are unchanged, and so is the wire format.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
