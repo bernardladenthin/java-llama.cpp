@@ -21,8 +21,9 @@
 // on): the batched path then gathers one token twice into a gemm group. Each runs with one input row per token (the
 // gate/up projections) and one per slot (the down projection), on 1, 3 and 4 threads -- 3 does not divide the column
 // blocks evenly, and 1 thread leaves units past the last column. Four weight types reach the repack path on AVX2 (MXFP4
-// of gpt-oss, Q4_0, IQ4_NL, Q4_K with its Q8_K activations); a type the running CPU does not repack is skipped, not
-// passed.
+// of gpt-oss, Q4_0, IQ4_NL, Q4_K with its Q8_K activations), and Q8_0 does on ARM -- with dotprod or i8mm, and since
+// llama.cpp b12711 (#32142) on an ARMv8.0 core without dotprod too, which also repacks Q4_0 there; a type the running
+// CPU does not repack is skipped, not passed.
 //
 // The switch is resolved through the CPU backend's get_proc_address, the way libjllama reaches it in a
 // GGML_BACKEND_DL build, so a llama.cpp bump that drops the patch reds this file at once.
@@ -272,7 +273,7 @@ TEST_P(MoeRepack, BothPathsComputeWhatTheGenericPathComputes) {
 
 std::vector<Case> cases() {
     std::vector<Case> out;
-    for (ggml_type type : {GGML_TYPE_MXFP4, GGML_TYPE_Q4_0, GGML_TYPE_IQ4_NL, GGML_TYPE_Q4_K}) {
+    for (ggml_type type : {GGML_TYPE_MXFP4, GGML_TYPE_Q4_0, GGML_TYPE_IQ4_NL, GGML_TYPE_Q4_K, GGML_TYPE_Q8_0}) {
         for (const Routing &routing : {spread(false), spread(true), single_token(), duplicates()}) {
             for (bool row_per_slot : {false, true}) {
                 out.push_back({type, routing, row_per_slot});
