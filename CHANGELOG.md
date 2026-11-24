@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12685** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12686** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -485,6 +485,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (896), and the new form test fails against the previous hook and passes against this one.
   b12685 gives the WebUI's tool-call timer the font size of its title (#32922); the WebUI builds and
   embeds its 291 assets.
+  b12686 lets the slot scheduler ask the host-memory prompt cache (`--cache-ram`) for every request
+  (#28992). It asked only when the slot's state was worth saving, so a request that named an empty
+  slot evaluated its whole prompt although the cache held its state, and a slot holding a shorter
+  prefix was reused as it was. Two new C API cases hold both, red with the previous scheduler.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds

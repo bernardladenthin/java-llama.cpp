@@ -2718,6 +2718,104 @@ std::string greedy_answer(jllama_model *model, int n_predict = 8) {
 
 } // namespace
 
+namespace {
+
+// The prompts of upstream's prompt-cache tests (tools/server/tests/unit/test_completion.py, b12686),
+// shortened for the random model's byte tokens: LONG starts with the text of SHORT, which covers more of it
+// than the default --slot-prompt-similarity (0.1), and OTHER shares nothing with either. SHORT ends with
+// one byte LONG does not have there, as upstream's SHORT does in tokens: with a BPE vocabulary its trailing
+// space is a token of its own, which LONG merges into the next word. A slot holding SHORT therefore keeps
+// all but its last token of LONG; one holding an exact token prefix would keep all its tokens, and the
+// cache would rightly not be preferred (find_better takes an entry only for more kept and more matched).
+const std::string PROMPT_CACHE_HEAD = "The capital of France is Paris. ";
+const std::string PROMPT_CACHE_TAIL = "The river Seine runs slowly through the middle of the old stone city. ";
+std::string repeated(const std::string &text, int times) {
+    std::string out;
+    for (int i = 0; i < times; ++i) {
+        out += text;
+    }
+    return out;
+}
+const std::string PROMPT_CACHE_LONG = PROMPT_CACHE_HEAD + repeated(PROMPT_CACHE_TAIL, 12);
+const std::string PROMPT_CACHE_SHORT = PROMPT_CACHE_HEAD + repeated(PROMPT_CACHE_TAIL, 3) + "|";
+const std::string PROMPT_CACHE_OTHER = repeated("Whiskers the cat climbed the tall oak tree behind the red barn. ", 6);
+
+// The random model with a training context the long prompt fits: the server caps a slot's context at it.
+std::string write_prompt_cache_model(const std::string &prefix) {
+    tiny_model_spec spec;
+    spec.prefix = prefix;
+    spec.n_ctx_train = 2048;
+    return write_tiny_llama_gguf(spec);
+}
+
+// Two slots and a host-memory prompt cache, as upstream's prompt_cache_server().
+jllama_model *load_prompt_cache_model(const std::string &path) {
+    return load_tiny(path, {"-c", "2048", "-np", "2", "-b", "512", "--cache-ram", "64"});
+}
+
+// prompt_n and cache_n of a prompt evaluated into the given slot, nothing generated.
+std::pair<int, int> evaluate_into_slot(jllama_model *model, const std::string &prompt, int id_slot) {
+    const json request = {
+        {"prompt", prompt}, {"cache_prompt", true}, {"n_predict", 0}, {"temperature", 0}, {"id_slot", id_slot}};
+    Owned response;
+    EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    if (response.s == nullptr) {
+        return {-1, -1};
+    }
+    const json timings = json::parse(response.str()).at("timings");
+    return {timings.at("prompt_n").get<int>(), timings.at("cache_n").get<int>()};
+}
+
+} // namespace
+
+TEST(CApiPromptCache, AnEmptySlotNamedByIdTakesItsPromptFromTheHostMemoryCache) {
+    // A request that names an empty slot passed the slot selection without asking the host-memory
+    // cache: the selection decided whether the cache is updated only from the outgoing state, and an
+    // empty slot has none to save. So the prompt was evaluated whole although the cache held its state
+    // (upstream #28992, b12686, issues #28139 and #28276).
+    const std::string path = write_prompt_cache_model("jllama-c-api-prompt-cache-empty");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_prompt_cache_model(path);
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    const auto cold = evaluate_into_slot(model, PROMPT_CACHE_LONG, 0);
+    ASSERT_GT(cold.first, 100) << "the long prompt is evaluated whole the first time";
+    // another prompt in slot 0 pushes the long prompt's state into the cache
+    evaluate_into_slot(model, PROMPT_CACHE_OTHER, 0);
+    // slot 1 is empty: the cache holds the exact state for the long prompt and is used
+    const auto pinned = evaluate_into_slot(model, PROMPT_CACHE_LONG, 1);
+    EXPECT_EQ(pinned.second, cold.first - pinned.first) << "prompt_n " << pinned.first;
+    EXPECT_LT(pinned.first, cold.first) << "the long prompt was evaluated whole again";
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+TEST(CApiPromptCache, ASlotHoldingAShorterPrefixTakesTheLongerStateFromTheHostMemoryCache) {
+    // A slot that holds a prefix of the prompt was reused as it was, and the cache, which held the
+    // state of the whole prompt, was not asked (#28992, b12686).
+    const std::string path = write_prompt_cache_model("jllama-c-api-prompt-cache-prefix");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_prompt_cache_model(path);
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+
+    // warm slot 1 before the long state reaches the cache, or this request would take that entry itself
+    const auto shorter = evaluate_into_slot(model, PROMPT_CACHE_SHORT, 1);
+    const auto cold = evaluate_into_slot(model, PROMPT_CACHE_LONG, 0);
+    ASSERT_GT(cold.first, shorter.first);
+    // another prompt in slot 0 pushes the long state into the cache
+    evaluate_into_slot(model, PROMPT_CACHE_OTHER, 0);
+    // slot 1 holds a prefix of the long prompt; the cache holds all of it and is the better start
+    const auto reuse = evaluate_into_slot(model, PROMPT_CACHE_LONG, 1);
+    EXPECT_EQ(reuse.second, cold.first - reuse.first) << "prompt_n " << reuse.first;
+    EXPECT_LT(reuse.first, cold.first - shorter.first) << "only the slot's own prefix was reused";
+
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesKeepsTheCliStopsBesideTheTemplatesOwn) {
     // The completion schema falls back to the CLI's stops (-r, --reverse-prompt) when a request names
     // no effective stop; the raw paths write the template's stops into "stop", which would hide the
