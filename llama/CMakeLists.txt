@@ -366,8 +366,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b12677)
-set(JLLAMA_GIT_COMMIT "38b9cad71d14fa69b20393f42ebcd22ced77934e")   # the commit the number b12677 names (not tagged yet; the commit stays the pin)
+set(JLLAMA_GIT_TAG    b12678)
+set(JLLAMA_GIT_COMMIT "c74c71a6f7a0b06df30f979520e5d9a86a4d60ad")   # the commit the number b12678 names (not tagged yet; the commit stays the pin)
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
