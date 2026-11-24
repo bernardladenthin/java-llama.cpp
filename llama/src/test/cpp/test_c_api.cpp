@@ -2816,6 +2816,54 @@ TEST(CApiPromptCache, ASlotHoldingAShorterPrefixTakesTheLongerStateFromTheHostMe
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiPromptCache, AUnifiedCacheRestoresAPromptAfterClearingTheIdleSlots) {
+    // With a unified KV cache (-kvu) all slots share one pool of cells. A prompt whose state the host
+    // memory cache holds could not be restored when another idle slot still held the cells it needs;
+    // the cache entry was kept, but the prompt was evaluated whole. Since b12699 (#30997, issue #30961)
+    // the server saves and clears the other idle slots and retries the restore once. Upstream's
+    // test_restore_under_cache_pressure, with the random model's byte tokens: two prompts that do not
+    // fit the 512 cells together, taken in turns, each reusing what the cache holds of it.
+    tiny_model_spec spec;
+    spec.prefix = "jllama-c-api-prompt-cache-unified";
+    spec.n_ctx_train = 512;
+    const std::string path = write_tiny_llama_gguf(spec);
+    ASSERT_FALSE(path.empty());
+    for (const char *n_slots : {"2", "3"}) {
+        SCOPED_TRACE(std::string("slots ") + n_slots);
+        jllama_model *model = load_tiny(path, {"-c", "512", "-np", n_slots, "-kvu", "--cache-ram", "100"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        const auto tokens = [](int token, size_t n) { return std::vector<int>(n, token); };
+        const auto plus = [](std::vector<int> prompt, int token, size_t n) {
+            prompt.insert(prompt.end(), n, token);
+            return prompt;
+        };
+        const int a = 'H', b = 'd';
+        const std::vector<int> prompt_a = tokens(a, 350), prompt_b = tokens(b, 300);
+        const std::vector<std::pair<std::vector<int>, int>> steps = {
+            {prompt_a, 0},
+            {plus(prompt_a, a, 10), 350},
+            {prompt_b, 0},
+            {plus(prompt_a, a, 20), 360},
+            {plus(prompt_b, b, 10), 300},
+            {plus(prompt_a, a, 30), 370},
+        };
+        for (size_t i = 0; i < steps.size(); ++i) {
+            const json request = {
+                {"prompt", steps[i].first}, {"n_predict", 1}, {"cache_prompt", true}, {"temperature", 0}};
+            Owned response;
+            ASSERT_EQ(jllama_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            const json timings = json::parse(response.str()).at("timings");
+            EXPECT_GE(timings.at("cache_n").get<int>(), steps[i].second) << "step " << i << ": " << timings.dump();
+            EXPECT_LE(timings.at("prompt_n").get<int>(), static_cast<int>(steps[i].first.size()) - steps[i].second)
+                << "step " << i << ": " << timings.dump();
+        }
+        jllama_model_free(model);
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiTemplateStops, ARawCompletionWithMessagesKeepsTheCliStopsBesideTheTemplatesOwn) {
     // The completion schema falls back to the CLI's stops (-r, --reverse-prompt) when a request names
     // no effective stop; the raw paths write the template's stops into "stop", which would hide the
