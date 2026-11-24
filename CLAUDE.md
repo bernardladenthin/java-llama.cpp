@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b12687**
+Current llama.cpp pinned version: **b12688**
 
 ## Natives jars: library jars and GPU module jars (`.github/natives.csv`)
 
@@ -381,7 +381,7 @@ rejects anything else loudly.
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `aarpoms.py` | `verify-aar-poms.py` (`package-android-aar`, on the poms in mavenLocal) | both AAR poms carry exactly the core's compile-scope dependencies, at its versions and at `compile` (plus the CPU AAR, `type aar`, in the OpenCL one) |
 | `postrelease.py` | `post-release-check.py` (`post-release.yml`, after the release) | the published natives jars against `natives.csv`, their provenance with `patches.sha256` recomputed from the tag, the source archive's stamp and reproducible pack, the AAR invariants and poms, the cache-free tag build (docs/post-release-check.md, checks 3, 8, 9, 13, 14) |
-| `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports, those of Llama UI's sources in `ui/lib/ui` (b12480) and Llama Voice's in `ui/lib/voice` (b12587, none yet) included; a package npm resolved from a GitHub commit instead of the registry (`llama-brand` from b12316 to b12520: the logo and favicons, CC BY-NC with a `BRAND-USAGE.md` that permits redistribution with software; from npm since b12521) is read from GitHub's archive of that commit, and a branch name or another host is refused; a package whose license joins several with AND brings the license files of its parts below its root too (`llama-brand`'s `css/LICENSE`, MIT, and `fonts/OFL.txt`, OFL-1.1), a package under one license only its root files; `check_reuse` holds `REUSE.toml`'s annotation of `THIRD-PARTY-LICENSES.txt` to the licenses `packages.csv` lists (and each to a text in `LICENSES/`), which `reuse lint` cannot see; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first; `check_reuse` holds the annotation both ways since 2026-11-19 (a license no package has any more, Unlicense after b12541, was declared unseen), and `check_notice` holds `NOTICE.md`'s WebUI npm row (total, the count per license, the packages without a license field or file) to `packages.csv`, which kept the numbers of an older lockfile |
+| `webuilicenses.py` | `webui-licenses.py` (`build-webui`, and `webui-licenses.yml` on every pull request and push) | the WebUI's npm license texts cover the pinned lockfile (digest over LF line ends) and its imports, those of Llama UI's sources in `ui/lib/ui` (b12480), Llama Voice's in `ui/lib/voice` (b12587, none yet) and Llama Harness's in `ui/lib/harness` (b12688, none: it has no dependencies) included; a package npm resolved from a GitHub commit instead of the registry (`llama-brand` from b12316 to b12520: the logo and favicons, CC BY-NC with a `BRAND-USAGE.md` that permits redistribution with software; from npm since b12521) is read from GitHub's archive of that commit, and a branch name or another host is refused; a package whose license joins several with AND brings the license files of its parts below its root too (`llama-brand`'s `css/LICENSE`, MIT, and `fonts/OFL.txt`, OFL-1.1), a package under one license only its root files; `check_reuse` holds `REUSE.toml`'s annotation of `THIRD-PARTY-LICENSES.txt` to the licenses `packages.csv` lists (and each to a text in `LICENSES/`), which `reuse lint` cannot see; it fails every run -- until the release run of v6.0.0 it only warned outside a release tag, and a stale list surfaced there first; `check_reuse` holds the annotation both ways since 2026-11-19 (a license no package has any more, Unlicense after b12541, was declared unseen), and `check_notice` holds `NOTICE.md`'s WebUI npm row (total, the count per license, the packages without a license field or file) to `packages.csv`, which kept the numbers of an older lockfile |
 
 | Action (bernardladenthin/actions) | Job here | What it checks or does |
 |---|---|---|
@@ -1221,8 +1221,10 @@ Pipeline (`.github/workflows/publish.yml`):
    pinned `b<nnnn>` tag from `llama/CMakeLists.txt`'s `JLLAMA_GIT_TAG` (checking out
    `JLLAMA_GIT_COMMIT` instead when that is set, see "Upgrading/Downgrading"), sparse-checks-out
    `ggml-org/llama.cpp@<tag>` `ui/apps/chat` (`tools/ui` until b12453, upstream #32032), `ui/lib/ui` (Llama UI, whose
-   sources the app compiles since b12480, #32468) and `ui/lib/voice` (Llama Voice, compiled through two vite
-   aliases since b12587, #32531 -- without it vite fails with "Could not load ../../lib/voice/src/index.ts"),
+   sources the app compiles since b12480, #32468), `ui/lib/voice` (Llama Voice, compiled through two vite
+   aliases since b12587, #32531 -- without it vite fails with "Could not load ../../lib/voice/src/index.ts")
+   and `ui/lib/harness` (Llama Harness, the agentic loop, compiled through one vite alias since b12688,
+   #32927 -- without it "Could not load ../../lib/harness/src/index.ts", measured),
    runs the upstream Svelte build
    (`npm ci && npm run build`), gzips `dist/` into `dist/_gzip/` (LLAMA_UI_GZIP
    parity), then runs upstream's own **`scripts/ui-assets.cmake`** (a plain `cmake -P`
@@ -1234,7 +1236,7 @@ Pipeline (`.github/workflows/publish.yml`):
    ("pre-built assets in `<UI_SOURCE_DIR>/dist`") over the tree npm just built — no
    second npm run, no Hugging Face download. `LLAMA_UI_GZIP` is upstream's own knob
    and replaced the job's hand-rolled gzip loop. The sparse checkout therefore needs
-   **`scripts` as well as `ui/apps/chat`, `ui/lib/ui` and `ui/lib/voice`**. **The completeness guard cannot be a bare
+   **`scripts` as well as `ui/apps/chat`, `ui/lib/ui`, `ui/lib/voice` and `ui/lib/harness`**. **The completeness guard cannot be a bare
    `grep LLAMA_UI_HAS_ASSETS`**: `ui.h.in` emits `/* #undef LLAMA_UI_HAS_ASSETS */`
    for an empty table, so that token is present either way and the check passes the
    failure case — the old `embed.cpp` emitted no such line, which is why the naive
@@ -1300,7 +1302,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12687`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b12688`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -3040,7 +3042,7 @@ the parameterized `CApiVocabOnly` case expands to 22 instances and `MoeRepack` t
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12687`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b12688`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
