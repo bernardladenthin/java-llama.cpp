@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12676** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12677** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -459,7 +459,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   its cell is moved (#31656). A new generator model holds it: Qwen3.5 with an MTP block
   (`CApiQwen35`), whose random drafts are all rejected while the greedy answer stays the model's
   alone, token for token -- red with the CPU kernel's replay loop skipped. The full C++ suite passes
-  at b12676.
+  at b12676. b12677 makes the target quantizer's constants `static constexpr` for MSVC (#32902),
+  the cause of the `C2131` that `patches/0047` worked around; the patch is dropped (see "Fixed"), and
+  the quantizer and imatrix cases pass unchanged.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
@@ -1017,10 +1019,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
-- **The MSVC build of llama compiles again** (`patches/0047`). llama.cpp b12669's target quantizer
-  reads a `constexpr` local of its function in a constant expression inside a lambda, which GCC and clang
-  accept and MSVC 14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in
-  run 45233019300. The value is now a plain `const` initialised from the same constant.
+- **The MSVC build of llama compiles again.** llama.cpp b12669's target quantizer reads a `constexpr`
+  local of its function in a constant expression inside a lambda, which GCC and clang accept and MSVC
+  14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in run 45233019300.
+  `patches/0047` made the value a plain `const` from b12672 on; upstream fixed the cause at b12677
+  (#32902: the constants are `static constexpr`), and the patch was dropped with that bump.
 - **The Windows x86-64 CPU build (`cpu-windows-x86-64`) never finished since 2026-11-22.** Its job took the
   clang Visual Studio ships (22.1.3) from that day, because the STL of MSVC 14.52 refuses the image's
   LLVM 20.1.8; with it the build compiled every file and then never linked `ggml.dll` and

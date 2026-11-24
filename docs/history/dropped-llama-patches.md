@@ -11,6 +11,21 @@ themselves. Moved here from `CLAUDE.md`, which lists only the patches still carr
 records why the patch went and what guard, if any, stays behind -- read the matching note before
 reintroducing a patch for the same defect.
 
+**`0047` was dropped at the b12677 bump**, eight numbers after it came in. b12669 (#15550, the quantizer to a
+target) declared `constexpr float eps_eig = EPSILON;` inside a `[&]` lambda of `target_bpw_type()`, with
+`EPSILON` a `constexpr` *automatic* local of the enclosing function; MSVC 14.52 refused reading it in a
+constant expression there (`C2131`), so `build-windows-x86_64-msvc` failed (run 45233019300), and the patch
+made `eps_eig` a plain `const`. Upstream [#32902](https://github.com/ggml-org/llama.cpp/pull/32902)
+("quantize : make local const static for MSVC", `38b9cad71`, b12677) fixed the cause instead: `EPSILON` and
+the other constants of that function are `static constexpr` now, a variable with static storage, which a
+lambda reads without a capture. The line the patch changed is still there, so **the applier would not have
+fired** -- the patch still applied cleanly -- and the drop-check its row named (a hit of `constexpr float
+eps_eig` with `EPSILON` as its initializer meant "still needed") read the wrong line: the defect was in how
+`EPSILON` was declared, not in `eps_eig`. Read at b12677: `grep -n "static constexpr double EPSILON"
+src/llama-quant.cpp` is a hit (line 912). **Guard that stays:** the MSVC build itself
+(`build-windows-x86_64-msvc`, release-gating), the only compiler that refused the old form; none of the
+others can tell the two apart.
+
 **`0001` was dropped at the b12014 bump.** Upstream [#31417](https://github.com/ggml-org/llama.cpp/pull/31417)
 ("common : drop the Windows argv reconstruction", `aa588a346`, 2026-10-30, "Fixes #26416" -- the issue this
 project filed) deleted the 61 lines of `common/arg.cpp` that re-derived `argv` from `GetCommandLineW` and
