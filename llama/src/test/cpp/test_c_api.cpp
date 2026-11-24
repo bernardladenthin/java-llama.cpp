@@ -15927,6 +15927,92 @@ TEST(CApiServerTools, TheShellToolAsksForADescriptionFirstAndRunsWithoutOne) {
     std::filesystem::remove_all(models, ignored);
 }
 
+#ifndef _WIN32
+TEST(CApiServerTools, AnMcpToolResultCarriesItsImageAndAudioAsDataUris) {
+    // A tool of an MCP server (--mcp-servers-json, a subprocess speaking JSON-RPC over stdio) is called
+    // through POST /tools like a built-in one; its result's content parts are joined into
+    // plain_text_response, one line each. Since b12708 (#32064) an image or audio part is a line of its
+    // own as a data URI, its base64 joined when the server wrapped it; a part of another type is still
+    // left out. At b12707 only the text part was kept. The stand-in MCP server is a POSIX shell script
+    // that answers initialize, tools/list (one tool, "picture") and tools/call by the request's id.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-mcp-" + std::to_string(std::random_device{}()));
+    const std::filesystem::path models = dir / "models";
+    std::filesystem::create_directories(models);
+    const std::filesystem::path script = dir / "mcp-stand-in.sh";
+    {
+        std::ofstream s(script, std::ios::binary);
+        s << "while IFS= read -r line; do\n"
+             "  id=$(printf '%s' \"$line\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\).*/\\1/p')\n"
+             "  case \"$line\" in\n"
+             "    *'\"method\":\"initialize\"'*)\n"
+             "      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2024-11-05\","
+             "\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"stand-in\",\"version\":\"1\"}}}\\n' "
+             "\"$id\";;\n"
+             "    *'\"method\":\"tools/list\"'*)\n"
+             "      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"tools\":[{\"name\":\"picture\","
+             "\"description\":\"draws a picture\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}]}}\\n' "
+             "\"$id\";;\n"
+             "    *'\"method\":\"tools/call\"'*)\n"
+             "      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":["
+             "{\"type\":\"text\",\"text\":\"here it is\"},"
+             "{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"iVBORw0K\\\\nGgo=\"},"
+             "{\"type\":\"audio\",\"mimeType\":\"audio/wav\",\"data\":\"UklGRg==\"},"
+             "{\"type\":\"resource\",\"resource\":{\"uri\":\"file:///x\"}}]}}\\n' \"$id\";;\n"
+             "  esac\n"
+             "done\n";
+    }
+    const json mcp = {
+        {"mcpServers", {{"standin", {{"command", "/bin/sh"}, {"args", json::array({script.string()})}}}}}};
+    const std::string mcp_text = mcp.dump();
+    httplib::Server probe;
+    const int port = probe.bind_to_any_port("127.0.0.1");
+    std::thread probe_listener([&probe]() { probe.listen_after_bind(); });
+    probe.wait_until_ready();
+    probe.stop();
+    probe_listener.join();
+    const std::string port_text = std::to_string(port);
+    const std::string models_dir = models.string();
+    const char *argv[] = {"llama-server", "--host",           "127.0.0.1",          "--port",        port_text.c_str(),
+                          "--models-dir", models_dir.c_str(), "--mcp-servers-json", mcp_text.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(9, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    httplib::Client client("127.0.0.1", port);
+    httplib::Result health;
+    for (int i = 0; i < 100 && !(health && health->status == 200); i++) {
+        health = client.Get("/health");
+        if (!(health && health->status == 200)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ASSERT_TRUE(health && health->status == 200);
+
+    const auto listed = client.Get("/tools");
+    ASSERT_TRUE(listed && listed->status == 200) << (listed ? listed->body : httplib::to_string(listed.error()));
+    bool found = false;
+    for (const auto &tool : json::parse(listed->body)) {
+        if (tool.value("tool", std::string()) == "standin_picture") {
+            found = true;
+            EXPECT_EQ(tool.value("type", std::string()), "mcp") << listed->body;
+        }
+    }
+    ASSERT_TRUE(found) << listed->body;
+
+    const json body = {{"tool", "standin_picture"}, {"params", json::object()}};
+    const auto called = client.Post("/tools", body.dump(), "application/json");
+    ASSERT_TRUE(called) << httplib::to_string(called.error());
+    EXPECT_EQ(called->status, 200) << called->body;
+    const json result = json::parse(called->body);
+    EXPECT_EQ(result.value("plain_text_response", std::string()),
+              "here it is\ndata:image/png;base64,iVBORw0KGgo=\ndata:audio/wav;base64,UklGRg==")
+        << called->body;
+
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+}
+#endif
+
 TEST(CApiServerTools, GrepSearchPagesItsMatchesByOffsetInTheOrderOfTheFiles) {
     // The embedded server's built-in tools (--tools, POST /tools): since b12640 (#32792) grep_search
     // takes an offset, the number of matching lines to skip, searches the files of a directory in the
