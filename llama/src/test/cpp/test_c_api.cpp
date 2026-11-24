@@ -3407,6 +3407,53 @@ TEST(CApiDraft, APlainDraftModelGivesTheGreedyAnswerOfTheModelAlone) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiQwen35, ARejectedDraftLeavesTheDeltaNetStateAsTheModelAloneHasIt) {
+    // Qwen3.5 is a model llama.cpp rolls a recurrent state back for: its MTP block drafts, and the state
+    // of the gated delta net must forget the draft tokens the model rejects. Since b12676 (#31669)
+    // llama.cpp keeps one state and the inputs of the last ubatch and replays the kept tokens
+    // (rs_replay, which the load logs) where it kept a snapshot per draft token before. The random MTP
+    // block is rejected most of the time; greedily the answer must still be the model's alone, every
+    // token of it. (A plain draft model, draft-simple, takes no rollback: the server keeps context
+    // checkpoints for it instead.)
+    const std::string path = write_tiny_llama_gguf(tiny_model_spec::qwen35("jllama-qwen35-mtp", 1));
+    ASSERT_FALSE(path.empty());
+    jllama_model *alone = load_tiny(path, {});
+    ASSERT_NE(alone, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(alone, 48);
+    EXPECT_EQ(drafted_tokens(alone), 0);
+    jllama_model_free(alone);
+
+    struct Sink {
+        std::mutex m;
+        std::string text;
+    } sink;
+    ASSERT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *ud) {
+                      auto *s = static_cast<Sink *>(ud);
+                      std::lock_guard<std::mutex> lk(s->m);
+                      s->text += text;
+                  },
+                  &sink),
+              JLLAMA_STATUS_OK);
+    jllama_model *drafted = load_tiny(path, {"--spec-type", "draft-mtp", "-lv", "4"});
+    ASSERT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK); // flushes
+    ASSERT_NE(drafted, nullptr) << jllama_last_error();
+    EXPECT_NE(sink.text.find("rs_replay             = true"), std::string::npos)
+        << "the target context does not replay its delta net";
+    EXPECT_FALSE(expected.empty());
+    EXPECT_EQ(greedy_answer(drafted, 48), expected);
+    Owned metrics;
+    ASSERT_EQ(jllama_metrics(drafted, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json m = json::parse(metrics.str());
+    const int n_drafted = m.at("n_draft_tokens_total").get<int>();
+    const int n_accepted = m.at("n_draft_accepted_total").get<int>();
+    EXPECT_GT(n_drafted, 0);
+    EXPECT_LT(n_accepted, n_drafted) << "no draft token was rejected, so nothing was rolled back";
+    jllama_model_free(drafted);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiAlias, TheAliasIsTheModelOfEveryOpenAiAnswer) {
     // --alias names the model to the API (model_name, the first alias): every OpenAI answer and chunk
     // carries it, blocking and streamed, for chat and completions, as upstream's server does.

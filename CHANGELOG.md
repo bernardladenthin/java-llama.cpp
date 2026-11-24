@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12675** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12676** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -450,7 +450,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   state then failed to load, the entry stayed in the cache without its target state. The entry is
   still removed after a successful restore. The prompt-cache cases (`LoraCacheHostMemory`, the slot
   files, the drafts) pass unchanged. No case reaches the fixed path: no way was found to make a
-  draft state fail to load through the API.
+  draft state fail to load through the API. b12676 rolls the gated delta net of Qwen3.5, Qwen3.5-MoE,
+  Qwen4-Exp, Clover-MoE, Kimi K3 / K3.1, GLM5-Next and BailingMoE3 back by replay (#31669): where a
+  draft that needs a recurrent rollback (MTP, EAGLE-3, DFlash) kept a snapshot of the state per draft
+  token, the model now keeps one state and the inputs of the last ubatch, and the delta net op
+  replays the kept tokens before the new ones (CPU, CUDA, Metal, Vulkan, OpenCL and the other
+  backends; one without it leaves the op to the CPU). A sequence also keeps its rollback depth when
+  its cell is moved (#31656). A new generator model holds it: Qwen3.5 with an MTP block
+  (`CApiQwen35`), whose random drafts are all rejected while the greedy answer stays the model's
+  alone, token for token -- red with the CPU kernel's replay loop skipped. The full C++ suite passes
+  at b12676.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds

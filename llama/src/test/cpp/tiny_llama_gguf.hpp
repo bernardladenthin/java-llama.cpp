@@ -296,6 +296,21 @@ struct tiny_model_spec {
         return spec;
     }
 
+    // Qwen3.5: the delta net (layer 0) and the gated attention (layer 1) of Qwen3-Next, but a dense
+    // feed-forward, separate beta and alpha projections and RoPE in sections, and with n_layer_nextn
+    // MTP blocks after them (a gated attention block each, plus the projection that joins a token
+    // embedding with the trunk's hidden state). It is one of the architectures llama.cpp rolls a
+    // recurrent state back for (llm_arch_supports_rs_rollback): a draft that needs it (draft-mtp,
+    // n_rs_seq > 0) has the delta net replay the kept tokens since b12676 (rs_replay).
+    static tiny_model_spec qwen35(const std::string &prefix = "jllama-qwen35", int n_layer_nextn = 0) {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.arch = "qwen35";
+        spec.n_head_kv = 2;
+        spec.n_layer_nextn = n_layer_nextn;
+        return spec;
+    }
+
     // ZAYA1 (Zyphra, b12517): every layer a CCA attention -- the queries and keys of the last two
     // positions convolved (kernel 2, a recurrent state), the second of the two value heads the previous
     // token's -- and a mixture of experts behind a router MLP that can also skip the experts (one class
@@ -354,6 +369,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     const bool cohere2 = spec.arch == "cohere2";
     const bool mamba = spec.arch == "mamba";
     const bool qwen3next = spec.arch == "qwen3next";
+    const bool qwen35 = spec.arch == "qwen35";
     const bool zaya1 = spec.arch == "zaya1";
     const bool domyn = spec.arch == "domynedge";
     const bool gemma4 = spec.arch == "gemma4";
@@ -378,7 +394,7 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
-    if (qwen3vl) {
+    if (qwen3vl || qwen35) {
         // half the head in four sections, as the real 24/20/20/0 of a head of 128
         const int32_t sections[4] = {spec.head_dim / 4, spec.head_dim / 8, spec.head_dim / 8, 0};
         gguf_set_arr_data(g, (a + ".rope.dimension_sections").c_str(), GGUF_TYPE_INT32, sections, 4);
@@ -389,9 +405,11 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
         gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), SSM_STATE);
         gguf_set_val_u32(g, (a + ".ssm.time_step_rank").c_str(), SSM_DT_RANK);
     }
-    if (qwen3next) {
-        gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
-        gguf_set_val_u32(g, (a + ".expert_shared_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+    if (qwen3next || qwen35) {
+        if (qwen3next) {
+            gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+            gguf_set_val_u32(g, (a + ".expert_shared_feed_forward_length").c_str(), static_cast<uint32_t>(spec.n_ff));
+        }
         gguf_set_val_u32(g, (a + ".ssm.conv_kernel").c_str(), SSM_CONV);
         gguf_set_val_u32(g, (a + ".ssm.inner_size").c_str(), GDN_INNER);
         gguf_set_val_u32(g, (a + ".ssm.state_size").c_str(), GDN_HEAD_DIM);
@@ -734,10 +752,10 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "post_ffw_norm.weight", {spec.n_embd}, 1.0f);
             continue;
         }
-        if (qwen3next) {
+        if (qwen3next || qwen35) {
             add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
             add_random_tensor(to, ctx, rng, p + "post_attention_norm.weight", {spec.n_embd}, 1.0f);
-            if (il % 2 == 0) { // the gated delta net
+            if (il < spec.n_layer && il % 2 == 0) { // the gated delta net (an MTP block is attention)
                 if (spec.qwen3next_legacy) {
                     matrix(to, p + "ssm_in.weight", {spec.n_embd, 4 * GDN_INNER});
                 } else {
@@ -750,7 +768,12 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                 for (int64_t i = 0; i < ggml_nelements(ssm_a); ++i) {
                     static_cast<float *>(ssm_a->data)[i] = -0.5f; // -A_log.exp(): the state decays
                 }
-                add_random_tensor(to, ctx, rng, p + "ssm_ba.weight", {spec.n_embd, 2 * GDN_HEADS}, 0.1f);
+                if (qwen35) {
+                    add_random_tensor(to, ctx, rng, p + "ssm_beta.weight", {spec.n_embd, GDN_HEADS}, 0.1f);
+                    add_random_tensor(to, ctx, rng, p + "ssm_alpha.weight", {spec.n_embd, GDN_HEADS}, 0.1f);
+                } else {
+                    add_random_tensor(to, ctx, rng, p + "ssm_ba.weight", {spec.n_embd, 2 * GDN_HEADS}, 0.1f);
+                }
                 add_random_tensor(to, ctx, rng, p + "ssm_norm.weight", {GDN_HEAD_DIM}, 1.0f);
                 matrix(to, p + "ssm_out.weight", {GDN_INNER, spec.n_embd});
             } else { // attention, the query carrying its output gate
@@ -760,6 +783,17 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
                 matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
                 add_random_tensor(to, ctx, rng, p + "attn_q_norm.weight", {spec.head_dim}, 1.0f);
                 add_random_tensor(to, ctx, rng, p + "attn_k_norm.weight", {spec.head_dim}, 1.0f);
+            }
+            if (qwen35) {
+                if (il >= spec.n_layer) {
+                    matrix(to, p + "nextn.eh_proj.weight", {2 * spec.n_embd, spec.n_embd});
+                    add_random_tensor(to, ctx, rng, p + "nextn.enorm.weight", {spec.n_embd}, 1.0f);
+                    add_random_tensor(to, ctx, rng, p + "nextn.hnorm.weight", {spec.n_embd}, 1.0f);
+                }
+                matrix(to, p + "ffn_gate.weight", {spec.n_embd, spec.n_ff});
+                matrix(to, p + "ffn_up.weight", {spec.n_embd, spec.n_ff});
+                matrix(to, p + "ffn_down.weight", {spec.n_ff, spec.n_embd});
+                continue;
             }
             add_random_tensor(to, ctx, rng, p + "ffn_gate_inp.weight", {spec.n_embd, spec.n_expert}, 1.0f);
             matrix(to, p + "ffn_gate_exps.weight", {spec.n_embd, spec.n_ff, spec.n_expert});
