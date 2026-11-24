@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12679** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12680** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -466,7 +466,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   batch a speculative verification step sends (#32909); it runs only when Qualcomm's Adreno binary
   kernel library is loaded, which no natives jar ships (see b12674), and
   `GGML_OPENCL_COOPK_Q6_K_BIN=0` turns it off. The module builds here against the system OpenCL
-  headers; not measured on an Adreno GPU.
+  headers; not measured on an Adreno GPU. b12680 has the OpenCL gated delta net read the keys at
+  their own strides (#32747): it read them at the queries', which is wrong wherever the two tensors
+  are laid out differently. OpenCL only, built here, not measured on a GPU.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
