@@ -892,9 +892,13 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
 // upstream's own architecture test (tests/test-llama-archs.cpp) with the widths made small: three
 // layers, sliding / full / sliding, a window of n_swa positions, blocks of two layers, a convolution
 // of four taps, four experts of which two answer. The vocabulary is the GPT-2 byte tokens, and the
-// embedding and output carry two padding rows past it, as the converter writes them.
-inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-inkling2", int n_swa = 8) {
-    constexpr int EMBD = 32, N_HEAD_A = 4, N_HEAD_KV_A = 2, HEAD = 8, FF_EXP = 16, N_LAYER_A = 3;
+// embedding and output carry two padding rows past it, as the converter writes them. embd is the hidden
+// size; the heads stay 4 x 8 wide (key_length), and a DSpark draft (write_tiny_inkling2_dspark_gguf)
+// needs at least 130: its Markov head packs 2 + 2 * 64 values of every draw into a row of the hidden size.
+inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-inkling2", int n_swa = 8,
+                                            int embd = 32) {
+    const int EMBD = embd;
+    constexpr int N_HEAD_A = 4, N_HEAD_KV_A = 2, HEAD = 8, FF_EXP = 16, N_LAYER_A = 3;
     constexpr int N_EXPERT_A = 4, N_EXPERT_USED_A = 2, N_REL = 4, REL_EXTENT = 16, N_CONV = 4, VOCAB_PAD = 2;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -913,6 +917,8 @@ inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-
     gguf_set_val_u32(g, (a + ".expert_feed_forward_length").c_str(), FF_EXP);
     gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD_A);
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV_A);
+    gguf_set_val_u32(g, (a + ".attention.key_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".attention.value_length").c_str(), HEAD);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_f32(g, (a + ".attention.qk_clip").c_str(), 0.25f);
     gguf_set_val_u32(g, (a + ".attention.relative_length").c_str(), N_REL);
@@ -999,6 +1005,118 @@ inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-
         add_random_tensor(g, ctx, rng, p + "ffn_gate_inp.weight", {EMBD, N_EXPERT_A}, 0.1f);
         add_random_tensor(g, ctx, rng, p + "ffn_gate_up_exps.weight", {EMBD, 2 * FF_EXP, N_EXPERT_A}, 0.1f);
         add_random_tensor(g, ctx, rng, p + "ffn_down_exps.weight", {FF_EXP, EMBD, N_EXPERT_A}, 0.1f);
+    }
+    const bool ok = gguf_write_to_file(g, path.c_str(), false);
+    gguf_free(g);
+    ggml_free(ctx);
+    return ok ? path : std::string();
+}
+
+// An Inkling 2 DSpark draft (llama.cpp's dflash architecture with the DSpark Markov head, b12720, #32218)
+// for the target write_tiny_inkling2_gguf(prefix, n_swa, embd) writes, in the layout of upstream's
+// converter (conversion/inkling2.py, --dspark): a block of block_size tokens, the anchor and
+// block_size - 1 mask rows (one learned mask embedding), runs through two decoder layers, sliding and
+// full, whose context K and V are each layer's own mix of the target features (ctx_mix, no shared fc);
+// the Markov head is the rnn_hidden kind, a gated state carried across the block that also reads the
+// same mix of the target features of the last committed token (f_rnn, has_markov_context), and biases
+// the block's logits through markov_w2 (the converter's fold of the target unembed and hidden_out).
+// target_layers [1, 3]: the input of the target's second layer and, as the last id, its final norm
+// output. The draft has no token embedding and no head of its own: it takes the target's through the
+// paired context. Slot 0 is the anchor, which predicts nothing (sample_from_anchor false), and there is
+// no confidence head. embd must be the target's, and at least 130 (see write_tiny_inkling2_gguf).
+// With markov_context false, has_markov_context is written false and the rnn and f_rnn tensors are left
+// out: the plain Markov head, a chain of markov_w1 rows through markov_w2 from the argmax of each
+// position. With stale_markov_norm, markov_ctx_norm is written anyway, which the loader refuses.
+inline std::string write_tiny_inkling2_dspark_gguf(const std::string &prefix = "jllama-inkling2-dspark", int embd = 160,
+                                                   int n_swa = 8, bool markov_context = true,
+                                                   bool stale_markov_norm = false) {
+    constexpr int N_HEAD_D = 4, N_HEAD_KV_D = 2, HEAD = 8, FF_D = 32, N_LAYER_D = 2, BLOCK = 4, RANK = 8;
+    static std::atomic<int> counter{0};
+    static const unsigned run_id = std::random_device{}();
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              (prefix + "-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
+                                 .string();
+    std::mt19937 rng(31);
+    gguf_context *g = gguf_init_empty();
+    const std::string a = "dflash";
+    const bool swa[N_LAYER_D] = {true, false};
+    const int32_t target_layers[2] = {1, 3};
+    gguf_set_val_str(g, "general.architecture", a.c_str());
+    gguf_set_val_u32(g, (a + ".context_length").c_str(), 2048);
+    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), static_cast<uint32_t>(embd));
+    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER_D);
+    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), FF_D);
+    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD_D);
+    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV_D);
+    gguf_set_val_u32(g, (a + ".attention.key_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".attention.value_length").c_str(), HEAD);
+    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD);
+    gguf_set_val_f32(g, (a + ".rope.freq_base").c_str(), 10000.0f);
+    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
+    // the block sees W positions before the anchor, llama.cpp's sliding window n_swa - 1
+    gguf_set_val_u32(g, (a + ".attention.sliding_window").c_str(), static_cast<uint32_t>(n_swa + 1));
+    gguf_set_arr_data(g, (a + ".attention.sliding_window_pattern").c_str(), GGUF_TYPE_BOOL, swa, N_LAYER_D);
+    gguf_set_val_f32(g, (a + ".final_logit_softcapping").c_str(), 30.0f);
+    gguf_set_val_u32(g, (a + ".block_size").c_str(), BLOCK);
+    gguf_set_arr_data(g, (a + ".target_layers").c_str(), GGUF_TYPE_INT32, target_layers, 2);
+    gguf_set_val_bool(g, (a + ".sample_from_anchor").c_str(), false);
+    gguf_set_val_bool(g, (a + ".has_confidence_head").c_str(), false);
+    gguf_set_val_bool(g, (a + ".has_markov_context").c_str(), markov_context);
+
+    std::vector<std::string> tokens = byte_tokens();
+    std::vector<int32_t> token_types(tokens.size(), 1);
+    const int n_vocab = static_cast<int>(tokens.size());
+    std::vector<const char *> token_ptrs;
+    for (const std::string &t : tokens) {
+        token_ptrs.push_back(t.c_str());
+    }
+    const char *merges[] = {"Ġ Ġ"}; // never applies, as in the target
+    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
+    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
+    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
+    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
+    gguf_set_arr_str(g, "tokenizer.ggml.merges", merges, 1);
+    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
+    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", '>');
+    // the block uses mask_embd, the mask token id is not used
+    gguf_set_val_u32(g, "tokenizer.ggml.mask_token_id", 0);
+
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    add_random_tensor(g, ctx, rng, "token_embd_norm.weight", {embd}, 1.0f);
+    add_random_tensor(g, ctx, rng, "output_norm.weight", {embd}, 1.0f);
+    add_random_tensor(g, ctx, rng, "mask_embd.weight", {embd, BLOCK - 1}, 0.1f);
+    add_random_tensor(g, ctx, rng, "markov_w1.weight", {RANK, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "markov_w2.weight", {RANK, n_vocab}, 0.1f);
+    add_random_tensor(g, ctx, rng, "markov_w2.bias", {n_vocab}, 1.0f);
+    if (markov_context) {
+        // the rnn head reads [state | markov_w1[prev] | hidden | f_rnn] and answers gate, candidate and output
+        add_random_tensor(g, ctx, rng, "joint_proj.weight", {2 * embd + 2 * RANK, 3 * RANK}, 0.1f);
+        add_random_tensor(g, ctx, rng, "joint_proj.bias", {3 * RANK}, 1.0f);
+        add_random_tensor(g, ctx, rng, "markov_ctx_mix.weight", {2}, 1.0f);
+    }
+    if (markov_context || stale_markov_norm) {
+        add_random_tensor(g, ctx, rng, "markov_ctx_norm.weight", {embd}, 1.0f);
+    }
+    for (int il = 0; il < N_LAYER_D; ++il) {
+        const std::string p = "blk." + std::to_string(il) + ".";
+        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {embd}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "attn_q.weight", {embd, HEAD * N_HEAD_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_k.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_v.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_output.weight", {HEAD * N_HEAD_D, embd}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_q_norm.weight", {HEAD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "attn_k_norm.weight", {HEAD}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {embd}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {embd, FF_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {embd, FF_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {FF_D, embd}, 0.1f);
+        // the context K and V of this layer, from its own mix of the two target features
+        add_random_tensor(g, ctx, rng, p + "ctx_mix.weight", {2}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "ctx_norm.weight", {embd}, 1.0f);
+        add_random_tensor(g, ctx, rng, p + "attn_k_ctx.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_v_ctx.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
+        add_random_tensor(g, ctx, rng, p + "attn_k_ctx_norm.weight", {HEAD}, 1.0f);
     }
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);

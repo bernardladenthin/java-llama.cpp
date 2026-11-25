@@ -4821,6 +4821,208 @@ TEST(CApiInkling2, TwoSlotsAtOnceAnswerAsEachAlone) {
     std::filesystem::remove(path, ignored);
 }
 
+// The Inkling 2 DSpark draft (b12720, #32218): write_tiny_inkling2_dspark_gguf() over a target of
+// write_tiny_inkling2_gguf() 160 wide. The target hands the draft the input of its second layer and its
+// final norm output of every token (t_layer_inp, llama_set_embeddings_layer_inp); the draft mixes them
+// into each layer's context K and V and, for the Markov head, into the state f_rnn of the last committed
+// token, then proposes a block of three tokens in one pass. The target checks every draft, so with
+// greedy sampling the answer is the target's alone; what the test holds is that the path runs and drafts.
+namespace {
+struct DsparkLog {
+    std::mutex m;
+    std::string text;
+};
+
+jllama_model *load_with_log(const std::string &path, const std::vector<std::string> &extra, DsparkLog &log) {
+    EXPECT_EQ(jllama_set_log_callback(
+                  [](int, const char *text, void *ud) {
+                      auto *s = static_cast<DsparkLog *>(ud);
+                      std::lock_guard<std::mutex> lk(s->m);
+                      s->text += text;
+                  },
+                  &log),
+              JLLAMA_STATUS_OK);
+    jllama_model *model = load_tiny(path, extra);
+    EXPECT_EQ(jllama_set_log_callback(nullptr, nullptr), JLLAMA_STATUS_OK); // flushes
+    return model;
+}
+
+// With the draft: no --spec-type (the models handler reads draft-dflash from the draft's architecture, and
+// the DFlash driver runs the DSpark head of the loaded draft), draft-dspark, draft-dflash and none.
+void expect_dspark_drafts_and_answers_the_same(bool markov_context, const std::string &prefix) {
+    const std::string path = write_tiny_inkling2_gguf(prefix + "-target", 8, 160);
+    const std::string draft = write_tiny_inkling2_dspark_gguf(prefix, 160, 8, markov_context);
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(draft.empty());
+    std::map<std::string, std::string> answers;
+    std::map<std::string, int> drafted;
+    for (const char *type : {"", "auto", "draft-dspark", "draft-dflash", "none"}) {
+        SCOPED_TRACE(*type != 0 ? std::string("--spec-type ") + type : std::string("without the draft"));
+        std::vector<std::string> extra;
+        if (*type != 0) {
+            extra = {"--spec-draft-model", draft, "--spec-draft-ngl", "0"};
+        }
+        if (*type != 0 && std::string(type) != "auto") {
+            extra.insert(extra.end(), {"--spec-type", type});
+        }
+        DsparkLog log;
+        jllama_model *model = load_with_log(path, extra, log);
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        if (std::string(type) == "auto") {
+            EXPECT_NE(log.text.find("auto-detected speculative type 'draft-dflash'"), std::string::npos) << log.text;
+        }
+        if (*type != 0 && std::string(type) != "none") {
+            const std::string head = std::string("has_markov_context=") + (markov_context ? "true" : "false");
+            EXPECT_NE(log.text.find(head), std::string::npos) << "the DSpark driver did not run";
+        }
+        // a fresh model evaluates the whole prompt: nothing is compared across a prompt-cache hit
+        answers[type] = greedy_answer(model, 48);
+        drafted[type] = drafted_tokens(model);
+        jllama_model_free(model);
+    }
+    EXPECT_FALSE(answers[""].empty());
+    for (const char *type : {"auto", "draft-dspark", "draft-dflash", "none"}) {
+        EXPECT_EQ(answers[type], answers[""]) << type;
+    }
+    for (const char *type : {"auto", "draft-dspark", "draft-dflash"}) {
+        EXPECT_GT(drafted[type], 0) << type << ": the DSpark draft drafted nothing";
+    }
+    EXPECT_EQ(drafted["none"], 0);
+    EXPECT_EQ(drafted[""], 0);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(draft, ec);
+}
+} // namespace
+
+TEST(CApiInkling2, ADSparkDraftWithItsMarkovContextDraftsAndAnswersWhatTheTargetAnswersAlone) {
+    // The Inkling 2 head: the rnn Markov head that reads the context state f_rnn, which comes back from
+    // the injection of every prompt token as h_nextn; without it for the token before a block, no draft.
+    expect_dspark_drafts_and_answers_the_same(true, "jllama-c-api-inkling2-dspark");
+}
+
+TEST(CApiInkling2, ADSparkDraftWithThePlainMarkovHeadDraftsAndAnswersWhatTheTargetAnswersAlone) {
+    // The plain Markov head over the same draft layers: a chain of markov_w1 rows from the argmax of
+    // every block position, no state and no context.
+    expect_dspark_drafts_and_answers_the_same(false, "jllama-c-api-inkling2-dspark-plain");
+}
+
+TEST(CApiInkling2, ADSparkDraftSampledAtATemperatureAnswersTheSameRequestTheSame) {
+    // --spec-draft-sampling probabilistic: the graph draws every block token at the request's
+    // temperature, from uniforms the driver writes into the block's state rows, and hands the target the
+    // distribution of each draw for its rejection sampling. The generator of those uniforms is seeded
+    // from the request's seed at the start of every request (begin()): carried over from the request
+    // before, the second of two identical requests drew other uniforms, proposed other tokens and,
+    // through the rejection sampling, answered differently.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dspark-sampled-target", 8, 160);
+    const std::string draft = write_tiny_inkling2_dspark_gguf("jllama-c-api-inkling2-dspark-sampled", 160);
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(draft.empty());
+    jllama_model *model = load_tiny(path, {"--spec-draft-model", draft, "--spec-draft-ngl", "0", "--spec-type",
+                                           "draft-dspark", "--spec-draft-sampling", "probabilistic"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    const auto answer = [&](int seed) {
+        const json request = without_prompt_cache(
+            json{{"prompt", "Hello there"}, {"temperature", 0.8}, {"seed", seed}, {"n_predict", 32}});
+        Owned completion;
+        EXPECT_EQ(jllama_completions(model, request.dump().c_str(), &completion.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        if (completion.s == nullptr) {
+            return std::string();
+        }
+        const json result = json::parse(completion.str());
+        expect_whole_prompt_evaluated(result, 11);
+        return result.at("content").get<std::string>();
+    };
+    const std::string first = answer(7);
+    const int drafted_first = drafted_tokens(model);
+    const std::string second = answer(7);
+    const std::string other = answer(8);
+    EXPECT_FALSE(first.empty());
+    EXPECT_GT(drafted_first, 0) << "the DSpark draft drafted nothing";
+    EXPECT_EQ(second, first) << "the same request with the same seed answered differently";
+    EXPECT_NE(other, first) << "the seed does not decide the answer: nothing here is sampled";
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(draft, ec);
+}
+
+TEST(CApiInkling2, TwoSlotsDraftingWithDSparkAtOnceAnswerAsEachAlone) {
+    // Two drafting slots put their blocks into one draft batch: the Markov head reads every block's
+    // anchor and state rows as strided views of the batch, and each block its own context state.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dspark-slots-target", 8, 160);
+    const std::string draft = write_tiny_inkling2_dspark_gguf("jllama-c-api-inkling2-dspark-slots", 160);
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(draft.empty());
+    const std::vector<std::string> prompts = {"Hello there, how are you", "Yellow paint, how are you"};
+    const auto request = [](const std::string &prompt) {
+        return json{{"prompt", prompt}, {"n_predict", 24}, {"temperature", 0}, {"cache_prompt", false}}.dump();
+    };
+    std::vector<std::string> alone;
+    {
+        jllama_model *model = load_tiny(path, {"-c", "256"});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        for (const std::string &prompt : prompts) {
+            Owned response;
+            ASSERT_EQ(jllama_completions(model, request(prompt).c_str(), &response.s), JLLAMA_STATUS_OK)
+                << jllama_last_error();
+            alone.push_back(json::parse(response.str()).at("content").get<std::string>());
+        }
+        jllama_model_free(model);
+    }
+    EXPECT_NE(alone[0], alone[1]);
+
+    jllama_model *model = load_tiny(path, {"-c", "256", "-np", "2", "--spec-draft-model", draft, "--spec-draft-ngl",
+                                           "0", "--spec-type", "draft-dspark"});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    std::vector<Owned> together(prompts.size());
+    std::vector<jllama_status> status(prompts.size(), JLLAMA_STATUS_ERROR);
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < prompts.size(); ++i) {
+        threads.emplace_back(
+            [&, i]() { status[i] = jllama_completions(model, request(prompts[i]).c_str(), &together[i].s); });
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    for (size_t p = 0; p < prompts.size(); ++p) {
+        ASSERT_EQ(status[p], JLLAMA_STATUS_OK) << p;
+        EXPECT_EQ(json::parse(together[p].str()).at("content").get<std::string>(), alone[p]) << "prompt " << p;
+    }
+    EXPECT_GT(drafted_tokens(model), 0) << "the DSpark draft drafted nothing";
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(draft, ec);
+}
+
+TEST(CApiInkling2, ADSparkDraftWithAContextNormButNoMarkovContextIsRefused) {
+    // markov_ctx_norm without has_markov_context true: the loader refuses the draft by name, and the
+    // process loads the next model.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dspark-stale-target", 8, 160);
+    const std::string draft =
+        write_tiny_inkling2_dspark_gguf("jllama-c-api-inkling2-dspark-stale", 160, 8, false, true);
+    ASSERT_FALSE(path.empty());
+    ASSERT_FALSE(draft.empty());
+    DsparkLog log;
+    jllama_model *model =
+        load_with_log(path, {"--spec-draft-model", draft, "--spec-draft-ngl", "0", "--spec-type", "draft-dspark"}, log);
+    EXPECT_NE(log.text.find("DSpark model has 'markov_ctx_norm.weight' but 'has_markov_context' is not true"),
+              std::string::npos)
+        << log.text;
+    if (model != nullptr) {
+        jllama_model_free(model);
+    }
+    jllama_model *next = load_tiny(path, {});
+    ASSERT_NE(next, nullptr) << jllama_last_error();
+    EXPECT_FALSE(greedy_answer(next).empty());
+    jllama_model_free(next);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(draft, ec);
+}
+
 // Gemma 4 through the server (b12588, #32342). The server decodes the slots that are busy at the same
 // time in one batch; with a batch of 8 tokens a prompt of a slot is evaluated in pieces, the piece
 // before its last with no output, while the other slots generate -- sequences with other numbers of

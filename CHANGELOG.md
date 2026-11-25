@@ -518,7 +518,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   but cannot run here (HIP, CUDA, Metal) or does not build (WebGPU, SpacemiT), the WebUI's styling,
   upstream's conversion script, CI or docs. b12720 adds DSpark drafting for Inkling 2 (#32218: the
   DFlash/DSpark draft reads the target's layer inputs and an RNN Markov head); the Inkling 2 model's
-  probabilities are bitwise those of b12719, and no DSpark draft is generated here yet.
+  probabilities are bitwise those of b12719. The generator writes an Inkling 2 DSpark draft in the
+  converter's layout (`write_tiny_inkling2_dspark_gguf`: two decoder layers whose context K and V are
+  each layer's own mix of the target's layer inputs, the RNN Markov head reading the same mix of the
+  last committed token, no token embedding or head of its own) over an Inkling 2 target 160 wide (the
+  head packs 130 values of every draw into a row of the hidden size). `CApiInkling2` holds that it
+  drafts with `--spec-type draft-dspark`, `draft-dflash` and without a type and that the target then
+  answers what it answers alone, with the plain Markov head too and on two slots at once; that a
+  request sampled with `--spec-draft-sampling probabilistic` answers the same twice for one seed (red
+  without upstream's reseed per request); and that a draft with `markov_ctx_norm` but no Markov
+  context is refused by name.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
