@@ -370,7 +370,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
-- **llama.cpp b12720** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+- **llama.cpp b12723** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
   ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
   `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
   test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
@@ -527,7 +527,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   answers what it answers alone, with the plain Markov head too and on two slots at once; that a
   request sampled with `--spec-draft-sampling probabilistic` answers the same twice for one seed (red
   without upstream's reseed per request); and that a draft with `markov_ctx_norm` but no Markov
-  context is refused by name.
+  context is refused by name. b12722 adds OpenCL cooperative-matrix MoE kernels for Adreno (#32971);
+  the OpenCL module builds with and without the Adreno kernels. b12723 builds Inkling 2's graph with
+  fewer ops (#32948: each depth block normalized once per graph, the stacks cached); the generated
+  model's probabilities are bitwise those of b12722, and a stack with an unnormalized block moves
+  them by 0.50. b12721 changes only upstream's own tests.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
