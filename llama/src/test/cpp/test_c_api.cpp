@@ -5009,7 +5009,8 @@ TEST(CApiInkling2, ADFlash2DraftDraftsWithItsSelectorAndAnswersWhatTheTargetAnsw
     // draft-dspark does not match the draft: the server names the right type and runs without a draft. With and without
     // selector_softcap_after_correction (the final logit softcapping on the selector scores instead of the
     // logits, b12785) the draft drafts, and the target checks every draft, so the greedy answer is the
-    // target's alone.
+    // target's alone. The case does not show that the flag is read: the softcap is monotonic, so a greedy
+    // draft picks the same candidates with it on the logits or on the scores.
     const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dflash2-target", 8, 160);
     ASSERT_FALSE(path.empty());
     jllama_model *alone = load_tiny(path, {});

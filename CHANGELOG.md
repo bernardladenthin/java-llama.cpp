@@ -12,22 +12,39 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ### Added
 - **A failed model load names the loader's reason.** llama.cpp logs why a file did not load and hands
   back only a null model, so the message used to end at "could not load model from given file path";
-  the engine now keeps the first `error loading model:` line of the loading thread and appends it
+  the engine now keeps the last `error loading model:` line of the loading thread and appends it
   (`LlamaException`, the C API's `jllama_last_error()`, a vocab-only load too) -- e.g. "could not load
   model from given file path: llama_model_loader: failed to load model from <path>", or b12818's
   "tensor '...' of type f8_e4m3 requires a weight scale, but '...scale' is missing; re-convert the
-  model". `CApiLoadErrors`, `CApiFp8Weights` and `LoadRefusalTest` (over JNI, model-free).
+  model". The logger that keeps it is the process's for good: the engine runs `common_init()` once and
+  sets common_log's prefix and timestamps itself on every load, because `common_init()` points the
+  logger at llama.cpp's default and so took the reason away from a load on another thread (769 of 1000
+  lost, measured by the review; `check-common-init.cmake` holds `common_init()`'s body to what the engine
+  repeats). `CApiLoadErrors` (also with a second thread loading), `CApiFp8Weights` and `LoadRefusalTest`
+  (over JNI, model-free).
 - **`ModelParameters.enableUiAgent()`** (`--ui-agent`, llama.cpp b12724, #33004): the WebUI's agent mode
   with nothing enabled on the server -- the browser's own tools and the MCP servers the browser reaches
   itself; `GET /props` reports it as `ui_agent`. A model parameter, since an attached `NativeServer`
   serves the model's own routes (`CApiServer.TheAttachedServerReportsTheUiAgentModeOfTheModel`).
 - **`tool_choice` with `allowed_tools`** in `OpenAiCompatServer`'s chat and Responses translators
   (OpenAI's shapes: `{"type":"allowed_tools","allowed_tools":{"mode":...,"tools":[...]}}` and the flat
-  Responses form), validated as llama.cpp b12731 (#31564) validates it: an unknown name, a tool named
-  twice, an empty `required` set and another type are `400`; an empty `auto` set is `none`. The server
+  Responses form), validated as llama.cpp b12731 (#31564) validates it: a name no supplied tool carries
+  (also in a request without tools, which used to drop the choice) or two supplied tools carry, an empty
+  `required` set and another type are `400`; an empty `auto` set is `none`. The server
   keeps enforcing a named or allowed choice by forwarding those tools alone, which restricts the call
   for every chat format (`ToolChoiceRestriction`); llama.cpp's own reading restricts it only for the
-  formats its automatic parser handles (TODO.md).
+  formats its automatic parser handles, which `patches/0048` widens to every format (see below).
+- **A named tool choice for every chat format and route** (`patches/0048`). llama.cpp restricted the call
+  to the named or allowed tools only for the formats its automatic parser handles; the specialized parsers
+  (Qwen3-Coder, the Harmony formats, DeepSeek, Kimi, Gemma 4, Inkling, ...) offered every tool, so the C
+  API, JNI, FFM and `NativeServer` could return a call to a tool the request did not allow (measured:
+  naming `set` called `get`). The patch offers only the allowed tools, and makes the embedded server read
+  the Responses shape on `/v1/responses` (a 400 before) and Anthropic's named tool and `none` on
+  `/v1/messages` (`required` over every tool, and dropped, before). `CApiChatTokens`, each red without it.
+- **`InferenceParameters.withToolChoiceFunction(name)` / `withAllowedTools(mode, names...)` and
+  `ChatRequest.withToolChoiceFunction(name)`**: OpenAI's named function and `allowed_tools`, which
+  `withToolChoice(String)` could not send (it encodes a string). `ToolCallingIntegrationTest` holds that
+  the named one of two tools of one shape is the one called.
 - **Quantization to a target** (llama.cpp b12669): `LlamaQuantizer.quantizeToBitsPerWeight` and
   `quantizeToSize` quantize a GGUF file to an average number of bits per weight or a file size, as
   `llama-quantize --target-bpw` / `--target-size` do: llama.cpp picks the type of every tensor so that
@@ -178,6 +195,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Tests now feed every enum value to llama.cpp's parser and run it against a model.
 
 ### Changed
+- **`chatWithTools` forces a call in its first round only.** A tool choice that forces a call --
+  `required`, or a named function -- holds for the first round; the rounds after it run with `auto`.
+  Forced in every round, the model could never answer the tool results, and the loop ran to its cap with
+  a call as its last response (`ToolCallingAgentTest`).
+- **Fine-tuning refuses a model with weight scales** (`patches/0044`). Since b12818 a weight's
+  `<matrix>.scale` is a source of the matmul, whose backward pass ignores it: such a model (FP8 and NVFP4
+  conversions carry scales) trained without an error and with every gradient through a scaled weight off by
+  its scale. It is refused now, naming the matmul (`CApiTrainer`, red without the check).
 - **The LLM Service app targets API 36** (`targetSdk`, from 35), the level Google Play requires of
   every app update since 2026-08-31 (the extension ran to 2026-11-01), so the app can be updated in
   the Play Store again; the AAR consumer fixture follows. Of what API 36 changes for an app that
@@ -396,21 +421,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   architecture (#33032), a llama model's included (`CApiYarn`, red before; the generator writes further
   architecture keys, `tiny_model_spec::extra_f32`). b12747 and b12751 honour
   `tokenizer.ggml.metaspace.prepend_scheme`: `first` on SentencePiece (#31986) and `always` on BPE
-  (#33038), which used to refuse the load (two `CApiTokenizers` cases, red before). b12757 hands
+  (#33038): the SentencePiece vocabulary read the key and ignored it, the BPE one refused the load (two
+  `CApiTokenizers` cases, red before). b12757 hands
   Inkling 2's relative-position bias to flash attention as an indexed bias (#33053; flash attention on
   and off agree, red with the CPU ignoring the bias; the recorded probabilities move by 1.7e-4). b12768
   gives `TANH` a backward pass (#32136): `check-backward-ops.cmake` failed the configure until
   `patches/0044` listed it, and Gemma 4 is now refused for fine-tuning by its `GEGLU`. b12785 supports
   Inkling-2-Mini's DFlash2 draft (#33073); the DSpark draft generator writes a DFlash2 draft, which
   drafts while the target answers as alone (`SpecType.DRAFT_DFLASH2` had no test before). b12775 and
-  b12793 change only the WebUI package and its demo harness (the license texts are the same 281
+  b12794 change only the WebUI package and its demo harness (the license texts are the same 281
   packages, the lockfile digest is regenerated); b12811 shares conversations to Hugging Face datasets
   from a new library, `ui/lib/huggingface`, which `build-webui` and the license workflow check out now
   (without it vite fails; sharing stays off). b12816 reads recurrent states in place (#30139; the
   Inkling 2 record is bitwise unchanged). b12818 applies weight and activation scales inside the matrix
   multiplication (#28898): a skipped weight's scales are skipped with it, which `patches/0043` fixed --
   the patch is dropped (`docs/history/dropped-llama-patches.md`) -- and FP8 E4M3 / NVFP4 weights need
-  their scale (`CApiFp8Weights`). The other steps change backends this project does not build here
+  their scale (`CApiFp8Weights`); a GGUF converted without them fails the load now ("requires a weight
+  scale ... re-convert the model"). Since the scale is part of the matmul, the Vulkan, OpenCL, SYCL and
+  OpenVINO modules (which do not take it) leave such matmuls to the CPU; only CUDA, HIP and Metal apply it
+  (not measured, TODO.md). And an `RpcServer` of an older jar computes such a matmul without its scale for
+  a client of this one: the RPC protocol did not change, so keep both ends at the same version. The other steps change backends this project does not build here
   (SYCL, Hexagon, OpenVINO, CUDA/HIP, Metal, Vulkan, WebGPU, OpenCL kernels), upstream's CI and tests,
   or the WebUI without a dependency change. 35 patches remain, all applying at b12818; the WebUI builds
   from CI's sparse checkout at every WebUI step (293 assets).

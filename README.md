@@ -837,7 +837,11 @@ try (LlamaModel model = new LlamaModel(new ModelParameters()
 }
 ```
 
-`tool_choice` is the OpenAI-compatible string form (`auto`, `none`, or `required`). Set
+`tool_choice` is the OpenAI-compatible string form (`auto`, `none`, or `required`);
+`withToolChoiceFunction("name")` names the one tool the model must call (on `ChatRequest` and on
+`InferenceParameters`, which also has `withAllowedTools(mode, names...)`, OpenAI's `allowed_tools`). In
+`chatWithTools` a choice that forces a call -- `required` or a named tool -- holds for the first round; the
+rounds after it run with `auto`, so that the model can answer the tool results. Set
 `parallel_tool_calls` to `false` when handlers should be issued one at a time. Handler failures and
 unknown tool names are returned to the model as valid `{"error":"..."}` tool-result JSON.
 
@@ -1250,9 +1254,12 @@ where it does; where llama-server would drop part of a request without a word, t
   `{"type":"function","name":…}`, Anthropic `{"type":"tool","name":…}`) forwards that tool alone with
   `required`, so the model can call no other, and OpenAI's `allowed_tools` (chat and Responses shapes)
   forwards the tools it names with its mode (`auto` or `required`; an empty `auto` set is `none`); a name
-  that no tool or more than one carries is refused. llama-server reads both objects itself since b12731,
-  but restricts the call only for the formats its automatic parser handles (its Qwen3-Coder, Inkling and
-  Harmony parsers offer every tool), and reads the Anthropic one as `required` over every tool. A
+  that no tool or more than one carries is refused, also when the request carries no tools. llama-server
+  reads both chat objects itself since b12731; this project's `patches/0048` makes it offer the named tools
+  alone for every chat format (its Qwen3-Coder, Inkling and Harmony parsers offered every tool) and read
+  the Responses and Anthropic shapes on `/v1/responses` and `/v1/messages` (the first was a 400, the
+  second `required` over every tool), so `NativeServer`, the C API, JNI and FFM honour a named tool as this
+  server does. A
   `tool_choice` object of any other type (`custom`, `mcp`, a hosted tool) is refused, as llama-server
   refuses it; so is a value that is neither a string nor an object (on Anthropic, one that is no object,
   and `allowed_tools`, which the Messages API does not have).

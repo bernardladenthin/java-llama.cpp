@@ -24,7 +24,7 @@ to their weights and creates each scale with `TENSOR_NOT_REQUIRED | (flags & (TE
 TENSOR_DUPLICATED))` -- the skip of the weight passes to its scales -- and no longer reads a scale whose
 weight is null and not skipped. The patch no longer applied there (its hunks were in the code that commit
 replaced), so the applier fired; the drop-check of its row (the skip branch of `create_tensor` and the
-generic scale pass) reads `scale_flags` in `src/llama-model-loader.cpp`. **Guard that stays:**
+generic scale pass) reads `scale_flags` in `src/llama-model.cpp` (line 2523 at b12818). **Guard that stays:**
 `CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting` (the scaled and the folded HY-V3 answer
 the same without MTP drafting) and `AnMtpBlockDraftsWithTheScaleOfItsProjection`, both green against
 upstream's version unchanged. The same commit makes a scale **required** for a type that cannot be computed

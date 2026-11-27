@@ -196,14 +196,16 @@ Kept as a list because each entry names the machine it needs -- the harness is
   process); a patch would turn the three into `std::runtime_error`, which the load already reports.
   Not filed upstream (policy).
 
-- **A named `tool_choice` reaches only the formats llama.cpp's automatic parser reads** (b12731,
-  #31564, measured at b12731): upstream restricts the grammar to the named or allowed tools through
-  `common_chat_foreach_tool`, which the specialized parsers (`qwen3-coder.cpp`, Inkling, the Harmony
-  formats) do not call -- with the Qwen3-Coder format, naming `set` called `get`. `OpenAiCompatServer`
-  is not affected: it forwards the allowed tools alone (`ToolChoiceRestriction`). A raw request through
-  `LlamaModel.chatComplete*` / `jllama_chat_completions` is: it forwards `tool_choice` as given. To
-  decide: filter `tools` in the engine as the Java server does (one place, every format), or leave it to
-  upstream. `CApiChatTokens.ANamedToolChoiceCallsTheToolItNames` holds the formats that work.
+- **Weight scales since b12818 (#28898) -- not measured.** (1) The scale is a source of `MUL_MAT` /
+  `MUL_MAT_ID` now, and the Vulkan, OpenCL, SYCL and OpenVINO modules (also BLAS, CANN, WebGPU) answer
+  `supports_op` false for a scaled matmul, so a GGUF with `<matrix>.scale` tensors (FP8 and NVFP4
+  conversions) runs those matmuls on the CPU there; before b12818 the scale was a MUL of its own and the
+  matmul stayed on the GPU. Only CUDA/HIP and Metal apply the scale. Measure on a GPU before calling it a
+  regression (`docs/benchmarks/gpu-module-jars.md`). (2) Plain `ggml_mul_mat` aborts the process for a type
+  that needs a scale; `tools/mtmd` has no such guard, so an FP8 or NVFP4 tensor in a projector would end
+  the process (read from the code by the review of 2026-11-27, no such projector at hand). (3) An
+  `RpcServer` of a jar before b12818 receives the scale in `src[2]` / `src[3]` of a matmul and drops it --
+  the protocol is still 10.0.2, so nothing refuses the pair (see the compatibility notes).
 
 What the bumps brought that this library does not use yet, or that changed under it and is not
 verified. Done items are not listed (CHANGELOG, `docs/history/llama-cpp-breaking-changes.md`).
@@ -448,6 +450,10 @@ aarch64 (CI builds and runs it).
   load model from <path>"; callers matching the message as a whole see the longer text.
 - **FP8 E4M3 and NVFP4 weights need their `<matrix>.scale`** (b12818, #28898): a GGUF converted
   without them fails the load ("requires a weight scale ... re-convert the model").
+- **An `RpcServer` and its `--rpc` clients run the same version**: since b12818 a matmul carries its
+  weight scale, which an older server drops without an error (the RPC protocol did not change).
+- **`chatWithTools` forces a call (`required`, a named tool) in its first round only**, and fine-tuning
+  refuses a model with weight scales.
 
 ### Modular natives -- follow-ups
 
