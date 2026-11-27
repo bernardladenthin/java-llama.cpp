@@ -196,6 +196,15 @@ Kept as a list because each entry names the machine it needs -- the harness is
   process); a patch would turn the three into `std::runtime_error`, which the load already reports.
   Not filed upstream (policy).
 
+- **A named `tool_choice` reaches only the formats llama.cpp's automatic parser reads** (b12731,
+  #31564, measured at b12731): upstream restricts the grammar to the named or allowed tools through
+  `common_chat_foreach_tool`, which the specialized parsers (`qwen3-coder.cpp`, Inkling, the Harmony
+  formats) do not call -- with the Qwen3-Coder format, naming `set` called `get`. `OpenAiCompatServer`
+  is not affected: it forwards the allowed tools alone (`ToolChoiceRestriction`). A raw request through
+  `LlamaModel.chatComplete*` / `jllama_chat_completions` is: it forwards `tool_choice` as given. To
+  decide: filter `tools` in the engine as the Java server does (one place, every format), or leave it to
+  upstream. `CApiChatTokens.ANamedToolChoiceCallsTheToolItNames` holds the formats that work.
+
 What the bumps brought that this library does not use yet, or that changed under it and is not
 verified. Done items are not listed (CHANGELOG, `docs/history/llama-cpp-breaking-changes.md`).
 
@@ -434,6 +443,11 @@ aarch64 (CI builds and runs it).
 - **A refused load parameter's message** carries llama.cpp's reason after "Failed to parse model
   parameters: " (patch `0031`), and an unparseable chat template fails the load instead of ending
   the process.
+- **A failed model load names the loader's reason** after "could not load model from given file
+  path: " (`LlamaException`, the C API's `jllama_last_error()`), e.g. "llama_model_loader: failed to
+  load model from <path>"; callers matching the message as a whole see the longer text.
+- **FP8 E4M3 and NVFP4 weights need their `<matrix>.scale`** (b12818, #28898): a GGUF converted
+  without them fails the load ("requires a weight scale ... re-convert the model").
 
 ### Modular natives -- follow-ups
 
