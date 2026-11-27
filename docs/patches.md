@@ -28,7 +28,7 @@ match a binary to this page.
 | 0007 | [`0007-server-attach-http-frontend.patch`](#0007-server-attach-http-frontendpatch) | server: let an embedding host attach the HTTP frontend to an already-loaded server_context | 1 | 2 |
 | 0008 | [`0008-server-models-worker-cmd-override.patch`](#0008-server-models-worker-cmd-overridepatch) | server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD) | 1 | 1 |
 | 0014 | [`0014-common-log-callback-sink.patch`](#0014-common-log-callback-sinkpatch) | common: add a callback sink to common_log (common_log_set_callback) | 2 | 6 |
-| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 24 |
+| 0015 | [`0015-rpc-embeddable-client-and-stoppable-server.patch`](#0015-rpc-embeddable-client-and-stoppable-serverpatch) | ggml-rpc: let an embedding host register servers and stop its own server safely | 5 | 25 |
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
@@ -364,6 +364,17 @@ Refreshed at b12387 ("ggml : prune", protocol 10.0.0): upstream reformatted the
 declaration of ggml_backend_rpc_start_server() in ggml-rpc.h over several lines, the context
 of the hunk that declares the stop and listening functions after it. Only context moved; the
 + and - lines are unchanged, 24 hunks.
+
+Refreshed at b12658 (#32651, "rpc : typed request helpers and a single validation step on the
+server"): upstream moved every fixed-size command to typed helpers and one validation step,
+which shifted the server's code by some 200 lines and split one hunk in two. The + and - lines
+are unchanged; the wire format is too (protocol 10.0.2), so a client and a server of b12657
+and b12658 still speak to each other.
+
+Refreshed at b12683 (#32896, "rpc : reuse one context for request tensors on the server"): the
+server's constructor creates that context after the vectors it sizes, the trailing context of
+the hunk that adds the bind address to the constructor. Only context moved; the + and - lines
+are unchanged, and so is the wire format.
 ```
 
 ## 0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch
@@ -924,6 +935,12 @@ red without the patch, green with it.
 Drop-check: drop this patch when the output stream no longer takes the narrow fname --
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
 without it on a Windows job.
+
+Refreshed at b12669 (#15550, the quantizer that picks the types to reach a target size): upstream
+rewrote llama-quant.cpp, the output stream moved into a new_ofstream lambda and <filesystem> is no
+longer included; the patch includes it after <exception> and opens the stream there, same + line.
+The new bpw state file (llama_model_quantize_params::state_file) also opens narrow paths; this
+library passes none, so the quantizer writes no state file.
 ```
 
 ## 0029-server-media-file-reads-utf8.patch

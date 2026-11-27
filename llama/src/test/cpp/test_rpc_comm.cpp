@@ -427,6 +427,139 @@ void run_scenario(scenario mode) {
     ggml_log_set(nullptr, nullptr);
 }
 
+// b12658 (#32651): the server checks a client's request in one place, before ggml's own asserts see
+// it, so a request that ended the server's process now ends only its connection. The wire structs
+// below mirror ggml-rpc.cpp's, packed as there.
+#pragma pack(push, 1)
+struct wire_tensor {
+    uint64_t id;
+    uint32_t type;
+    uint64_t buffer;
+    uint32_t ne[GGML_MAX_DIMS];
+    uint32_t nb[GGML_MAX_DIMS];
+    uint32_t op;
+    int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+    int32_t flags;
+    uint64_t src[GGML_MAX_SRC];
+    uint64_t view_src;
+    uint64_t view_offs;
+    uint64_t data;
+    char name[GGML_MAX_NAME];
+    int32_t use_count;
+};
+struct alloc_buffer_request {
+    uint32_t device;
+    uint64_t size;
+};
+struct alloc_buffer_answer {
+    uint64_t remote_ptr;
+    uint64_t remote_size;
+};
+struct buffer_get_base_request {
+    uint64_t remote_ptr;
+};
+struct buffer_get_base_answer {
+    uint64_t base_ptr;
+};
+struct get_tensor_request {
+    wire_tensor tensor;
+    uint64_t offset;
+    uint64_t size;
+};
+#pragma pack(pop)
+static_assert(sizeof(wire_tensor) == 296, "rpc_tensor wire layout changed: update the protocol-v10 fixture");
+
+constexpr uint8_t cmd_alloc_buffer = 0;
+constexpr uint8_t cmd_buffer_get_base = 3;
+constexpr uint8_t cmd_get_tensor = 8;
+
+// the answer of a command whose answer has a fixed size
+template <class T> T answer(fd_t fd) {
+    uint64_t size = 0;
+    recv_bytes(fd, &size, sizeof(size));
+    require(size == sizeof(T), "an answer of another size than its struct: update the protocol-v10 fixture");
+    T value{};
+    recv_bytes(fd, &value, sizeof(value));
+    return value;
+}
+
+// whether the server ended the connection: an orderly close, not an answer and not the timeout
+bool closed_by_server(fd_t fd) {
+    char byte = 0;
+    return recv(fd, &byte, 1, 0) == 0;
+}
+
+enum class bad_request {
+    // inside its buffer, past its tensor: ggml_backend_tensor_get asserts on it
+    outside_its_tensor,
+    // more elements than int64_t holds: ggml_new_tensor asserts on it while the tensor is read
+    element_count_overflow,
+};
+
+void run_bad_request(bad_request kind) {
+    init_sockets();
+    watchdog deadline;
+    const int port = free_port();
+    running_server server(port);
+    {
+        socket_owner client(try_connect("127.0.0.1", port));
+        require(client.fd != invalid_fd, "main connection failed");
+        hello(client.fd);
+        get_tensor_request request{};
+        request.tensor.id = 1;
+        request.tensor.type = GGML_TYPE_F32;
+        if (kind == bad_request::outside_its_tensor) {
+            // a buffer of 1024 bytes and a tensor of four floats at its start
+            const alloc_buffer_request alloc{0, 1024};
+            command(client.fd, cmd_alloc_buffer, &alloc, sizeof(alloc));
+            const auto buffer = answer<alloc_buffer_answer>(client.fd);
+            require(buffer.remote_ptr != 0 && buffer.remote_size >= 1024, "ALLOC_BUFFER failed");
+            const buffer_get_base_request base_request{buffer.remote_ptr};
+            command(client.fd, cmd_buffer_get_base, &base_request, sizeof(base_request));
+            const auto base = answer<buffer_get_base_answer>(client.fd);
+            request.tensor.buffer = buffer.remote_ptr;
+            request.tensor.data = base.base_ptr;
+            const uint32_t ne[GGML_MAX_DIMS] = {4, 1, 1, 1};
+            const uint32_t nb[GGML_MAX_DIMS] = {4, 16, 16, 16};
+            std::memcpy(request.tensor.ne, ne, sizeof(ne));
+            std::memcpy(request.tensor.nb, nb, sizeof(nb));
+            // the whole tensor reads back, so the fixture speaks the protocol
+            request.size = 16;
+            command(client.fd, cmd_get_tensor, &request, sizeof(request));
+            uint64_t size = 0;
+            recv_bytes(client.fd, &size, sizeof(size));
+            require(size == 16, "a GET_TENSOR inside its tensor was not answered with its bytes");
+            std::array<uint8_t, 16> data{};
+            recv_bytes(client.fd, data.data(), data.size());
+            request.size = 64;
+        } else {
+            // 2^31 * 2^31 * 4 elements; no buffer, the tensor is refused before it is read
+            const uint32_t ne[GGML_MAX_DIMS] = {1u << 31, 1u << 31, 4, 1};
+            const uint32_t nb[GGML_MAX_DIMS] = {4, 4, 4, 4};
+            std::memcpy(request.tensor.ne, ne, sizeof(ne));
+            std::memcpy(request.tensor.nb, nb, sizeof(nb));
+            request.size = 16;
+        }
+        command(client.fd, cmd_get_tensor, &request, sizeof(request));
+        require(closed_by_server(client.fd), "the server answered or kept a request it must refuse");
+    }
+    // the process and its listener live on: the next client is served
+    socket_owner next(try_connect("127.0.0.1", port));
+    require(next.fd != invalid_fd, "the server stopped listening after it refused a request");
+    hello(next.fd);
+    server.stop();
+}
+
+void check_bad_request(bad_request kind) {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    ASSERT_EXIT(
+        {
+            run_bad_request(kind);
+            std::_Exit(0);
+        },
+        ::testing::ExitedWithCode(0), "");
+}
+
 void check_scenario(scenario mode) {
     // Re-exec instead of forking a process that may have ggml worker threads from earlier tests.
     ::testing::FLAGS_gtest_death_test_style = "threadsafe";
@@ -464,3 +597,12 @@ TEST(RpcComm, ThreeRanksConnectInAnyOrderAndAreRefusedWithoutABackendCommunicato
     check_scenario(scenario::three_ranks_refused);
 }
 TEST(RpcComm, StopInterruptsTheWaitForTheSecondPeer) { check_scenario(scenario::second_peer_missing); }
+
+// b12658 (#32651): a request the server refuses ends its connection, not the server's process; both
+// ended the process with a GGML_ASSERT before.
+TEST(RpcComm, AReadPastItsTensorEndsTheConnectionAndTheServerServesTheNextClient) {
+    check_bad_request(bad_request::outside_its_tensor);
+}
+TEST(RpcComm, ATensorWhoseElementCountOverflowsEndsTheConnectionAndTheServerServesTheNextClient) {
+    check_bad_request(bad_request::element_count_overflow);
+}

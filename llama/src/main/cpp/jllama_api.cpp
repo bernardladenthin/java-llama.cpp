@@ -661,6 +661,33 @@ jllama_status jllama_quantize_imatrix(const char *input_path, const char *output
     }
 }
 
+jllama_status jllama_quantize_target(const char *input_path, const char *output_path, int nthread,
+                                     bool allow_requantize, const char *imatrix_path, double target_bpw,
+                                     int64_t target_size) {
+    jllama::load_backend_modules();         // backend_modules.hpp: a host without a JVM
+    const jllama::c_numeric_locale numbers; // numeric_locale.hpp
+    if (input_path == nullptr || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
+    }
+    jllama::engine::quantize_target target;
+    target.bits_per_weight = target_bpw;
+    target.size_bytes = target_size;
+    const std::string imatrix = imatrix_path != nullptr ? imatrix_path : "";
+    const std::string refusal = jllama::engine::quantize_target_refusal(target, imatrix);
+    if (!refusal.empty()) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, refusal.c_str());
+    }
+    try {
+        jllama::engine::quantize_to_target(input_path, output_path, nthread, allow_requantize, imatrix, target);
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception during quantization");
+    }
+}
+
 jllama_status jllama_imatrix(const char *model_path, const char *text_path, const char *output_path, int chunk_size,
                              int max_chunks, int nthread, int n_gpu_layers, jllama_load_progress_fn progress,
                              void *progress_user_data, int *n_chunks) {

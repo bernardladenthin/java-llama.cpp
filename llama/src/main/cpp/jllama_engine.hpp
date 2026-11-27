@@ -302,6 +302,40 @@ void configure(jllama_context *jctx, const std::string &config_json);
 void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
               bool allow_requantize, const std::string &imatrix_path = std::string());
 
+/**
+ * What quantize_to_target() aims at (b12669, llama_model_quantize_params::target_bpw / target_size):
+ * an average number of bits per weight, or a file size in bytes. Exactly one is set, the other is
+ * negative.
+ */
+struct quantize_target {
+    double bits_per_weight = -1.0;
+    int64_t size_bytes = -1;
+};
+
+/**
+ * Why `target` with the importance matrix `imatrix_path` cannot be quantized to, or "" when it can:
+ * exactly one of the two is set, bits per weight above 0 and at most 16 (llama-quantize's range), a
+ * size above 0 bytes, and an importance matrix named, without which llama.cpp refuses a target.
+ */
+[[nodiscard]] std::string quantize_target_refusal(const quantize_target &target, const std::string &imatrix_path);
+
+/**
+ * The llama_ftype the quantizer starts from for `target`, as upstream's llama-quantize picks it: for
+ * bits per weight the first type whose own is not below the target (get_ftype in
+ * tools/quantize/quantize.cpp), for a size F16. llama.cpp chooses the type of every quantizable
+ * tensor itself; the file type is what the output's metadata names and the tensors it keeps.
+ */
+[[nodiscard]] int quantize_target_ftype(const quantize_target &target);
+
+/**
+ * Quantises a GGUF file to `target`: llama.cpp picks the type of every tensor so that the file
+ * reaches the target at the lowest error it estimates from the importance matrix at
+ * `imatrix_path`, which is required. Throws std::invalid_argument for a target
+ * quantize_target_refusal() refuses, std::runtime_error when the quantization fails.
+ */
+void quantize_to_target(const std::string &input_path, const std::string &output_path, int nthread,
+                        bool allow_requantize, const std::string &imatrix_path, const quantize_target &target);
+
 } // namespace jllama::engine
 
 // ===========================================================================

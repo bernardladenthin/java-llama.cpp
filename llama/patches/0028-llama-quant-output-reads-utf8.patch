@@ -19,18 +19,25 @@ Drop-check: drop this patch when the output stream no longer takes the narrow fn
 CApiNonAsciiPaths.TheImatrixQuantizerAndTrainerReadAndWriteUnderANonAsciiPath then stays green
 without it on a Windows job.
 
+Refreshed at b12669 (#15550, the quantizer that picks the types to reach a target size): upstream
+rewrote llama-quant.cpp, the output stream moved into a new_ofstream lambda and <filesystem> is no
+longer included; the patch includes it after <exception> and opens the stream there, same + line.
+The new bpw state file (llama_model_quantize_params::state_file) also opens narrow paths; this
+library passes none, so the quantizer writes no state file.
+
 diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+index c66f060f6..976945d84 100644
 --- a/src/llama-quant.cpp
 +++ b/src/llama-quant.cpp
-@@ -8,6 +8,7 @@
- #include <cmath>
+@@ -12,6 +12,7 @@
+ #include <cstdio>
  #include <cstring>
- #include <cinttypes>
+ #include <exception>
 +#include <filesystem>
  #include <fstream>
  #include <mutex>
- #include <regex>
-@@ -1257,7 +1258,7 @@
+ #include <numeric>
+@@ -3522,7 +3523,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
              fname = std::string(split_path.data());
          }
  

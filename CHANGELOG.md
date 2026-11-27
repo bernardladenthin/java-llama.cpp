@@ -10,6 +10,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Quantization to a target** (llama.cpp b12669): `LlamaQuantizer.quantizeToBitsPerWeight` and
+  `quantizeToSize` quantize a GGUF file to an average number of bits per weight or a file size, as
+  `llama-quantize --target-bpw` / `--target-size` do: llama.cpp picks the type of every tensor so that
+  the file reaches the target at the lowest error it estimates from the importance matrix, which these
+  methods require. The C API has it as `jllama_quantize_target` (a target out of range or without a
+  matrix is `JLLAMA_STATUS_INVALID_ARGUMENT` with its reason), `llama-ffm` as
+  `Jllama.quantizeToBitsPerWeight` / `quantizeToSize`. The matrix's mean activations and statistics
+  (`.in_sum`, `.stats`, which upstream's `llama-imatrix` writes) reach the search as they do from
+  upstream's tool; no `.bpw_state` file of the search is kept. `CApiEnumSweep` holds it on the wide
+  random model -- 3, 4.5 and 6 bits per weight land at 2.98, 4.49 and 5.95 and name IQ3_XXS, Q4_K_M
+  and Q6_K, a third of the F16 file's size is kept and names F16, every result loads and answers, red
+  without the target reaching the quantizer -- and `QuantizerIntegrationTest` on CI's draft model.
 - **More of llama.cpp's request and sampler options.** `Sampler.ADAPTIVE_P` and `Sampler.TOP_N_SIGMA`
   (upstream's sampler names `adaptive_p` and `top_n_sigma`, which the enum lacked) with
   `InferenceParameters.withAdaptiveTarget` / `withAdaptiveDecay` for the adaptive-p sampler (the
@@ -358,6 +370,168 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12723** (from b12652, one upstream commit at a time; pinned by commit). b12653 links
+  ggml-base against `MATH_LIBRARY` only when it names a library (#32864): a parent project whose
+  `find_library(MATH_LIBRARY)` found nothing set it to `MATH_LIBRARY-NOTFOUND`, which the `DEFINED`
+  test let through on Windows. This project sets no `MATH_LIBRARY`, so nothing changes in its builds.
+  b12654 regenerates the Qwen3.6-27B snapshot of upstream's own tests (#32845), which this project
+  does not build. b12655 silences the warnings of the vendored KleidiAI sources (#32605), which no
+  build here enables (`GGML_CPU_KLEIDIAI` stays off). b12656 gives every collapsible of the WebUI the
+  same height transition (#32873) and moves Llama UI to 0.6.0, its own version only: the npm license
+  texts still match the lockfile, and the WebUI builds from CI's sparse checkout with npm 11 and embeds
+  291 assets. b12657 lets the CUDA module quantize a block of zeros for its few-row matrix
+  multiplication (#32566): the scale was `127 / 0`, and the quantized values of such a block were
+  `0 * inf`; both are 0 now. Not measured here, no CI job has a GPU. b12658 gives the RPC server one
+  validation step for what a client sends (#32651; wire format and protocol 10.0.2 unchanged, so both
+  ends of a b12657 and a b12658 jar still speak to each other): a request outside its tensor, a tensor
+  ggml would assert on, a graph whose nodes are out of order and an allocation of a client-given size
+  that fails are refused and end the connection, where several of them ended the server's process.
+  `RpcServer` serves the next client afterwards; two new cases of `test_rpc_comm.cpp` hold that (a
+  read past its tensor and an element count that overflows, both a `GGML_ASSERT` of the server at
+  b12657). `patches/0015` was refreshed: the server's code moved by some 200 lines and one hunk split
+  in two, the `+`/`-` lines are unchanged. The other 35 patches apply unchanged. b12659 brings Intel's
+  round of OpenVINO work (#32861): an `ARGMAX` translator, the RoPE angle kept in F32 under the F16
+  hint, a compiled-model cache of several shapes instead of one, consecutive `SET_ROWS` writes as one
+  scatter, the speculative-decoding buffers kept on the device, and static NPU graphs that keep a
+  fixed token count (GATED_DELTA_NET models translate again there). The module builds against the
+  OpenVINO 2026.4.1 that CI installs (built here against PyPI's wheel of that release; its
+  dependencies pass `verify-native-deps.py` as before). Upstream still pins that release, so CI's
+  install steps are unchanged. Not measured on an Intel accelerator. b12660 names the WebUI's PWA
+  from `VITE_PUBLIC_APP_NAME` of the build and defaults it to "Llama Chat" (#32890); `build-webui`
+  sets no name, so the embedded WebUI is "Llama Chat" now. b12661 gives the WebUI's send button a red
+  edge in its error state (#32856). b12662 splits a Metal graph into eight command buffers on iOS
+  (#31815), which stops a command buffer that runs for more than a few seconds; macOS keeps one, so
+  `metal-macos-aarch64` is unchanged. b12663 makes the WebUI drop a tool call that Stop cut off, with
+  the tool result answering it, from the next request (#32738): for a template that reads a call's
+  arguments as an object, the server parses every call's arguments and refuses the whole request when
+  one is no JSON. A new case of `CApiTemplate` holds that half for the C API -- cut-off and empty
+  arguments are `JLLAMA_STATUS_INVALID_REQUEST` on the template and the chat path, the model answers
+  the next request, and the history the WebUI sends instead renders. b12664 unmounts a closed
+  collapsible's body after one transition (#32881), and b12665 sets code in messages at the size of
+  the text around it (#32892). b12666 shows an agentic reply of the WebUI as one grouped "Agent
+  Trace" of its tool calls (#32879); no npm package changed, and the WebUI builds from CI's sparse
+  checkout with npm 11 and embeds 291 assets. b12667 has the built-in `exec_shell_command` tool of the
+  embedded server ask for a short `description` of the command, as its first and a required argument
+  (#32894): a client can show it while the call streams, the tool ignores it, and a call without it
+  still runs (`CApiServerTools`, red at b12666). b12668 lets Metal multiply with a BF16 or F32
+  second operand (`MUL_MAT`, `MUL_MAT_ID`, #32677) and hands the precision policy the weight of
+  every matrix multiplication; the temporary environment variable `LLAMA_MOE_AMAX_SKIP` swaps the
+  amax rescaling of the MoE down projection of Mistral 4, Mellum, Flint and Laguna for a BF16
+  operand (upstream measured +22 % to +25 % token generation on M2 Ultra and M5 Max). The CPU
+  library builds the same graphs as before; the MoE, weight-scale and trainer cases pass unchanged. b12669
+  lets the quantizer aim at a target instead of a type (#15550; "Added" above): with an importance
+  matrix it scores the candidate types of every tensor and picks the mix that reaches the bits per
+  weight or the file size asked for. `patches/0028` was rewritten by hand: the output is opened in a
+  lambda of its own now, which still takes the narrow name, and the patch passes it through
+  `std::filesystem::u8path()` there. A quantization to a type writes the same files as before. b12670
+  gives ggml's flash attention an indexed bias (#32740: a table of biases per head and query, looked up
+  by an index per key, added to the mask in F32), with a reference implementation on the CPU that the
+  CPU backend does not offer yet (`supports_op` answers no for it), and no llama.cpp graph uses it
+  yet. Without the bias the CPU computes the mask as before (`slope * mask`); the flash attention
+  cases pass unchanged. b12671 batches the rows of Metal's
+  `CONCAT` and copies them in vector chunks (#32824), only in `metal-macos-aarch64`; not measured here
+  (no Mac), the macOS Metal Java tests run it. b12672 gives Metal NVFP4 (#32825): mat-vec, MUL_MAT_ID,
+  mul_mm and tensor-op kernels, get_rows and cpy, so an NVFP4 model runs on the GPU of
+  `metal-macos-aarch64` instead of falling back to the CPU; the CPU and the other backends are
+  unchanged. b12673 removes the WebUI's Matte theme and its "Light surfaces" setting (#32906): Paper
+  is the only light theme. No npm package changed; the npm license texts still match the lockfile,
+  and the WebUI builds from CI's sparse checkout with npm 11 and embeds 291 assets. b12674 lets
+  the OpenCL module load Qualcomm's Adreno binary kernel library by default (#31759:
+  `GGML_OPENCL_USE_ADRENO_BIN_KERNELS` is an option, default ON; the library has MoE matmul
+  kernels for Snapdragon X2 GPUs) and has every Windows ARM64 configure download it from the
+  Qualcomm Software Center (`GGML_OPENCL_ADRENO_BIN_KERNELS_FETCH`, default ON).
+  `llama/CMakeLists.txt` forces the download off, as upstream's own opencl-adreno release job does:
+  the DLL is proprietary, under Qualcomm's license, and no natives jar ships it (a module directory
+  holds its one module). The three OpenCL modules now try to load `adreno-opencl-kernels.dll`
+  (`libadreno-opencl-kernels.so` on Android) by name and run their builtin kernels without it; the
+  Android module links `libdl.so` for that, which its allowlist already has. Not measured on an
+  Adreno GPU. b12675 keeps a host-memory prompt-cache entry intact until its restore has succeeded
+  (#32828): the target state used to be freed as soon as it was loaded, so when the draft model's
+  state then failed to load, the entry stayed in the cache without its target state. The entry is
+  still removed after a successful restore. The prompt-cache cases (`LoraCacheHostMemory`, the slot
+  files, the drafts) pass unchanged. No case reaches the fixed path: no way was found to make a
+  draft state fail to load through the API. b12676 rolls the gated delta net of Qwen3.5, Qwen3.5-MoE,
+  Qwen4-Exp, Clover-MoE, Kimi K3 / K3.1, GLM5-Next and BailingMoE3 back by replay (#31669): where a
+  draft that needs a recurrent rollback (MTP, EAGLE-3, DFlash) kept a snapshot of the state per draft
+  token, the model now keeps one state and the inputs of the last ubatch, and the delta net op
+  replays the kept tokens before the new ones (CPU, CUDA, Metal, Vulkan, OpenCL and the other
+  backends; one without it leaves the op to the CPU). A sequence also keeps its rollback depth when
+  its cell is moved (#31656). A new generator model holds it: Qwen3.5 with an MTP block
+  (`CApiQwen35`), whose random drafts are all rejected while the greedy answer stays the model's
+  alone, token for token -- red with the CPU kernel's replay loop skipped. The full C++ suite passes
+  at b12676. b12677 makes the target quantizer's constants `static constexpr` for MSVC (#32902),
+  the cause of the `C2131` that `patches/0047` worked around; the patch is dropped (see "Fixed"), and
+  the quantizer and imatrix cases pass unchanged. b12678 removes trailing whitespace from `ggml.c`
+  (#32914). b12679 gives the OpenCL module a Q6_K matrix multiplication for two to eight columns, the
+  batch a speculative verification step sends (#32909); it runs only when Qualcomm's Adreno binary
+  kernel library is loaded, which no natives jar ships (see b12674), and
+  `GGML_OPENCL_COOPK_Q6_K_BIN=0` turns it off. The module builds here against the system OpenCL
+  headers; not measured on an Adreno GPU. b12680 has the OpenCL gated delta net read the keys at
+  their own strides (#32747): it read them at the queries', which is wrong wherever the two tensors
+  are laid out differently. OpenCL only, built here, not measured on a GPU. b12681 lets the Vulkan
+  `SSM_SCAN` run a state of 96 (#32162), which went to the CPU before: upstream's two new
+  `test-backend-ops` cases for it and the other twelve the device supports pass on Mesa's lavapipe
+  (14 of 14). b12682 computes softplus as `log1p` (#32655): the CPU's `SSM_SCAN` (the step size of a
+  Mamba layer) and XIELU's parameters keep the value below an input of -16.6, where
+  `log(1 + exp(x))` rounded to 0, and the Metal, OpenCL and Vulkan shaders use a range-reduced
+  `log1p`. The recurrent, Qwen3.5, mixture-of-experts and trainer cases of the C API pass, and so do
+  upstream's softplus cases on lavapipe, the new one with negative inputs included (13 of 13).
+  b12683 lets the RPC server reuse one context for the tensors of every request (#32896) instead
+  of creating one per request; `patches/0015` was refreshed for it (only the context of its
+  constructor hunk moved), the wire format is unchanged, and the 52 RPC cases of the C++ suite pass
+  (the loopback math, the stop, COMM_INIT with its peers, the requests the server refuses).
+  b12684 has the WebUI's submit button follow the model picked in the chat form (#32920): a
+  conversation whose model was gone kept it disabled. Only the WebUI changed; its unit tests pass
+  (896), and the new form test fails against the previous hook and passes against this one.
+  b12685 gives the WebUI's tool-call timer the font size of its title (#32922); the WebUI builds and
+  embeds its 291 assets.
+  b12686 lets the slot scheduler ask the host-memory prompt cache (`--cache-ram`) for every request
+  (#28992). It asked only when the slot's state was worth saving, so a request that named an empty
+  slot evaluated its whole prompt although the cache held its state, and a slot holding a shorter
+  prefix was reused as it was. Two new C API cases hold both, red with the previous scheduler.
+  b12687 changes only upstream's own CI.
+  b12688 moves the WebUI's agentic loop into a library of its own, Llama Harness (`ui/lib/harness`,
+  #32927), which the chat app compiles from source; `build-webui` and `webui-licenses.yml` check it
+  out with the other two libraries (without it the build fails: "Could not load
+  ../../lib/harness/src/index.ts"), and the license check reads its imports, of which it has none.
+  The WebUI builds and embeds its 291 assets, its unit tests pass (929) and the license texts match.
+  b12694 keeps the BPE merges as string views (#32859): the same tokens as before for Llama 3.2,
+  Qwen3-TTS, SmolVLM and LFM3-Audio over 655 KB of mixed text, 15 to 33 % faster for three of them.
+  b12696 and b12701 change Inkling 2's graph (the row clip as an L2 norm, #32940; the depth mix with
+  the scores first, #32855): a generated Inkling 2 model (`write_tiny_inkling2_gguf`, new) answers
+  with probabilities within 3.4e-5 of b12695's, and three new C API cases hold its hybrid memory
+  (`-ub 1`, two slots at once, a restored slot). b12699 restores a prompt from the host-memory
+  cache after clearing the idle slots when a unified KV cache had no room for it (#30997; new case
+  `CApiPromptCache.AUnifiedCacheRestoresAPromptAfterClearingTheIdleSlots`, red before). b12700
+  makes the WebUI a plain chat unless the server offers built-in tools or the MCP proxy
+  (`--agent`, #32949), which an attached `NativeServer` does not. b12704 lets Vulkan's
+  cooperative-matrix gated delta net replay a rejected draft (#32721; the 98 GATED_DELTA_NET cases
+  pass on lavapipe). b12707 pauses the CPU threadpool after a graph split across several backends,
+  so its workers stop spinning while a GPU or an RPC server finishes (#32378; without OpenMP, as
+  every shipped build is). b12708 passes an MCP tool's image and audio parts on as data URIs (#32064;
+  new case over a stand-in MCP server, red before). b12709 adds SVE dot products for Q5_0 and Q5_1
+  (#30867) and b12711 repacks Q4_0 and Q8_0 on ARM cores without dotprod (#32142), both checked under
+  qemu-aarch64 against the reference, the second through both paths of `patches/0022`, whose test now
+  runs Q8_0 too. b12714 bumps the WebUI to 0.2.0, which can name its server in a `config.json`
+  (#32945); the license texts were regenerated for the new lockfile and lost `rehype-highlight`,
+  which the app has not imported since b12582. The other steps change backends this project builds
+  but cannot run here (HIP, CUDA, Metal) or does not build (WebGPU, SpacemiT), the WebUI's styling,
+  upstream's conversion script, CI or docs. b12720 adds DSpark drafting for Inkling 2 (#32218: the
+  DFlash/DSpark draft reads the target's layer inputs and an RNN Markov head); the Inkling 2 model's
+  probabilities are bitwise those of b12719. The generator writes an Inkling 2 DSpark draft in the
+  converter's layout (`write_tiny_inkling2_dspark_gguf`: two decoder layers whose context K and V are
+  each layer's own mix of the target's layer inputs, the RNN Markov head reading the same mix of the
+  last committed token, no token embedding or head of its own) over an Inkling 2 target 160 wide (the
+  head packs 130 values of every draw into a row of the hidden size). `CApiInkling2` holds that it
+  drafts with `--spec-type draft-dspark`, `draft-dflash` and without a type and that the target then
+  answers what it answers alone, with the plain Markov head too and on two slots at once; that a
+  request sampled with `--spec-draft-sampling probabilistic` answers the same twice for one seed (red
+  without upstream's reseed per request); and that a draft with `markov_ctx_norm` but no Markov
+  context is refused by name. b12722 adds OpenCL cooperative-matrix MoE kernels for Adreno (#32971);
+  the OpenCL module builds with and without the Adreno kernels. b12723 builds Inkling 2's graph with
+  fewer ops (#32948: each depth block normalized once per graph, the stacks cached); the generated
+  model's probabilities are bitwise those of b12722, and a stack with an unnormalized block moves
+  them by 0.50. b12721 changes only upstream's own tests.
 - **llama.cpp b12652** (from b12573, 79 upstream commits in twenty-three steps; master, pinned by commit
   before upstream tags it). b12574 slims the WebUI's design tokens and sets its text through type roles
   (#32615; only `ui/` changed, and the npm license texts still match the lockfile). The WebUI builds
@@ -915,6 +1089,32 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **The MSVC build of llama compiles again.** llama.cpp b12669's target quantizer reads a `constexpr`
+  local of its function in a constant expression inside a lambda, which GCC and clang accept and MSVC
+  14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in run 45233019300.
+  `patches/0047` made the value a plain `const` from b12672 on; upstream fixed the cause at b12677
+  (#32902: the constants are `static constexpr`), and the patch was dropped with that bump.
+- **The Windows x86-64 CPU build (`cpu-windows-x86-64`) never finished since 2026-11-22.** Its job took the
+  clang Visual Studio ships (22.1.3) from that day, because the STL of MSVC 14.52 refuses the image's
+  LLVM 20.1.8; with it the build compiled every file and then never linked `ggml.dll` and
+  `ggml-cpu-sapphirerapids.dll`, and stood still until the job was cancelled (37 min in run
+  45052971364, 5 h 51 min in run 45157679242), while the static test build with the same clang passed.
+  Both plain-clang Windows jobs now install LLVM 22.1.8 from Chocolatey, the toolchain upstream's
+  `windows-cpu` release job builds the same modular CPU-variants configuration with, check that it is
+  the clang on `PATH`, and give the build step 90 minutes. The hang could not be reproduced off
+  Windows (clang 22 compiles and sccache passes the 13.5 MB WebUI table in seconds on Linux); the next
+  CI run is the proof.
+- **`ZonosTtsIntegrationTest.everyListedVoiceSpeaks` timed out on every macOS job.** The contract's voice
+  test synthesizes once per predefined voice under a 10-minute limit for the whole test; CI's ZONOS3 Mini
+  lists 27 voices of 150 to 320 prompt rows each, about 34 s apiece on the macOS CPU runners (939 s on
+  2026-11-16, 925 s on 2026-11-23), and 26 s for all of them on a 4-core Linux machine. The budget is per
+  voice now (2 minutes, `assertTimeout` naming the voice), under a 60-minute limit for the test.
+- **`CApiServer.ARouterCancelsTheLoadOfAModelWhoseWorkerHasNotComeUpAndCanLoadItAgain` could miss the
+  load it cancels.** The router replays no `/models/sse` event, and the test posted `/models/load` without
+  waiting for its stream to answer, so a reader that connected a moment later never saw `loading` (the
+  macOS 15 job of the Publish run of 2026-11-23). The test waits for the stream now
+  (`ModelsSseReader::await_connected`, which the failed-load case uses as well); with the reader held back
+  300 ms it fails as on macOS without the wait and passes with it.
 - **A single-model server whose download or load failed could end its `/models/sse` stream without
   the last event.** llama.cpp promises a `status_change` to `unloaded` (with the exit code) before the
   server exits, and notified it -- then stopped the HTTP server at once, and cpp-httplib asks a stream

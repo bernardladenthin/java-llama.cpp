@@ -55,6 +55,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_systemone()` | a `/v1/systemone` request to a decision model |
 | `jllama_json_schema_to_grammar()` | a JSON schema as GBNF (no model needed) |
 | `jllama_quantize()`, `jllama_quantize_imatrix()` | `llama_model_quantize` over a GGUF file (no model needed), the second with an importance matrix |
+| `jllama_quantize_target()` | `llama_model_quantize` to a target, average bits per weight or a file size (b12669): llama.cpp picks every tensor's type from the importance matrix, which is required; a target out of range is `JLLAMA_STATUS_INVALID_ARGUMENT` |
 | `jllama_imatrix()` | computes that importance matrix from a calibration text, as `llama-imatrix` does (loads the model itself) |
 | `jllama_imatrix_merge()` | adds up importance matrices of one model (GGUF or the legacy format in, either out; one input converts) |
 | `jllama_set_log_callback()` | every log line of llama.cpp, ggml and the server to a callback; null restores the console after a synchronous flush |

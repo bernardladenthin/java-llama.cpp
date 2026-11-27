@@ -7,12 +7,14 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.exception.InvalidRequestException;
@@ -45,6 +47,8 @@ public abstract class AbstractTtsPipelineContract {
 
     private static final int WAV_HEADER_BYTES = 44;
     private static final int MAX_FRAMES = 40;
+    /** What one predefined voice's synthesis may take, a few times the slowest CI runner's. */
+    private static final Duration PER_VOICE = Duration.ofMinutes(2);
 
     private TextToSpeech tts;
 
@@ -115,13 +119,17 @@ public abstract class AbstractTtsPipelineContract {
     }
 
     @Test
-    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    @Timeout(value = 60, unit = TimeUnit.MINUTES)
     @DisplayName("predefined voices: every listed one speaks, an unknown one is refused with the list")
     public void everyListedVoiceSpeaks() {
         List<String> voices = tts.getVoices();
         Assumptions.assumeFalse(voices.isEmpty(), "this pipeline ships no predefined voices");
+        // one synthesis per voice, each over that voice's own prompt rows, so the budget is per voice: CI's
+        // ZONOS3 Mini lists 27 voices of 150 to 320 rows, about 34 s each on the macOS CPU runners (925 s
+        // in all, past a 10-minute limit for the whole test on 2026-11-16 and 2026-11-23)
         for (String voice : voices) {
-            assertWellFormedAudibleWav(tts.synthesize("Hello.", null, null, voice, MAX_FRAMES, 4, 1));
+            assertWellFormedAudibleWav(assertTimeout(
+                    PER_VOICE, () -> tts.synthesize("Hello.", null, null, voice, MAX_FRAMES, 4, 1), voice));
         }
         // the request's fault, so that a server answers 400: InvalidRequestException, not its parent
         InvalidRequestException unknown = assertThrows(

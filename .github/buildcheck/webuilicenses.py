@@ -9,8 +9,8 @@ llama/legal/natives/webui-npm/, generated from the pinned ui/apps/chat:
 
 - `closure()` -- a static upper bound of the packages the bundle can contain: the bare imports
   of ui/apps/chat/src and, since b12480, of the Llama UI sources it compiles from ui/lib/ui/src/lib
-  and, since b12587, of Llama Voice's from ui/lib/voice/src (tests, stories and type-only imports
-  left out), closed over the runtime
+  and, since b12587, of Llama Voice's from ui/lib/voice/src and, since b12688, of Llama Harness's from
+  ui/lib/harness/src (tests, stories and type-only imports left out), closed over the runtime
   dependencies package-lock.json records. Upper bound on purpose: shipping a text for a package
   that tree-shaking dropped is harmless, missing one is not.
 - `generate()` -- each package's own license/notice files, byte for byte from the tarball
@@ -88,10 +88,12 @@ def source_dirs(ui):
     they reach the bundle like the app's own; upstream's scripts/ui-assets.cmake stages that folder
     next to the app, at ../../lib/ui. Since b12587 (#32531) it compiles Llama Voice the same way
     (ui/lib/voice/src, @ggml-org/llama-voice, through two vite aliases of the app; the library has no
-    build step in the repository). Before each, its folder does not exist and is left out.
+    build step in the repository), and since b12688 (#32927) Llama Harness (ui/lib/harness/src,
+    @ggml-org/llama-harness, through one vite alias; no dependencies of its own). Before each, its
+    folder does not exist and is left out.
     """
     lib = Path(ui).parent.parent / "lib"
-    libraries = [lib / "ui" / "src" / "lib", lib / "voice" / "src"]
+    libraries = [lib / "ui" / "src" / "lib", lib / "voice" / "src", lib / "harness" / "src"]
     return [Path(ui) / "src"] + [folder for folder in libraries if folder.is_dir()]
 
 

@@ -571,13 +571,15 @@ jobs:
           # ui/apps/chat (tools/ui until b12453, #32032) holds the npm project AND the
           # ui.cpp.in / ui.h.in templates;
           # ui/lib/ui holds Llama UI, whose sources the app compiles since b12480 (#32468),
-          # and ui/lib/voice Llama Voice, which it compiles since b12587 (#32531, vite aliases);
+          # ui/lib/voice Llama Voice, which it compiles since b12587 (#32531, vite aliases), and
+          # ui/lib/harness Llama Harness, which it compiles since b12688 (#32927, a vite alias);
           # scripts/ holds ui-assets.cmake, which consumes them. All are needed
           # since upstream #28445 replaced the embed.cpp host tool.
           sparse-checkout: |
             ui/apps/chat
             ui/lib/ui
             ui/lib/voice
+            ui/lib/harness
             scripts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -1775,8 +1777,8 @@ jobs:
   # Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll per
   # instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
   # start-up, and the directory every Windows x86-64 GPU module jar is loaded next to (CLAUDE.md
-  # "Modular natives"). The compiler is plain clang (the GNU driver, the clang Visual Studio ships
-  # in VC\Tools\Llvm\x64), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
+  # "Modular natives"). The compiler is plain clang (the GNU driver, LLVM 22.1.8 from Chocolatey as
+  # upstream's windows-cpu release job installs it), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
   # cl.exe, and ggml's `if (NOT MSVC)` then drops 5 of the 14 variants, so llama/CMakeLists.txt
   # refuses both. It needs the MSVC headers, libraries and linker from the developer environment
   # all the same (clang targets the MSVC ABI), and it ships the same hybrid CRT as every Windows
@@ -1822,16 +1824,27 @@ jobs:
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
         uses: ./.github/actions/install-sccache-windows
-      # The clang Visual Studio ships (VC\Tools\Llvm\x64), not the LLVM the image puts on PATH: the
-      # STL of MSVC 14.52 refuses any clang below 22 (STL1000), and the image's C:\Program Files\LLVM
-      # was 20.1.8 when it moved to 14.52 (run 45047172519); Visual Studio keeps its own clang in step
-      # with its STL. `clang --version` first: clang 22+ makes patches/0017's compiler half an error.
+      # LLVM 22.1.8 from Chocolatey, the toolchain upstream's windows-cpu release job builds the same
+      # modular CPU-variants configuration with (.github/workflows/release.yml, KEEP IN SYNC WITH
+      # UPSTREAM). The STL of MSVC 14.52 refuses any clang below 22 (STL1000), and the image's own
+      # C:\Program Files\LLVM was 20.1.8 (run 45047172519). The clang Visual Studio ships
+      # (VC\Tools\Llvm\x64, 22.1.3) compiled everything here but never linked ggml.dll and
+      # ggml-cpu-sapphirerapids.dll: the build stood still after its last compile until the job was
+      # cancelled, 37 min on 2026-11-22 (run 45052971364) and 5 h 51 min on 2026-11-23 (run
+      # 45157679242). The step's timeout turns such a stall into a failure.
+      - name: Install LLVM 22.1.8 (as upstream's windows-cpu release job)
+        run: |
+          choco install llvm --version=22.1.8
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+      # `clang --version` first, and it must be the release above: clang 22+ makes patches/0017's
+      # compiler half an error.
       - name: Build libraries
         shell: cmd
+        timeout-minutes: 90
         run: |
-          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
-          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
           clang --version
+          clang --version | findstr /C:"clang version 22.1.8" >nul || (echo clang is not LLVM 22.1.8 & exit /b 1)
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -2841,13 +2854,19 @@ jobs:
           arch: x64
       - name: Display CPU Info
         uses: bernardladenthin/actions/common/print-host-info@e7554f8d2e3f2e59dac55c5f6a7cb5be7b6d8606 # v1.2.3
-      # Visual Studio's clang, as build-windows-x86_64 (the image's LLVM 20 fails MSVC 14.52's STL1000 check)
+      # the clang build-windows-x86_64 ships with: LLVM 22.1.8 from Chocolatey, as upstream's
+      # windows-cpu release job (KEEP IN SYNC WITH UPSTREAM)
+      - name: Install LLVM 22.1.8 (as upstream's windows-cpu release job)
+        run: |
+          choco install llvm --version=22.1.8
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
       - name: Build libraries
         shell: cmd
+        timeout-minutes: 90
         run: |
-          if not exist "%VCINSTALLDIR%Tools\Llvm\x64\bin\clang.exe" (echo Visual Studio's clang is missing under "%VCINSTALLDIR%Tools\Llvm\x64\bin" & exit /b 1)
-          set "PATH=%VCINSTALLDIR%Tools\Llvm\x64\bin;%PATH%"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
           clang --version
+          clang --version | findstr /C:"clang version 22.1.8" >nul || (echo clang is not LLVM 22.1.8 & exit /b 1)
           .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Verify llama.cpp patches are applied
         shell: bash

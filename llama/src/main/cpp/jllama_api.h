@@ -36,6 +36,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #if defined(_WIN32) && !defined(__MINGW32__)
 #if defined(JLLAMA_BUILD)
@@ -440,6 +441,20 @@ JLLAMA_API jllama_status jllama_quantize(const char *input_path, const char *out
  */
 JLLAMA_API jllama_status jllama_quantize_imatrix(const char *input_path, const char *output_path, int ftype,
                                                  int nthread, bool allow_requantize, const char *imatrix_path);
+
+/**
+ * Quantises a GGUF file to a target instead of a file type (llama.cpp b12669): `target_bpw` the
+ * average bits per weight (above 0, at most 16), or `target_size` the file size in bytes (above 0);
+ * the other one is negative. llama.cpp then picks the type of every tensor so that the file reaches
+ * the target at the lowest error it estimates from the importance matrix at `imatrix_path`, which is
+ * required, and the output names the file type llama-quantize starts from (the first one whose bits
+ * per weight are not below the target, F16 for a size). The search runs on the CPU and takes longer
+ * than a quantization to a file type. A target that is refused is JLLAMA_STATUS_INVALID_ARGUMENT
+ * with the reason; a target the tensors of a fixed type leave no room for fails the quantization.
+ */
+JLLAMA_API jllama_status jllama_quantize_target(const char *input_path, const char *output_path, int nthread,
+                                                bool allow_requantize, const char *imatrix_path, double target_bpw,
+                                                int64_t target_size);
 
 /**
  * Computes the importance matrix jllama_quantize_imatrix() takes, as llama-imatrix does: the model at

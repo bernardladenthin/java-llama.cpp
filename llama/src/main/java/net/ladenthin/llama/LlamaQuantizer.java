@@ -29,6 +29,11 @@ import org.jspecify.annotations.Nullable;
  * {@link #quantize(String, String, QuantizationType, int, boolean, String)}; the IQ1 and IQ2
  * types, IQ3_XS, IQ3_XXS and Q2_K_S cannot be written without one.</p>
  *
+ * <p>Instead of a type, the file can be quantized to a target, an average number of bits per weight
+ * ({@link #quantizeToBitsPerWeight(String, String, double, String)}) or a file size
+ * ({@link #quantizeToSize(String, String, long, String)}): llama.cpp then picks the type of every
+ * tensor from the importance matrix, which these methods require.</p>
+ *
  * <p>Quantization is CPU-bound and can take minutes for large models; it initializes the shared
  * llama backend (a no-op if a {@link LlamaModel} is already loaded) and may safely run while
  * models are loaded in the same JVM.</p>
@@ -36,6 +41,7 @@ import org.jspecify.annotations.Nullable;
 public final class LlamaQuantizer {
 
     private static final String OUTPUT_PATH = "outputPath";
+    private static final String IMPORTANCE_MATRIX_PATH = "importanceMatrixPath";
 
     static {
         LlamaLoader.initialize();
@@ -108,6 +114,115 @@ public final class LlamaQuantizer {
             throw new IllegalArgumentException(type + " cannot be quantized to without an importance matrix");
         }
         quantizeNative(inputPath, outputPath, type.getFtypeValue(), threads, allowRequantize, importanceMatrixPath);
+    }
+
+    /** The largest average bits per weight a target may ask for, as {@code llama-quantize} allows. */
+    public static final double MAX_TARGET_BITS_PER_WEIGHT = 16.0;
+
+    /**
+     * Quantize a GGUF model file to an average number of bits per weight, as
+     * {@code llama-quantize --target-bpw} does: llama.cpp picks the type of every tensor so that the
+     * whole file reaches {@code bitsPerWeight} at the lowest error it estimates from the importance
+     * matrix, on all hardware threads, without re-quantizing a quantized input.
+     *
+     * @param inputPath path to the source GGUF file
+     * @param outputPath path the quantized GGUF file is written to
+     * @param bitsPerWeight the average bits per weight, above 0 and at most
+     *     {@value #MAX_TARGET_BITS_PER_WEIGHT}
+     * @param importanceMatrixPath path of the importance matrix of this model (GGUF or the legacy
+     *     format); required
+     * @throws IllegalArgumentException if {@code bitsPerWeight} is out of range
+     * @throws net.ladenthin.llama.exception.LlamaException if quantization fails, also when the
+     *     tensors of a fixed type leave too little room for the others
+     * @see #quantizeToBitsPerWeight(String, String, double, String, int, boolean)
+     */
+    public static void quantizeToBitsPerWeight(
+            String inputPath, String outputPath, double bitsPerWeight, String importanceMatrixPath) {
+        quantizeToBitsPerWeight(inputPath, outputPath, bitsPerWeight, importanceMatrixPath, 0, false);
+    }
+
+    /**
+     * Quantize a GGUF model file to an average number of bits per weight with explicit thread
+     * count and re-quantization opt-in. The search for the tensor types runs on the CPU and takes
+     * longer than a quantization to a {@link QuantizationType}; the written file names the type
+     * {@code llama-quantize} starts from, the first one whose bits per weight are not below the
+     * target.
+     *
+     * @param inputPath path to the source GGUF file
+     * @param outputPath path the quantized GGUF file is written to
+     * @param bitsPerWeight the average bits per weight, above 0 and at most
+     *     {@value #MAX_TARGET_BITS_PER_WEIGHT}
+     * @param importanceMatrixPath path of the importance matrix of this model; required
+     * @param threads number of threads to use; {@code <= 0} lets llama.cpp pick
+     * @param allowRequantize whether to permit quantizing an already-quantized input
+     * @throws IllegalArgumentException if {@code bitsPerWeight} is out of range
+     * @throws net.ladenthin.llama.exception.LlamaException if quantization fails
+     */
+    public static void quantizeToBitsPerWeight(
+            String inputPath,
+            String outputPath,
+            double bitsPerWeight,
+            String importanceMatrixPath,
+            int threads,
+            boolean allowRequantize) {
+        Objects.requireNonNull(inputPath, "inputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
+        Objects.requireNonNull(importanceMatrixPath, IMPORTANCE_MATRIX_PATH);
+        if (!(bitsPerWeight > 0.0 && bitsPerWeight <= MAX_TARGET_BITS_PER_WEIGHT)) {
+            throw new IllegalArgumentException("bitsPerWeight must be above 0 and at most " + MAX_TARGET_BITS_PER_WEIGHT
+                    + ", not " + bitsPerWeight);
+        }
+        quantizeTargetNative(inputPath, outputPath, threads, allowRequantize, importanceMatrixPath, bitsPerWeight, -1L);
+    }
+
+    /**
+     * Quantize a GGUF model file to a file size, as {@code llama-quantize --target-size} does:
+     * llama.cpp picks the type of every tensor so that the written file holds at most about
+     * {@code sizeBytes} bytes at the lowest error it estimates from the importance matrix, on all
+     * hardware threads, without re-quantizing a quantized input.
+     *
+     * @param inputPath path to the source GGUF file
+     * @param outputPath path the quantized GGUF file is written to
+     * @param sizeBytes the file size in bytes, above 0
+     * @param importanceMatrixPath path of the importance matrix of this model; required
+     * @throws IllegalArgumentException if {@code sizeBytes} is not above 0
+     * @throws net.ladenthin.llama.exception.LlamaException if quantization fails, also when the size
+     *     leaves too little room for the tensors of a fixed type
+     * @see #quantizeToSize(String, String, long, String, int, boolean)
+     */
+    public static void quantizeToSize(
+            String inputPath, String outputPath, long sizeBytes, String importanceMatrixPath) {
+        quantizeToSize(inputPath, outputPath, sizeBytes, importanceMatrixPath, 0, false);
+    }
+
+    /**
+     * Quantize a GGUF model file to a file size with explicit thread count and re-quantization
+     * opt-in. The written file names F16 as its file type, as {@code llama-quantize} does for a
+     * size target; the tensors carry the types the search chose.
+     *
+     * @param inputPath path to the source GGUF file
+     * @param outputPath path the quantized GGUF file is written to
+     * @param sizeBytes the file size in bytes, above 0
+     * @param importanceMatrixPath path of the importance matrix of this model; required
+     * @param threads number of threads to use; {@code <= 0} lets llama.cpp pick
+     * @param allowRequantize whether to permit quantizing an already-quantized input
+     * @throws IllegalArgumentException if {@code sizeBytes} is not above 0
+     * @throws net.ladenthin.llama.exception.LlamaException if quantization fails
+     */
+    public static void quantizeToSize(
+            String inputPath,
+            String outputPath,
+            long sizeBytes,
+            String importanceMatrixPath,
+            int threads,
+            boolean allowRequantize) {
+        Objects.requireNonNull(inputPath, "inputPath");
+        Objects.requireNonNull(outputPath, OUTPUT_PATH);
+        Objects.requireNonNull(importanceMatrixPath, IMPORTANCE_MATRIX_PATH);
+        if (sizeBytes <= 0) {
+            throw new IllegalArgumentException("sizeBytes must be above 0, not " + sizeBytes);
+        }
+        quantizeTargetNative(inputPath, outputPath, threads, allowRequantize, importanceMatrixPath, -1.0, sizeBytes);
     }
 
     /**
@@ -254,4 +369,13 @@ public final class LlamaQuantizer {
             int threads,
             boolean allowRequantize,
             @Nullable String importanceMatrixPath);
+
+    private static native void quantizeTargetNative(
+            String inputPath,
+            String outputPath,
+            int threads,
+            boolean allowRequantize,
+            String importanceMatrixPath,
+            double targetBitsPerWeight,
+            long targetSizeBytes);
 }

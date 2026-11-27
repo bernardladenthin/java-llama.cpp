@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12652](https://img.shields.io/badge/llama.cpp-%23b12652-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12652)  
+[![llama.cpp b12723](https://img.shields.io/badge/llama.cpp-%23b12723-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12723)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -277,7 +277,7 @@ iGPU, the example being a Core Ultra 7 165U).
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
 | `vulkan-windows-aarch64` | Vulkan | Windows on ARM (Snapdragon X) with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. Built natively on `windows-11-arm` with `clang-cl`, like upstream's Windows arm64 Vulkan release. |
 | `opencl-windows-x86-64` | OpenCL | Windows x86-64 with an OpenCL 2.0+ GPU | A vendor OpenCL ICD (`OpenCL.dll`). The GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA or Vulkan are better supported. |
-| `opencl-windows-aarch64` | OpenCL (Adreno) | Windows on ARM (Snapdragon X) | The Adreno driver's OpenCL ICD (`OpenCL.dll`). |
+| `opencl-windows-aarch64` | OpenCL (Adreno) | Windows on ARM (Snapdragon X) | The Adreno driver's OpenCL ICD (`OpenCL.dll`). Optional: Qualcomm's Adreno binary kernel library (`adreno-opencl-kernels.dll`, faster MoE kernels on X2 GPUs, from the Qualcomm Software Center under Qualcomm's license) on `PATH`; it is not shipped, and without it the module runs its builtin kernels. |
 | `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Adreno GPU | A device OpenCL ICD (`libOpenCL.so`); see also the `llama-android-opencl` AAR. |
 | `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An AMD ROCm **10** runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) — built against ROCm 10.0 (TheRock), like upstream llama.cpp; every GPU TheRock builds for Linux, Instinct included (gfx900/gfx906/gfx90c/gfx1153 best effort — built, but not release-ready in ROCm 10). |
 | `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH`; every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). |
@@ -1068,7 +1068,16 @@ int chunks = LlamaQuantizer.computeImportanceMatrix("model-f16.gguf", "calibrati
 // inputs are GGUF or the legacy binary format, and "true" as a third argument writes the latter.
 LlamaQuantizer.mergeImportanceMatrices(
         Arrays.asList("model.code.imatrix.gguf", "model.prose.imatrix.gguf"), "model.imatrix.gguf");
+// A target instead of a type (llama-quantize --target-bpw / --target-size): llama.cpp picks the
+// type of every tensor from the importance matrix, which these need, so that the file reaches it.
+LlamaQuantizer.quantizeToBitsPerWeight("model-f16.gguf", "model-3.5bpw.gguf", 3.5, "model.imatrix.gguf");
+LlamaQuantizer.quantizeToSize("model-f16.gguf", "model-4gb.gguf", 4L << 30, "model.imatrix.gguf");
 ```
+
+The target search runs on the CPU, evaluates several types for every tensor and takes longer than a
+quantization to one type; the file names the type `llama-quantize` starts from (for bits per weight
+the first type whose own are not below the target, for a size F16), its tensors the types the search
+chose.
 
 ### Raw JSON Endpoints
 

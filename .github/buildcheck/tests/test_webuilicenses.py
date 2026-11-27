@@ -143,6 +143,27 @@ class WebuiLicensesTest(unittest.TestCase):
         names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
         self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
 
+    def test_the_llama_harness_sources_next_to_the_app_are_imports_too(self):
+        # b12688: ui/apps/chat compiles ui/lib/harness/src through a vite alias; its imports resolve
+        # from the app's node_modules as Llama Voice's do, and the folder comes after the others.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        lib = Path(self.temp.name) / "ui" / "lib"
+        voice = lib / "voice" / "src"
+        harness = lib / "harness" / "src"
+        (app / "src").mkdir(parents=True)
+        voice.mkdir(parents=True)
+        (harness / "trace").mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (voice / "index.ts").write_text("export const voice = 1;\n")
+        (harness / "index.ts").write_text("export { run } from './harness';\n")
+        (harness / "trace" / "phrasing.ts").write_text("import { t } from 'testonly';\n")
+        (harness / "harness.test.ts").write_text("import { x } from 'typesonly';\n")
+        self.assertEqual(webuilicenses.source_dirs(app), [app / "src", voice, harness])
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
     def test_check_reports_a_listed_file_without_its_section(self):
         self.generated()
         path = self.out / "THIRD-PARTY-LICENSES.txt"

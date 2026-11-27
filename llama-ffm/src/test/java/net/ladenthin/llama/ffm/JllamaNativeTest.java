@@ -347,6 +347,28 @@ class JllamaNativeTest {
     }
 
     @Test
+    void quantizeToATargetPassesTheTargetAndRefusesOneOutOfRange() {
+        // jllama_quantize_target (b12669): a refused target is IllegalArgumentException with the C
+        // API's reason; a target in range reaches the quantizer, which fails on the missing matrix.
+        // 16.0 against 16.5 and 1 byte against 0 hold the double and the long of the downcall.
+        String in = "/nonexistent/in.gguf";
+        String out = "/nonexistent/out.gguf";
+        String imatrix = "/nonexistent/imatrix.gguf";
+        IllegalArgumentException tooMany = assertThrows(
+                IllegalArgumentException.class, () -> Jllama.quantizeToBitsPerWeight(in, out, 16.5, imatrix, 1, false));
+        assertThat(tooMany.getMessage(), containsString("at most 16"));
+        IllegalArgumentException empty =
+                assertThrows(IllegalArgumentException.class, () -> Jllama.quantizeToSize(in, out, 0L, imatrix, 1, false));
+        assertThat(empty.getMessage(), containsString("above 0 bytes"));
+        LlamaException byBits = assertThrows(
+                LlamaException.class, () -> Jllama.quantizeToBitsPerWeight(in, out, 16.0, imatrix, 1, false));
+        assertThat(byBits.getMessage(), containsString("importance matrix"));
+        LlamaException bySize =
+                assertThrows(LlamaException.class, () -> Jllama.quantizeToSize(in, out, 1L, imatrix, 1, false));
+        assertThat(bySize.getMessage(), containsString("importance matrix"));
+    }
+
+    @Test
     void computeImportanceMatrixReportsAMissingModel() {
         LlamaException e = assertThrows(
                 LlamaException.class,
