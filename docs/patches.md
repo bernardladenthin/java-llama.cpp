@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**35 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**36 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -57,6 +57,7 @@ match a binary to this page.
 | 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
 | 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
 | 0046 | [`0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch`](#0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-eventpatch) | server : a failed download or load lets /models/sse send its last event | 3 | 7 |
+| 0048 | [`0048-server-a-named-tool-choice-reaches-every-chat-format-and-route.patch`](#0048-server-a-named-tool-choice-reaches-every-chat-format-and-routepatch) | server : a named tool choice reaches every chat format and every route | 2 | 3 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1500,4 +1501,42 @@ patch and green with it.
 
 Drop-check on every bump: read the two failure paths of server_run_instance() in tools/server/server.cpp
 -- once the HTTP server is stopped only after the SSE clients have their last event, drop the patch.
+```
+
+## 0048-server-a-named-tool-choice-reaches-every-chat-format-and-route.patch
+
+**Files (2):** `tools/server/server-common.cpp`, `tools/server/server-chat.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server : a named tool choice reaches every chat format and every route
+
+llama.cpp reads a named tool_choice ({"type":"function","function":{"name":...}}) and OpenAI's
+allowed_tools since b12731 (#31564), but only the automatic parser restricts its grammar to the tools
+they name (common_chat_foreach_tool). The specialized parsers -- Qwen3-Coder, the Harmony formats,
+DeepSeek, Kimi, Gemma 4, Inkling and others in common/parsers/ -- build their grammar over every tool
+they are given, so a model could call a tool the request did not allow (measured with the Qwen3-Coder
+format: naming "set" called "get"). oaicompat_chat_params_parse() now offers only the allowed tools,
+which restricts the call for every format; the chat template then renders only those tools, as a
+model may not call the others anyway.
+
+Two routes named the tool in another shape and lost it:
+- /v1/responses passed the Responses shape on unchanged ({"type":"function","name":...},
+  {"type":"allowed_tools","mode":...,"tools":[{"type":"function","name":...}]}), which the chat parser
+  refuses (it reads "function" / "allowed_tools"): a named choice there was a 400. It is converted to
+  the chat shape now.
+- /v1/messages turned Anthropic's {"type":"tool","name":...} into "required", so the model could call
+  any tool, and dropped {"type":"none"}, so it could call one. They become the named function and
+  "none".
+
+The guards are in src/test/cpp/test_c_api.cpp: CApiChatTokens.ANamedToolChoiceHoldsForASpecializedParser
+(the Qwen3-Coder-style template, naming the second of two tools), and the attached server's /v1/responses
+and /v1/messages with a named tool (CApiChatTokens.TheServerRoutesHonourANamedToolChoice); each red
+without the patch.
+
+Drop-check on every bump: read oaicompat_chat_params_parse() in tools/server/server-common.cpp and the
+tool_choice handling of server_chat_convert_responses_to_chatcmpl() and server_chat_convert_anthropic_to_oai()
+in tools/server/server-chat.cpp -- once every parser honours the allowed tools and both routes convert their
+named shapes, drop the patch.
 ```

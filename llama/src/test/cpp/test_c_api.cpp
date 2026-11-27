@@ -16558,6 +16558,51 @@ TEST(CApiChatTokens, AQwen3CoderToolCallStartsAtItsTokenAndIsParsedIntoTheCall) 
     std::filesystem::remove(path, ignored);
 }
 
+namespace {
+// A Hermes-style template: a JSON call between <tool_call> tags, which no specialized parser claims, so
+// llama.cpp's automatic parser reads it. A content of parts (what the /v1/responses route makes of every
+// message) is rendered as its text.
+std::string hermes_tool_template() {
+    return "{%- if tools -%}{{- '<|im_start|>system\\n' -}}"
+           "{%- for t in tools -%}{{- t.function.name + '\\n' -}}{%- endfor -%}{{- '<|im_end|>\\n' -}}{%- endif -%}"
+           "{%- for message in messages -%}"
+           "{%- if message.role == 'assistant' and message.tool_calls is defined and message.tool_calls -%}"
+           "{{- '<|im_start|>assistant\\n' -}}"
+           "{%- for tc in message.tool_calls -%}"
+           "{{- '<tool_call>\\n{\"name\": \"' + tc.function.name + '\", \"arguments\": ' + (tc.function.arguments | "
+           "tojson) + '}\\n</tool_call>' -}}"
+           "{%- endfor -%}{{- '<|im_end|>\\n' -}}"
+           "{%- else -%}"
+           "{{- '<|im_start|>' + message.role + '\\n' -}}"
+           "{%- if message.content is string -%}{{- message.content -}}"
+           "{%- elif message.content -%}{%- for part in message.content -%}{{- part.text -}}{%- endfor -%}{%- endif -%}"
+           "{{- '<|im_end|>\\n' -}}"
+           "{%- endif -%}{%- endfor -%}"
+           "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+}
+
+// A tool of one boolean parameter, as the chat API writes it.
+json flag_tool(const char *name) {
+    return json{{"type", "function"},
+                {"function",
+                 {{"name", name},
+                  {"description", "sets the flag"},
+                  {"parameters",
+                   {{"type", "object"},
+                    {"properties", {{"flag", {{"type", "boolean"}}}}},
+                    {"required", json::array({"flag"})}}}}}};
+}
+
+// The tiny model with the Hermes-style template, for the named tool choice.
+std::string write_named_tool_model(const std::string &prefix) {
+    tiny_model_spec spec;
+    spec.prefix = prefix;
+    spec.eos = 4;
+    spec.n_ctx_train = 2048;
+    return write_tiny_llama_gguf(spec);
+}
+} // namespace
+
 TEST(CApiChatTokens, ANamedToolChoiceCallsTheToolItNames) {
     // b12731 (#31564): tool_choice names a function ({"type":"function","function":{"name":...}}) or a
     // set of them ({"type":"allowed_tools",...}), and the grammar of a format llama.cpp's automatic
@@ -16567,47 +16612,18 @@ TEST(CApiChatTokens, ANamedToolChoiceCallsTheToolItNames) {
     // greedy model answered without a call. A name no tool has, an empty allowed set that is required,
     // and another type are the caller's fault. (The specialized parsers -- Qwen3-Coder, Inkling, the
     // Harmony formats -- did not take the restriction at b12731 and offer every tool.)
-    tiny_model_spec spec;
-    spec.prefix = "jllama-c-api-named-tool";
-    spec.eos = 4;
-    spec.n_ctx_train = 2048;
-    const std::string path = write_tiny_llama_gguf(spec);
+    const std::string path = write_named_tool_model("jllama-c-api-named-tool");
     ASSERT_FALSE(path.empty());
-    const std::string tmpl =
-        "{%- if tools -%}{{- '<|im_start|>system\\n' -}}"
-        "{%- for t in tools -%}{{- t.function.name + '\\n' -}}{%- endfor -%}{{- '<|im_end|>\\n' -}}{%- endif -%}"
-        "{%- for message in messages -%}"
-        "{%- if message.role == 'assistant' and message.tool_calls is defined and message.tool_calls -%}"
-        "{{- '<|im_start|>assistant\\n' -}}"
-        "{%- for tc in message.tool_calls -%}"
-        "{{- '<tool_call>\\n{\"name\": \"' + tc.function.name + '\", \"arguments\": ' + (tc.function.arguments | "
-        "tojson) + '}\\n</tool_call>' -}}"
-        "{%- endfor -%}{{- '<|im_end|>\\n' -}}"
-        "{%- else -%}"
-        "{{- '<|im_start|>' + message.role + '\\n' + (message.content if message.content is string else '') + "
-        "'<|im_end|>\\n' -}}"
-        "{%- endif -%}{%- endfor -%}"
-        "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
-    jllama_model *model = load_tiny(path, {"-c", "2048", "--chat-template", tmpl});
+    jllama_model *model = load_tiny(path, {"-c", "2048", "--chat-template", hermes_tool_template()});
     ASSERT_NE(model, nullptr) << jllama_last_error();
     // The grammar of a required call admits text before it, which a random model writes for ever. The
     // answer is therefore continued from an assistant message that opens the call ("<tool_call>\n"):
     // the grammar is fed the prompt first, so the model writes the call itself, which the grammar
     // fixes up to the tool's name.
-    const auto tool = [](const char *name) {
-        return json{{"type", "function"},
-                    {"function",
-                     {{"name", name},
-                      {"description", "sets the flag"},
-                      {"parameters",
-                       {{"type", "object"},
-                        {"properties", {{"flag", {{"type", "boolean"}}}}},
-                        {"required", json::array({"flag"})}}}}}};
-    };
     const auto request = [&](const json &tool_choice) {
         return json{{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}},
                                               json{{"role", "assistant"}, {"content", "<tool_call>\n"}}})},
-                    {"tools", json::array({tool("set"), tool("get")})},
+                    {"tools", json::array({flag_tool("set"), flag_tool("get")})},
                     {"tool_choice", tool_choice},
                     {"temperature", 0},
                     {"n_predict", 200}}
@@ -16653,6 +16669,152 @@ TEST(CApiChatTokens, ANamedToolChoiceCallsTheToolItNames) {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
+
+TEST(CApiChatTokens, ANamedToolChoiceHoldsForASpecializedParser) {
+    // The specialized parsers (Qwen3-Coder, the Harmony formats, ...) build their grammar over every tool
+    // they are given and ignore which ones tool_choice names; patches/0048 offers them the named tools
+    // only. The Qwen3-Coder-style template and vocabulary of the case above, two tools of the same shape,
+    // a logit bias on <tool_call> and on the end-of-generation byte: whichever tool is named or allowed is
+    // the one called. Without the patch the greedy model called the same tool either way ("get" for a
+    // choice naming "set", measured at b12731).
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-qwen3-coder-named-tool", false, 4,
+                                                   {"<think>", "</think>", "<tool_call>", "</tool_call>"});
+    ASSERT_FALSE(path.empty());
+    const std::string tmpl = "{#- a Qwen3-Coder template without thinking: <tool_call> <function= <parameter= -#}"
+                             "{%- for message in messages -%}"
+                             "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+                             "{%- endfor -%}"
+                             "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}";
+    jllama_model *model = load_with_chat_template(path, tmpl);
+    ASSERT_NE(model, nullptr);
+    const int tool_call = N_VOCAB + 2;
+    const int eos = single_token(model, "\x04");
+    const auto called = [&](const json &tool_choice) {
+        const json request = {{"messages", json::array({json{{"role", "user"}, {"content", "Hi"}}})},
+                              {"tools", json::array({flag_tool("set"), flag_tool("get")})},
+                              {"tool_choice", tool_choice},
+                              {"temperature", 0},
+                              {"n_predict", 200},
+                              {"logit_bias", json::array({json::array({tool_call, 100}), json::array({eos, 100})})}};
+        Owned response;
+        EXPECT_EQ(jllama_chat_completions(model, request.dump().c_str(), &response.s), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        if (response.s == nullptr) {
+            return std::string("no response");
+        }
+        const json calls = json::parse(response.str()).at("choices").at(0).at("message").value("tool_calls", json());
+        std::set<std::string> names;
+        for (const auto &call : calls.is_array() ? calls : json::array()) {
+            names.insert(call.at("function").value("name", std::string()));
+        }
+        return names.size() == 1 ? *names.begin() : response.str();
+    };
+    const auto named = [](const char *name) { return json{{"type", "function"}, {"function", {{"name", name}}}}; };
+    const auto allowed = [](const char *name) {
+        return json{
+            {"type", "allowed_tools"},
+            {"allowed_tools",
+             {{"mode", "required"}, {"tools", json::array({{{"type", "function"}, {"function", {{"name", name}}}}})}}}};
+    };
+    EXPECT_EQ(called(named("set")), "set");
+    EXPECT_EQ(called(named("get")), "get");
+    EXPECT_EQ(called(allowed("set")), "set");
+    EXPECT_EQ(called(allowed("get")), "get");
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiChatTokens, TheServerRoutesHonourANamedToolChoice) {
+    // The attached server's two routes that name a tool in another shape than the chat API
+    // (patches/0048): /v1/responses ({"type":"function","name":...} and allowed_tools with "mode" and
+    // "tools" at the top), which upstream passed on unchanged to a parser that refused it (a 400), and
+    // /v1/messages (Anthropic's {"type":"tool","name":...}), which upstream turned into "required", so the
+    // model called whichever tool it liked. The Hermes-style model of the cases above, continued from an
+    // assistant message that opens the call.
+    const std::string path = write_named_tool_model("jllama-c-api-named-tool-routes");
+    ASSERT_FALSE(path.empty());
+    jllama_model *model = load_tiny(path, {"-c", "2048", "--chat-template", hermes_tool_template()});
+    ASSERT_NE(model, nullptr) << jllama_last_error();
+    {
+        AttachedServer attached(model);
+        ASSERT_NE(attached.server, nullptr);
+        httplib::Client client = attached.client();
+        client.set_read_timeout(60, 0);
+        const auto responses_tool = [](const char *name) {
+            json tool = flag_tool(name).at("function");
+            tool["type"] = "function";
+            return tool;
+        };
+        const auto responses = [&](const json &tool_choice) {
+            const json body = {
+                {"input",
+                 json::array({json{{"role", "user"}, {"content", "Hi"}},
+                              json{{"type", "message"}, {"role", "assistant"}, {"content", "<tool_call>\n"}}})},
+                {"tools", json::array({responses_tool("set"), responses_tool("get")})},
+                {"tool_choice", tool_choice},
+                {"temperature", 0},
+                {"max_output_tokens", 200}};
+            const auto result = client.Post("/v1/responses", body.dump(), "application/json");
+            if (!result) {
+                return std::string("no response: ") + httplib::to_string(result.error());
+            }
+            if (result->status != 200) {
+                return std::to_string(result->status) + " " + result->body;
+            }
+            std::set<std::string> names;
+            for (const auto &item : json::parse(result->body).value("output", json::array())) {
+                if (item.value("type", std::string()) == "function_call") {
+                    names.insert(item.value("name", std::string()));
+                }
+            }
+            return names.size() == 1 ? *names.begin() : result->body;
+        };
+        EXPECT_EQ(responses({{"type", "function"}, {"name", "get"}}), "get");
+        EXPECT_EQ(responses({{"type", "function"}, {"name", "set"}}), "set");
+        EXPECT_EQ(responses({{"type", "allowed_tools"},
+                             {"mode", "required"},
+                             {"tools", json::array({{{"type", "function"}, {"name", "get"}}})}}),
+                  "get");
+
+        const auto anthropic_tool = [](const char *name) {
+            const json function = flag_tool(name).at("function");
+            return json{{"name", name},
+                        {"description", function.at("description")},
+                        {"input_schema", function.at("parameters")}};
+        };
+        const auto messages = [&](const json &tool_choice) {
+            const json body = {{"model", "tiny"},
+                               {"max_tokens", 200},
+                               {"temperature", 0},
+                               {"messages", json::array({json{{"role", "user"}, {"content", "Hi"}},
+                                                         json{{"role", "assistant"}, {"content", "<tool_call>\n"}}})},
+                               {"tools", json::array({anthropic_tool("set"), anthropic_tool("get")})},
+                               {"tool_choice", tool_choice}};
+            const auto result = client.Post("/v1/messages", body.dump(), "application/json");
+            if (!result) {
+                return std::string("no response: ") + httplib::to_string(result.error());
+            }
+            if (result->status != 200) {
+                return std::to_string(result->status) + " " + result->body;
+            }
+            std::set<std::string> names;
+            for (const auto &block : json::parse(result->body).value("content", json::array())) {
+                if (block.value("type", std::string()) == "tool_use") {
+                    names.insert(block.value("name", std::string()));
+                }
+            }
+            return names.size() == 1 ? *names.begin() : result->body;
+        };
+        EXPECT_EQ(messages({{"type", "tool"}, {"name", "get"}}), "get");
+        EXPECT_EQ(messages({{"type", "tool"}, {"name", "set"}}), "set");
+    }
+    jllama_model_free(model);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+#endif
 
 #ifdef JLLAMA_HAS_NATIVE_SERVER
 TEST(CApiServerTools, TheShellToolAsksForADescriptionFirstAndRunsWithoutOne) {

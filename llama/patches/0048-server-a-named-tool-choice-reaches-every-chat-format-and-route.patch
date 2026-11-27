@@ -1,0 +1,107 @@
+server : a named tool choice reaches every chat format and every route
+
+llama.cpp reads a named tool_choice ({"type":"function","function":{"name":...}}) and OpenAI's
+allowed_tools since b12731 (#31564), but only the automatic parser restricts its grammar to the tools
+they name (common_chat_foreach_tool). The specialized parsers -- Qwen3-Coder, the Harmony formats,
+DeepSeek, Kimi, Gemma 4, Inkling and others in common/parsers/ -- build their grammar over every tool
+they are given, so a model could call a tool the request did not allow (measured with the Qwen3-Coder
+format: naming "set" called "get"). oaicompat_chat_params_parse() now offers only the allowed tools,
+which restricts the call for every format; the chat template then renders only those tools, as a
+model may not call the others anyway.
+
+Two routes named the tool in another shape and lost it:
+- /v1/responses passed the Responses shape on unchanged ({"type":"function","name":...},
+  {"type":"allowed_tools","mode":...,"tools":[{"type":"function","name":...}]}), which the chat parser
+  refuses (it reads "function" / "allowed_tools"): a named choice there was a 400. It is converted to
+  the chat shape now.
+- /v1/messages turned Anthropic's {"type":"tool","name":...} into "required", so the model could call
+  any tool, and dropped {"type":"none"}, so it could call one. They become the named function and
+  "none".
+
+The guards are in src/test/cpp/test_c_api.cpp: CApiChatTokens.ANamedToolChoiceHoldsForASpecializedParser
+(the Qwen3-Coder-style template, naming the second of two tools), and the attached server's /v1/responses
+and /v1/messages with a named tool (CApiChatTokens.TheServerRoutesHonourANamedToolChoice); each red
+without the patch.
+
+Drop-check on every bump: read oaicompat_chat_params_parse() in tools/server/server-common.cpp and the
+tool_choice handling of server_chat_convert_responses_to_chatcmpl() and server_chat_convert_anthropic_to_oai()
+in tools/server/server-chat.cpp -- once every parser honours the allowed tools and both routes convert their
+named shapes, drop the patch.
+
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1586,6 +1586,17 @@
+     inputs.messages               = common_chat_msgs_parse_oaicompat(messages);
+     inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
+     inputs.tool_choice            = common_chat_tool_choice_parse_oaicompat(tool_choice, inputs.tools);
++    if (!inputs.tool_choice.allowed.empty()) {
++        // [jllama] a named function or allowed_tools: only the tools it names are offered. The automatic parser's
++        // grammar admits only those (common_chat_foreach_tool), but the specialized parsers (Qwen3-Coder,
++        // the Harmony formats, ...) build theirs over every tool they are given, so a model could call one
++        // the request did not allow.
++        inputs.tools.erase(std::remove_if(inputs.tools.begin(), inputs.tools.end(),
++                                          [&](const common_chat_tool & tool) {
++                                              return !inputs.tool_choice.allows(tool.name);
++                                          }),
++                           inputs.tools.end());
++    }
+     inputs.json_schema            = json_schema.is_null() ? "" : json_schema.dump();
+     inputs.grammar                = grammar;
+     inputs.use_jinja              = opt.use_jinja;
+diff --git a/tools/server/server-chat.cpp b/tools/server/server-chat.cpp
+--- a/tools/server/server-chat.cpp
++++ b/tools/server/server-chat.cpp
+@@ -297,6 +297,34 @@
+         }
+     }
+ 
++    // [jllama] a named function and allowed_tools name their tools without the chat API's "function" object:
++    // {"type":"function","name":...}, {"type":"allowed_tools","mode":...,"tools":[{"type":"function","name":...}]}
++    if (response_body.contains("tool_choice") && response_body.at("tool_choice").is_object()) {
++        const json & tc   = response_body.at("tool_choice");
++        const std::string type = json_value(tc, "type", std::string());
++        if (type == "function" && !tc.contains("function")) {
++            chatcmpl_body["tool_choice"] = {
++                {"type",     "function"},
++                {"function", {{"name", json_value(tc, "name", std::string())}}},
++            };
++        } else if (type == "allowed_tools" && !tc.contains("allowed_tools")) {
++            json allowed_tools = json::array();
++            if (tc.contains("tools") && tc.at("tools").is_array()) {
++                for (const auto & tool : tc.at("tools")) {
++                    json entry = {{"type", json_value(tool, "type", std::string())}};
++                    if (tool.contains("name")) {
++                        entry["function"] = {{"name", tool.at("name")}};
++                    }
++                    allowed_tools.push_back(entry);
++                }
++            }
++            chatcmpl_body["tool_choice"] = {
++                {"type",          "allowed_tools"},
++                {"allowed_tools", {{"mode", tc.contains("mode") ? tc.at("mode") : json()}, {"tools", allowed_tools}}},
++            };
++        }
++    }
++
+     if (response_body.contains("max_output_tokens")) {
+         chatcmpl_body.erase("max_output_tokens");
+         chatcmpl_body["max_tokens"] = response_body["max_output_tokens"];
+@@ -624,8 +652,16 @@
+             std::string type = json_value(tc, "type", std::string());
+             if (type == "auto") {
+                 oai_body["tool_choice"] = "auto";
+-            } else if (type == "any" || type == "tool") {
++            } else if (type == "any") {
+                 oai_body["tool_choice"] = "required";
++            } else if (type == "tool") {
++                // [jllama] the named tool, as OpenAI's named function; "required" let the model call any tool
++                oai_body["tool_choice"] = {
++                    {"type",     "function"},
++                    {"function", {{"name", json_value(tc, "name", std::string())}}},
++                };
++            } else if (type == "none") {
++                oai_body["tool_choice"] = "none";
+             }
+         }
+     }
