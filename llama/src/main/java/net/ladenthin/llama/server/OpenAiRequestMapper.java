@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -105,6 +106,13 @@ final class OpenAiRequestMapper {
             JsonNode parallelToolCalls = request.path("parallel_tool_calls");
             if (parallelToolCalls.isBoolean()) {
                 params = params.withParallelToolCalls(parallelToolCalls.asBoolean());
+            }
+        } else {
+            // without tools a choice that names any names an unknown one, which llama.cpp refuses too
+            ToolChoiceRestriction restriction =
+                    ToolChoiceRestriction.parse(request.path("tool_choice"), ToolChoiceRestriction.Shape.CHAT);
+            if (restriction != null) {
+                restriction.checkAgainst(Collections.<String>emptyList());
             }
         }
 

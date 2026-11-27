@@ -564,6 +564,23 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void aToolChoiceThatNamesToolsIsRefusedWithoutFunctionTools() throws IOException {
+        // llama.cpp refuses a named choice no supplied tool matches; without tools the translation dropped it
+        for (String tools : new String[] {"", ",\"tools\":[]", ",\"tools\":[{\"type\":\"web_search\"}]"}) {
+            String request = "{\"model\":\"m\",\"input\":\"hi\"" + tools
+                    + ",\"tool_choice\":{\"type\":\"function\",\"name\":\"f\"}}";
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ResponsesApiSupport.toOpenAiChatRequest(read(request)),
+                    request);
+            assertThat(request, e.getMessage(), is("tool_choice names unknown tool 'f'"));
+        }
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(
+                read("{\"model\":\"m\",\"input\":\"hi\",\"tool_choice\":\"required\"}"));
+        assertThat(openAi.has("tool_choice"), is(false));
+    }
+
+    @Test
     public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
         // There is no response store: answering a turn that continues by previous_response_id without
         // its history would silently answer something else. upstream rejects it with a 400.

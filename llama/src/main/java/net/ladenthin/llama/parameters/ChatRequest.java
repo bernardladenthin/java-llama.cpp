@@ -65,7 +65,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <h2>Equality</h2>
  *
- * <p>{@code @EqualsAndHashCode} compares messages, tools, {@code toolChoice},
+ * <p>{@code @EqualsAndHashCode} compares messages, tools, {@code toolChoice}, {@code toolChoiceFunction},
  * {@code parallelToolCalls}, and {@code maxToolRounds} by value. The {@code paramsCustomizer}
  * {@link UnaryOperator} is <b>excluded</b> from equality: lambdas have
  * compiler-synthesised identity equality which is not value-shaped, so
@@ -101,12 +101,15 @@ public final class ChatRequest {
             Collections.<ToolDefinition>emptyList(),
             null,
             null,
+            null,
             DEFAULT_MAX_TOOL_ROUNDS,
             null);
 
     private final List<ChatMessage> messages;
     private final List<ToolDefinition> tools;
     private final @Nullable String toolChoice;
+    // the name of the one function the model must call; replaces the toolChoice hint when set
+    private final @Nullable String toolChoiceFunction;
     private final @Nullable Boolean parallelToolCalls;
     private final int maxToolRounds;
 
@@ -125,12 +128,14 @@ public final class ChatRequest {
             List<ChatMessage> messages,
             List<ToolDefinition> tools,
             @Nullable String toolChoice,
+            @Nullable String toolChoiceFunction,
             @Nullable Boolean parallelToolCalls,
             int maxToolRounds,
             @Nullable UnaryOperator<InferenceParameters> paramsCustomizer) {
         this.messages = messages;
         this.tools = tools;
         this.toolChoice = toolChoice;
+        this.toolChoiceFunction = toolChoiceFunction;
         this.parallelToolCalls = parallelToolCalls;
         this.maxToolRounds = maxToolRounds;
         this.paramsCustomizer = paramsCustomizer;
@@ -165,6 +170,7 @@ public final class ChatRequest {
                 Collections.unmodifiableList(next),
                 tools,
                 toolChoice,
+                toolChoiceFunction,
                 parallelToolCalls,
                 maxToolRounds,
                 paramsCustomizer);
@@ -205,6 +211,7 @@ public final class ChatRequest {
                 messages,
                 Collections.unmodifiableList(next),
                 toolChoice,
+                toolChoiceFunction,
                 parallelToolCalls,
                 maxToolRounds,
                 paramsCustomizer);
@@ -222,7 +229,28 @@ public final class ChatRequest {
      * @return a new request with the hint replaced; this request is unchanged
      */
     public ChatRequest withToolChoice(@Nullable String newToolChoice) {
-        return new ChatRequest(messages, tools, newToolChoice, parallelToolCalls, maxToolRounds, paramsCustomizer);
+        return new ChatRequest(
+                messages, tools, newToolChoice, null, parallelToolCalls, maxToolRounds, paramsCustomizer);
+    }
+
+    /**
+     * Returns a new request whose {@code tool_choice} names one function the model must call
+     * ({@code {"type":"function","function":{"name":...}}}); it replaces the {@link #withToolChoice(String)}
+     * hint, as that one replaces it. llama.cpp offers the model that tool alone and refuses the request when
+     * no supplied tool, or more than one, has the name. In {@link
+     * net.ladenthin.llama.LlamaModel#chatWithTools(ChatRequest, java.util.Map)} it holds for the first round
+     * only, like the hint {@code required}: forced in every round, the model could never answer.
+     *
+     * @param functionName the name of the tool to call, or {@code null} to clear
+     * @return a new request with the choice replaced; this request is unchanged
+     * @throws IllegalArgumentException if {@code functionName} is empty
+     */
+    public ChatRequest withToolChoiceFunction(@Nullable String functionName) {
+        if (functionName != null && functionName.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "tool_choice of type 'function' needs the function's name (got '" + functionName + "')");
+        }
+        return new ChatRequest(messages, tools, null, functionName, parallelToolCalls, maxToolRounds, paramsCustomizer);
     }
 
     /**
@@ -233,7 +261,8 @@ public final class ChatRequest {
      * @return a new request with the hint replaced; this request is unchanged
      */
     public ChatRequest withParallelToolCalls(@Nullable Boolean newParallelToolCalls) {
-        return new ChatRequest(messages, tools, toolChoice, newParallelToolCalls, maxToolRounds, paramsCustomizer);
+        return new ChatRequest(
+                messages, tools, toolChoice, toolChoiceFunction, newParallelToolCalls, maxToolRounds, paramsCustomizer);
     }
 
     /**
@@ -247,7 +276,8 @@ public final class ChatRequest {
         if (newMaxToolRounds <= 0) {
             throw new IllegalArgumentException("maxToolRounds must be > 0 but was " + newMaxToolRounds);
         }
-        return new ChatRequest(messages, tools, toolChoice, parallelToolCalls, newMaxToolRounds, paramsCustomizer);
+        return new ChatRequest(
+                messages, tools, toolChoice, toolChoiceFunction, parallelToolCalls, newMaxToolRounds, paramsCustomizer);
     }
 
     /**
@@ -257,7 +287,8 @@ public final class ChatRequest {
      * @return a new request with the customiser replaced; this request is unchanged
      */
     public ChatRequest withInferenceCustomizer(@Nullable UnaryOperator<InferenceParameters> newCustomizer) {
-        return new ChatRequest(messages, tools, toolChoice, parallelToolCalls, maxToolRounds, newCustomizer);
+        return new ChatRequest(
+                messages, tools, toolChoice, toolChoiceFunction, parallelToolCalls, maxToolRounds, newCustomizer);
     }
 
     // -----------------------------------------------------------------------
@@ -289,6 +320,16 @@ public final class ChatRequest {
      */
     public Optional<String> getToolChoice() {
         return Optional.ofNullable(toolChoice);
+    }
+
+    /**
+     * Named-function tool choice accessor.
+     *
+     * @return the name of the function the model must call ({@link #withToolChoiceFunction(String)}), or
+     *     {@link Optional#empty()} when unset
+     */
+    public Optional<String> getToolChoiceFunction() {
+        return Optional.ofNullable(toolChoiceFunction);
     }
 
     /**

@@ -934,6 +934,60 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void aNamedFunctionIsTheChatApisToolChoiceObject() {
+        // llama.cpp reads the object since b12731 (#31564); the name is JSON-escaped
+        InferenceParameters params = InferenceParameters.empty().withToolChoiceFunction("get_\"time\"");
+        assertThat(
+                params.parameters.get("tool_choice"),
+                is("{\"type\":\"function\",\"function\":{\"name\":\"get_\\\"time\\\"\"}}"));
+        // it replaces the hint, and the hint replaces it
+        assertThat(
+                InferenceParameters.empty()
+                        .withToolChoice("auto")
+                        .withToolChoiceFunction("f")
+                        .parameters
+                        .get("tool_choice"),
+                is("{\"type\":\"function\",\"function\":{\"name\":\"f\"}}"));
+        assertThat(params.withToolChoice("none").parameters.get("tool_choice"), is("\"none\""));
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withToolChoiceFunction(""));
+        assertThat(e.getMessage(), is("tool_choice of type 'function' needs the function's name (got '')"));
+    }
+
+    @Test
+    public void allowedToolsIsTheChatApisAllowedToolsObject() {
+        assertThat(
+                InferenceParameters.empty()
+                        .withAllowedTools("required", "f", "g")
+                        .parameters
+                        .get("tool_choice"),
+                is("{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"required\",\"tools\":["
+                        + "{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
+                        + "{\"type\":\"function\",\"function\":{\"name\":\"g\"}}]}}"));
+        // an empty auto set is upstream's "none"; it is sent as given
+        assertThat(
+                InferenceParameters.empty().withAllowedTools("auto").parameters.get("tool_choice"),
+                is("{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"auto\",\"tools\":[]}}"));
+        String[][] refused = {
+            {"none", "f", "allowed_tools mode must be auto or required (got none)"},
+            {
+                "required",
+                null,
+                "Required allowed_tools must contain at least one function (got mode required and no names)"
+            },
+            {"auto", "", "allowed_tools entries need the function's name (got [])"},
+        };
+        for (String[] c : refused) {
+            String[] names = c[1] == null ? new String[0] : new String[] {c[1]};
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> InferenceParameters.empty().withAllowedTools(c[0], names));
+            assertThat(e.getMessage(), is(c[2]));
+        }
+    }
+
+    @Test
     public void testToolChoiceNullClearsAnEarlierValue() {
         InferenceParameters params =
                 InferenceParameters.empty().withToolChoice("x").withToolChoice(null);

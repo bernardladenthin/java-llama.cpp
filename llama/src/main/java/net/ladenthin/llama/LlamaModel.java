@@ -768,8 +768,11 @@ public class LlamaModel implements AutoCloseable {
         Optional<String> toolsJsonOpt = request.buildToolsJson();
         if (toolsJsonOpt.isPresent()) {
             params = params.withToolsJson(toolsJsonOpt.get());
+            Optional<String> toolChoiceFunction = request.getToolChoiceFunction();
             Optional<String> toolChoice = request.getToolChoice();
-            if (toolChoice.isPresent()) {
+            if (toolChoiceFunction.isPresent()) {
+                params = params.withToolChoiceFunction(toolChoiceFunction.get());
+            } else if (toolChoice.isPresent()) {
                 params = params.withToolChoice(toolChoice.get());
             }
             Optional<Boolean> parallelToolCalls = request.getParallelToolCalls();
@@ -792,6 +795,12 @@ public class LlamaModel implements AutoCloseable {
      * Handler exceptions are caught and reported back to the model as
      * {@code {"error":"..."}} tool results so the loop can continue. Unknown tool names
      * produce {@code {"error":"unknown tool: <name>"}}.
+     * </p>
+     * <p>
+     * A tool choice that forces a call -- {@code required} or a named function
+     * ({@link net.ladenthin.llama.parameters.ChatRequest#withToolChoiceFunction(String)}) -- holds for the first
+     * round; the rounds after it run with {@code auto}, since a call forced in every round would leave the model
+     * no turn to answer the tool results.
      * </p>
      *
      * @param request  the typed request; must declare tools that the model can call

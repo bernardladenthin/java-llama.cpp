@@ -179,6 +179,13 @@ final class ResponsesApiSupport {
                         "parallel_tool_calls",
                         request.path("parallel_tool_calls").asBoolean());
             }
+        } else {
+            // without tools a choice that names any names an unknown one, which llama.cpp refuses too
+            ToolChoiceRestriction restriction =
+                    ToolChoiceRestriction.parse(request.path("tool_choice"), ToolChoiceRestriction.Shape.RESPONSES);
+            if (restriction != null) {
+                restriction.checkAgainst(Collections.<String>emptyList());
+            }
         }
 
         copyNumber(request, "temperature", openAi, "temperature");

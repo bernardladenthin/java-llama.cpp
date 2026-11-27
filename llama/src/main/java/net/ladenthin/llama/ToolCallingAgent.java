@@ -38,13 +38,24 @@ final class ToolCallingAgent {
             }
 
             ChatMessage assistant = assistantOpt.get();
-            current = current.appendMessage(assistant);
+            current = afterTheFirstRound(current).appendMessage(assistant);
             for (ToolCall call : assistant.getToolCalls()) {
                 current = current.appendMessage(ChatMessage.toolResult(call.getId(), invoke(call, handlers)));
             }
             last = chatCall.apply(current);
         }
         return last;
+    }
+
+    /**
+     * The request of every round after the first: a choice that forces a call -- {@code required} or a
+     * named function -- becomes {@code auto}, since forced in every round the model could never answer
+     * the tool results, and the loop ran to its cap with a call as its last response.
+     */
+    static ChatRequest afterTheFirstRound(ChatRequest request) {
+        boolean forced = request.getToolChoiceFunction().isPresent()
+                || "required".equals(request.getToolChoice().orElse(null));
+        return forced ? request.withToolChoice("auto") : request;
     }
 
     private static String invoke(ToolCall call, Map<String, ToolHandler> handlers) {

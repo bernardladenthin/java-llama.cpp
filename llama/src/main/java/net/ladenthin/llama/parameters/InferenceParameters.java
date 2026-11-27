@@ -4,6 +4,7 @@
 
 package net.ladenthin.llama.parameters;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -771,6 +772,67 @@ public final class InferenceParameters extends JsonParameters {
      */
     public InferenceParameters withToolChoice(@Nullable String toolChoice) {
         return withOptionalJson(RequestField.TOOL_CHOICE, toolChoice);
+    }
+
+    /**
+     * Returns a new request whose {@code tool_choice} names one function: the model must call it
+     * ({@code {"type":"function","function":{"name":...}}}). llama.cpp offers the model that tool alone
+     * and refuses the request when no supplied tool, or more than one, has the name. A chat field like
+     * {@link #withToolChoice(String)}, which it replaces.
+     *
+     * @param functionName the name of the tool to call
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code functionName} is empty
+     */
+    public InferenceParameters withToolChoiceFunction(String functionName) {
+        if (functionName.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "tool_choice of type 'function' needs the function's name (got '" + functionName + "')");
+        }
+        return withRaw(
+                RequestField.TOOL_CHOICE,
+                "{\"type\":\"function\",\"function\":{\"name\":" + toJsonString(functionName) + "}}");
+    }
+
+    /**
+     * Returns a new request whose {@code tool_choice} is OpenAI's {@code allowed_tools}: the model may call
+     * only the named tools, and with mode {@code required} must call one of them
+     * ({@code {"type":"allowed_tools","allowed_tools":{"mode":...,"tools":[...]}}}). llama.cpp offers the
+     * model those tools alone, refuses a name no supplied tool (or more than one) has, and treats an empty
+     * list in mode {@code auto} as {@code none}. A chat field like {@link #withToolChoice(String)}, which it
+     * replaces.
+     *
+     * @param mode {@code "auto"} or {@code "required"}
+     * @param functionNames the names of the tools the model may call
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException for another mode, an empty name, or mode {@code required} without a
+     *     name
+     */
+    public InferenceParameters withAllowedTools(String mode, String... functionNames) {
+        if (!"auto".equals(mode) && !"required".equals(mode)) {
+            throw new IllegalArgumentException("allowed_tools mode must be auto or required (got " + mode + ")");
+        }
+        if (functionNames.length == 0 && "required".equals(mode)) {
+            throw new IllegalArgumentException(
+                    "Required allowed_tools must contain at least one function (got mode " + mode + " and no names)");
+        }
+        StringBuilder tools = new StringBuilder();
+        for (String name : functionNames) {
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "allowed_tools entries need the function's name (got " + Arrays.toString(functionNames) + ")");
+            }
+            if (tools.length() > 0) {
+                tools.append(',');
+            }
+            tools.append("{\"type\":\"function\",\"function\":{\"name\":")
+                    .append(toJsonString(name))
+                    .append("}}");
+        }
+        return withRaw(
+                RequestField.TOOL_CHOICE,
+                "{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":" + toJsonString(mode) + ",\"tools\":[" + tools
+                        + "]}}");
     }
 
     /**

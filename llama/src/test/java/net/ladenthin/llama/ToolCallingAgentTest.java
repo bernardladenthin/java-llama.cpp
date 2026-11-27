@@ -63,6 +63,37 @@ class ToolCallingAgentTest {
     }
 
     @Test
+    void aChoiceThatForcesACallHoldsForTheFirstRoundOnly() {
+        // forced in every round, the model could never answer the tool result: the loop ran to its cap
+        ToolCall call = new ToolCall("call-1", "weather", "{}");
+        Map<String, ToolHandler> handlers = Collections.<String, ToolHandler>singletonMap("weather", args -> "{}");
+        ChatRequest[] forcing = {
+            ChatRequest.empty().appendMessage("user", "Weather?").withToolChoice("required"),
+            ChatRequest.empty().appendMessage("user", "Weather?").withToolChoiceFunction("weather"),
+        };
+        for (ChatRequest first : forcing) {
+            List<ChatRequest> requests = new ArrayList<ChatRequest>();
+            List<ChatResponse> responses =
+                    new ArrayList<ChatResponse>(Arrays.asList(toolResponse(call), textResponse("It is sunny.")));
+            ToolCallingAgent.run(first.withMaxToolRounds(3), handlers, request -> {
+                requests.add(request);
+                return responses.remove(0);
+            });
+            assertThat(requests, hasSize(2));
+            assertThat(requests.get(0).getToolChoice(), is(first.getToolChoice()));
+            assertThat(requests.get(0).getToolChoiceFunction(), is(first.getToolChoiceFunction()));
+            assertThat(requests.get(1).getToolChoice().orElseThrow(), is("auto"));
+            assertThat(requests.get(1).getToolChoiceFunction().isPresent(), is(false));
+        }
+        // a choice that forces nothing stays
+        for (String hint : new String[] {"auto", "none"}) {
+            ChatRequest request = ChatRequest.empty().withToolChoice(hint);
+            assertThat(ToolCallingAgent.afterTheFirstRound(request), is(request));
+        }
+        assertThat(ToolCallingAgent.afterTheFirstRound(ChatRequest.empty()), is(ChatRequest.empty()));
+    }
+
+    @Test
     void invokesEveryToolCallInOneAssistantTurn() {
         ToolCall first = new ToolCall("call-1", "first", "{}");
         ToolCall second = new ToolCall("call-2", "second", "{}");

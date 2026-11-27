@@ -53,6 +53,27 @@ class ChatRequestTest {
         }
 
         @Test
+        void aNamedFunctionReplacesTheHintAndTheHintReplacesIt() {
+            ChatRequest named = ChatRequest.empty().withToolChoice("required").withToolChoiceFunction("f");
+            assertThat(named.getToolChoiceFunction().orElseThrow(), is("f"));
+            assertThat("the hint is replaced", named.getToolChoice().isPresent(), is(false));
+            ChatRequest hinted = named.withToolChoice("auto");
+            assertThat(hinted.getToolChoice().orElseThrow(), is("auto"));
+            assertThat("the name is replaced", hinted.getToolChoiceFunction().isPresent(), is(false));
+            assertThat(
+                    named.withToolChoiceFunction(null).getToolChoiceFunction().isPresent(), is(false));
+            // the name survives the other withers and counts for equality
+            ChatRequest derived =
+                    named.appendMessage("user", "hi").withMaxToolRounds(3).withParallelToolCalls(true);
+            assertThat(derived.getToolChoiceFunction().orElseThrow(), is("f"));
+            assertThat(named, is(ChatRequest.empty().withToolChoiceFunction("f")));
+            assertThat(named, is(not(ChatRequest.empty().withToolChoiceFunction("g"))));
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> ChatRequest.empty().withToolChoiceFunction(""));
+            assertThat(e.getMessage(), is("tool_choice of type 'function' needs the function's name (got '')"));
+        }
+
+        @Test
         void withToolChoiceReturnsNewInstance() {
             ChatRequest original = ChatRequest.empty();
             ChatRequest derived = original.withToolChoice("auto");

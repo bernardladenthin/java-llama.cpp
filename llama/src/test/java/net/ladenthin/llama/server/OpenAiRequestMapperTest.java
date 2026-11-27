@@ -513,6 +513,39 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void aToolChoiceThatNamesToolsIsRefusedWithoutTools() throws IOException {
+        // llama.cpp refuses a named choice no supplied tool matches; without tools the mapper dropped it
+        String[][] cases = {
+            {"{\"type\":\"function\",\"function\":{\"name\":\"f\"}}", "tool_choice names unknown tool 'f'"},
+            {
+                "{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"auto\",\"tools\":"
+                        + "[{\"type\":\"function\",\"function\":{\"name\":\"g\"}}]}}",
+                "tool_choice names unknown tool 'g'"
+            },
+            {"{\"type\":\"custom\"}", "tool_choice type 'custom' is not supported"},
+        };
+        for (String[] c : cases) {
+            for (String tools : new String[] {"", ",\"tools\":[]"}) {
+                String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]" + tools + ",\"tool_choice\":"
+                        + c[0] + "}";
+                IllegalArgumentException e =
+                        assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(request), request);
+                assertThat(request, e.getMessage(), containsString(c[1]));
+            }
+        }
+        // what names no tool goes on without one, as before
+        for (String choice : new String[] {
+            "\"required\"",
+            "\"none\"",
+            "{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"auto\",\"tools\":[]}}"
+        }) {
+            JsonNode out = mapAndSerialize(
+                    "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"tool_choice\":" + choice + "}");
+            assertThat(choice, out.has("tool_choice"), is(false));
+        }
+    }
+
+    @Test
     public void aToolChoiceThatIsNeitherAStringNorAnObjectIsRefused() {
         for (String value : new String[] {"3", "true", "[\"auto\"]"}) {
             String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"

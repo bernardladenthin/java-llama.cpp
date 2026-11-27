@@ -100,6 +100,30 @@ public class ToolCallingIntegrationTest {
     }
 
     @Test
+    public void aNamedFunctionIsTheToolTheModelCalls() {
+        // b12731 (#31564) with patches/0048: a choice naming one of two tools of the same shape decides
+        // which one the model calls, for every chat format (the specialized parsers included)
+        ToolDefinition other = new ToolDefinition("other", "", TEST_TOOL.getParametersSchemaJson());
+        for (String name : new String[] {"test", "other"}) {
+            ChatRequest request = ChatRequest.empty()
+                    .appendMessage("system", "You are a coding assistant.")
+                    .appendMessage("user", "Call a tool with success set to true.")
+                    .appendTool(TEST_TOOL)
+                    .appendTool(other)
+                    .withToolChoiceFunction(name)
+                    .withParallelToolCalls(Boolean.FALSE)
+                    .withInferenceCustomizer(params -> params.withNPredict(512)
+                            .withTemperature(0.0f)
+                            .withTopK(1)
+                            .withTopP(1.0f));
+            ChatResponse response = model.chat(request);
+            List<ToolCall> calls = response.getFirstMessage().orElseThrow().getToolCalls();
+            assertThat("tool calls of " + response, calls, hasSize(1));
+            assertThat(calls.get(0).getName(), is(name));
+        }
+    }
+
+    @Test
     public void requiredToolCallIsParsedFromBlockingResponse() throws IOException {
         ChatResponse response = model.chat(toolRequest());
 
