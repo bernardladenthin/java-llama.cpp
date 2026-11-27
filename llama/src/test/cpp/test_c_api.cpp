@@ -2634,6 +2634,30 @@ TEST(CApiStatic, ASchemaWhoseBoundsAdmitNoValueIsRefused) {
     }
 }
 
+TEST(CApiStatic, ABooleanTrueSchemaIsAnyValueAndFalseIsRefused) {
+    // b12729 (#32908): `true` is the JSON schema every value satisfies, as {} is -- clients such as
+    // RAGFlow send it for a property of any type. It converts to the grammar of {}, at the top level
+    // and as a property; `false`, which no value satisfies, is refused by name (the grammar has no
+    // way to say "nothing"). Until b12728 both were "schema must be an object".
+    const auto convert = [](const char *schema) {
+        Owned grammar;
+        EXPECT_EQ(jllama_json_schema_to_grammar(schema, &grammar.s), JLLAMA_STATUS_OK)
+            << schema << ": " << jllama_last_error();
+        return grammar.str();
+    };
+    EXPECT_EQ(convert("true"), convert("{}"));
+    EXPECT_EQ(convert(R"({"type":"object","properties":{"a":true},"required":["a"]})"),
+              convert(R"({"type":"object","properties":{"a":{}},"required":["a"]})"));
+    EXPECT_NE(convert(R"({"type":"object","properties":{"a":true},"required":["a"]})"),
+              convert(R"({"type":"object","properties":{"a":{"type":"integer"}},"required":["a"]})"));
+    for (const char *schema : {"false", R"({"type":"object","properties":{"a":false},"required":["a"]})"}) {
+        Owned grammar;
+        EXPECT_EQ(jllama_json_schema_to_grammar(schema, &grammar.s), JLLAMA_STATUS_ERROR) << schema;
+        EXPECT_EQ(grammar.s, nullptr) << schema;
+        EXPECT_NE(std::string(jllama_last_error()).find("false schema"), std::string::npos) << jllama_last_error();
+    }
+}
+
 // patches/0022's switch through the C API: it reaches the CPU backend's entry points, round-trips,
 // and refuses a null out-pointer. What the two paths compute is test_moe_repack.cpp's business.
 TEST(CApiStatic, CpuMoeBatchedSwitchRoundTrips) {
