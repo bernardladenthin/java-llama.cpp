@@ -202,7 +202,8 @@ struct tiny_model_spec {
     tokenizer_kind tokenizer = tokenizer_kind::BYTES;
     // tokenizer.ggml.metaspace.prepend_scheme ("always", "first", "never"), written when not empty: since
     // b12747 an SPM vocabulary with "first" puts its space piece before the first text only, not after a
-    // special token, and takes it off the first piece it detokenizes.
+    // special token, and takes it off the first piece it detokenizes; since b12751 a BPE vocabulary with
+    // "always" starts every word with U+2581.
     std::string metaspace_prepend_scheme = {};
     // The BPE kinds (BYTES, BPE_MERGES): tokenizer.ggml.pre, which selects llama.cpp's pre-tokenizer
     // and its flags ("inkling2": GPT-4o's regex, no BOS, ignore_merges since b12641), and normal tokens
@@ -598,6 +599,9 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     } else {
         gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
         gguf_set_val_str(g, "tokenizer.ggml.pre", spec.pre_tokenizer.c_str());
+        if (!spec.metaspace_prepend_scheme.empty()) {
+            gguf_set_val_str(g, "tokenizer.ggml.metaspace.prepend_scheme", spec.metaspace_prepend_scheme.c_str());
+        }
         gguf_set_arr_str(g, "tokenizer.ggml.merges", merge_ptrs.data(), merge_ptrs.size());
         gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
         gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", spec.eos);

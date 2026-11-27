@@ -13391,6 +13391,43 @@ TEST(CApiTokenizers, ASentencePieceVocabularyWithPrependSchemeFirstPutsItsSpaceB
     EXPECT_EQ(first.second, " hello world");
 }
 
+TEST(CApiTokenizers, ABpeVocabularyWithPrependSchemeAlwaysStartsEveryWordWithTheMetaspace) {
+    // b12751 (#33038): a BPE vocabulary with tokenizer.ggml.metaspace.prepend_scheme "always" loads and
+    // puts U+2581 in front of every word, the Metaspace pre-tokenizer only mmBERT had before; up to b12750
+    // the load was refused ("metaspace prepend_scheme 'always' is not supported for BPE vocab"). The
+    // metaspace is a token of such a vocabulary, as in the models that use this pre-tokenizer (in the
+    // byte vocabulary alone it would be dropped: the bytes of its raw UTF-8 are no tokens there).
+    const std::string metaspace = "\xE2\x96\x81";
+    const auto spec_with = [&](const char *prefix, const std::string &scheme) {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.unmerged_tokens = {metaspace};
+        spec.metaspace_prepend_scheme = scheme;
+        return spec;
+    };
+    const std::string plain_path = write_tiny_llama_gguf(spec_with("jllama-bpe-metaspace-plain", ""));
+    const std::string always_path = write_tiny_llama_gguf(spec_with("jllama-bpe-metaspace-always", "always"));
+    ASSERT_FALSE(plain_path.empty());
+    ASSERT_FALSE(always_path.empty());
+    jllama_model *plain = load_tiny(plain_path, {});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    jllama_model *always = load_tiny(always_path, {});
+    ASSERT_NE(always, nullptr) << jllama_last_error();
+    const std::vector<int> word = token_ids(plain, "hello");
+    const std::vector<int> prefixed = token_ids(always, "hello");
+    ASSERT_EQ(prefixed.size(), word.size() + 1) << "no metaspace in front of the word";
+    EXPECT_EQ(std::vector<int>(prefixed.begin() + 1, prefixed.end()), word);
+    EXPECT_GE(prefixed.front(), 256) << "the metaspace token, after the byte tokens";
+    // every word: "hi you" is two words, each with its metaspace
+    const std::vector<int> two = token_ids(always, "hi you");
+    EXPECT_EQ(std::count(two.begin(), two.end(), prefixed.front()), 2);
+    jllama_model_free(plain);
+    jllama_model_free(always);
+    std::error_code ec;
+    std::filesystem::remove(plain_path, ec);
+    std::filesystem::remove(always_path, ec);
+}
+
 TEST(CApiTokenizers, ASentencePieceVocabularyWithBytePiecesSpellsOutWhatItHasNoPieceFor) {
     tiny_model_spec plain;
     plain.prefix = "jllama-spm-plain";
