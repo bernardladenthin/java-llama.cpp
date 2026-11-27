@@ -20,6 +20,7 @@
 #include <random>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace jllama_test {
@@ -235,6 +236,10 @@ struct tiny_model_spec {
         return spec;
     }
 
+    // Further metadata of the architecture, written as <arch>.<key>: a number (F32) or a string.
+    std::vector<std::pair<std::string, float>> extra_f32 = {};
+    std::vector<std::pair<std::string, std::string>> extra_str = {};
+
     // A sliding-window decoder, for which the server writes context checkpoints.
     static tiny_model_spec swa(int window = 16, const std::string &prefix = "jllama-swa") {
         tiny_model_spec spec;
@@ -394,6 +399,12 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
     gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), spec.n_head_kv);
     gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
     gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), spec.head_dim);
+    for (const auto &kv : spec.extra_f32) {
+        gguf_set_val_f32(g, (a + "." + kv.first).c_str(), kv.second);
+    }
+    for (const auto &kv : spec.extra_str) {
+        gguf_set_val_str(g, (a + "." + kv.first).c_str(), kv.second.c_str());
+    }
     if (qwen3vl || qwen35) {
         // half the head in four sections, as the real 24/20/20/0 of a head of 128
         const int32_t sections[4] = {spec.head_dim / 4, spec.head_dim / 8, spec.head_dim / 8, 0};

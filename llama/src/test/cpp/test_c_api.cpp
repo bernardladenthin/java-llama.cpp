@@ -5340,6 +5340,51 @@ TEST(CApiDomynEdge, ARotationWiderThanTheSlidingWindowHeadIsRefusedAndTheProcess
     std::filesystem::remove(good, ignored);
 }
 
+TEST(CApiYarn, ALlamaModelReadsTheYarnParametersOfItsFile) {
+    // b12746 (#33032): every architecture reads the YaRN parameters of its GGUF (rope.scaling.yarn_ext_factor,
+    // yarn_attn_factor, yarn_beta_fast, yarn_beta_slow); before, only some of them did, and a llama model
+    // ignored them. The random llama model with YaRN scaling (factor 4 over an original context of 16)
+    // and a prompt past that context: the file's extrapolation factor 0 changes the probabilities, and
+    // --yarn-ext-factor 1, the default, gives back those of the file without the key.
+    const auto write = [](const char *prefix, bool with_key) {
+        tiny_model_spec spec;
+        spec.prefix = prefix;
+        spec.n_ctx_train = 256;
+        spec.extra_str = {{"rope.scaling.type", "yarn"}};
+        spec.extra_f32 = {{"rope.scaling.factor", 4.0f}};
+        if (with_key) {
+            spec.extra_f32.push_back({"rope.scaling.yarn_ext_factor", 0.0f});
+        }
+        return write_tiny_llama_gguf(spec);
+    };
+    const std::string plain_path = write("jllama-c-api-yarn", false);
+    const std::string keyed_path = write("jllama-c-api-yarn-ext", true);
+    ASSERT_FALSE(plain_path.empty());
+    ASSERT_FALSE(keyed_path.empty());
+    const std::string prompt = "The quick brown fox jumps over the lazy dog, again and again and again.";
+    const auto probs = [&](const std::string &path, const std::vector<std::string> &extra) {
+        std::vector<std::string> args = {"-c", "256", "--yarn-orig-ctx", "16"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        jllama_model *model = load_tiny(path, args);
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return std::vector<double>();
+        }
+        const std::vector<double> out = domyn_first_logprobs(model, prompt);
+        jllama_model_free(model);
+        return out;
+    };
+    const std::vector<double> plain = probs(plain_path, {});
+    const std::vector<double> keyed = probs(keyed_path, {});
+    const std::vector<double> overridden = probs(keyed_path, {"--yarn-ext-factor", "1"});
+    ASSERT_EQ(plain.size(), 3u);
+    EXPECT_GT(max_difference(plain, keyed), 1e-3) << "the file's yarn_ext_factor had no effect";
+    EXPECT_LT(max_difference(plain, overridden), 1e-5) << "--yarn-ext-factor did not override the file";
+    std::error_code ignored;
+    std::filesystem::remove(plain_path, ignored);
+    std::filesystem::remove(keyed_path, ignored);
+}
+
 TEST(CApiThreads, ALongPromptsEmbeddingLookupGivesTheSameAnswerOnOneAndOnFourThreads) {
     // Since b12517 (#32514) the CPU backend splits a GET_ROWS of at least 262144 elements over every
     // thread (it was one). The token embedding lookup of 2100 tokens of width 128 in one batch is
