@@ -1449,8 +1449,8 @@ supported op it does not differentiate (the softmax mask, ROPE's frequency facto
 llama_opt_epoch builds that graph for every training step and returns nothing, so fine-tuning a model
 whose graph holds such an op ended the process that ran it -- measured over the test generator's
 architectures: a mixture of experts (MUL_MAT_ID; Qwen3-Next and ZAYA1 too), a recurrent model
-(SSM_SCAN), Gemma 4 (the unary TANH of its soft-capping) and Cohere2 (NORM). For an embedding host that
-is the JVM.
+(SSM_SCAN), Gemma 4 (the unary TANH of its soft-capping; since b12768, which gives TANH a backward pass,
+the GEGLU of its feed-forward) and Cohere2 (NORM). For an embedding host that is the JVM.
 
 llama_context::opt_epoch_iter now walks the forward graph with the backward pass's own rules before it
 hands the graph to ggml_opt: which nodes need a gradient (ggml_build_backward_expand's first loop, its
@@ -1464,8 +1464,8 @@ MUL_MAT's broadcast over the fourth dimension.
 
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
-ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's)
-would otherwise be refused here although ggml could train it.
+ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
+b12768 TANH's) would otherwise be refused here although ggml could train it.
 
 The guards are in src/test/cpp/test_c_api.cpp:
 CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six

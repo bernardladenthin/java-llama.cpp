@@ -14922,7 +14922,8 @@ TEST(CApiTrainer, AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAnd
     } rows[] = {
         {"moe", moe, "MUL_MAT_ID"},
         {"mamba", tiny_model_spec::recurrent("jllama-c-api-train-mamba"), "SSM_SCAN"},
-        {"gemma4", tiny_model_spec::gemma4(8, "jllama-c-api-train-gemma4"), "TANH"},
+        // the TANH of its soft-capping until b12768, which gives TANH a backward pass
+        {"gemma4", tiny_model_spec::gemma4(8, "jllama-c-api-train-gemma4"), "GEGLU"},
         {"qwen3next", tiny_model_spec::qwen3next("jllama-c-api-train-qwen3next"), "MUL_MAT_ID"},
         {"zaya1", tiny_model_spec::zaya1("jllama-c-api-train-zaya1"), "MUL_MAT_ID"},
         {"cohere2", tiny_model_spec::swa(16, "jllama-c-api-train-cohere2"), "NORM"},
