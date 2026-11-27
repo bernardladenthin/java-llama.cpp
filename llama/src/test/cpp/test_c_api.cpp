@@ -4948,6 +4948,67 @@ void expect_dspark_drafts_and_answers_the_same(bool markov_context, const std::s
 }
 } // namespace
 
+TEST(CApiInkling2, ADFlash2DraftDraftsWithItsSelectorAndAnswersWhatTheTargetAnswersAlone) {
+    // Inkling-2-Mini's DFlash2 draft (b12785, #33073; Java SpecType.DRAFT_DFLASH2): the same draft layers
+    // with dynamic convolutions after the attention and the feed-forward, and a selector instead of the
+    // Markov head, which scores the top-4 candidates of every block position with their transitions; the
+    // speculative driver walks that lattice. Without a type the models handler reads draft-dflash from the
+    // architecture and the loaded draft's head picks the DFlash2 driver; draft-dflash2 names it, and
+    // draft-dspark does not match the draft: the server names the right type and runs without a draft. With and without
+    // selector_softcap_after_correction (the final logit softcapping on the selector scores instead of the
+    // logits, b12785) the draft drafts, and the target checks every draft, so the greedy answer is the
+    // target's alone.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dflash2-target", 8, 160);
+    ASSERT_FALSE(path.empty());
+    jllama_model *alone = load_tiny(path, {});
+    ASSERT_NE(alone, nullptr) << jllama_last_error();
+    const std::string expected = greedy_answer(alone, 48);
+    jllama_model_free(alone);
+    ASSERT_FALSE(expected.empty());
+    for (const bool softcap_post : {false, true}) {
+        SCOPED_TRACE(softcap_post ? "softcap after correction" : "softcap on the logits");
+        const std::string draft =
+            write_tiny_inkling2_dspark_gguf("jllama-c-api-inkling2-dflash2", 160, 8, false, false, true, softcap_post);
+        ASSERT_FALSE(draft.empty());
+        for (const char *type : {"", "draft-dflash2", "draft-dflash"}) {
+            SCOPED_TRACE(std::string("--spec-type ") + type);
+            // -lv 4: llama.cpp's own INFO lines, which name the DFlash2 head the loader found
+            std::vector<std::string> extra = {"--spec-draft-model", draft, "--spec-draft-ngl", "0", "-lv", "4"};
+            if (*type != 0) {
+                extra.insert(extra.end(), {"--spec-type", type});
+            }
+            DsparkLog log;
+            jllama_model *model = load_with_log(path, extra, log);
+            ASSERT_NE(model, nullptr) << jllama_last_error();
+            EXPECT_NE(log.text.find("DFlash2 conv kernel = 3, group = 8, selector rank = 8, top-k = 4"),
+                      std::string::npos)
+                << log.text;
+            if (*type == 0) {
+                EXPECT_NE(log.text.find("auto-detected speculative type 'draft-dflash'"), std::string::npos);
+            }
+            EXPECT_EQ(greedy_answer(model, 48), expected);
+            EXPECT_GT(drafted_tokens(model), 0) << "the DFlash2 draft drafted nothing";
+            jllama_model_free(model);
+        }
+        // draft-dspark does not match the draft's head: the server names the right type and runs without
+        // the draft
+        DsparkLog log;
+        jllama_model *dspark = load_with_log(
+            path, {"--spec-draft-model", draft, "--spec-draft-ngl", "0", "--spec-type", "draft-dspark"}, log);
+        ASSERT_NE(dspark, nullptr) << jllama_last_error();
+        EXPECT_NE(log.text.find("--spec-type draft-dspark does not match the draft model: use draft-dflash2"),
+                  std::string::npos)
+            << log.text;
+        EXPECT_EQ(greedy_answer(dspark, 48), expected);
+        EXPECT_EQ(drafted_tokens(dspark), 0);
+        jllama_model_free(dspark);
+        std::error_code ec;
+        std::filesystem::remove(draft, ec);
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
 TEST(CApiInkling2, ADSparkDraftWithItsMarkovContextDraftsAndAnswersWhatTheTargetAnswersAlone) {
     // The Inkling 2 head: the rnn Markov head that reads the context state f_rnn, which comes back from
     // the injection of every prompt token as h_nextn; without it for the token before a block, no draft.

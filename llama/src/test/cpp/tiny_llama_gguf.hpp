@@ -1049,9 +1049,17 @@ inline std::string write_tiny_inkling2_gguf(const std::string &prefix = "jllama-
 // With markov_context false, has_markov_context is written false and the rnn and f_rnn tensors are left
 // out: the plain Markov head, a chain of markov_w1 rows through markov_w2 from the argmax of each
 // position. With stale_markov_norm, markov_ctx_norm is written anyway, which the loader refuses.
+// With dflash2, the draft is a DFlash2 one instead (Inkling-2-Mini's, b12785, #33073): no Markov head and no
+// mask embedding (the masked positions take the target's embedding of the mask token), but per layer a
+// dynamic convolution after the attention and after the feed-forward (kernel 3 over groups of 8 channels,
+// attn/ffn_conv_base and _proj), and a selector that scores the top-4 candidates of every block position
+// with the transitions from the candidates before (selector_predecessor / successor, rank 8, gated by
+// selector_hidden of the hidden state); softcap_post writes selector_softcap_after_correction, which
+// moves the final logit softcapping from the logits onto those scores.
 inline std::string write_tiny_inkling2_dspark_gguf(const std::string &prefix = "jllama-inkling2-dspark", int embd = 160,
                                                    int n_swa = 8, bool markov_context = true,
-                                                   bool stale_markov_norm = false) {
+                                                   bool stale_markov_norm = false, bool dflash2 = false,
+                                                   bool softcap_post = false) {
     constexpr int N_HEAD_D = 4, N_HEAD_KV_D = 2, HEAD = 8, FF_D = 32, N_LAYER_D = 2, BLOCK = 4, RANK = 8;
     static std::atomic<int> counter{0};
     static const unsigned run_id = std::random_device{}();
@@ -1083,7 +1091,17 @@ inline std::string write_tiny_inkling2_dspark_gguf(const std::string &prefix = "
     gguf_set_arr_data(g, (a + ".target_layers").c_str(), GGUF_TYPE_INT32, target_layers, 2);
     gguf_set_val_bool(g, (a + ".sample_from_anchor").c_str(), false);
     gguf_set_val_bool(g, (a + ".has_confidence_head").c_str(), false);
-    gguf_set_val_bool(g, (a + ".has_markov_context").c_str(), markov_context);
+    gguf_set_val_bool(g, (a + ".has_markov_context").c_str(), markov_context && !dflash2);
+    constexpr int CONV_KERNEL = 3, CONV_GROUP = 8, SELECTOR_TOP_K = 4;
+    if (dflash2) {
+        gguf_set_val_u32(g, (a + ".conv_kernel_size").c_str(), CONV_KERNEL);
+        gguf_set_val_u32(g, (a + ".conv_group_size").c_str(), CONV_GROUP);
+        gguf_set_val_u32(g, (a + ".selector_rank").c_str(), RANK);
+        gguf_set_val_u32(g, (a + ".selector_top_k").c_str(), SELECTOR_TOP_K);
+        if (softcap_post) {
+            gguf_set_val_bool(g, (a + ".selector_softcap_after_correction").c_str(), true);
+        }
+    }
 
     std::vector<std::string> tokens = byte_tokens();
     std::vector<int32_t> token_types(tokens.size(), 1);
@@ -1107,11 +1125,17 @@ inline std::string write_tiny_inkling2_dspark_gguf(const std::string &prefix = "
     ggml_context *ctx = ggml_init(ip);
     add_random_tensor(g, ctx, rng, "token_embd_norm.weight", {embd}, 1.0f);
     add_random_tensor(g, ctx, rng, "output_norm.weight", {embd}, 1.0f);
-    add_random_tensor(g, ctx, rng, "mask_embd.weight", {embd, BLOCK - 1}, 0.1f);
-    add_random_tensor(g, ctx, rng, "markov_w1.weight", {RANK, n_vocab}, 0.1f);
-    add_random_tensor(g, ctx, rng, "markov_w2.weight", {RANK, n_vocab}, 0.1f);
-    add_random_tensor(g, ctx, rng, "markov_w2.bias", {n_vocab}, 1.0f);
-    if (markov_context) {
+    if (dflash2) {
+        add_random_tensor(g, ctx, rng, "selector_predecessor.weight", {RANK, n_vocab}, 0.1f);
+        add_random_tensor(g, ctx, rng, "selector_successor.weight", {RANK, n_vocab}, 0.1f);
+        add_random_tensor(g, ctx, rng, "selector_hidden.weight", {embd, RANK}, 0.1f);
+    } else {
+        add_random_tensor(g, ctx, rng, "mask_embd.weight", {embd, BLOCK - 1}, 0.1f);
+        add_random_tensor(g, ctx, rng, "markov_w1.weight", {RANK, n_vocab}, 0.1f);
+        add_random_tensor(g, ctx, rng, "markov_w2.weight", {RANK, n_vocab}, 0.1f);
+        add_random_tensor(g, ctx, rng, "markov_w2.bias", {n_vocab}, 1.0f);
+    }
+    if (markov_context && !dflash2) {
         // the rnn head reads [state | markov_w1[prev] | hidden | f_rnn] and answers gate, candidate and output
         add_random_tensor(g, ctx, rng, "joint_proj.weight", {2 * embd + 2 * RANK, 3 * RANK}, 0.1f);
         add_random_tensor(g, ctx, rng, "joint_proj.bias", {3 * RANK}, 1.0f);
@@ -1139,6 +1163,13 @@ inline std::string write_tiny_inkling2_dspark_gguf(const std::string &prefix = "
         add_random_tensor(g, ctx, rng, p + "attn_k_ctx.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
         add_random_tensor(g, ctx, rng, p + "attn_v_ctx.weight", {embd, HEAD * N_HEAD_KV_D}, 0.1f);
         add_random_tensor(g, ctx, rng, p + "attn_k_ctx_norm.weight", {HEAD}, 1.0f);
+        if (dflash2) {
+            const int projected = 2 * CONV_KERNEL * (embd / CONV_GROUP);
+            add_random_tensor(g, ctx, rng, p + "attn_conv_base", {embd, CONV_KERNEL, 2}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "attn_conv_proj.weight", {embd, projected}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ffn_conv_base", {embd, CONV_KERNEL, 2}, 0.1f);
+            add_random_tensor(g, ctx, rng, p + "ffn_conv_proj.weight", {embd, projected}, 0.1f);
+        }
     }
     const bool ok = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
