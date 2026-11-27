@@ -3123,14 +3123,15 @@ TEST(CApiWeightScales, EveryDecoderOfTheGeneratorAppliesItsScales) {
 }
 
 TEST(CApiWeightScales, AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting) {
-    // patches/0043. Without --spec-type draft-mtp llama.cpp skips the weights of an MTP block, and the
-    // generic pass that loads the scales loads one only next to a weight it has: the block's scales
+    // Without --spec-type draft-mtp llama.cpp skips the weights of an MTP block. Until b12818 the
+    // generic pass that loads the scales loaded one only next to a weight it had: the block's scales
     // counted as tensors of the file nobody loaded, and the model did not load at all ("wrong number
     // of tensors; expected 62, got 57") -- a model of the 18 architectures that skip an MTP block
     // this way (hy_v3, DeepSeek, GLM, Qwen3.5, Qwen3-Next, ...) whose block carries scales, as an
-    // NVFP4 or FP8 conversion of the whole checkpoint does, unless it drafted with that block. The
-    // generator's HY-V3 carries a scale next to every matrix, the MTP block's projection included;
-    // loaded without MTP drafting it answers like the folded model.
+    // NVFP4 or FP8 conversion of the whole checkpoint does, unless it drafted with that block. This
+    // project carried patches/0043 for it; since b12818 a skipped weight passes its skip on to its
+    // scales upstream. The generator's HY-V3 carries a scale next to every matrix, the MTP block's
+    // projection included; loaded without MTP drafting it answers like the folded model.
     expect_weight_scales_applied(tiny_model_spec::mtp("jllama-c-api-scales-hy-v3"));
 }
 
@@ -4278,6 +4279,57 @@ TEST(CApiAudio, AModelWithAnAudioProjectorHearsAClipInAPrompt) {
     std::filesystem::remove(path, ignored);
     std::filesystem::remove(mmproj, ignored);
 }
+
+namespace {
+// A copy of the GGUF at `src` whose attention and feed-forward matrices are F8_E4M3 (OCP FP8, the type of an
+// FP8 checkpoint's weights), each with an F32 scale of `scale` next to it as "<matrix>.scale" when
+// `with_scale`; the other tensors and every key as they were.
+std::string with_fp8_weights(const std::string &src, const std::string &prefix, bool with_scale, float scale = 1.0f) {
+    ggml_context *data = nullptr;
+    gguf_init_params params = {false, &data};
+    gguf_context *in = gguf_init_from_file(src.c_str(), params);
+    if (in == nullptr) {
+        return std::string();
+    }
+    gguf_context *out = gguf_init_empty();
+    gguf_set_kv(out, in);
+    ggml_init_params ip = {64u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    for (int64_t i = 0; i < gguf_get_n_tensors(in); ++i) {
+        const std::string name = gguf_get_tensor_name(in, i);
+        ggml_tensor *t = ggml_get_tensor(data, name.c_str());
+        const bool matrix = t->type == GGML_TYPE_F32 && ggml_n_dims(t) == 2 && name.rfind("blk.", 0) == 0 &&
+                            (name.find("attn_") != std::string::npos || name.find("ffn_") != std::string::npos);
+        if (!matrix) {
+            gguf_add_tensor(out, t);
+            continue;
+        }
+        ggml_tensor *q = ggml_new_tensor_2d(ctx, GGML_TYPE_F8_E4M3, t->ne[0], t->ne[1]);
+        ggml_quantize_chunk(GGML_TYPE_F8_E4M3, static_cast<const float *>(t->data), q->data, 0, t->ne[1], t->ne[0],
+                            nullptr);
+        ggml_set_name(q, name.c_str());
+        gguf_add_tensor(out, q);
+        if (with_scale) {
+            const std::string base = name.substr(0, name.size() - std::string("weight").size());
+            ggml_tensor *sc = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+            static_cast<float *>(sc->data)[0] = scale;
+            ggml_set_name(sc, (base + "scale").c_str());
+            gguf_add_tensor(out, sc);
+        }
+    }
+    static std::atomic<int> counter{0};
+    const std::string path =
+        (std::filesystem::temp_directory_path() /
+         (prefix + "-" + std::to_string(std::random_device{}()) + "-" + std::to_string(counter++) + ".gguf"))
+            .string();
+    const bool ok = gguf_write_to_file(out, path.c_str(), false);
+    gguf_free(out);
+    gguf_free(in);
+    ggml_free(ctx);
+    ggml_free(data);
+    return ok ? path : std::string();
+}
+} // namespace
 
 TEST(CApiFp8Cache, AModelWithCacheScalesRunsAnEightBitFloatCache) {
     // The 8-bit float KV cache (--cache-type-k/-v f8_e4m3, b12283; on CUDA since b12289) stores K and
@@ -5428,6 +5480,84 @@ TEST(CApiDomynEdge, ARotationWiderThanTheSlidingWindowHeadIsRefusedAndTheProcess
     std::error_code ignored;
     std::filesystem::remove(bad, ignored);
     std::filesystem::remove(good, ignored);
+}
+
+TEST(CApiLoadErrors, AFailedLoadNamesTheLoadersReason) {
+    // llama_model_load() catches the loader's exception and only logs its message, so a failed load was
+    // "could not load model from given file path" whatever the file was; the engine keeps the reason the
+    // loader logged on the loading thread and appends it (jllama_last_error, a Java LlamaException).
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-load-errors-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string not_gguf = (dir / "not-a-model.gguf").string();
+    {
+        std::ofstream out(not_gguf, std::ios::binary);
+        out << "this is no GGUF file, only text that is long enough to have a header";
+    }
+    for (const bool vocab_only : {false, true}) {
+        SCOPED_TRACE(vocab_only ? "vocab only" : "model");
+        std::vector<std::string> extra;
+        if (vocab_only) {
+            extra.push_back("--vocab-only");
+        }
+        EXPECT_EQ(load_tiny(not_gguf, extra), nullptr);
+        const std::string error = jllama_last_error();
+        const std::string head = vocab_only ? "could not load tokenizer from given file path: "
+                                            : "could not load model from given file path: ";
+        EXPECT_EQ(error.rfind(head, 0), 0u) << error;
+        EXPECT_GT(error.size(), head.size()) << error;
+        EXPECT_EQ(error.find('\n'), std::string::npos) << error;
+    }
+    // the reason of one load is not the next one's: a model that loads after a failure has no error
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-load-errors-ok");
+    jllama_model *model = load_tiny(path, {});
+    EXPECT_NE(model, nullptr) << jllama_last_error();
+    jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiFp8Weights, AnFp8WeightNeedsItsScaleAndRunsWithIt) {
+    // b12818 (#28898): ggml's matmul takes the weight scales itself, and the two types whose values only mean
+    // something with a scale -- NVFP4 and FP8 E4M3 -- require one: a model with an FP8 weight but no
+    // "<matrix>.scale" is refused at load, naming the tensor and the missing scale ("re-convert the model"),
+    // where up to b12817 it loaded and computed with the unscaled values. With its scale (1 here, which
+    // leaves the weights as they are) the same file answers, and with 2 it answers differently -- the scale
+    // reaches the matmul. The process loads the next model after the refusal.
+    const std::string plain = write_tiny_llama_gguf("jllama-c-api-fp8-plain");
+    ASSERT_FALSE(plain.empty());
+    const std::string unscaled = with_fp8_weights(plain, "jllama-c-api-fp8-unscaled", false);
+    const std::string scaled = with_fp8_weights(plain, "jllama-c-api-fp8-scaled", true);
+    const std::string doubled = with_fp8_weights(plain, "jllama-c-api-fp8-doubled", true, 2.0f);
+    ASSERT_FALSE(unscaled.empty());
+    ASSERT_FALSE(scaled.empty());
+    ASSERT_FALSE(doubled.empty());
+    EXPECT_EQ(load_tiny(unscaled, {}), nullptr) << "an FP8 weight without its scale loaded";
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("requires a weight scale"), std::string::npos) << "[" << error << "]";
+    EXPECT_NE(error.find(".scale"), std::string::npos) << error;
+    const auto probs = [](const std::string &path) {
+        jllama_model *model = load_tiny(path, {});
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return std::vector<double>();
+        }
+        const std::vector<double> out = domyn_first_logprobs(model, "The quick brown fox");
+        jllama_model_free(model);
+        return out;
+    };
+    const std::vector<double> one = probs(scaled);
+    const std::vector<double> two = probs(doubled);
+    ASSERT_EQ(one.size(), 3u);
+    ASSERT_EQ(two.size(), 3u);
+    EXPECT_GT(max_difference(one, two), 1e-3) << "the scale did not reach the matmul";
+    // the FP8 model with scale 1 is the F32 model up to the rounding of the weights to FP8
+    EXPECT_LT(max_difference(one, probs(plain)), 0.5);
+    std::error_code ec;
+    for (const std::string &p : {plain, unscaled, scaled, doubled}) {
+        std::filesystem::remove(p, ec);
+    }
 }
 
 TEST(CApiYarn, ALlamaModelReadsTheYarnParametersOfItsFile) {

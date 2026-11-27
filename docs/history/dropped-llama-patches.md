@@ -11,6 +11,26 @@ themselves. Moved here from `CLAUDE.md`, which lists only the patches still carr
 records why the patch went and what guard, if any, stays behind -- read the matching note before
 reintroducing a patch for the same defect.
 
+**`0043` was dropped at the b12818 bump.** llama.cpp loads the weight scales of every architecture in
+one generic pass (`<matrix>.scale`, `<matrix>.input_scale`), and until b12818 it loaded one only next to a
+weight it had. Without `--spec-type draft-mtp` the weights of an MTP block are created with `TENSOR_SKIP`
+(null), so their scales were loaded by nobody and counted as tensors of the file nobody loaded: a model of
+the 18 architectures that skip an MTP block that does not draft (17 through `nextn_flags`, xing4-0 in its
+own loader) whose block carries scales failed to load ("wrong number of tensors; expected 62, got 57" for
+the generator's HY-V3). The patch made the loader skip a skipped weight's scales with it and count a
+skipped tensor once. Upstream [#28898](https://github.com/ggml-org/llama.cpp/pull/28898) ("ggml: support
+quant scales for fp8 and nvfp4", `a38695013`, b12818) rewrote the scale pass as a map of scale tensors next
+to their weights and creates each scale with `TENSOR_NOT_REQUIRED | (flags & (TENSOR_SKIP |
+TENSOR_DUPLICATED))` -- the skip of the weight passes to its scales -- and no longer reads a scale whose
+weight is null and not skipped. The patch no longer applied there (its hunks were in the code that commit
+replaced), so the applier fired; the drop-check of its row (the skip branch of `create_tensor` and the
+generic scale pass) reads `scale_flags` in `src/llama-model-loader.cpp`. **Guard that stays:**
+`CApiWeightScales.AScaledModelWithAnMtpBlockLoadsWithoutMtpDrafting` (the scaled and the folded HY-V3 answer
+the same without MTP drafting) and `AnMtpBlockDraftsWithTheScaleOfItsProjection`, both green against
+upstream's version unchanged. The same commit makes a scale **required** for a type that cannot be computed
+without one (FP8 E4M3 and NVFP4, `ggml_need_scale`): such a weight without its `<matrix>.scale` fails the
+load ("requires a weight scale ... re-convert the model"), held by `CApiFp8Weights`.
+
 **`0047` was dropped at the b12677 bump**, eight numbers after it came in. b12669 (#15550, the quantizer to a
 target) declared `constexpr float eps_eig = EPSILON;` inside a `[&]` lambda of `target_bpw_type()`, with
 `EPSILON` a `constexpr` *automatic* local of the enclosing function; MSVC 14.52 refused reading it in a

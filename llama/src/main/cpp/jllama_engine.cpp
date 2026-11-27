@@ -43,6 +43,49 @@
 namespace jllama::engine {
 
 namespace {
+// The reason a model failed to load. llama_model_load() catches the loader's exception and only logs it
+// ("llama_model_load: error loading model: <reason>"), so the engine's own error could only say that the
+// file did not load. While this thread loads a model, the llama/ggml log callback below keeps the first
+// such reason; it forwards every line to common_log as common_log_default_callback does. Per thread,
+// since a load runs on the caller's thread and the callback is called there, synchronously.
+thread_local std::string *t_load_error = nullptr;
+
+void llama_log_keeping_the_load_error(enum ggml_log_level level, const char *text, void *user_data) {
+    static const char marker[] = "error loading model: ";
+    if (t_load_error != nullptr && t_load_error->empty() && level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
+        const char *reason = std::strstr(text, marker);
+        if (reason != nullptr) {
+            std::string kept(reason + sizeof(marker) - 1);
+            while (!kept.empty() && (kept.back() == '\n' || kept.back() == '\r')) {
+                kept.pop_back();
+            }
+            *t_load_error = kept;
+        }
+    }
+    common_log_default_callback(level, text, user_data);
+}
+
+// Keeps the reason of a failed load on this thread for the scope of a load (see above). common_init()
+// points llama_log_set() at common_log_default_callback on every load; this callback does the same and
+// more, so it is set again at the start of every scope.
+class load_error_scope {
+  public:
+    load_error_scope() {
+        t_load_error = &error_;
+        llama_log_set(llama_log_keeping_the_load_error, nullptr);
+    }
+    ~load_error_scope() { t_load_error = nullptr; }
+    load_error_scope(const load_error_scope &) = delete;
+    load_error_scope &operator=(const load_error_scope &) = delete;
+    // ": <reason>" to append to the engine's own message, or nothing when the loader logged none
+    std::string suffix() const { return error_.empty() ? std::string() : ": " + error_; }
+
+  private:
+    std::string error_;
+};
+} // namespace
+
+namespace {
 
 // Sentinel value used by llama.cpp (since b7433) to indicate that n_parallel should be resolved
 // automatically by the host application (common_params_parser_init() for LLAMA_EXAMPLE_SERVER).
@@ -720,9 +763,10 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
         llama_model_params mparams = llama_model_default_params();
         mparams.vocab_only = true;
+        load_error_scope load_error;
         jctx->vocab_only_model = llama_model_load_from_file(params.model.path.c_str(), mparams);
         if (!jctx->vocab_only_model) {
-            throw std::runtime_error("could not load tokenizer from given file path");
+            throw std::runtime_error("could not load tokenizer from given file path" + load_error.suffix());
         }
         jctx->vocab = llama_model_get_vocab(jctx->vocab_only_model);
         jctx->log_file_owner = log_file.owner;
@@ -764,15 +808,19 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         jctx->server.set_video_decoder(&video_host->mtmd);
     }
 
+    std::optional<load_error_scope> load_error;
+    load_error.emplace();
     const bool loaded = jctx->server.load_model(params);
+    const std::string load_error_suffix = load_error->suffix();
+    load_error.reset();
     if (progress_relay != nullptr) {
         progress_relay->active.store(false);
     }
     if (!loaded) {
         // The failed load may have left a vocab-only model? No: that is the other branch. Nothing
         // to free besides the context (the server owns what it loaded and frees it in its
-        // destructor).
-        throw std::runtime_error("could not load model from given file path");
+        // destructor). The loader's reason, when it logged one, follows the message.
+        throw std::runtime_error("could not load model from given file path" + load_error_suffix);
     }
 
     jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
@@ -1240,8 +1288,8 @@ void set_log_sink(common_log_callback callback, void *user_data) {
     if (callback != nullptr) {
         common_log_set_callback(common_log_main(), callback, user_data);
         // llama/ggml lines feed common_log even before the first model load runs common_init(),
-        // which re-points llama_log_set() at this same default callback anyway.
-        llama_log_set(common_log_default_callback, nullptr);
+        // which re-points llama_log_set() at the default callback; this one forwards to it too.
+        llama_log_set(llama_log_keeping_the_load_error, nullptr);
     }
 }
 

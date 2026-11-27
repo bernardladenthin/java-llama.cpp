@@ -11,11 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.loader.NativeLibraryPresence;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Parameters llama.cpp refuses before it reads the model file. A batch of no tokens and a chat
@@ -27,7 +32,8 @@ import org.junit.jupiter.api.Test;
  */
 @ClaudeGenerated(
         purpose = "Model-free guard that a --batch-size of 0 and a chat template llama.cpp cannot parse "
-                + "fail the load with a LlamaException naming the reason instead of ending the JVM.")
+                + "fail the load with a LlamaException naming the reason instead of ending the JVM, and that "
+                + "a file the loader cannot read names the loader's reason.")
 class LoadRefusalTest {
 
     private static final String NO_MODEL = "/nonexistent/jllama-load-refusal.gguf";
@@ -75,5 +81,21 @@ class LoadRefusalTest {
                 refused.getMessage(),
                 containsString("Failed to parse model parameters: error while handling argument \"--override-kv\""));
         assertThat(refused.getMessage(), not(containsString("usage:")));
+    }
+
+    @Test
+    void aFileThatIsNoModelFailsWithTheLoadersReason(@TempDir Path dir) throws IOException {
+        // llama.cpp's loader only logs why a file did not load; the message carries that reason now
+        Path notAModel = dir.resolve("not-a-model.gguf");
+        Files.write(notAModel, "this is no GGUF file".getBytes(StandardCharsets.UTF_8));
+        LlamaException refused = assertThrows(
+                LlamaException.class,
+                () -> new LlamaModel(
+                        new ModelParameters().setModel(notAModel.toString()).setFit(false)));
+        assertThat(
+                refused.getMessage(),
+                containsString("could not load model from given file path: llama_model_loader: failed to load model"));
+        assertThat(refused.getMessage(), containsString("not-a-model.gguf"));
+        assertEquals(LlamaException.class, refused.getClass());
     }
 }
