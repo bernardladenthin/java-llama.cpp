@@ -490,6 +490,11 @@ jllama_check_prefetch_byte_offset(${llama.cpp_SOURCE_DIR})
 include(cmake/check-backward-ops.cmake)
 jllama_check_backward_ops(${llama.cpp_SOURCE_DIR})
 
+# common_init() does what the engine repeats on every load without it (init_common_for_load() in
+# src/main/cpp/jllama_engine.cpp: the llama logger that keeps a failed load's reason stays installed).
+include(cmake/check-common-init.cmake)
+jllama_check_common_init(${llama.cpp_SOURCE_DIR})
+
 # nlohmann/json comes from upstream's vendored copy and from nowhere else (see the json block above).
 # Asserted here rather than left to the compiler: a missing header fails every TU that includes it
 # with a message about the header, while this one says where the file is expected and what to do.

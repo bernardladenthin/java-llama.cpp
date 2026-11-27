@@ -45,14 +45,21 @@ namespace jllama::engine {
 namespace {
 // The reason a model failed to load. llama_model_load() catches the loader's exception and only logs it
 // ("llama_model_load: error loading model: <reason>"), so the engine's own error could only say that the
-// file did not load. While this thread loads a model, the llama/ggml log callback below keeps the first
-// such reason; it forwards every line to common_log as common_log_default_callback does. Per thread,
+// file did not load. While this thread loads a model, the llama/ggml log callback below keeps the last
+// such reason -- the load that failed, not a probe of the fit before it, whose reason is the same in the
+// common case; it forwards every line to common_log as common_log_default_callback does. Per thread,
 // since a load runs on the caller's thread and the callback is called there, synchronously.
+//
+// The callback is the process's llama logger for good (init_common_for_load(), set_log_sink()): another
+// thread's load must not take it away while this one is in its scope. common_init() pointed the logger at
+// common_log_default_callback on every load, so a load on one thread dropped the reason of a load on
+// another (769 of 1000 reasons lost with a second thread loading in a loop, measured 2026-11-27), and the
+// fit's log scope (common/fit.cpp) saves and restores whatever logger is set, which is this one now.
 thread_local std::string *t_load_error = nullptr;
 
 void llama_log_keeping_the_load_error(enum ggml_log_level level, const char *text, void *user_data) {
     static const char marker[] = "error loading model: ";
-    if (t_load_error != nullptr && t_load_error->empty() && level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
+    if (t_load_error != nullptr && level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
         const char *reason = std::strstr(text, marker);
         if (reason != nullptr) {
             std::string kept(reason + sizeof(marker) - 1);
@@ -65,24 +72,38 @@ void llama_log_keeping_the_load_error(enum ggml_log_level level, const char *tex
     common_log_default_callback(level, text, user_data);
 }
 
-// Keeps the reason of a failed load on this thread for the scope of a load (see above). common_init()
-// points llama_log_set() at common_log_default_callback on every load; this callback does the same and
-// more, so it is set again at the start of every scope.
+// Keeps the reason of a failed load on this thread for the scope of a load (see above). A scope opened
+// inside another on the same thread (a load from a load-progress callback) keeps its own reason and gives
+// the outer scope back its own when it ends.
 class load_error_scope {
   public:
-    load_error_scope() {
-        t_load_error = &error_;
-        llama_log_set(llama_log_keeping_the_load_error, nullptr);
-    }
-    ~load_error_scope() { t_load_error = nullptr; }
+    load_error_scope() : previous_(t_load_error) { t_load_error = &error_; }
+    ~load_error_scope() { t_load_error = previous_; }
     load_error_scope(const load_error_scope &) = delete;
     load_error_scope &operator=(const load_error_scope &) = delete;
     // ": <reason>" to append to the engine's own message, or nothing when the loader logged none
     std::string suffix() const { return error_.empty() ? std::string() : ": " + error_; }
 
   private:
+    std::string *previous_;
     std::string error_;
 };
+
+// What common_init() does at the start of every load and server start, except that the llama logger stays
+// the one that keeps the load's reason (see above). common_init() itself runs once per process, for the
+// rest of what it does (on Windows the console's UTF-8 code page); every other call sets only what it sets
+// on common_log -- the prefix and the timestamps, which --no-log-prefix / --no-log-timestamps of the
+// argv then turn off again. llama/cmake/check-common-init.cmake holds common_init()'s body to exactly
+// that, so a statement upstream adds there fails the configure instead of being skipped here.
+void init_common_for_load() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        common_init();
+        llama_log_set(llama_log_keeping_the_load_error, nullptr);
+    });
+    common_log_set_prefix(common_log_main(), true);
+    common_log_set_timestamps(common_log_main(), true);
+}
 } // namespace
 
 namespace {
@@ -585,7 +606,7 @@ std::uint64_t prepare_server_argv(std::vector<std::string> &argv, common_params 
     // does not call it, patches/0006). Not for an attached server: the model's load called it, and a
     // second call turned on what the model's argv had turned off (llama_server_attach() never calls it).
     if (!attached) {
-        common_init();
+        init_common_for_load();
     }
     log_file_claim log_file;
     bool parsed = false;
@@ -651,9 +672,9 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
     for (auto &arg : parse_args) {
         parse_argv.push_back(const_cast<char *>(arg.c_str()));
     }
-    // before the parse, as llama_server() calls it: it turns common_log's prefix and timestamps on, and
-    // after the parse it turned off what --no-log-prefix / --no-log-timestamps had just set
-    common_init();
+    // before the parse, as llama_server() calls common_init(): it turns common_log's prefix and timestamps
+    // on, and after the parse it turned off what --no-log-prefix / --no-log-timestamps had just set
+    init_common_for_load();
     log_file_claim log_file;
     bool parsed = false;
     std::string refusal;
@@ -808,11 +829,13 @@ jllama_context *load(const std::vector<std::string> &argv_in, llama_progress_cal
         jctx->server.set_video_decoder(&video_host->mtmd);
     }
 
-    std::optional<load_error_scope> load_error;
-    load_error.emplace();
-    const bool loaded = jctx->server.load_model(params);
-    const std::string load_error_suffix = load_error->suffix();
-    load_error.reset();
+    bool loaded = false;
+    std::string load_error_suffix;
+    {
+        load_error_scope load_error;
+        loaded = jctx->server.load_model(params);
+        load_error_suffix = load_error.suffix();
+    }
     if (progress_relay != nullptr) {
         progress_relay->active.store(false);
     }
@@ -1287,8 +1310,8 @@ void set_log_sink(common_log_callback callback, void *user_data) {
     common_log_set_callback(common_log_main(), nullptr, nullptr);
     if (callback != nullptr) {
         common_log_set_callback(common_log_main(), callback, user_data);
-        // llama/ggml lines feed common_log even before the first model load runs common_init(),
-        // which re-points llama_log_set() at the default callback; this one forwards to it too.
+        // llama/ggml lines feed common_log even before the first model load (the callback forwards to
+        // common_log_default_callback and keeps a load's reason, see init_common_for_load())
         llama_log_set(llama_log_keeping_the_load_error, nullptr);
     }
 }

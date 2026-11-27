@@ -5508,11 +5508,71 @@ TEST(CApiLoadErrors, AFailedLoadNamesTheLoadersReason) {
         EXPECT_GT(error.size(), head.size()) << error;
         EXPECT_EQ(error.find('\n'), std::string::npos) << error;
     }
-    // the reason of one load is not the next one's: a model that loads after a failure has no error
+    // the reason of one load is not the next one's: another file that does not load names its own reason,
+    // and a model that loads after a failure has no error
+    const std::string other = (dir / "another-file.gguf").string();
+    {
+        std::ofstream out(other, std::ios::binary);
+        out << "neither is this one, and it is long enough to have a header too";
+    }
+    EXPECT_EQ(load_tiny(other, {}), nullptr);
+    const std::string other_error = jllama_last_error();
+    EXPECT_NE(other_error.find("another-file.gguf"), std::string::npos) << other_error;
+    EXPECT_EQ(other_error.find("not-a-model.gguf"), std::string::npos) << other_error;
     const std::string path = write_tiny_llama_gguf("jllama-c-api-load-errors-ok");
     jllama_model *model = load_tiny(path, {});
     EXPECT_NE(model, nullptr) << jllama_last_error();
     jllama_model_free(model);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::remove(path, ec);
+}
+
+TEST(CApiLoadErrors, AFailedLoadNamesItsReasonWhileAnotherThreadLoads) {
+    // The reason is kept by the process's llama logger. Every load used to run common_init(), which points
+    // that logger at common_log_default_callback, and the engine set its own again only at the start of its
+    // next load: while another thread was loading, a failed load on this one named no reason (769 of 1000
+    // tries, measured 2026-11-27). The other thread here loads in a loop -- mostly a file that is not there
+    // (a load that fails before the model), every eighth time the tiny model (a load that runs the fit's
+    // log scope, which saves and restores the logger) -- while this one fails to load a file that is no GGUF.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("jllama-c-api-load-errors-threads-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string not_gguf = (dir / "not-a-model.gguf").string();
+    {
+        std::ofstream out(not_gguf, std::ios::binary);
+        out << "this is no GGUF file, only text that is long enough to have a header";
+    }
+    const std::string missing = (dir / "missing.gguf").string();
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-load-errors-threads");
+    ASSERT_FALSE(path.empty());
+    std::atomic<bool> stop{false};
+    std::atomic<int> other_loads{0};
+    std::thread other([&] {
+        for (int i = 0; !stop.load(); ++i) {
+            if (i % 8 == 7) {
+                jllama_model_free(load_tiny(path, {}));
+            } else {
+                load_tiny(missing, {"--vocab-only"});
+            }
+            other_loads.fetch_add(1);
+        }
+    });
+    int without_reason = 0;
+    std::string first_without;
+    for (int i = 0; i < 300; ++i) {
+        EXPECT_EQ(load_tiny(not_gguf, {}), nullptr);
+        const std::string error = jllama_last_error();
+        if (error.find("not-a-model.gguf") == std::string::npos) {
+            if (without_reason++ == 0) {
+                first_without = error;
+            }
+        }
+    }
+    stop.store(true);
+    other.join();
+    EXPECT_GT(other_loads.load(), 30); // the other thread loaded while this one did
+    EXPECT_EQ(without_reason, 0) << "first message without the reason: " << first_without;
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::remove(path, ec);
