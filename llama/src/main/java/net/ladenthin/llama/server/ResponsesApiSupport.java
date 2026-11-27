@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -133,14 +134,24 @@ final class ResponsesApiSupport {
         JsonNode tools = request.path("tools");
         if (tools.isArray() && tools.size() > 0) {
             JsonNode toolChoice = request.path("tool_choice");
-            // {"type":"function","name":...}: llama.cpp knows only auto/none/required, so the named
-            // function is forwarded alone with "required" (see OpenAiRequestMapper.namedToolChoice).
-            String namedTool = OpenAiRequestMapper.namedToolChoice(toolChoice, toolChoice.path("name"));
+            // A named function or allowed_tools: the tools it allows are forwarded alone, with its mode
+            // (see ToolChoiceRestriction).
+            ToolChoiceRestriction restriction =
+                    ToolChoiceRestriction.parse(toolChoice, ToolChoiceRestriction.Shape.RESPONSES);
+            if (restriction != null) {
+                List<String> names = new ArrayList<>();
+                for (JsonNode tool : tools) {
+                    if ("function".equals(tool.path("type").asText(""))) {
+                        names.add(tool.path("name").asText(""));
+                    }
+                }
+                restriction.checkAgainst(names);
+            }
             ArrayNode openAiTools = openAi.putArray("tools");
             for (JsonNode tool : tools) {
                 if (!"function".equals(tool.path("type").asText(""))
-                        || (namedTool != null
-                                && !namedTool.equals(tool.path("name").asText("")))) {
+                        || (restriction != null
+                                && !restriction.forwards(tool.path("name").asText("")))) {
                     continue;
                 }
                 ObjectNode openAiTool = openAiTools.addObject();
@@ -155,17 +166,13 @@ final class ResponsesApiSupport {
                     function.set("parameters", tool.path("parameters").deepCopy());
                 }
             }
-            if (namedTool != null && openAiTools.size() == 0) {
-                throw new IllegalArgumentException("tool_choice names unknown tool '" + namedTool + "'");
-            }
             // The Responses API uses the same tool_choice + parallel_tool_calls fields as chat; forward
             // them so the shared chat core honors them. The string form (auto/none/required) goes as is,
-            // a named function becomes "required" with only that tool forwarded above, and any other
-            // object form was refused by namedToolChoice.
+            // an object as its mode with only the tools it allows forwarded above.
             if (toolChoice.isTextual()) {
                 openAi.put("tool_choice", toolChoice.asText());
-            } else if (namedTool != null) {
-                openAi.put("tool_choice", "required");
+            } else if (restriction != null) {
+                openAi.put("tool_choice", restriction.mode());
             }
             if (request.path("parallel_tool_calls").isBoolean()) {
                 openAi.put(

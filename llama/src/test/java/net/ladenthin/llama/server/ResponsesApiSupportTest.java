@@ -472,7 +472,7 @@ public class ResponsesApiSupportTest {
 
     @Test
     public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
-        // Responses names a tool as {"type":"function","name":...}; the chat side only knows strings.
+        // Responses names a tool as {"type":"function","name":...}; the chat side gets "required".
         JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
                 + "\"tools\":[{\"type\":\"function\",\"name\":\"f\",\"parameters\":{\"type\":\"object\"}}],"
                 + "\"tool_choice\":{\"type\":\"function\",\"name\":\"f\"}}"));
@@ -481,8 +481,8 @@ public class ResponsesApiSupportTest {
 
     @Test
     public void toolChoiceNamingAFunctionForwardsOnlyThatTool() throws IOException {
-        // "required" over every tool let the model call another one than the one named; llama.cpp knows
-        // only auto/none/required, so the named function is enforced by forwarding it alone.
+        // "required" over every tool lets the model call another one than the one named, and llama.cpp's
+        // specialized parsers do not restrict a named choice, so it is enforced by forwarding the tool alone.
         JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
                 + "\"tools\":[{\"type\":\"function\",\"name\":\"f\",\"parameters\":{\"type\":\"object\"}},"
                 + "{\"type\":\"function\",\"name\":\"g\",\"description\":\"gee\","
@@ -522,9 +522,9 @@ public class ResponsesApiSupportTest {
 
     @Test
     public void aToolChoiceObjectOfAnotherTypeIsRefused() {
-        // allowed_tools, mcp and the hosted tools cannot be expressed in llama.cpp's auto/none/required;
-        // the object was dropped and the request ran as "auto".
-        for (String type : new String[] {"allowed_tools", "mcp", "file_search", "custom"}) {
+        // mcp and the hosted tools cannot be expressed as a set of the request's functions; the object
+        // was dropped and the request ran as "auto".
+        for (String type : new String[] {"mcp", "file_search", "custom"}) {
             IllegalArgumentException e = assertThrows(
                     IllegalArgumentException.class,
                     () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
@@ -533,8 +533,34 @@ public class ResponsesApiSupportTest {
                     type);
             assertThat(
                     e.getMessage(),
-                    is("tool_choice type '" + type + "' is not supported; use auto, none, required or a function"));
+                    is("tool_choice type '" + type
+                            + "' is not supported; use auto, none, required, a function or allowed_tools"));
         }
+    }
+
+    @Test
+    public void allowedToolsForwardsTheToolsItNamesWithItsMode() throws IOException {
+        // The Responses shape of allowed_tools: mode and tools at the top level, a tool named by "name".
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"},{\"type\":\"function\",\"name\":\"g\"},"
+                + "{\"type\":\"function\",\"name\":\"h\"}],"
+                + "\"tool_choice\":{\"type\":\"allowed_tools\",\"mode\":\"auto\","
+                + "\"tools\":[{\"type\":\"function\",\"name\":\"h\"},{\"type\":\"function\",\"name\":\"f\"}]}}"));
+        assertThat(openAi.path("tools").size(), is(2));
+        assertThat(openAi.path("tools").path(0).path("function").path("name").asText(), is("f"));
+        assertThat(openAi.path("tools").path(1).path("function").path("name").asText(), is("h"));
+        assertThat(openAi.path("tool_choice").asText(), is("auto"));
+    }
+
+    @Test
+    public void allowedToolsNamingAnUnknownFunctionIsRejected() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                        + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"}],"
+                        + "\"tool_choice\":{\"type\":\"allowed_tools\",\"mode\":\"required\","
+                        + "\"tools\":[{\"type\":\"function\",\"name\":\"g\"}]}}")));
+        assertThat(e.getMessage(), is("tool_choice names unknown tool 'g'"));
     }
 
     @Test

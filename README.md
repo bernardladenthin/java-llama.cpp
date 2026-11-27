@@ -12,7 +12,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b12730](https://img.shields.io/badge/llama.cpp-%23b12730-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12730)  
+[![llama.cpp b12731](https://img.shields.io/badge/llama.cpp-%23b12731-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b12731)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.1%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1248,11 +1248,14 @@ where it does; where llama-server would drop part of a request without a word, t
   llama-server logs a warning and uses the default.
 - `tool_choice` naming one tool (OpenAI `{"type":"function","function":{"name":…}}`, Responses
   `{"type":"function","name":…}`, Anthropic `{"type":"tool","name":…}`) forwards that tool alone with
-  `required`, so the model can call no other; a name no tool carries is refused. llama-server reads the
-  first two as `auto` and the Anthropic one as `required` over every tool. A `tool_choice` object of any
-  other type (`allowed_tools`, `custom`, `mcp`, a hosted tool) cannot be expressed in llama.cpp's
-  `auto`/`none`/`required` and is refused, where llama-server runs the request as `auto`; so is a value
-  that is neither a string nor an object (on Anthropic, one that is no object).
+  `required`, so the model can call no other, and OpenAI's `allowed_tools` (chat and Responses shapes)
+  forwards the tools it names with its mode (`auto` or `required`; an empty `auto` set is `none`); a name
+  that no tool or more than one carries is refused. llama-server reads both objects itself since b12731,
+  but restricts the call only for the formats its automatic parser handles (its Qwen3-Coder, Inkling and
+  Harmony parsers offer every tool), and reads the Anthropic one as `required` over every tool. A
+  `tool_choice` object of any other type (`custom`, `mcp`, a hosted tool) is refused, as llama-server
+  refuses it; so is a value that is neither a string nor an object (on Anthropic, one that is no object,
+  and `allowed_tools`, which the Messages API does not have).
 - `logprobs: true` on a streamed chat request with tools is refused with llama-server's own message
   (`logprobs is not supported with tools + stream`); blocking, or without tools, it is answered.
 - An Anthropic `base64` image without `media_type` is named by its bytes (PNG, JPEG, GIF, WebP) and as

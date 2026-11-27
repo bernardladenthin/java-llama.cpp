@@ -23,10 +23,9 @@ import org.jspecify.annotations.Nullable;
  * so the full OpenAI shape (assistant {@code tool_calls}, {@code role:"tool"} results with
  * {@code tool_call_id}, and vision {@code image_url} content parts) round-trips untouched into the native
  * chat-template parser. {@code tool_choice} is forwarded in its string form ({@code auto}, {@code none},
- * {@code required}, the only values llama.cpp's chat parser accepts); a {@code tool_choice} naming one
- * function becomes {@code required} with only that tool forwarded, and any other object form
- * ({@code allowed_tools}, {@code custom}, ...) is refused (see {@link #namedToolChoice}), where upstream
- * reads a non-string as {@code auto} and runs the request without the restriction it asked for.
+ * {@code required}); a {@code tool_choice} naming one function, or OpenAI's {@code allowed_tools}, becomes
+ * its mode with only the tools it allows forwarded, and any other object form ({@code custom},
+ * {@code mcp}, ...) is refused (see {@link ToolChoiceRestriction}).
  * {@code parallel_tool_calls} is read as a boolean. Sampling fields are translated to the
  * matching {@code InferenceParameters.with*} setter, as are the llama.cpp sampling extensions upstream's
  * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
@@ -82,26 +81,26 @@ final class OpenAiRequestMapper {
         JsonNode tools = request.path("tools");
         if (tools.isArray() && tools.size() > 0) {
             JsonNode toolChoice = request.path("tool_choice");
-            String namedTool =
-                    namedToolChoice(toolChoice, toolChoice.path("function").path("name"));
-            if (namedTool == null) {
+            ToolChoiceRestriction restriction =
+                    ToolChoiceRestriction.parse(toolChoice, ToolChoiceRestriction.Shape.CHAT);
+            if (restriction == null) {
                 params = params.withToolsJson(tools.toString());
+                if (toolChoice.isTextual()) {
+                    params = params.withToolChoice(toolChoice.asText());
+                }
             } else {
-                ArrayNode named = JsonNodeFactory.instance.arrayNode();
+                List<String> names = new ArrayList<>();
                 for (JsonNode tool : tools) {
-                    if (namedTool.equals(tool.path("function").path("name").asText(""))) {
-                        named.add(tool);
+                    names.add(tool.path("function").path("name").asText(""));
+                }
+                restriction.checkAgainst(names);
+                ArrayNode forwarded = JsonNodeFactory.instance.arrayNode();
+                for (JsonNode tool : tools) {
+                    if (restriction.forwards(tool.path("function").path("name").asText(""))) {
+                        forwarded.add(tool);
                     }
                 }
-                if (named.size() == 0) {
-                    throw new IllegalArgumentException("tool_choice names unknown tool '" + namedTool + "'");
-                }
-                params = params.withToolsJson(named.toString());
-            }
-            if (toolChoice.isTextual()) {
-                params = params.withToolChoice(toolChoice.asText());
-            } else if (namedTool != null) {
-                params = params.withToolChoice("required");
+                params = params.withToolsJson(forwarded.toString()).withToolChoice(restriction.mode());
             }
             JsonNode parallelToolCalls = request.path("parallel_tool_calls");
             if (parallelToolCalls.isBoolean()) {
@@ -110,43 +109,6 @@ final class OpenAiRequestMapper {
         }
 
         return params;
-    }
-
-    /**
-     * The function a {@code tool_choice} object of type {@code function} names, or {@code null} for an
-     * absent, {@code null} or string {@code tool_choice} (the string goes on as it is; upstream's chat
-     * parser refuses one it does not know). llama.cpp's chat parser reads {@code tool_choice} only as
-     * {@code auto}, {@code none} or {@code required}; a named function is enforced by forwarding that
-     * tool alone with {@code required}, so the grammar admits no other call. The chat template then does
-     * not render the other tool definitions either, which the model may not call anyway (OpenAI keeps
-     * them visible and constrains only the output). Any other object ({@code allowed_tools},
-     * {@code custom}, {@code mcp}, a hosted tool) cannot be expressed in those three values and is
-     * refused rather than run as {@code auto}. Shared by the chat mapping
-     * ({@code tool_choice.function.name}) and the Responses translation ({@code tool_choice.name}).
-     *
-     * @param toolChoice the request's {@code tool_choice}
-     * @param name the node holding the function name in that request shape
-     * @return the named function, or {@code null}
-     * @throws IllegalArgumentException for a {@code tool_choice} of type {@code function} without a name,
-     *     an object of any other type, and a value that is neither a string nor an object
-     */
-    static @Nullable String namedToolChoice(JsonNode toolChoice, JsonNode name) {
-        if (toolChoice.isMissingNode() || toolChoice.isNull() || toolChoice.isTextual()) {
-            return null;
-        }
-        if (!toolChoice.isObject()) {
-            throw new IllegalArgumentException("'tool_choice' must be a string or an object (got " + toolChoice + ")");
-        }
-        String type = toolChoice.path("type").asText("");
-        if (!"function".equals(type)) {
-            throw new IllegalArgumentException(
-                    "tool_choice type '" + type + "' is not supported; use auto, none, required or a function");
-        }
-        if (!name.isTextual() || name.asText().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "tool_choice of type 'function' needs the function's 'name' (got " + toolChoice + ")");
-        }
-        return name.asText();
     }
 
     /**

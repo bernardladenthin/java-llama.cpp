@@ -372,9 +372,8 @@ public class OpenAiRequestMapperTest {
 
     @Test
     public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
-        // {"type":"function","function":{"name":...}} asks for that tool; llama.cpp's chat parser reads
-        // tool_choice only as a string and fell back to "auto". "required" is the closest it allows, as
-        // for Anthropic's {"type":"tool"}.
+        // {"type":"function","function":{"name":...}} asks for that tool: "required", with that tool
+        // alone (next case), as for Anthropic's {"type":"tool"}.
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
                 + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"f\"}}}");
@@ -383,8 +382,9 @@ public class OpenAiRequestMapperTest {
 
     @Test
     public void toolChoiceNamingAFunctionForwardsOnlyThatTool() throws IOException {
-        // "required" over every tool let the model call another one than the one named; llama.cpp knows
-        // only auto/none/required, so the named function is enforced by forwarding it alone.
+        // "required" over every tool lets the model call another one than the one named, and llama.cpp's
+        // specialized parsers (Qwen3-Coder, Inkling, Harmony, measured at b12731) do not restrict a named
+        // choice, so it is enforced by forwarding the tool alone.
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
                 + "{\"type\":\"function\",\"function\":{\"name\":\"g\",\"description\":\"gee\"}}],"
@@ -418,9 +418,9 @@ public class OpenAiRequestMapperTest {
 
     @Test
     public void aToolChoiceObjectOfAnotherTypeIsRefused() {
-        // allowed_tools, custom and the like cannot be expressed in llama.cpp's auto/none/required;
-        // upstream reads a non-string tool_choice as "auto", so the request ran without the restriction.
-        for (String type : new String[] {"allowed_tools", "custom", "mcp", ""}) {
+        // custom, mcp and the like cannot be expressed as a set of the request's functions; upstream
+        // refuses them too ("Invalid tool_choice") since b12731, and read them as "auto" before.
+        for (String type : new String[] {"custom", "mcp", ""}) {
             String request = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                     + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
                     + "\"tool_choice\":{\"type\":\"" + type + "\",\"name\":\"f\"}}";
@@ -429,7 +429,86 @@ public class OpenAiRequestMapperTest {
             assertThat(
                     request,
                     e.getMessage(),
-                    is("tool_choice type '" + type + "' is not supported; use auto, none, required or a function"));
+                    is("tool_choice type '" + type
+                            + "' is not supported; use auto, none, required, a function or allowed_tools"));
+        }
+    }
+
+    private static String allowedToolsRequest(String mode, String... names) {
+        StringBuilder tools = new StringBuilder();
+        for (String name : names) {
+            tools.append(tools.length() == 0 ? "" : ",")
+                    .append("{\"type\":\"function\",\"function\":{\"name\":\"")
+                    .append(name)
+                    .append("\"}}");
+        }
+        return "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
+                + "{\"type\":\"function\",\"function\":{\"name\":\"g\"}},"
+                + "{\"type\":\"function\",\"function\":{\"name\":\"h\"}}],"
+                + "\"tool_choice\":{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"" + mode
+                + "\",\"tools\":[" + tools + "]}}}";
+    }
+
+    @Test
+    public void allowedToolsForwardsTheToolsItNamesWithItsMode() throws IOException {
+        // OpenAI's allowed_tools (llama.cpp reads it since b12731): the subset goes to the model, in the
+        // order of the request's tools, with the mode as tool_choice.
+        for (String mode : new String[] {"auto", "required"}) {
+            JsonNode out = mapAndSerialize(allowedToolsRequest(mode, "h", "f"));
+            assertThat(mode, out.path("tools").size(), is(2));
+            assertThat(
+                    mode,
+                    out.path("tools").path(0).path("function").path("name").asText(),
+                    is("f"));
+            assertThat(
+                    mode,
+                    out.path("tools").path(1).path("function").path("name").asText(),
+                    is("h"));
+            assertThat(mode, out.path("tool_choice").asText(), is(mode));
+        }
+    }
+
+    @Test
+    public void anEmptyAutoAllowedToolsSetIsNone() throws IOException {
+        // as upstream: no tool may be called; the tools stay, as with tool_choice "none"
+        JsonNode out = mapAndSerialize(allowedToolsRequest("auto"));
+        assertThat(out.path("tools").size(), is(3));
+        assertThat(out.path("tool_choice").asText(), is("none"));
+    }
+
+    @Test
+    public void aMalformedAllowedToolsChoiceIsRefusedWithUpstreamsReason() {
+        String[][] cases = {
+            {allowedToolsRequest("required"), "Required allowed_tools must contain at least one function"},
+            {allowedToolsRequest("none", "f"), "allowed_tools requires mode auto or required and a tools array"},
+            {allowedToolsRequest("required", "g", "k"), "tool_choice names unknown tool 'k'"},
+            {
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"auto\","
+                        + "\"tools\":[{\"type\":\"custom\",\"custom\":{\"name\":\"f\"}}]}}}",
+                "allowed_tools entries must have type function"
+            },
+            {
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"allowed_tools\",\"allowed_tools\":{\"mode\":\"auto\","
+                        + "\"tools\":[{\"type\":\"function\"}]}}}",
+                "allowed_tools entries need the function's 'name'"
+            },
+            {
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
+                        + "{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"f\"}}}",
+                "tool_choice names tool 'f', which more than one supplied tool has"
+            },
+        };
+        for (String[] c : cases) {
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> mapAndSerialize(c[0]), c[0]);
+            assertThat(c[0], e.getMessage(), containsString(c[1]));
         }
     }
 
