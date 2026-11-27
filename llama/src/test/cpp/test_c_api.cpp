@@ -4949,17 +4949,23 @@ TEST(CApiInkling2, ADSparkDraftSampledAtATemperatureAnswersTheSameRequestTheSame
 }
 
 TEST(CApiInkling2, TwoSlotsDraftingWithDSparkAtOnceAnswerAsEachAlone) {
-    // Two drafting slots put their blocks into one draft batch: the Markov head reads every block's
-    // anchor and state rows as strided views of the batch, and each block its own context state.
+    // Two drafting slots put their blocks into one draft batch (the Markov head reads every block's
+    // anchor and state rows as strided views of it, each block its own context state), and the target
+    // checks both slots' drafts in one batch. A defect of the draft only costs acceptance -- the target
+    // checks every draft --, so what the answers hold is the target's side: each sequence keeps its own
+    // KV rows and convolution state through the verification (red with the convolution state of the
+    // first sequence read for both).
     const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-dspark-slots-target", 8, 160);
     const std::string draft = write_tiny_inkling2_dspark_gguf("jllama-c-api-inkling2-dspark-slots", 160);
     ASSERT_FALSE(path.empty());
     ASSERT_FALSE(draft.empty());
     const std::vector<std::string> prompts = {"Hello there, how are you", "Yellow paint, how are you"};
     const auto request = [](const std::string &prompt) {
-        return json{{"prompt", prompt}, {"n_predict", 24}, {"temperature", 0}, {"cache_prompt", false}}.dump();
+        return json{{"prompt", prompt}, {"n_predict", 24}, {"temperature", 0}, {"n_probs", 3}, {"cache_prompt", false}}
+            .dump();
     };
     std::vector<std::string> alone;
+    std::vector<std::vector<double>> alone_probs;
     {
         jllama_model *model = load_tiny(path, {"-c", "256"});
         ASSERT_NE(model, nullptr) << jllama_last_error();
@@ -4967,11 +4973,21 @@ TEST(CApiInkling2, TwoSlotsDraftingWithDSparkAtOnceAnswerAsEachAlone) {
             Owned response;
             ASSERT_EQ(jllama_completions(model, request(prompt).c_str(), &response.s), JLLAMA_STATUS_OK)
                 << jllama_last_error();
-            alone.push_back(json::parse(response.str()).at("content").get<std::string>());
+            const json result = json::parse(response.str());
+            alone.push_back(result.at("content").get<std::string>());
+            alone_probs.push_back(top_logprobs_of(result));
         }
         jllama_model_free(model);
     }
-    EXPECT_NE(alone[0], alone[1]);
+    // the probabilities, not the text: the greedy answers of the two prompts are the same loop on
+    // Windows and macOS (run 45555863304), while what the model computes for them differs
+    ASSERT_EQ(alone_probs[0].size(), 72u); // 24 steps of 3
+    ASSERT_EQ(alone_probs[1].size(), 72u);
+    double apart = 0.0;
+    for (size_t i = 0; i < alone_probs[0].size(); ++i) {
+        apart = std::max(apart, std::fabs(alone_probs[0][i] - alone_probs[1][i]));
+    }
+    EXPECT_GT(apart, 1e-3) << "the two prompts are answered with other probabilities";
 
     jllama_model *model = load_tiny(path, {"-c", "256", "-np", "2", "--spec-draft-model", draft, "--spec-draft-ngl",
                                            "0", "--spec-type", "draft-dspark"});
@@ -4988,7 +5004,14 @@ TEST(CApiInkling2, TwoSlotsDraftingWithDSparkAtOnceAnswerAsEachAlone) {
     }
     for (size_t p = 0; p < prompts.size(); ++p) {
         ASSERT_EQ(status[p], JLLAMA_STATUS_OK) << p;
-        EXPECT_EQ(json::parse(together[p].str()).at("content").get<std::string>(), alone[p]) << "prompt " << p;
+        const json result = json::parse(together[p].str());
+        EXPECT_EQ(result.at("content").get<std::string>(), alone[p]) << "prompt " << p;
+        // the target checks the drafts in batches, so the probabilities agree up to rounding
+        const std::vector<double> got = top_logprobs_of(result);
+        ASSERT_EQ(got.size(), alone_probs[p].size()) << p;
+        for (size_t i = 0; i < got.size(); ++i) {
+            EXPECT_NEAR(got[i], alone_probs[p][i], 1e-3) << "prompt " << p << ", value " << i;
+        }
     }
     EXPECT_GT(drafted_tokens(model), 0) << "the DSpark draft drafted nothing";
     jllama_model_free(model);
