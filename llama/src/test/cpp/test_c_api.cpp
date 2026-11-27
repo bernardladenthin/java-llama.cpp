@@ -5559,9 +5559,12 @@ TEST(CApiLoadErrors, AFailedLoadNamesItsReasonWhileAnotherThreadLoads) {
             other_loads.fetch_add(1);
         }
     });
+    // until the other thread has loaded 40 times (a loaded runner is slow; the bound is a minute) and this
+    // one at least 300 times
     int without_reason = 0;
     std::string first_without;
-    for (int i = 0; i < 300; ++i) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (int i = 0; (i < 300 || other_loads.load() < 40) && std::chrono::steady_clock::now() < deadline; ++i) {
         EXPECT_EQ(load_tiny(not_gguf, {}), nullptr);
         const std::string error = jllama_last_error();
         if (error.find("not-a-model.gguf") == std::string::npos) {
@@ -5572,7 +5575,7 @@ TEST(CApiLoadErrors, AFailedLoadNamesItsReasonWhileAnotherThreadLoads) {
     }
     stop.store(true);
     other.join();
-    EXPECT_GT(other_loads.load(), 30); // the other thread loaded while this one did
+    EXPECT_GE(other_loads.load(), 40); // the other thread loaded while this one did
     EXPECT_EQ(without_reason, 0) << "first message without the reason: " << first_without;
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
