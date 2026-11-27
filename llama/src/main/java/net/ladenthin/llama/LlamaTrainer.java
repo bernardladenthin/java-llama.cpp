@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Only a model whose graph ggml can differentiate trains: ggml has no backward pass for the expert
  * matmul of a mixture of experts ({@code MUL_MAT_ID}), the scan of a recurrent model ({@code SSM_SCAN}),
- * {@code NORM} or the unary {@code TANH} (Gemma 4's soft-capping), among others. Such a model is refused
+ * {@code NORM} or the gated feed-forward {@code GEGLU} (Gemma 4's), among others. Such a model is refused
  * with a {@link LlamaException} naming the op, before its first training step and without writing an
  * output.
  */
