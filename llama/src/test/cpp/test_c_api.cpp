@@ -13343,6 +13343,54 @@ TEST(CApiTokenizers, ASentencePieceVocabularyTokenizesWordsAndRoundTrips) {
     std::filesystem::remove(path, ec);
 }
 
+TEST(CApiTokenizers, ASentencePieceVocabularyWithPrependSchemeFirstPutsItsSpaceBeforeTheFirstTextOnly) {
+    // b12747 (#31986): an SPM vocabulary honours tokenizer.ggml.metaspace.prepend_scheme. With "first"
+    // the space piece goes before the start of the text only, not before the text after a special
+    // token (Nanbeige 4.3's chat prompts); without the key (and up to b12746 with it) every text after
+    // a special token got the space piece. The detokenization joins the pieces, as llama-server's
+    // /detokenize does, so the first piece keeps its space either way; llama_detokenize() itself takes
+    // it off for "first".
+    const auto ids_and_text = [](const std::string &scheme) {
+        tiny_model_spec spec;
+        spec.prefix = "jllama-spm-prepend";
+        spec.tokenizer = tiny_model_spec::tokenizer_kind::SENTENCEPIECE;
+        spec.metaspace_prepend_scheme = scheme;
+        const std::string path = write_tiny_llama_gguf(spec);
+        EXPECT_FALSE(path.empty());
+        jllama_model *model = load_tiny(path, {});
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        std::pair<std::vector<int>, std::string> out;
+        if (model != nullptr) {
+            out.first = token_ids(model, "hello</s>world");
+            out.second = detokenized(model, token_ids(model, "hello world"));
+            jllama_model_free(model);
+        }
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return out;
+    };
+    // <unk> <s> </s>, the space piece, 94 printable characters, then the pieces of the two words
+    const int hello = 3 + 1 + 94 + 4;
+    const int world = hello + 5;
+    const auto chars = [](const std::string &word) {
+        std::vector<int> ids;
+        for (const char c : word) {
+            ids.push_back(4 + (c - '!'));
+        }
+        return ids;
+    };
+    std::vector<int> first_ids = {hello, 2};
+    for (const int id : chars("world")) {
+        first_ids.push_back(id);
+    }
+    const auto always = ids_and_text("");
+    EXPECT_EQ(always.first, (std::vector<int>{hello, 2, world}));
+    EXPECT_EQ(always.second, " hello world");
+    const auto first = ids_and_text("first");
+    EXPECT_EQ(first.first, first_ids) << "the text after </s> got the space piece";
+    EXPECT_EQ(first.second, " hello world");
+}
+
 TEST(CApiTokenizers, ASentencePieceVocabularyWithBytePiecesSpellsOutWhatItHasNoPieceFor) {
     tiny_model_spec plain;
     plain.prefix = "jllama-spm-plain";
