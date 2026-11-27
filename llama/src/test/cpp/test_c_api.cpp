@@ -15197,6 +15197,33 @@ TEST(CApiTrainer, AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAnd
     std::filesystem::remove_all(dir, ec);
 }
 
+TEST(CApiTrainer, AModelWithWeightScalesIsRefusedBecauseTheBackwardPassIgnoresThem) {
+    // Since b12818 (#28898) a weight's "<matrix>.scale" is a source of the matmul itself (src[2] of
+    // MUL_MAT), where before it was a MUL of its own after it; ggml_compute_backward's MUL_MAT case
+    // differentiates src[0] and src[1] only, as if the scale were 1, so every gradient through a scaled
+    // weight was off by its scale and such a model trained without an error, wrongly. patches/0044 refuses
+    // it now and names the matmul; the same model with the scale folded into its weights trains.
+    tiny_model_spec scaled;
+    scaled.prefix = "jllama-c-api-train-scaled";
+    scaled.weight_scale = 2.0f;
+    tiny_model_spec folded = scaled;
+    folded.prefix = "jllama-c-api-train-folded";
+    folded.weight_scale_folded = true;
+    const std::filesystem::path dir = fresh_dir("jllama-c-api-train-scales");
+    const auto refused = dir / "scaled.gguf";
+    EXPECT_EQ(finetune_spec(scaled, refused), JLLAMA_STATUS_ERROR);
+    const std::string error = jllama_last_error();
+    EXPECT_NE(error.find("cannot train this model: ggml's backward pass of MUL_MAT ignores the scale of its weight"),
+              std::string::npos)
+        << error;
+    EXPECT_FALSE(std::filesystem::exists(refused));
+    const auto trained = dir / "folded.gguf";
+    ASSERT_EQ(finetune_spec(folded, trained), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_GT(std::filesystem::file_size(trained), 0u);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST(CApiTrainer, TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain) {
     // the check of patches/0044 refuses no graph the backward pass can be built for: sliding-window and
     // full attention with norms on the heads (Domyn Edge), an MTP block (HY-V3) and Qwen3-VL's text model

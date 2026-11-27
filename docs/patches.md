@@ -1428,6 +1428,12 @@ llama.h, since llama_opt_epoch has no return value. The evaluation part of an ep
 graph and is not checked; the shape assertions of the supported cases are not mirrored, except
 MUL_MAT's broadcast over the fourth dimension.
 
+A MUL_MAT that carries a weight or activation scale (src[2] / src[3], b12818 #28898, where the scale of a
+"<matrix>.scale" tensor moved into the matmul) is refused too: ggml_compute_backward differentiates
+src[0] and src[1] as if both scales were 1, so a model with weight scales trained without an error and
+with every gradient through such a weight off by its scale. The message is "cannot train this model:
+ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>')".
+
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
 ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
@@ -1436,12 +1442,15 @@ b12768 TANH's) would otherwise be refused here although ggml could train it.
 The guards are in src/test/cpp/test_c_api.cpp:
 CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six
 architectures refused by their op, then a llama model trains; an abort of the test process without the
-check) and CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
-Qwen3-VL's text model).
+check), CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
+Qwen3-VL's text model) and CApiTrainer.AModelWithWeightScalesIsRefusedBecauseTheBackwardPassIgnoresThem
+(refused, and the same model with the scale folded into its weights trains).
 
 Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
 once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
 llama_opt_epoch reports), drop the patch and read upstream's way of reporting it in train_engine.cpp.
+The scale half on its own: once the MUL_MAT case of ggml_compute_backward multiplies by src[2] / src[3],
+drop the scale check and let the test train the scaled model.
 ```
 
 ## 0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch

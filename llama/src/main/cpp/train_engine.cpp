@@ -142,8 +142,8 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     ggml_opt_result_t result_eval = ggml_opt_result_init();
 
     // A model whose graph needs a gradient ggml cannot compute (MUL_MAT_ID of a mixture of experts, SSM_SCAN, NORM,
-    // TANH, ...) ended the process in ggml_build_backward_expand; patches/0044 stops the epoch before it and names the
-    // op through llama_opt_error.
+    // GEGLU, ...) ended the process in ggml_build_backward_expand, and one with weight scales trained with gradients
+    // off by its scales; patches/0044 stops the epoch before it and names the op through llama_opt_error.
     std::string refused;
     for (params.lr.epoch = 0; params.lr.epoch < params.lr.epochs; ++params.lr.epoch) {
         llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split, ggml_opt_epoch_callback_progress_bar,
