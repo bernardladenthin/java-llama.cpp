@@ -4791,6 +4791,35 @@ TEST(CApiInkling2, ThePromptInOneBatchAndOneTokenAtATimeGiveTheSameAnswer) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiInkling2, FlashAttentionWithTheIndexedBiasAnswersWhatTheDenseBiasAnswers) {
+    // Since b12757 (#33053) the learned relative-position bias reaches the attention as flash
+    // attention's indexed bias (a table looked up by an index per key, b12670), which the CPU backend
+    // runs since b12735; without flash attention the graph builds the dense bias mask from the same
+    // table. Both paths give the same probabilities up to rounding (the mask goes to F16 under flash
+    // attention). Before b12757 flash attention was skipped for these layers.
+    const std::string path = write_tiny_inkling2_gguf("jllama-c-api-inkling2-fa");
+    ASSERT_FALSE(path.empty());
+    std::vector<std::vector<double>> answers;
+    for (const char *fa : {"on", "off"}) {
+        jllama_model *model = load_tiny(path, {"-fa", fa});
+        ASSERT_NE(model, nullptr) << jllama_last_error();
+        Owned response;
+        ASSERT_EQ(
+            jllama_completions(model, inkling2_request("Yellow paint, how are you today", 6).c_str(), &response.s),
+            JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        answers.push_back(top_logprobs_of(json::parse(response.str())));
+        jllama_model_free(model);
+    }
+    ASSERT_EQ(answers[0].size(), 18u);
+    ASSERT_EQ(answers[1].size(), answers[0].size());
+    for (size_t i = 0; i < answers[0].size(); ++i) {
+        EXPECT_NEAR(answers[0][i], answers[1][i], 1e-2) << i;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST(CApiInkling2, TwoSlotsAtOnceAnswerAsEachAlone) {
     // Two requests on two slots are decoded in one batch, each with its own convolution state, KV
     // rows and relative positions. A state or a row read from the other sequence changes the
