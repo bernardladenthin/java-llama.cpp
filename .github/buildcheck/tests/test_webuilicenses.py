@@ -164,6 +164,27 @@ class WebuiLicensesTest(unittest.TestCase):
         names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
         self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
 
+    def test_the_llama_hugging_face_sources_next_to_the_app_are_imports_too(self):
+        # b12811: ui/apps/chat compiles ui/lib/huggingface/src through a vite alias; its imports resolve
+        # from the app's node_modules as the other libraries' do, and the folder comes last.
+        app = Path(self.temp.name) / "ui" / "apps" / "chat"
+        lib = Path(self.temp.name) / "ui" / "lib"
+        harness = lib / "harness" / "src"
+        huggingface = lib / "huggingface" / "src"
+        (app / "src").mkdir(parents=True)
+        harness.mkdir(parents=True)
+        (huggingface / "svelte").mkdir(parents=True)
+        (app / "package-lock.json").write_text((self.ui / "package-lock.json").read_text())
+        (app / "src/app.ts").write_text("import { a } from 'alpha';\n")
+        (harness / "index.ts").write_text("export const run = 1;\n")
+        (huggingface / "index.ts").write_text("export { share } from './share';\n")
+        (huggingface / "svelte" / "account.svelte.ts").write_text("import { t } from 'testonly';\n")
+        (huggingface / "share.test.ts").write_text("import { x } from 'typesonly';\n")
+        self.assertEqual(webuilicenses.source_dirs(app), [app / "src", harness, huggingface])
+        lock = json.loads((app / "package-lock.json").read_text())
+        names = [p["name"] for p in webuilicenses.closure(lock, webuilicenses.imports(app))]
+        self.assertEqual(names, ["alpha", "beta", "svelte", "testonly"])
+
     def test_check_reports_a_listed_file_without_its_section(self):
         self.generated()
         path = self.out / "THIRD-PARTY-LICENSES.txt"

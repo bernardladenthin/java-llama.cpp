@@ -46,13 +46,15 @@ jobs:
           ref: ${{ steps.tag.outputs.ref }}
           path: llamacpp-ui
           # ui/lib/ui: Llama UI, whose sources the app compiles since b12480 (#32468),
-          # ui/lib/voice: Llama Voice, compiled since b12587 (#32531), and ui/lib/harness: Llama
-          # Harness, compiled since b12688 (#32927), so their imports are the bundle's too.
+          # ui/lib/voice: Llama Voice, compiled since b12587 (#32531), ui/lib/harness: Llama
+          # Harness, compiled since b12688 (#32927), and ui/lib/huggingface: Llama Hugging Face,
+          # compiled since b12811 (#32608), so their imports are the bundle's too.
           sparse-checkout: |
             ui/apps/chat
             ui/lib/ui
             ui/lib/voice
             ui/lib/harness
+            ui/lib/huggingface
           sparse-checkout-cone-mode: true
       - name: Check the WebUI license texts against this package-lock.json
         run: python3 .github/webui-licenses.py check llamacpp-ui/ui/apps/chat llama/legal/natives/webui-npm

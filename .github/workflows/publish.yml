@@ -572,7 +572,10 @@ jobs:
           # ui.cpp.in / ui.h.in templates;
           # ui/lib/ui holds Llama UI, whose sources the app compiles since b12480 (#32468),
           # ui/lib/voice Llama Voice, which it compiles since b12587 (#32531, vite aliases), and
-          # ui/lib/harness Llama Harness, which it compiles since b12688 (#32927, a vite alias);
+          # ui/lib/harness Llama Harness, which it compiles since b12688 (#32927, a vite alias), and
+          # ui/lib/huggingface Llama Hugging Face, which it compiles since b12811 (#32608, a vite alias;
+          # this build has no sharing to Hugging Face, which stubs only the package's Svelte entry);
+          # ui/lib/demo, the demo harness (b12794), is a devDependency the build does not read.
           # scripts/ holds ui-assets.cmake, which consumes them. All are needed
           # since upstream #28445 replaced the embed.cpp host tool.
           sparse-checkout: |
@@ -580,6 +583,7 @@ jobs:
             ui/lib/ui
             ui/lib/voice
             ui/lib/harness
+            ui/lib/huggingface
             scripts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
