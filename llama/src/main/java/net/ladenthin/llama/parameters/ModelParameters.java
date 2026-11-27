@@ -1832,6 +1832,21 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Turn the WebUI's agent mode on without server tools and without the MCP proxy (upstream
+     * {@code --ui-agent}, llama.cpp b12724): the chat then offers the tools that run in the browser
+     * and the MCP servers the browser reaches itself, and {@code GET /props} reports
+     * {@code "ui_agent": true}. Since b12700 the WebUI shows a plain chat for a server that lists no
+     * built-in tools and no MCP proxy, which an attached {@link net.ladenthin.llama.server.NativeServer}
+     * never does; its routes read the model's parameters, so the flag is set here and not in the
+     * attach argv. Not needed next to {@code --agent}, {@code --tools} or {@code --ui-mcp-proxy}.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableUiAgent() {
+        return setFlag(ModelFlag.UI_AGENT);
+    }
+
+    /**
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
      *

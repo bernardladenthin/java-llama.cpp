@@ -6333,6 +6333,37 @@ TEST(CApiServer, TheEndpointTogglesOfTheAttachedServerAreTheModelsParameters) {
     std::filesystem::remove(path, ignored);
 }
 
+TEST(CApiServer, TheAttachedServerReportsTheUiAgentModeOfTheModel) {
+    // --ui-agent (b12724) turns the WebUI's agent mode on with nothing enabled on the server: the
+    // browser's own tools and the MCP servers the browser reaches itself. GET /props reports it as
+    // ui_agent; the attached frontend reads the model's parameters, like the endpoint toggles.
+    const std::string path = write_tiny_llama_gguf("jllama-c-api-attach-ui-agent");
+    ASSERT_FALSE(path.empty());
+    const auto ui_agent = [](jllama_model *model) {
+        AttachedServer attached(model);
+        EXPECT_NE(attached.server, nullptr);
+        httplib::Client client = attached.client();
+        const auto props = client.Get("/props");
+        EXPECT_TRUE(props) << httplib::to_string(props.error());
+        if (!props || props->status != 200) {
+            return std::string("no props");
+        }
+        const json j = json::parse(props->body);
+        return j.contains("ui_agent") ? j.at("ui_agent").dump() : std::string("missing");
+    };
+    jllama_model *plain = load_tiny(path, {});
+    ASSERT_NE(plain, nullptr) << jllama_last_error();
+    EXPECT_EQ(ui_agent(plain), "false");
+    jllama_model_free(plain);
+
+    jllama_model *agent = load_tiny(path, {"--ui-agent"});
+    ASSERT_NE(agent, nullptr) << jllama_last_error();
+    EXPECT_EQ(ui_agent(agent), "true");
+    jllama_model_free(agent);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 TEST_F(CApi, TheAttachedServerServesTheModelAndLeavesItUsable) {
     const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0"};
     jllama_server *server = nullptr;

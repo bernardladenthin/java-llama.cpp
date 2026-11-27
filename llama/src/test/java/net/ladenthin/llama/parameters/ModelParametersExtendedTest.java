@@ -1200,4 +1200,10 @@ public class ModelParametersExtendedTest {
         ModelParameters p = new ModelParameters().allowUnauthenticatedTools();
         assertThat(p.parameters.containsKey("--allow-unauthenticated-tools"), is(true));
     }
+
+    @Test
+    public void testEnableUiAgent() {
+        ModelParameters p = new ModelParameters().enableUiAgent();
+        assertThat(p.parameters.containsKey("--ui-agent"), is(true));
+    }
 }

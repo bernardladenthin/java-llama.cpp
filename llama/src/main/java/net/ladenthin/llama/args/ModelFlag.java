@@ -148,6 +148,13 @@ public enum ModelFlag {
     ALLOW_UNAUTHENTICATED_TOOLS("--allow-unauthenticated-tools"),
 
     /**
+     * Agent mode in the WebUI with nothing enabled on the server: the tools that run in the browser and
+     * the MCP servers the browser reaches itself, no server tools and no MCP proxy (llama.cpp b12724).
+     * {@code GET /props} reports it as {@code ui_agent}.
+     */
+    UI_AGENT("--ui-agent"),
+
+    /**
      * Run fully offline — never make an outbound network request to download a model. Useful for
      * air-gapped or pre-staged-model deployments where any outbound call is itself a failure mode.
      *

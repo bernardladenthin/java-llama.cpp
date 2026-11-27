@@ -49,6 +49,7 @@ public class ModelFlagTest {
             {ModelFlag.NO_MMPROJ_OFFLOAD, "--no-mmproj-offload"},
             {ModelFlag.MEDIA_ALLOW_PRIVATE_URLS, "--media-allow-private-urls"},
             {ModelFlag.ALLOW_UNAUTHENTICATED_TOOLS, "--allow-unauthenticated-tools"},
+            {ModelFlag.UI_AGENT, "--ui-agent"},
             {ModelFlag.OFFLINE, "--offline"},
             {ModelFlag.METRICS, "--metrics"},
             {ModelFlag.PROPS, "--props"},
@@ -80,7 +81,7 @@ public class ModelFlagTest {
         //   DUMP_KV_CACHE  -- removed upstream with no replacement.
         // The last two added: SPEC_DRAFT_BACKEND_SAMPLING / NO_SPEC_DRAFT_BACKEND_SAMPLING (b9261).
         // src/test/cpp/test_model_flags.cpp enforces this against the real option table.
-        assertEquals(40, ModelFlag.values().length);
+        assertEquals(41, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")
