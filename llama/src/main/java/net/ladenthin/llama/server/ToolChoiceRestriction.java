@@ -5,9 +5,12 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -26,6 +29,8 @@ import org.jspecify.annotations.Nullable;
  * names exactly one supplied tool, a required set not empty, and an empty {@code auto} set is
  * {@code none}.
  */
+@EqualsAndHashCode
+@ToString
 final class ToolChoiceRestriction {
 
     /** Where a request writes a function's name. */
@@ -37,11 +42,12 @@ final class ToolChoiceRestriction {
     }
 
     private final String mode;
-    private final List<String> allowed;
+    /** The names the choice allows, in the request's order; empty when it allows none. */
+    private final Set<String> allowed;
 
-    private ToolChoiceRestriction(String mode, List<String> allowed) {
+    private ToolChoiceRestriction(String mode, Set<String> allowed) {
         this.mode = mode;
-        this.allowed = Collections.unmodifiableList(allowed);
+        this.allowed = Collections.unmodifiableSet(allowed);
     }
 
     /**
@@ -68,7 +74,7 @@ final class ToolChoiceRestriction {
                 throw new IllegalArgumentException(
                         "tool_choice of type 'function' needs the function's 'name' (got " + toolChoice + ")");
             }
-            List<String> named = new ArrayList<>();
+            Set<String> named = new LinkedHashSet<>();
             named.add(name.asText());
             return new ToolChoiceRestriction("required", named);
         }
@@ -85,7 +91,7 @@ final class ToolChoiceRestriction {
             throw new IllegalArgumentException(
                     "allowed_tools requires mode auto or required and a tools array (got " + toolChoice + ")");
         }
-        List<String> names = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
         for (JsonNode tool : tools) {
             if (!"function".equals(tool.path("type").asText(""))) {
                 throw new IllegalArgumentException("allowed_tools entries must have type function (got " + tool + ")");
@@ -99,7 +105,8 @@ final class ToolChoiceRestriction {
         }
         if (names.isEmpty()) {
             if ("required".equals(mode)) {
-                throw new IllegalArgumentException("Required allowed_tools must contain at least one function");
+                throw new IllegalArgumentException(
+                        "Required allowed_tools must contain at least one function (got " + toolChoice + ")");
             }
             return new ToolChoiceRestriction("none", names);
         }
