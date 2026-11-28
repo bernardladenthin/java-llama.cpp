@@ -6,6 +6,7 @@
 
 #include "common.h"
 #include "ggml-opt.h"
+#include "gguf.h"
 #include "llama.h"
 #include "rpc_support.hpp"
 #include "train_params.hpp"
@@ -29,6 +30,53 @@ using json = nlohmann::json;
 
 namespace jllama_train {
 
+namespace {
+
+// The model's trained context (<arch>.context_length) read from its GGUF, 0 when the file cannot be
+// read or carries none: an n_ctx of 0 trains with it, and build_train_params has to know it before
+// the load to make the whole context one ubatch.
+int gguf_context_length(const std::string &path) {
+    std::error_code ec;
+    if (path.empty() || !std::filesystem::is_regular_file(std::filesystem::u8path(path), ec)) {
+        return 0; // the load names the file
+    }
+    gguf_init_params ip{};
+    ip.no_alloc = true;
+    ip.ctx = nullptr;
+    gguf_context *gguf = gguf_init_from_file(path.c_str(), ip);
+    if (gguf == nullptr) {
+        return 0;
+    }
+    int64_t length = 0;
+    const int64_t arch = gguf_find_key(gguf, "general.architecture");
+    if (arch >= 0 && gguf_get_kv_type(gguf, arch) == GGUF_TYPE_STRING) {
+        const std::string key = std::string(gguf_get_val_str(gguf, arch)) + ".context_length";
+        const int64_t id = gguf_find_key(gguf, key.c_str());
+        if (id >= 0) {
+            switch (gguf_get_kv_type(gguf, id)) {
+            case GGUF_TYPE_UINT32:
+                length = gguf_get_val_u32(gguf, id);
+                break;
+            case GGUF_TYPE_INT32:
+                length = gguf_get_val_i32(gguf, id);
+                break;
+            case GGUF_TYPE_UINT64:
+                length = static_cast<int64_t>(std::min<uint64_t>(gguf_get_val_u64(gguf, id), INT32_MAX));
+                break;
+            case GGUF_TYPE_INT64:
+                length = gguf_get_val_i64(gguf, id);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    gguf_free(gguf);
+    return length > 0 && length <= INT32_MAX ? static_cast<int>(length) : 0;
+}
+
+} // namespace
+
 bool finetune(const finetune_config &cfg, std::string &err) {
     // llama_opt_epoch asserts 0 <= the training part <= the windows, so a split outside [0, 1) ended
     // the process (a negative or a too large part), and 1 trained on nothing; LlamaTrainer's
@@ -47,7 +95,11 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         err = "optimizer must be 0 (AdamW) or 1 (SGD), was " + std::to_string(cfg.optimizer);
         return false;
     }
-    common_params params = build_train_params(cfg);
+    common_params params = build_train_params(cfg, cfg.n_ctx > 0 ? 0 : gguf_context_length(cfg.model_path));
+    if (const std::string refusal = training_batch_refusal(params); !refusal.empty()) {
+        err = refusal;
+        return false;
+    }
 
     // The corpus is either read from a file or supplied inline.
     if (!cfg.training_file.empty()) {

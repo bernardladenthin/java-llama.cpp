@@ -1218,6 +1218,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `post-release.yml` uses (see Added); nothing changes for the actions already in use.
 
 ### Fixed
+- **Fine-tuning trains the key and value projections.** Since llama.cpp #28520 (b11304) the attention
+  of a training step reads the keys and values of the step itself only when one micro-batch is the
+  whole context; otherwise it reads them back from the KV cache, through which no gradient flows.
+  llama.cpp caps the batch at the context it is asked for before it rounds the context up to a
+  multiple of 256, so `LlamaTrainer` / `jllama_finetune` with an `nCtx` of 64 trained with a batch of 64
+  in a context of 256, and with the native defaults (a micro-batch of 512) every larger context the
+  same way: no run trained a single `attn_k` or `attn_v` (measured on the random llama model; llama.cpp
+  logged "the K and V projections will not receive gradients"). The trainer now passes the rounded
+  context (an `nCtx` of 0 as the model's trained context, read from the GGUF) and makes it the batch
+  and the micro-batch a caller leaves unset -- what upstream's own example runs (`-c 512 -b 512 -ub
+  512`); a smaller `nUbatch` saves memory and leaves the two projections as they were. The token
+  embedding is still not trained: llama.cpp leaves it out on purpose (TODO.md; the disabled
+  `CApi.DISABLED_FinetuneTrainsEveryWeightIncludingTheTokenEmbedding` checks it on demand).
+- **A fine-tuning batch that does not divide the context is refused instead of ending the process.**
+  `llama_opt_init` asserts that the batch divides the context and the micro-batch the batch
+  (`GGML_ASSERT`): an `nBatch` of 100 with an `nCtx` of 512 took the JVM down. Both are refused by name
+  before the model loads.
 - **The MSVC build of llama compiles again.** llama.cpp b12669's target quantizer reads a `constexpr`
   local of its function in a constant expression inside a lambda, which GCC and clang accept and MSVC
   14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in run 45233019300.

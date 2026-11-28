@@ -19,7 +19,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Build with {@code builder()}; only {@code modelPath} and {@code outputPath} are required, and
  * exactly one of {@code trainingText} / {@code trainingFile} should be set. All other fields default
- * to values that mirror upstream llama.cpp's fine-tuning defaults. The configuration is serialized to
+ * to values that mirror upstream llama.cpp's fine-tuning defaults, except the batch sizes: they default
+ * to the whole context, as upstream's training example runs ({@code -c 512 -b 512 -ub 512}), because
+ * only then are the key and value projections trained. The configuration is serialized to
  * JSON via {@link #toJson()} and parsed by the native layer, the same way {@link ModelParameters} and
  * {@link InferenceParameters} cross the JNI boundary.
  */
@@ -68,7 +70,8 @@ public final class TrainingParameters {
     @Builder.Default
     private final Optimizer optimizer = Optimizer.ADAMW;
 
-    // Context size in tokens, or 0 to use the model's trained context.
+    // Context size in tokens, or 0 to use the model's trained context; rounded up to a multiple of
+    // 256, the size llama.cpp makes of it and the length of every training window.
     @Builder.Default
     private final int nCtx = 0;
 
@@ -80,11 +83,13 @@ public final class TrainingParameters {
     @Builder.Default
     private final float valSplit = 0.05f;
 
-    // Logical batch size, or 0 to use the native default.
+    // Logical batch size, or 0 for the whole (rounded) context; must divide the context.
     @Builder.Default
     private final int nBatch = 0;
 
-    // Physical (micro) batch size, or 0 to use the native default.
+    // Physical (micro) batch size, or 0 for the logical batch; must divide it. The key and value
+    // projections are trained only while one micro-batch is the whole context: a smaller one needs
+    // less memory and leaves them as they were.
     @Builder.Default
     private final int nUbatch = 0;
 

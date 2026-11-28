@@ -26,6 +26,12 @@ import org.jspecify.annotations.Nullable;
  * a matmul ignores a weight's scale (a GGUF with {@code <matrix>.scale} tensors, as FP8 and NVFP4
  * conversions carry). Such a model is refused with a {@link LlamaException} naming the op, before its
  * first training step and without writing an output.
+ *
+ * <p>What is trained: every F32 weight of the model except the token embedding, which llama.cpp leaves
+ * out of the trained parameters ({@code llama_set_param}, marked FIXME upstream). The key and value
+ * projections get a gradient only while one micro-batch is the whole context, which is the default
+ * here (see {@link TrainingParameters}); a smaller {@code nUbatch} saves memory and leaves them as
+ * they were.
  */
 public final class LlamaTrainer {
 

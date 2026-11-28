@@ -278,16 +278,78 @@ TEST(TrainParams, MapsTheConfigOntoTheOptimizerFields) {
     EXPECT_EQ(params.out_file, "tuned.gguf");
 }
 
-TEST(TrainParams, NonPositiveBatchSizesKeepTheNativeDefaults) {
-    const common_params defaults{};
+// Since upstream #28520 the K and V projections get a gradient only when one ubatch is the whole
+// context, and llama_context caps the batch at the context it is asked for before it rounds the
+// context up to a multiple of 256: the builder passes the rounded context and makes it the batch and
+// the ubatch the caller left unset (CApi.FinetuneTrainsTheKeyAndValueProjections is the run).
+TEST(TrainParams, UnsetBatchSizesAreTheContextRoundedUpToAMultipleOf256) {
     jllama_train::finetune_config cfg = minimal_train_config();
     cfg.n_batch = 0;
+    cfg.n_ubatch = -3; // non-positive is unset
+
+    for (const int asked : {1, 64, 256, 257, 512}) {
+        SCOPED_TRACE(asked);
+        cfg.n_ctx = asked;
+        const common_params params = jllama_train::build_train_params(cfg);
+        const int rounded = (asked + 255) / 256 * 256;
+        EXPECT_EQ(params.n_ctx, rounded);
+        EXPECT_EQ(params.n_batch, rounded);
+        EXPECT_EQ(params.n_ubatch, rounded);
+    }
+}
+
+TEST(TrainParams, AnUnsetContextIsTheModelsTrainedContextWhenItIsKnown) {
+    const common_params defaults{};
+    jllama_train::finetune_config cfg = minimal_train_config();
+    cfg.n_ctx = 0;
+
+    const common_params known = jllama_train::build_train_params(cfg, 128);
+    EXPECT_EQ(known.n_ctx, 256);
+    EXPECT_EQ(known.n_batch, 256);
+    EXPECT_EQ(known.n_ubatch, 256);
+    // an n_ctx the caller gave wins over the model's
+    cfg.n_ctx = 512;
+    EXPECT_EQ(jllama_train::build_train_params(cfg, 128).n_ctx, 512);
+    // not known: the model's context and llama.cpp's defaults, as before
+    cfg.n_ctx = 0;
+    const common_params unknown = jllama_train::build_train_params(cfg, 0);
+    EXPECT_EQ(unknown.n_ctx, 0);
+    EXPECT_EQ(unknown.n_batch, defaults.n_batch);
+    EXPECT_EQ(unknown.n_ubatch, defaults.n_ubatch);
+}
+
+TEST(TrainParams, ABatchTheCallerSetIsKeptAndTheUbatchDefaultsToIt) {
+    jllama_train::finetune_config cfg = minimal_train_config(); // n_ctx 512
+    cfg.n_batch = 128;
     cfg.n_ubatch = 0;
-
     const common_params params = jllama_train::build_train_params(cfg);
+    EXPECT_EQ(params.n_ctx, 512);
+    EXPECT_EQ(params.n_batch, 128);
+    EXPECT_EQ(params.n_ubatch, 128);
+}
 
-    EXPECT_EQ(params.n_batch, defaults.n_batch);
-    EXPECT_EQ(params.n_ubatch, defaults.n_ubatch);
+TEST(TrainParams, BatchSizesThatWouldEndTheProcessAreRefusedByName) {
+    // llama_context::opt_init asserts n_ctx % n_batch == 0 and n_batch % n_ubatch == 0, with the
+    // batch capped at the context and the ubatch at the batch
+    const auto refusal = [](int n_ctx, int n_batch, int n_ubatch) {
+        jllama_train::finetune_config cfg = minimal_train_config();
+        cfg.n_ctx = n_ctx;
+        cfg.n_batch = n_batch;
+        cfg.n_ubatch = n_ubatch;
+        return jllama_train::training_batch_refusal(jllama_train::build_train_params(cfg));
+    };
+    EXPECT_EQ(refusal(512, 0, 0), "");
+    EXPECT_EQ(refusal(512, 256, 64), "");
+    EXPECT_EQ(refusal(64, 4096, 0), ""); // capped at the context of 256
+    EXPECT_EQ(refusal(64, 4096, 1024), "");
+    EXPECT_EQ(refusal(512, 100, 0),
+              "n_batch 100 must divide the training context of 512 tokens (n_ctx rounded up to a multiple of 256)");
+    EXPECT_EQ(refusal(300, 0, 200), "n_ubatch 200 must divide n_batch 512");
+    // a context that is not known is not checked: the load decides
+    common_params unknown = jllama_train::build_train_params(minimal_train_config());
+    unknown.n_ctx = 0;
+    unknown.n_batch = 100;
+    EXPECT_EQ(jllama_train::training_batch_refusal(unknown), "");
 }
 
 TEST(TrainParams, EpochsBelowOneAreClampedSoTheOptimizerRunsAtLeastOnce) {

@@ -10649,6 +10649,118 @@ TEST_F(CApi, FinetuneChangesTheWeightsWithEitherOptimizerAndWithAValidationSplit
     }
 }
 
+namespace {
+
+// The tensors of a trained file whose bytes are the input's, by name.
+std::vector<std::string> finetune_unchanged(const std::string &model, json config) {
+    const auto input = gguf_tensor_bytes(model);
+    const std::string out = model + ".unchanged.gguf";
+    config["model_path"] = model;
+    config["output_path"] = out;
+    config["training_text"] = training_corpus(24);
+    config["epochs"] = 1;
+    config["learning_rate"] = 1e-3;
+    config["n_gpu_layers"] = 0;
+    config["val_split"] = 0.0;
+    std::vector<std::string> unchanged;
+    if (jllama_finetune(config.dump().c_str()) != JLLAMA_STATUS_OK) {
+        ADD_FAILURE() << jllama_last_error();
+        return unchanged;
+    }
+    const auto output = gguf_tensor_bytes(out);
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+    EXPECT_EQ(output.size(), input.size());
+    for (const auto &tensor : input) {
+        const auto it = output.find(tensor.first);
+        if (it == output.end()) {
+            ADD_FAILURE() << tensor.first << " is missing from the trained file";
+        } else if (it->second == tensor.second) {
+            unchanged.push_back(tensor.first);
+        }
+    }
+    return unchanged;
+}
+
+std::string joined_names(const std::vector<std::string> &names) {
+    std::string out;
+    for (const std::string &name : names) {
+        out += " " + name;
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_F(CApi, FinetuneTrainsTheKeyAndValueProjections) {
+    // Since upstream #28520 the attention of a training step reads the keys and values of the step only
+    // when one ubatch is the whole context; otherwise it reads them back from the KV cache, through
+    // which no gradient flows. llama.cpp capped the batch at the n_ctx asked for (64) before it rounded
+    // the context up to 256, and kept a ubatch of 512 below a larger one, so no run trained a single
+    // attn_k or attn_v: the trainer passes the rounded context and makes it the batch and the ubatch.
+    // Measured red before (opt_init: "n_ubatch (64) != n_ctx (256), the K and V projections will not
+    // receive gradients", the four projections byte for byte the input's).
+    const auto projections = [](const std::vector<std::string> &names) {
+        std::vector<std::string> kv;
+        for (const std::string &name : names) {
+            if (name.find("attn_k.") != std::string::npos || name.find("attn_v.") != std::string::npos) {
+                kv.push_back(name);
+            }
+        }
+        return kv;
+    };
+    for (const int n_ctx : {64, 0}) { // 0 is the model's trained context (128)
+        SCOPED_TRACE(n_ctx);
+        const auto unchanged = finetune_unchanged(path_, {{"n_ctx", n_ctx}});
+        EXPECT_TRUE(projections(unchanged).empty()) << "unchanged:" << joined_names(unchanged);
+    }
+    // a ubatch below the context is the caller's choice: less memory, and no gradient for K and V
+    const auto smaller = finetune_unchanged(path_, {{"n_ctx", 64}, {"n_ubatch", 32}});
+    EXPECT_EQ(projections(smaller).size(), 4u) << "unchanged:" << joined_names(smaller);
+}
+
+TEST_F(CApi, FinetuneRefusesABatchThatDoesNotDivideTheContextAndTheProcessGoesOn) {
+    // llama_context::opt_init asserts that the batch divides the context and the ubatch the batch, which
+    // ended the process (a batch of 100 in a context of 512, measured as an abort before the check).
+    const std::string out = path_ + ".refused-batch.gguf";
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+    const auto finetune = [&out](int n_ctx, int n_batch, int n_ubatch) {
+        const json config = {{"model_path", path_},   {"training_text", training_corpus(24)},
+                             {"output_path", out},    {"epochs", 1},
+                             {"learning_rate", 1e-4}, {"n_ctx", n_ctx},
+                             {"n_batch", n_batch},    {"n_ubatch", n_ubatch},
+                             {"n_gpu_layers", 0},     {"val_split", 0.0}};
+        return jllama_finetune(config.dump().c_str());
+    };
+    EXPECT_EQ(finetune(512, 100, 0), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("n_batch 100 must divide the training context of 512"),
+              std::string::npos)
+        << jllama_last_error();
+    EXPECT_FALSE(std::filesystem::exists(out));
+    EXPECT_EQ(finetune(64, 0, 48), JLLAMA_STATUS_ERROR); // the context and the batch are 256
+    EXPECT_NE(std::string(jllama_last_error()).find("n_ubatch 48 must divide n_batch 256"), std::string::npos)
+        << jllama_last_error();
+    EXPECT_FALSE(std::filesystem::exists(out));
+    // sizes that divide train, and a batch larger than the context is capped at it as before
+    EXPECT_EQ(finetune(64, 1024, 128), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(std::filesystem::exists(out));
+    std::filesystem::remove(out, ec);
+}
+
+// DISABLED: a machine check of a known defect (TODO.md, "Fine-tuning does not train the token
+// embedding"). llama.cpp leaves token_embd.weight out of the trained parameters on purpose
+// (llama_set_param in src/llama-context.cpp: `return; // FIXME`, since #10544), so a fine-tuned model
+// keeps the embedding it had. Red today and kept registered so it can be run on demand -- which is
+// also how a bump finds out that upstream has changed it:
+//   jllama_test --gtest_also_run_disabled_tests --gtest_filter='CApi.DISABLED_FinetuneTrainsEveryWeight*'
+// Once it passes, drop the prefix and the TODO entry.
+TEST_F(CApi, DISABLED_FinetuneTrainsEveryWeightIncludingTheTokenEmbedding) {
+    const auto unchanged = finetune_unchanged(path_, {{"n_ctx", 64}});
+    EXPECT_TRUE(unchanged.empty()) << unchanged.size()
+                                   << " tensors were written back unchanged:" << joined_names(unchanged);
+}
+
 TEST_F(CApi, FinetuneRefusesACorpusShorterThanOneTrainingWindowAndASplitWithoutTrainingData) {
     // llama.cpp's dataset cuts the corpus into windows of n_ctx + 1 tokens, one every n_ctx / 2
     // tokens (common_opt_dataset_init), and computes their count in size_t: a corpus shorter than a
