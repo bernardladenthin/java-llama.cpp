@@ -2302,6 +2302,7 @@ below covers the model bindings:
 | `net.ladenthin.llama.realtime.model` / `.mmproj`, `net.ladenthin.llama.tts.template.model` / `.mmproj` | `RealtimeNativeServerIntegrationTest`, `TtsChatTemplateIntegrationTest` | `LFM3-Audio-2B-Q4_0.gguf` + `mmproj-LFM3-Audio-2B-Q8_0.gguf` |
 | `net.ladenthin.llama.tts.pipeline.model` / `.mmproj` | `TtsPipelineIntegrationTest` (the same contract, for a pair outside the set: Drama-3 is 14.6 GB) | none |
 | `net.ladenthin.llama.decision.model` | `SystemOneIntegrationTest` (decision-model half) | `tinylaya-for-testing-Q8_0.gguf` (upstream's own test model, decision type `laya`) |
+| `net.ladenthin.llama.mtp.model` | `MtpDraftIntegrationTest` (`--spec-type draft-mtp` over a trained head) | `small-test-f16.gguf` (llama.cpp's own server CI fixture, a 95M Qwen3.5 with an MTP head) |
 | `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | `Llama-3.2-1B-Instruct-Q4_K_M.gguf` (Ultravox v0.5's text model) |
 | `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
 | `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed `src/test/resources/audios/sample.wav`; any `.wav`/`.mp3` |
@@ -2927,7 +2928,7 @@ clip (`src/test/resources/audios/sample.wav`). `SystemOneIntegrationTest` runs w
 own test model for the route, `tinylaya-for-testing-Q8_0.gguf` (feature `decision`).
 The model set has a **single source of truth: `.github/models.csv`**, one `filename,feature,sha256,url`
 row per model (`#` comments): the **feature** says what the model is in the set for (`text`, `draft`,
-`reasoning`, `tools`, `rerank`, `embedding`, `vision`, `tts`, `pockettts`, `chatterbox`, `zonos`, `kokoro`, `tinyvoca`, `realtime`, `decision`, `audio`, `train`), the **URL** is pinned to a
+`reasoning`, `tools`, `rerank`, `embedding`, `vision`, `tts`, `pockettts`, `chatterbox`, `zonos`, `kokoro`, `tinyvoca`, `realtime`, `decision`, `audio`, `mtp`, `train`), the **URL** is pinned to a
 Hugging Face commit (`resolve/<commit>/`, never `main`) and the **SHA-256** is the file's. A job
 gets its models from the composite action **`.github/actions/fetch-models`**, naming the features it
 needs (`features: draft tts`; none = every row); it runs **`.github/fetch-models.sh`**, which downloads

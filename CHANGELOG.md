@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Speculative decoding with a trained MTP head is tested over JNI.** `MtpDraftIntegrationTest`
+  loads llama.cpp's own server CI fixture `small-test` (b12838, #28815: a 95M Qwen3.5 with an MTP
+  head, Apache-2.0, new in `.github/models.csv` as feature `mtp`, 191 MB) and holds that
+  `--spec-type draft-mtp` drafts tokens the model takes (22 of 73 accepted, measured) while the greedy
+  answer stays the model's own, token for token; without a speculative type the head drafts nothing.
+  The C API tests drive the same paths over random weights, whose drafts are all rejected.
 - **A failed model load names the loader's reason.** llama.cpp logs why a file did not load and hands
   back only a null model, so the message used to end at "could not load model from given file path";
   the engine now keeps the last `error loading model:` line of the loading thread and appends it

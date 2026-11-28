@@ -22,7 +22,7 @@ from the repository root:
 ```bash
 bash .github/fetch-models.sh draft          # the small draft model most tests use
 bash .github/fetch-models.sh vision tts     # several features
-bash .github/fetch-models.sh                # all of them (about 6.3 GB)
+bash .github/fetch-models.sh                # all of them (about 6.5 GB)
 ```
 
 A file that is already here with the right SHA-256 is kept. With `HF_TOKEN` set in the environment

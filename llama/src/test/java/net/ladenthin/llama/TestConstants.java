@@ -185,6 +185,21 @@ public class TestConstants {
     public static final String DEFAULT_VISION_IMAGE_PATH = resolveModelPath("src/test/resources/images/test-image.jpg");
 
     /**
+     * System property holding a path to a GGUF with a multi-token-prediction head for
+     * {@code MtpDraftIntegrationTest} ({@link #DEFAULT_MTP_MODEL_PATH} when unset).
+     */
+    public static final String PROP_MTP_MODEL_PATH = LlamaSystemProperties.PREFIX + ".mtp.model";
+
+    /**
+     * Path used when {@link #PROP_MTP_MODEL_PATH} is unset: the CI model (.github/models.csv),
+     * llama.cpp's own server CI fixture {@code small-test}, a 95M Qwen3.5 trained with an MTP head.
+     */
+    public static final String DEFAULT_MTP_MODEL_PATH = resolveModelPath("models/small-test-f16.gguf");
+
+    /** The MTP model the tests use: {@link #PROP_MTP_MODEL_PATH}, else {@link #DEFAULT_MTP_MODEL_PATH}. */
+    public static final String MTP_MODEL_PATH = resolveModelProperty(PROP_MTP_MODEL_PATH, DEFAULT_MTP_MODEL_PATH);
+
+    /**
      * System property holding a path to a decision model GGUF (laya, julia-1, lev, openjev, kev, LFM3 d1, ...)
      * for {@code SystemOneIntegrationTest}, which drives llama.cpp's {@code /v1/systemone} API
      * ({@link #DEFAULT_DECISION_MODEL_PATH} when unset).
