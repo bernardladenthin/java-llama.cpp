@@ -419,6 +419,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12839** (from b12838, one upstream commit; master, pinned by commit). b12839 gives the
+  ROCm module a DPP and `ds_swizzle` path for the warp sums of ggml's CUDA/HIP kernels (#32215); for
+  CUDA the reduction is the same shuffle loop as before, and the vector matmuls (`mmvf`) write only lane
+  0 of each warp into shared memory. Neither module is measured on a GPU (TODO.md). No source of the
+  binding changed; the 36 patches apply unchanged.
 - **llama.cpp b12838** (from b12835, three upstream commits; master, pinned by commit). b12838 adds
   `small-test` to llama.cpp's server tests (#28815), a 95M Qwen3.5 trained as a CI fixture with an
   MTP head, which `MtpDraftIntegrationTest` drives over JNI too (see "Added"); b12836 gives the ROCm
