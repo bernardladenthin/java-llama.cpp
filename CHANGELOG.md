@@ -413,6 +413,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12826** (from b12818, eight upstream commits in one step; the tag, pinned by commit).
+  b12824 lets `conversion/inkling2.py` keep the experts of an NVFP4 checkpoint NVFP4 instead of
+  dequantizing them to F32, each expert's outer scale a per-expert `<matrix>.scale` (#33062). Such a
+  file loads and computes what its weights times their expert's scale compute: refused by name without
+  the scale and with fewer values than experts, bit for bit like the same experts with the scales
+  multiplied in, close to their F32 values (`CApiInkling2`, a new case over the generator's model with
+  its gate/up experts rewritten). b12823 fixes the CUDA module's `ADD_ID` (gpt-oss's expert biases) for
+  more than 65535 tokens in a batch (#33162); the other steps change the CUDA, Vulkan and zDNN backends
+  (zDNN is not built here) and the WebUI (no npm package changed; it builds from CI's sparse checkout,
+  293 assets). The 36 patches apply unchanged.
 - **llama.cpp b12818** (from b12723, 95 upstream commits in thirty-five steps; master, pinned by commit).
   b12724 adds `--ui-agent` (`ModelParameters.enableUiAgent()`, see "Added"). b12729 accepts the boolean
   JSON schema `true` as any value and refuses `false` by name (#32908; `CApiStatic`, red before).

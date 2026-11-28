@@ -5624,6 +5624,171 @@ TEST(CApiFp8Weights, AnFp8WeightNeedsItsScaleAndRunsWithIt) {
     }
 }
 
+namespace {
+// What with_nvfp4_experts writes for the merged gate/up experts of an Inkling 2 GGUF.
+enum class Nvfp4Experts {
+    WITHOUT_SCALE, // NVFP4 of the weights, no "<matrix>.scale"
+    SCALED,        // NVFP4 of the weights, the scales as "<matrix>.scale", one value per expert
+    FOLDED,        // NVFP4 of the weights times their expert's scale, a scale of 1 for every expert
+    DEQUANTIZED,   // F32: the values SCALED holds, each times its expert's scale
+};
+
+// A copy of the Inkling 2 GGUF at `src` whose merged gate/up experts (blk.N.ffn_gate_up_exps.weight, n_embd x
+// 2 * n_ff x n_expert) are NVFP4, the layout conversion/inkling2.py writes since b12824 (#33062) for an NVFP4
+// checkpoint: the checkpoint's 4-bit values and UE4M3 block scales as they are, and each expert's outer scale
+// (amax / denominator) as a "<matrix>.scale" of one value per expert. The down experts stay F32, as the
+// converter dequantizes a matrix whose rows are not a multiple of 64 values (n_ff is 16 here). The weights are
+// multiplied by 4 first: every block scale is then a normal UE4M3 number, which a power-of-two factor moves
+// by its exponent alone, so SCALED and FOLDED hold the same values whenever the scales are powers of two.
+std::string with_nvfp4_experts(const std::string &src, const std::string &prefix, const std::vector<float> &scales,
+                               Nvfp4Experts mode) {
+    ggml_context *data = nullptr;
+    gguf_init_params params = {false, &data};
+    gguf_context *in = gguf_init_from_file(src.c_str(), params);
+    if (in == nullptr) {
+        return std::string();
+    }
+    gguf_context *out = gguf_init_empty();
+    gguf_set_kv(out, in);
+    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+    ggml_context *ctx = ggml_init(ip);
+    const std::string suffix = "ffn_gate_up_exps.weight";
+    bool ok = true;
+    for (int64_t i = 0; i < gguf_get_n_tensors(in); ++i) {
+        const std::string name = gguf_get_tensor_name(in, i);
+        ggml_tensor *t = ggml_get_tensor(data, name.c_str());
+        if (name.size() < suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+            gguf_add_tensor(out, t);
+            continue;
+        }
+        const int64_t n_per_row = t->ne[0];
+        const int64_t rows = t->ne[1];
+        const int64_t n_expert = t->ne[2];
+        const int64_t per_expert = n_per_row * rows;
+        const auto scale_of = [&](int64_t e) {
+            return static_cast<size_t>(e) < scales.size() ? scales[static_cast<size_t>(e)] : 1.0f;
+        };
+        std::vector<float> values(static_cast<const float *>(t->data),
+                                  static_cast<const float *>(t->data) + ggml_nelements(t));
+        for (int64_t e = 0; e < n_expert; ++e) {
+            const float factor = 4.0f * (mode == Nvfp4Experts::FOLDED ? scale_of(e) : 1.0f);
+            for (int64_t k = 0; k < per_expert; ++k) {
+                values[static_cast<size_t>(e * per_expert + k)] *= factor;
+            }
+        }
+        ggml_tensor *q = ggml_new_tensor_3d(ctx, GGML_TYPE_NVFP4, n_per_row, rows, n_expert);
+        ok = ok && n_per_row % 64 == 0;
+        ggml_quantize_chunk(GGML_TYPE_NVFP4, values.data(), q->data, 0, rows * n_expert, n_per_row, nullptr);
+        const std::string base = name.substr(0, name.size() - std::string("weight").size());
+        if (mode == Nvfp4Experts::DEQUANTIZED) {
+            ggml_tensor *f = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_per_row, rows, n_expert);
+            ggml_get_type_traits(GGML_TYPE_NVFP4)->to_float(q->data, static_cast<float *>(f->data), ggml_nelements(f));
+            for (int64_t e = 0; e < n_expert; ++e) {
+                for (int64_t k = 0; k < per_expert; ++k) {
+                    static_cast<float *>(f->data)[e * per_expert + k] *= scale_of(e);
+                }
+            }
+            ggml_set_name(f, name.c_str());
+            gguf_add_tensor(out, f);
+            continue;
+        }
+        ggml_set_name(q, name.c_str());
+        gguf_add_tensor(out, q);
+        if (mode == Nvfp4Experts::WITHOUT_SCALE) {
+            continue;
+        }
+        ggml_tensor *sc = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, static_cast<int64_t>(scales.size()));
+        for (size_t e = 0; e < scales.size(); ++e) {
+            static_cast<float *>(sc->data)[e] = mode == Nvfp4Experts::FOLDED ? 1.0f : scales[e];
+        }
+        ggml_set_name(sc, (base + "scale").c_str());
+        gguf_add_tensor(out, sc);
+    }
+    static std::atomic<int> counter{0};
+    const std::string path =
+        (std::filesystem::temp_directory_path() /
+         (prefix + "-" + std::to_string(std::random_device{}()) + "-" + std::to_string(counter++) + ".gguf"))
+            .string();
+    ok = ok && gguf_write_to_file(out, path.c_str(), false);
+    gguf_free(out);
+    gguf_free(in);
+    ggml_free(ctx);
+    ggml_free(data);
+    return ok ? path : std::string();
+}
+} // namespace
+
+TEST(CApiInkling2, Nvfp4ExpertsWithAScalePerExpertAnswerAsTheirScaledWeights) {
+    // b12824 (#33062): conversion/inkling2.py no longer dequantizes the experts of an NVFP4 checkpoint to F32
+    // (unless asked for another type): it writes them as NVFP4 with each expert's outer scale as a per-expert
+    // "<matrix>.scale", which llama.cpp has applied inside MUL_MAT_ID since b12818 (#28898). Such a file
+    // has to load and compute what its weights times their expert's scale compute: without the scale it is
+    // refused by name (NVFP4 needs one), a scale with fewer values than experts is refused, and with the
+    // scales {1, 2, 4, 2} it answers bit for bit like the file whose experts hold the weights times those
+    // scales (a scale of 1 each), close to the F32 file of the same values (the CPU multiplies NVFP4 with
+    // Q8_0 activations) and unlike the file whose experts are all scaled by 1.
+    const std::string plain = write_tiny_inkling2_gguf("jllama-c-api-inkling2-nvfp4-plain", 8, 64);
+    ASSERT_FALSE(plain.empty());
+    const std::vector<float> scales = {1.0f, 2.0f, 4.0f, 2.0f};
+    const std::vector<float> ones(scales.size(), 1.0f);
+    const std::string unscaled =
+        with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-unscaled", scales, Nvfp4Experts::WITHOUT_SCALE);
+    const std::string short_scale =
+        with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-short", {1.0f, 2.0f, 4.0f}, Nvfp4Experts::SCALED);
+    const std::string scaled =
+        with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-scaled", scales, Nvfp4Experts::SCALED);
+    const std::string folded =
+        with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-folded", scales, Nvfp4Experts::FOLDED);
+    const std::string reference =
+        with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-f32", scales, Nvfp4Experts::DEQUANTIZED);
+    const std::string unit = with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-ones", ones, Nvfp4Experts::SCALED);
+    for (const std::string &p : {unscaled, short_scale, scaled, folded, reference, unit}) {
+        ASSERT_FALSE(p.empty());
+    }
+
+    EXPECT_EQ(load_tiny(unscaled, {}), nullptr) << "NVFP4 experts without their scale loaded";
+    const std::string missing = jllama_last_error();
+    EXPECT_NE(missing.find("requires a weight scale"), std::string::npos) << missing;
+    EXPECT_NE(missing.find("ffn_gate_up_exps.scale"), std::string::npos) << missing;
+    EXPECT_EQ(load_tiny(short_scale, {}), nullptr) << "a scale with fewer values than experts loaded";
+    const std::string wrong = jllama_last_error();
+    EXPECT_NE(wrong.find("per expert"), std::string::npos) << wrong;
+
+    const auto probs = [](const std::string &path) {
+        jllama_model *model = load_tiny(path, {"-c", "128"});
+        EXPECT_NE(model, nullptr) << jllama_last_error();
+        if (model == nullptr) {
+            return std::vector<double>();
+        }
+        Owned response;
+        EXPECT_EQ(jllama_completions(model, inkling2_request("Hello there, how are you today, my friend", 4).c_str(),
+                                     &response.s),
+                  JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        std::vector<double> out =
+            response.s != nullptr ? top_logprobs_of(json::parse(response.str())) : std::vector<double>();
+        jllama_model_free(model);
+        return out;
+    };
+    const std::vector<double> with_scales = probs(scaled);
+    ASSERT_EQ(with_scales.size(), 12u); // 4 steps of 3
+    for (double v : with_scales) {
+        EXPECT_TRUE(std::isfinite(v)) << v;
+    }
+    EXPECT_EQ(with_scales, probs(folded)) << "the per-expert scale is not what multiplying it into the weights gives";
+    const double to_f32 = max_difference(with_scales, probs(reference));
+    const double to_ones = max_difference(with_scales, probs(unit));
+    // measured: 0.14 apart from the F32 values (0.07 with every scale 1, the rounding of the activations to
+    // Q8_0), 0.99 apart from the scales of 1
+    EXPECT_LT(to_f32, 0.3) << "NVFP4 experts and their F32 values";
+    EXPECT_GT(to_ones, 3 * to_f32) << "the scales do not reach the experts";
+
+    std::error_code ec;
+    for (const std::string &p : {plain, unscaled, short_scale, scaled, folded, reference, unit}) {
+        std::filesystem::remove(p, ec);
+    }
+}
+
 TEST(CApiYarn, ALlamaModelReadsTheYarnParametersOfItsFile) {
     // b12746 (#33032): every architecture reads the YaRN parameters of its GGUF (rope.scaling.yarn_ext_factor,
     // yarn_attn_factor, yarn_beta_fast, yarn_beta_slow); before, only some of them did, and a llama model
