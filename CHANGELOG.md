@@ -419,6 +419,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12838** (from b12835, three upstream commits; master, pinned by commit). b12838 adds
+  `small-test` to llama.cpp's server tests (#28815), a 95M Qwen3.5 trained as a CI fixture with an
+  MTP head, which `MtpDraftIntegrationTest` drives over JNI too (see "Added"); b12836 gives the ROCm
+  module few-row matrix multiplications with WMMA on RDNA3.5 (#32224, not measured on a GPU) and
+  b12837 rewrites upstream's agent instructions. No source of the binding changed; the 36 patches
+  apply unchanged.
 - **llama.cpp b12835** (from b12828, seven upstream commits in one step; master, pinned by commit).
   b12832 gives `CONCAT` a backward pass (#32151): `patches/0044`'s list of the ops fine-tuning accepts
   names it now, which `check-backward-ops.cmake` demanded (the configure failed until it did); the
