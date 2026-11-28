@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**36 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**38 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -58,6 +58,8 @@ match a binary to this page.
 | 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
 | 0046 | [`0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch`](#0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-eventpatch) | server : a failed download or load lets /models/sse send its last event | 3 | 7 |
 | 0048 | [`0048-server-a-named-tool-choice-reaches-every-chat-format-and-route.patch`](#0048-server-a-named-tool-choice-reaches-every-chat-format-and-routepatch) | server : a named tool choice reaches every chat format and every route | 2 | 3 |
+| 0049 | [`0049-ggml-every-gradient-the-backward-pass-stores-is-contiguous.patch`](#0049-ggml-every-gradient-the-backward-pass-stores-is-contiguouspatch) | ggml : every gradient the backward pass stores is contiguous | 1 | 4 |
+| 0050 | [`0050-llama-a-training-step-that-fails-ends-the-epoch-with-its-reason.patch`](#0050-llama-a-training-step-that-fails-ends-the-epoch-with-its-reasonpatch) | llama : a training step that fails ends the epoch with its reason | 4 | 12 |
 
 ## 0002-server-preserve-caller-load-progress-callback.patch
 
@@ -1434,17 +1436,10 @@ src[0] and src[1] as if both scales were 1, so a model with weight scales traine
 with every gradient through such a weight off by its scale. The message is "cannot train this model:
 ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>')".
 
-Since b12832 (#32151) ggml differentiates CONCAT, whose backward views its gradient with explicit strides, and
-ggml_view_4d asserts that the first stride is the element's: a CONCAT whose only gradient comes back through a
-TRANSPOSE (or a PERMUTE that moves the first axis) ended the process. The walk therefore tracks the layout of every
-gradient as ggml_compute_backward builds it -- the first gradient a node gets is what its consumer hands over (the
-consumer's own for DUP, ADD, ACC, SUB and CONT, permuted for PERMUTE and TRANSPOSE), a second one is added into a
-new, contiguous tensor -- and refuses CONCAT, ACC and SET with a transposed gradient (ggml_view_4d), CPY, CONT and
-SET with a non-contiguous one (ggml_reshape, ggml_acc_impl, CONT's own assertion), and CONT and VIEW whose
-source's gradient so far is not contiguous (ggml_acc_impl). The message is "cannot train this model: ggml's
-backward pass of <op> cannot take its gradient as the transposed or permuted view it arrives as (tensor
-'<name>')". No architecture of llama.cpp reaches one of these today; the walk has external linkage (declared in
-src/llama-context.h) so that tests can drive it on graphs of their own.
+Since b12832 (#32151) ggml differentiates CONCAT, which is in the op list. The layout a gradient arrives in
+needs no check here: patches/0049 makes every gradient ggml stores contiguous (a CONCAT behind a TRANSPOSE
+ended the process before it). The walk has external linkage (declared in src/llama-context.h) so that tests
+can drive it on graphs of their own.
 
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
@@ -1456,12 +1451,9 @@ CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndThePro
 architectures refused by their op, then a llama model trains; an abort of the test process without the
 check), CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
 Qwen3-VL's text model) and CApiTrainer.AModelWithWeightScalesIsRefusedBecauseTheBackwardPassIgnoresThem
-(refused, and the same model with the scale folded into its weights trains),
-CApiTrainer.TheWalkRefusesAConcatWhoseGradientArrivesTransposedAndGgmlWouldAbort,
-CApiTrainer.TheWalkLetsAConcatThroughWhoseGradientIsContiguous, CApiTrainer.GgmlDifferentiatesAConcatAlongEitherAxis and
-CApiTrainer.TheWalkRefusesAContWhoseGradientArrivesTransposedAndGgmlWouldAbort (graphs built from ggml ops: the
-walk's answer, and ggml's backward pass on the same graph, which a death test holds to abort where the walk
-refuses).
+(refused, and the same model with the scale folded into its weights trains), and the graph tests next to
+them (CApiTrainer.GgmlDifferentiatesAConcatAlongEitherAxis and the ones of patches/0049), which ask the walk
+and then compute ggml's backward pass on the same graph.
 
 Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
 once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
@@ -1565,4 +1557,85 @@ Drop-check on every bump: read oaicompat_chat_params_parse() in tools/server/ser
 tool_choice handling of server_chat_convert_responses_to_chatcmpl() and server_chat_convert_anthropic_to_oai()
 in tools/server/server-chat.cpp -- once every parser honours the allowed tools and both routes convert their
 named shapes, drop the patch.
+```
+
+## 0049-ggml-every-gradient-the-backward-pass-stores-is-contiguous.patch
+
+**Files (1):** `ggml/src/ggml.c`
+
+The patch's own header, verbatim:
+
+```text
+ggml : every gradient the backward pass stores is contiguous
+
+The backward of TRANSPOSE and PERMUTE hands its source a transposed or permuted view of its own gradient
+(ggml_compute_backward in ggml/src/ggml.c), and ggml_add_or_set / ggml_acc_or_set / ggml_sub_or_set stored it as
+it came or accumulated into it. Kernels and backward cases that read a gradient assume more than that:
+
+  * ACC (the backward of VIEW) reads its second source by rows -- the CPU kernel asserts nb10 == sizeof(float)
+    -- and ggml_acc_impl asserts a contiguous first one;
+  * ADD and SUB read their first source by rows (the CPU binary-op kernel asserts nb00 == the element size),
+    which is the stored gradient once a second one arrives;
+  * the backward of CONCAT, SET and ACC views the gradient with explicit strides (ggml_view_4d asserts that the
+    first is the element's), the backward of CPY and CONT reshapes it, and CONT asserts a contiguous gradient.
+
+Every one of those ended the process (GGML_ASSERT) when a gradient arrived as such a view. One a real model
+reaches: a llama-architecture GGUF with a fused attn_qkv weight, whose value heads are a ggml_view of the QKV
+product. Since upstream #28520 (b11304) the attention of a training step reads the step's own keys and values
+when one ubatch is the whole context, and transposes the values; the gradient of that view came back
+transposed into ACC, and the CPU kernel aborted. With separate projections a RESHAPE sits there instead, whose
+backward makes its gradient contiguous itself.
+
+The three helpers now make a non-contiguous gradient contiguous (ggml_cont) before they store or accumulate
+it: every stored gradient is contiguous, so every backward case and kernel reads one the way it reads a
+contiguous one. The values are the same; a gradient that is contiguous already is not copied.
+
+Guards in java-llama.cpp's src/test/cpp/test_c_api.cpp: CApiTrainer.AModelWithAFusedQkvWeightTrainsItsProjections
+(the random llama model with attn_qkv: an abort of the test process without the patch, and the rows of the
+key and value heads change), and the graph tests next to it, which compute ggml's backward pass through a VIEW
+whose gradient arrives transposed, an ADD whose first gradient arrives transposed, and a CONCAT and a CONT
+behind a TRANSPOSE, and hold every gradient to its expected value.
+
+Drop-check on every bump: read ggml_add_or_set, ggml_acc_or_set and ggml_sub_or_set in ggml/src/ggml.c -- once
+they (or the backward of TRANSPOSE and PERMUTE) make the gradient contiguous, drop the patch.
+```
+
+## 0050-llama-a-training-step-that-fails-ends-the-epoch-with-its-reason.patch
+
+**Files (4):** `ggml/include/ggml-opt.h`, `ggml/src/ggml-opt.cpp`, `src/llama-context.h`, `src/llama-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+llama : a training step that fails ends the epoch with its reason
+
+llama_context::opt_epoch_iter (src/llama-context.cpp) has three ways to fail a training step that are not a
+graph patches/0044 refuses, and none of them reported anything:
+
+  * ggml_opt_alloc (ggml/src/ggml-opt.cpp) ignored the result of ggml_backend_sched_alloc_graph, so a step whose
+    compute buffers did not fit in memory went on and ended the process in the first kernel without a buffer
+    (GGML_ASSERT(buf != NULL && "tensor buffer not set") in ggml-backend.cpp); a failed output buffer was a
+    GGML_ABORT("TODO: handle this error");
+  * a batch the memory could not take, or a memory context that could not be applied, broke out of the loop,
+    and a batch that could not be initialized returned: the epoch trained nothing, or part of it, and
+    llama_opt_epoch returned as if it had trained;
+  * a model that keeps no memory (an encoder such as BERT: create_memory returns none) was dereferenced at the
+    first step (memory->clear), a segmentation fault.
+
+ggml_opt_alloc returns whether the graph was allocated (bool, was void; a caller that ignores it is unchanged),
+and each failure sets llama_context::opt_error, which patches/0044 added and llama_opt_error() reports: "fine-
+tuning failed: not enough memory for the compute buffers of a training step of <n> tokens; ...", "... could not
+initialize a batch", "cannot train this model: it keeps no KV cache (an encoder)", and so on. The evaluation
+part of an epoch stops on the same errors.
+
+java-llama.cpp's trainer makes the whole context one ubatch by default (so that the key and value projections
+are trained), which needs memory in proportion to the context squared: a large trained context is where the
+first case is reached.
+
+Guards in java-llama.cpp's src/test/cpp/test_c_api.cpp: CApiTrainer.ATrainingStepThatDoesNotFitInMemoryFailsTheRun
+(Linux: a model with a context of 12288 under an address-space limit; a SIGABRT of the child without the
+patch) and CApiTrainer.AnEncoderIsRefusedAndTheProcessGoesOn (the random BERT model; a SIGSEGV without it).
+
+Drop-check on every bump: read ggml_opt_alloc and opt_epoch_iter -- once a failed allocation and each failed
+step are reported to the caller, drop the patch and read upstream's way in train_engine.cpp.
 ```

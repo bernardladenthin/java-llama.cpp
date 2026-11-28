@@ -188,6 +188,10 @@ struct tiny_model_spec {
     // qwen3next only: the legacy layout of the delta net, one ssm_in for the queries, keys, values and
     // the gate, where a current conversion writes attn_qkv and attn_gate
     bool qwen3next_legacy = false;
+    // The attention projections as one attn_qkv weight (the query, key and value rows one after the other),
+    // which llama.cpp's loader accepts for every architecture that goes through create_tensor_qkv; its value
+    // heads are then a view of the QKV product instead of a reshape of their own
+    bool fused_qkv = false;
     // The vocabulary. BYTES is one GPT-2 byte token per byte and no merge that ever applies, so a
     // text is as many tokens as bytes. BPE_MERGES adds the merges that make "hello" and " world" one
     // token each (ids 256 + 3 and 256 + 8), the way a real BPE vocabulary works. SENTENCEPIECE is the
@@ -837,9 +841,13 @@ inline std::string write_tiny_llama_gguf(const tiny_model_spec &spec, std::strin
             add_random_tensor(to, ctx, rng, p + "nextn.hnorm.weight", {spec.n_embd}, 1.0f);
         }
         add_random_tensor(to, ctx, rng, p + "attn_norm.weight", {spec.n_embd}, 1.0f);
-        matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim});
-        matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
-        matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+        if (spec.fused_qkv) {
+            matrix(to, p + "attn_qkv.weight", {spec.n_embd, (spec.n_head + 2 * spec.n_head_kv) * spec.head_dim});
+        } else {
+            matrix(to, p + "attn_q.weight", {spec.n_embd, spec.n_head * spec.head_dim});
+            matrix(to, p + "attn_k.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+            matrix(to, p + "attn_v.weight", {spec.n_embd, spec.n_head_kv * spec.head_dim});
+        }
         matrix(to, p + "attn_output.weight", {spec.n_head * spec.head_dim, spec.n_embd});
         if (spec.cache_scales) {
             // constants, so the random weights are those of the same model without scales

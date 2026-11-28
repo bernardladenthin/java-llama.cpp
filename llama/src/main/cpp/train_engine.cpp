@@ -95,11 +95,11 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         err = "optimizer must be 0 (AdamW) or 1 (SGD), was " + std::to_string(cfg.optimizer);
         return false;
     }
-    common_params params = build_train_params(cfg, cfg.n_ctx > 0 ? 0 : gguf_context_length(cfg.model_path));
-    if (const std::string refusal = training_batch_refusal(params); !refusal.empty()) {
-        err = refusal;
+    if (cfg.n_ctx < 0) {
+        err = "n_ctx must not be negative, was " + std::to_string(cfg.n_ctx);
         return false;
     }
+    common_params params = build_train_params(cfg, cfg.n_ctx > 0 ? 0 : gguf_context_length(cfg.model_path));
 
     // The corpus is either read from a file or supplied inline.
     if (!cfg.training_file.empty()) {
@@ -175,6 +175,13 @@ bool finetune(const finetune_config &cfg, std::string &err) {
         ggml_opt_dataset_free(dataset);
         err = "val_split " + std::to_string(params.val_split) + " leaves no training window of the " +
               std::to_string(n_windows) + " the corpus gives (" + std::to_string(tokens.size()) + " tokens)";
+        return false;
+    }
+
+    if (const std::string refusal = training_batch_refusal(llama_n_ctx(ctx), llama_n_batch(ctx), llama_n_ubatch(ctx));
+        !refusal.empty()) {
+        ggml_opt_dataset_free(dataset);
+        err = refusal;
         return false;
     }
 

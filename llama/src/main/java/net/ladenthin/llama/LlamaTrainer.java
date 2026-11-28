@@ -27,11 +27,12 @@ import org.jspecify.annotations.Nullable;
  * conversions carry). Such a model is refused with a {@link LlamaException} naming the op, before its
  * first training step and without writing an output.
  *
- * <p>What is trained: every F32 weight of the model except the token embedding, which llama.cpp leaves
- * out of the trained parameters ({@code llama_set_param}, marked FIXME upstream). The key and value
- * projections get a gradient only while one micro-batch is the whole context, which is the default
- * here (see {@link TrainingParameters}); a smaller {@code nUbatch} saves memory and leaves them as
- * they were.
+ * <p>What is trained: every F32 weight of the model except the token embedding and the RoPE frequency
+ * factors, which llama.cpp leaves out of the trained parameters ({@code llama_set_param}, marked FIXME
+ * upstream). The key and value projections get a gradient only while one micro-batch is the whole
+ * context, which is the default here (see {@link TrainingParameters}); a smaller {@code nUbatch} saves
+ * memory and leaves them as they were. A model without a KV cache (an encoder such as BERT) is refused,
+ * and so is a training step that does not fit in memory, each with a {@link LlamaException}.
  */
 public final class LlamaTrainer {
 

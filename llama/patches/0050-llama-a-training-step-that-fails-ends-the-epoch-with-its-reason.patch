@@ -1,0 +1,189 @@
+llama : a training step that fails ends the epoch with its reason
+
+llama_context::opt_epoch_iter (src/llama-context.cpp) has three ways to fail a training step that are not a
+graph patches/0044 refuses, and none of them reported anything:
+
+  * ggml_opt_alloc (ggml/src/ggml-opt.cpp) ignored the result of ggml_backend_sched_alloc_graph, so a step whose
+    compute buffers did not fit in memory went on and ended the process in the first kernel without a buffer
+    (GGML_ASSERT(buf != NULL && "tensor buffer not set") in ggml-backend.cpp); a failed output buffer was a
+    GGML_ABORT("TODO: handle this error");
+  * a batch the memory could not take, or a memory context that could not be applied, broke out of the loop,
+    and a batch that could not be initialized returned: the epoch trained nothing, or part of it, and
+    llama_opt_epoch returned as if it had trained;
+  * a model that keeps no memory (an encoder such as BERT: create_memory returns none) was dereferenced at the
+    first step (memory->clear), a segmentation fault.
+
+ggml_opt_alloc returns whether the graph was allocated (bool, was void; a caller that ignores it is unchanged),
+and each failure sets llama_context::opt_error, which patches/0044 added and llama_opt_error() reports: "fine-
+tuning failed: not enough memory for the compute buffers of a training step of <n> tokens; ...", "... could not
+initialize a batch", "cannot train this model: it keeps no KV cache (an encoder)", and so on. The evaluation
+part of an epoch stops on the same errors.
+
+java-llama.cpp's trainer makes the whole context one ubatch by default (so that the key and value projections
+are trained), which needs memory in proportion to the context squared: a large trained context is where the
+first case is reached.
+
+Guards in java-llama.cpp's src/test/cpp/test_c_api.cpp: CApiTrainer.ATrainingStepThatDoesNotFitInMemoryFailsTheRun
+(Linux: a model with a context of 12288 under an address-space limit; a SIGABRT of the child without the
+patch) and CApiTrainer.AnEncoderIsRefusedAndTheProcessGoesOn (the random BERT model; a SIGSEGV without it).
+
+Drop-check on every bump: read ggml_opt_alloc and opt_epoch_iter -- once a failed allocation and each failed
+step are reported to the caller, drop the patch and read upstream's way in train_engine.cpp.
+
+diff --git a/ggml/include/ggml-opt.h b/ggml/include/ggml-opt.h
+--- a/ggml/include/ggml-opt.h
++++ b/ggml/include/ggml-opt.h
+@@ -183,7 +183,8 @@
+ 
+     // allocate the next graph for evaluation, either forward or forward + backward
+     // must be called exactly once prior to calling ggml_opt_eval
+-    GGML_API void ggml_opt_alloc(ggml_opt_context_t opt_ctx, bool backward);
++    // jllama: false when the buffers of the graph could not be allocated (the context is then not ready to eval)
++    GGML_API bool ggml_opt_alloc(ggml_opt_context_t opt_ctx, bool backward);
+ 
+     // do forward pass, increment result if not NULL, do backward pass if allocated
+     GGML_API void ggml_opt_eval(ggml_opt_context_t opt_ctx, ggml_opt_result_t result);
+diff --git a/ggml/src/ggml-opt.cpp b/ggml/src/ggml-opt.cpp
+--- a/ggml/src/ggml-opt.cpp
++++ b/ggml/src/ggml-opt.cpp
+@@ -722,7 +722,7 @@
+     opt_ctx->outputs     = outputs;
+ }
+ 
+-void ggml_opt_alloc(ggml_opt_context_t opt_ctx, bool backward) {
++bool ggml_opt_alloc(ggml_opt_context_t opt_ctx, bool backward) {
+     GGML_ASSERT(!opt_ctx->eval_ready);
+     if (opt_ctx->build_type == GGML_OPT_BUILD_TYPE_OPT && opt_ctx->opt_period > 1 && opt_ctx->opt_i == 0) {
+         ggml_graph_reset(opt_ctx->gb_grad);
+@@ -754,7 +754,7 @@
+ 
+     if (opt_ctx->allocated_graph == graph) {
+         opt_ctx->eval_ready = true;
+-        return;
++        return true;
+     }
+ 
+     ggml_backend_sched_reset(opt_ctx->backend_sched); // clear allocation of previous graph
+@@ -773,10 +773,15 @@
+         opt_ctx->allocated_graph_copy = graph;
+     }
+ 
+-    ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
++    if (!ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy)) {
++        // jllama: the result was ignored, and the step ended the process in the first kernel without a buffer
++        opt_ctx->allocated_graph = nullptr;
++        return false;
++    }
+     opt_ctx->allocated_graph = graph;
+ 
+     opt_ctx->eval_ready = true;
++    return true;
+ }
+ 
+ void ggml_opt_eval(ggml_opt_context_t opt_ctx, ggml_opt_result_t result) {
+diff --git a/src/llama-context.h b/src/llama-context.h
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -439,7 +439,7 @@
+ 
+     // training
+     ggml_opt_context_t opt_ctx = nullptr;
+-    std::string        opt_error; // jllama: set by opt_epoch_iter when the backward pass cannot be built
++    std::string        opt_error; // jllama: why the epoch stopped: a backward pass that cannot be built, a failed step
+ 
+     ggml_threadpool_t threadpool       = nullptr;
+     ggml_threadpool_t threadpool_batch = nullptr;
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -4488,6 +4488,7 @@
+             const int32_t   idx = batch.add_token(0);
+             const llama_pos pos = pos_ctx + pos_batch;
+             if (idx < 0 || !batch.set_token_id(idx, tokens[pos_ctx + pos_batch])) {
++                opt_error = "fine-tuning failed: could not initialize a batch"; // jllama
+                 LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);
+                 return;
+             }
+@@ -4496,6 +4497,7 @@
+         }
+ 
+         if (!balloc->init(batch, model.vocab, true)) {
++            opt_error = "fine-tuning failed: could not initialize a batch"; // jllama
+             LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);
+             return;
+         }
+@@ -4508,16 +4510,21 @@
+ 
+         uint32_t n_outputs_all = n_tokens_all;
+ 
++        // jllama: each failure of a training step ends the epoch with its reason in opt_error, which
++        // llama_opt_error() reports -- the memory and the batch failed silently (the epoch trained nothing and
++        // returned as if it had), the output buffer ended the process
+         auto mctx = memory->init_batch(*balloc, cparams.n_ubatch, true);
+         if (!mctx || mctx->get_status() != LLAMA_MEMORY_STATUS_SUCCESS) {
++            opt_error = "fine-tuning failed: the memory could not take a batch of " + std::to_string(n_tokens_all) + " tokens";
+             LLAMA_LOG_ERROR("%s: could not initialize batch\n", __func__);
+-            break;
++            return;
+         }
+ 
+         // reserve output buffer
+         if (output_reserve(n_outputs_all) < n_outputs_all) {
++            opt_error = "fine-tuning failed: not enough memory for the outputs of " + std::to_string(n_outputs_all) + " tokens";
+             LLAMA_LOG_ERROR("%s: could not reserve space for batch with %d outputs\n", __func__, n_outputs_all);
+-            GGML_ABORT("TODO: handle this error");
++            return;
+         };
+ 
+         uint32_t pos_batch = 0;
+@@ -4527,8 +4534,9 @@
+             n_outputs = ubatch.n_tokens;
+ 
+             if (!mctx->apply()) {
++                opt_error = "fine-tuning failed: could not update the memory context"; // jllama
+                 LLAMA_LOG_ERROR("%s: failed to update the memory context\n", __func__);
+-                break;
++                return;
+             }
+ 
+             auto * res = get_gf_res_prev();
+@@ -4563,7 +4571,15 @@
+                 ctx_compute_opt = ggml_init(params);
+             }
+             ggml_opt_prepare_alloc(opt_ctx, ctx_compute_opt, gf, res->get_inp_tokens(), res->get_logits());
+-            ggml_opt_alloc(opt_ctx, train);
++            if (!ggml_opt_alloc(opt_ctx, train)) {
++                // jllama: ggml_opt_alloc ignored the failed allocation and the step ended the process later
++                opt_error = "fine-tuning failed: not enough memory for the compute buffers of a training step of " +
++                            std::to_string(ubatch.n_tokens) + " tokens; a smaller n_ctx (or n_ubatch, which leaves the K "
++                            "and V projections untrained) needs less";
++                LLAMA_LOG_ERROR("%s: %s\n", __func__, opt_error.c_str());
++                ggml_free(ctx_compute_opt);
++                return;
++            }
+ 
+             res->set_inputs(&ubatch);
+             {
+@@ -4613,6 +4629,12 @@
+     int64_t idata = 0;
+ 
+     opt_error.clear();
++    if (!memory) {
++        // jllama: an encoder keeps no memory, and opt_epoch_iter clears it first (a null dereference)
++        opt_error = "cannot train this model: it keeps no KV cache (an encoder)";
++        LLAMA_LOG_ERROR("%s: %s\n", __func__, opt_error.c_str());
++        return;
++    }
+ 
+     int64_t t_loop_start = ggml_time_us();
+     int64_t ndata_in_loop = idata_split*ubatch_per_ctx;
+@@ -4637,6 +4659,9 @@
+         ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
+         opt_epoch_iter(dataset, result_eval, tokens, labels_sparse, batch,
+             callback_eval, train, idata_in_loop, ndata_in_loop, t_loop_start);
++        if (!opt_error.empty()) {
++            return; // jllama
++        }
+     }
+ }
+ 

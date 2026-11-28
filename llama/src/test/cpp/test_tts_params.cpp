@@ -174,8 +174,9 @@ TEST(CommonParamsCpuTrap, RoleModelMakesBatchInheritTheMainCount) {
 //   it through this one resolver. Delete either call site's resolve_cpu_params() and the JVM dies
 //   on memset(NULL, 0, huge) with no hs_err_pid log; these tests are the cheap, model-free way to
 //   notice. Each builder has its own guard above/below, because testing the resolver alone does
-//   NOT cover the call sites: train_engine.cpp is compiled into jllama only, and its integration
-//   test is gated on net.ladenthin.llama.train.model, which no CI job sets.
+//   NOT cover the call sites; the trainer's run is covered too (train_engine.cpp is in jllama_test,
+//   whose CApi finetune tests drive it, and LlamaTrainerIntegrationTest runs stories260K in CI), but
+//   a model-free test of the builder is the cheapest place to see the call go.
 // ============================================================
 
 TEST(ResolveCpuParams, LeavesBothThreadCountsUsable) {
@@ -215,10 +216,9 @@ TEST(ResolveCpuParams, BatchInheritsTheMainCountRatherThanResolvingAlone) {
 // ============================================================
 // build_train_params — the trainer's builder
 //
-//   The sibling of the TtsParams block. This is the only runnable guard on the trainer's
-//   resolve_cpu_params() call: train_engine.cpp is in the jllama target, not jllama_test, and
-//   LlamaTrainerIntegrationTest self-skips on every platform because its model is in no
-//   models.csv row.
+//   The sibling of the TtsParams block: the trainer's resolve_cpu_params() call, its context and
+//   batch sizes (the K and V projections are trained only when one ubatch is the whole context)
+//   and the batch refusal opt_init's assertions call for. The runs are CApi's finetune tests.
 // ============================================================
 
 namespace {
@@ -329,27 +329,17 @@ TEST(TrainParams, ABatchTheCallerSetIsKeptAndTheUbatchDefaultsToIt) {
 }
 
 TEST(TrainParams, BatchSizesThatWouldEndTheProcessAreRefusedByName) {
-    // llama_context::opt_init asserts n_ctx % n_batch == 0 and n_batch % n_ubatch == 0, with the
-    // batch capped at the context and the ubatch at the batch
-    const auto refusal = [](int n_ctx, int n_batch, int n_ubatch) {
-        jllama_train::finetune_config cfg = minimal_train_config();
-        cfg.n_ctx = n_ctx;
-        cfg.n_batch = n_batch;
-        cfg.n_ubatch = n_ubatch;
-        return jllama_train::training_batch_refusal(jllama_train::build_train_params(cfg));
-    };
-    EXPECT_EQ(refusal(512, 0, 0), "");
-    EXPECT_EQ(refusal(512, 256, 64), "");
-    EXPECT_EQ(refusal(64, 4096, 0), ""); // capped at the context of 256
-    EXPECT_EQ(refusal(64, 4096, 1024), "");
-    EXPECT_EQ(refusal(512, 100, 0),
-              "n_batch 100 must divide the training context of 512 tokens (n_ctx rounded up to a multiple of 256)");
-    EXPECT_EQ(refusal(300, 0, 200), "n_ubatch 200 must divide n_batch 512");
-    // a context that is not known is not checked: the load decides
-    common_params unknown = jllama_train::build_train_params(minimal_train_config());
-    unknown.n_ctx = 0;
-    unknown.n_batch = 100;
-    EXPECT_EQ(jllama_train::training_batch_refusal(unknown), "");
+    // llama_context::opt_init asserts n_ctx % n_batch == 0 and n_batch % n_ubatch == 0, with the batch capped at
+    // the context and the ubatch at the batch; the values are the loaded context's
+    using jllama_train::training_batch_refusal;
+    EXPECT_EQ(training_batch_refusal(512, 512, 512), "");
+    EXPECT_EQ(training_batch_refusal(512, 256, 64), "");
+    EXPECT_EQ(training_batch_refusal(256, 4096, 1024), ""); // both capped at the context
+    EXPECT_EQ(training_batch_refusal(768, 192, 192), "");   // a non-causal context's batch is its ubatch
+    EXPECT_EQ(training_batch_refusal(512, 100, 100), "n_batch 100 must divide the training context of 512 tokens");
+    EXPECT_EQ(training_batch_refusal(512, 512, 200), "n_ubatch 200 must divide n_batch 512");
+    EXPECT_EQ(training_batch_refusal(0, 512, 512),
+              "the training context, batch and ubatch must be positive, were 0, 512 and 512");
 }
 
 TEST(TrainParams, EpochsBelowOneAreClampedSoTheOptimizerRunsAtLeastOnce) {

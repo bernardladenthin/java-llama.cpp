@@ -437,16 +437,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   sources along either axis and holds them to the slices they must be (red with the second source's
   offset broken). No architecture of the generator trains one: in the training graph the keys and values
   go into the KV cache, through which no gradient flows. That backward views its gradient with explicit
-  strides, and `ggml_view_4d` asserts
-  that the first one is the element's: a CONCAT whose gradient comes back through a TRANSPOSE (or a
-  PERMUTE that moves the first axis) ended the process (found by the review of the bump). The walk of
-  `0044` now tracks the layout of every gradient as `ggml_compute_backward` builds it and refuses what
-  ggml would abort on -- CONCAT, ACC and SET with a transposed gradient, CPY, CONT and SET with a
-  non-contiguous one, CONT and VIEW whose source's gradient so far is not contiguous; the last two
-  groups were holes of the patch before b12832 already. No architecture of llama.cpp reaches one of
-  them today (an op without a backward pass comes first); `CApiTrainer.TheWalk...` drive the walk on
-  graphs built from ggml ops and ggml's backward pass on the same graphs (a death test where the walk
-  refuses), red without the layout check. b12830 lets K2 Horizon open a tool-call section before it
+  strides, and `ggml_view_4d` asserts that the first one is the element's: a CONCAT whose gradient comes
+  back through a TRANSPOSE ended the process (found by the review of the bump); `patches/0049` makes
+  every gradient ggml stores contiguous, which closes that and the other layout aborts of the backward
+  pass (see "Fixed"). b12830 lets K2 Horizon open a tool-call section before it
   closes its thought (#32993): the section start ends the reasoning, so the call is read instead of
   lost in it (`K2HorizonToolCalls`, a template of this project's own in the real one's shape; red
   before it). b12831 rewrites the s390x dot products (#32253: pairs of products in 16-bit lanes for
@@ -1228,18 +1222,43 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   whole context; otherwise it reads them back from the KV cache, through which no gradient flows.
   llama.cpp caps the batch at the context it is asked for before it rounds the context up to a
   multiple of 256, so `LlamaTrainer` / `jllama_finetune` with an `nCtx` of 64 trained with a batch of 64
-  in a context of 256, and with the native defaults (a micro-batch of 512) every larger context the
-  same way: no run trained a single `attn_k` or `attn_v` (measured on the random llama model; llama.cpp
-  logged "the K and V projections will not receive gradients"). The trainer now passes the rounded
-  context (an `nCtx` of 0 as the model's trained context, read from the GGUF) and makes it the batch
-  and the micro-batch a caller leaves unset -- what upstream's own example runs (`-c 512 -b 512 -ub
-  512`); a smaller `nUbatch` saves memory and leaves the two projections as they were. The token
-  embedding is still not trained: llama.cpp leaves it out on purpose (TODO.md; the disabled
-  `CApi.DISABLED_FinetuneTrainsEveryWeightIncludingTheTokenEmbedding` checks it on demand).
+  in a context of 256, and with the native defaults (a micro-batch of 512) every context but 256 and 512
+  did the same: `attn_k` and `attn_v` stayed as they were unless the context asked for was 256 or 512 (measured on
+  the random llama model; llama.cpp logged "the K and V projections will not receive gradients"). The
+  trainer now passes the rounded context (an `nCtx` of 0 as the model's trained context, read from the
+  GGUF, which also means that llama.cpp's memory fit no longer lowers an automatic context) and makes it
+  the batch and the micro-batch a caller leaves unset -- what upstream's own example runs (`-c 512 -b 512
+  -ub 512`). That needs memory in proportion to the context squared; a smaller `nUbatch` needs less and
+  leaves the two projections as they were. The token embedding is still not trained: llama.cpp leaves
+  it out on purpose (TODO.md; the disabled `CApi.DISABLED_FinetuneTrainsEveryWeightIncludingTheTokenEmbedding`
+  checks it on demand).
 - **A fine-tuning batch that does not divide the context is refused instead of ending the process.**
   `llama_opt_init` asserts that the batch divides the context and the micro-batch the batch
-  (`GGML_ASSERT`): an `nBatch` of 100 with an `nCtx` of 512 took the JVM down. Both are refused by name
-  before the model loads.
+  (`GGML_ASSERT`). With the old defaults (a batch of the asked context, at most 2048, and a micro-batch of
+  512) that ended the process for every `nCtx` above 256 that 256 does not divide (300: a batch of 300 in a
+  context of 512), for 768, 1280 and the other odd multiples of 256 (a micro-batch of 512), and for a
+  context above 2048 that 2048 does not divide; and for an `nBatch` of 100 in a context of 512. The new defaults divide by construction; sizes a caller sets are checked
+  against the loaded context's own (`llama_n_batch` / `llama_n_ubatch`, so a non-causal model's rules
+  apply) and refused by name before training. A negative `nCtx` is refused too.
+- **A model with a fused `attn_qkv` weight trains instead of ending the process, and so does every graph
+  whose gradient arrives transposed (`patches/0049`).** ggml's backward of TRANSPOSE and PERMUTE hands its
+  source a transposed view of its gradient, and the kernels and backward cases that read gradients
+  assume rows: ACC (the backward of VIEW) and ADD aborted while the step was computed, CONCAT, SET, ACC,
+  CONT and CPY while the backward graph was built. A llama-architecture GGUF with `attn_qkv` reached the
+  first as soon as the trainer trained K and V (its value heads are a view of the QKV product, which the
+  attention transposes). ggml now stores every gradient contiguous; `0044`'s walk, which refused the
+  build-time cases since b12835, no longer needs to. `CApiTrainer.AModelWithAFusedQkvWeightTrainsItsProjections`
+  and `CApiTrainer.AGradientThatArrivesTransposedOrPermutedIsComputedRight` (nine graphs whose gradients
+  are held to finite differences of the loss; six of them aborted without the patch, each at its own
+  assertion).
+- **A training step that fails ends the run with its reason (`patches/0050`).** A step whose compute
+  buffers did not fit in memory ended the process (`ggml_opt_alloc` ignored the failed allocation, and a
+  failed output buffer was a `GGML_ABORT`), a batch the memory could not take ended the epoch silently as
+  if it had trained, and an encoder (BERT) was a null dereference. Each is now an error
+  (`LlamaException`, `JLLAMA_STATUS_ERROR`): "fine-tuning failed: not enough memory for the compute
+  buffers of a training step of <n> tokens ...", "cannot train this model: it keeps no KV cache (an
+  encoder)". `CApiTrainer.ATrainingStepThatDoesNotFitInMemoryFailsTheRun` (Linux, a context of 12288
+  under an address-space limit) and `CApiTrainer.AnEncoderIsRefusedAndTheProcessGoesOn`.
 - **The MSVC build of llama compiles again.** llama.cpp b12669's target quantizer reads a `constexpr`
   local of its function in a constant expression inside a lambda, which GCC and clang accept and MSVC
   14.52 refuses (`C2131`); `build-windows-x86_64-msvc` and its Java suite failed in run 45233019300.

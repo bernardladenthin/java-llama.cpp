@@ -6,13 +6,11 @@
 // tested without a GGUF, a JVM or a loaded model -- the sibling of tts_params.hpp, and for the same
 // reason.
 //
-// It is a header, not a .cpp, because jllama_test deliberately does not compile train_engine.cpp
-// (that TU needs the llama runtime); a header lets the test exercise the real builder the engine
-// uses, rather than a copy that could drift away from it. Before this split there was NO runnable
-// guard on the trainer's jllama::resolve_cpu_params() call at all: train_engine.cpp is in the
-// jllama target only, and LlamaTrainerIntegrationTest is gated on a system property no CI job sets
-// and a model in no models.csv row -- so the JVM-abort documented in cpu_params.hpp could have
-// regressed here, on every platform, unseen.
+// A header, so that test_tts_params.cpp exercises the real builder the engine uses without a model.
+// When it was split out, train_engine.cpp was in the jllama target only and
+// LlamaTrainerIntegrationTest ran in no CI job, so nothing would have seen the JVM-abort documented in
+// cpu_params.hpp come back; both run now (train_engine.cpp is in jllama_test, the CApi finetune
+// tests), and the model-free tests stay the cheapest guard.
 //
 // Deliberately excluded: reading the training corpus. That does file I/O and can fail, so it stays
 // in finetune(), which owns the error string.
@@ -55,8 +53,8 @@ namespace jllama_train {
 // (llama_context::opt_init); otherwise it reads them back from the KV cache, through which no
 // gradient flows, and the K and V projections are not trained. llama_context caps the batch at the
 // context it was asked for before it rounds the context up, so an n_ctx of 64 gave a batch of 64 in a
-// context of 256, and the native defaults (a ubatch of 512) did the same for every larger context:
-// the trainer trained neither projection of any layer.
+// context of 256, and the native defaults (a ubatch of 512) did the same for every context but 256
+// and 512: the trainer left both projections of every layer as they were.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline common_params build_train_params(const finetune_config &cfg, int model_n_ctx_train = 0) {
     common_params params;
@@ -106,23 +104,20 @@ namespace jllama_train {
     return params;
 }
 
-// llama_context::opt_init asserts that the batch divides the context and the ubatch the batch
-// (GGML_ASSERT, which ended the process): both as llama.cpp makes them, the batch capped at the
-// context and the ubatch at the batch. Empty when the sizes train, else the reason; nothing is
-// checked for a context that is not known yet (0).
-[[nodiscard]] inline std::string training_batch_refusal(const common_params &params) {
-    if (params.n_ctx <= 0) {
-        return {};
+// llama_context::opt_init asserts that the batch divides the context and the ubatch the batch (GGML_ASSERT, which
+// ended the process). The three are the loaded context's (llama_n_ctx, llama_n_batch, llama_n_ubatch), which
+// already carry llama_context's own rules -- the batch capped at the context for causal attention, the ubatch
+// for a non-causal model -- and are taken the way opt_init takes them. Empty when they train, else the reason.
+[[nodiscard]] inline std::string training_batch_refusal(int64_t n_ctx, int64_t n_batch, int64_t n_ubatch) {
+    if (n_ctx <= 0 || n_batch <= 0 || n_ubatch <= 0) {
+        return "the training context, batch and ubatch must be positive, were " + std::to_string(n_ctx) + ", " +
+               std::to_string(n_batch) + " and " + std::to_string(n_ubatch);
     }
-    if (params.n_batch <= 0 || params.n_ubatch <= 0) {
-        return "n_batch and n_ubatch must be positive, were " + std::to_string(params.n_batch) + " and " +
-               std::to_string(params.n_ubatch);
-    }
-    const int32_t n_batch = std::min(params.n_ctx, params.n_batch);
-    const int32_t n_ubatch = std::min(n_batch, params.n_ubatch);
-    if (params.n_ctx % n_batch != 0) {
-        return "n_batch " + std::to_string(n_batch) + " must divide the training context of " +
-               std::to_string(params.n_ctx) + " tokens (n_ctx rounded up to a multiple of 256)";
+    n_batch = std::min(n_batch, n_ctx);
+    n_ubatch = std::min(n_ubatch, n_batch);
+    if (n_ctx % n_batch != 0) {
+        return "n_batch " + std::to_string(n_batch) + " must divide the training context of " + std::to_string(n_ctx) +
+               " tokens";
     }
     if (n_batch % n_ubatch != 0) {
         return "n_ubatch " + std::to_string(n_ubatch) + " must divide n_batch " + std::to_string(n_batch);

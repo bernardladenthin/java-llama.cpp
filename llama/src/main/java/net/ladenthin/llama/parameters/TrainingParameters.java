@@ -71,7 +71,9 @@ public final class TrainingParameters {
     private final Optimizer optimizer = Optimizer.ADAMW;
 
     // Context size in tokens, or 0 to use the model's trained context; rounded up to a multiple of
-    // 256, the size llama.cpp makes of it and the length of every training window.
+    // 256, the size llama.cpp makes of it and the length of every training window. With the default
+    // batch sizes the whole context is one micro-batch, whose memory grows with the context squared:
+    // 0 on a model trained for a long context (llama.cpp does not shrink it to fit) needs a lot.
     @Builder.Default
     private final int nCtx = 0;
 
