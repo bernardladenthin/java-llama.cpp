@@ -413,6 +413,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12828** (from b12826, two upstream commits; master, pinned by commit). b12828 builds
+  Inkling 2's log-scaled positions after the token embeddings (#33186), so a GPU backend runs those six
+  ops itself instead of the CPU thread pool (upstream measured +23 % decode on a GB10 with CUDA, and the
+  same pattern on Vulkan and Metal); on the CPU the generator's Inkling 2 record is bitwise b12826's.
+  b12827 changes the CUDA module's flash-attention kernel selection (#32626). Not measured on a GPU.
 - **llama.cpp b12826** (from b12818, eight upstream commits in one step; the tag, pinned by commit).
   b12824 lets `conversion/inkling2.py` keep the experts of an NVFP4 checkpoint NVFP4 instead of
   dequantizing them to F32, each expert's outer scale a per-expert `<matrix>.scale` (#33062). Such a
