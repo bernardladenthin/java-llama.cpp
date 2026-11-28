@@ -19,6 +19,7 @@
 //   - token_piece_value  (native /tokenize wire format)
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <regex>
 
 // Pull in all utils.hpp definitions.  No JNI headers needed.
@@ -2179,4 +2180,87 @@ TEST(InklingToolCalls, ACallOfAToolThatWasNotOfferedIsReadWithSpacesInItsJson) {
                          R"(unknown_tool<|content_invoke_tool_json|>{"name": "unknown_tool", "args": {"arg1": 1}})" +
                          INKLING_END),
         "unknown_tool", R"({"arg1": 1})");
+}
+
+// ============================================================
+// K2 Horizon: a tool call that opens before the thought is closed (b12830, #32993)
+//
+//   K2 Horizon thinks in `<ifm|think>` (high), `<ifm|think_fast>` (medium) or `<ifm|think_faster>`
+//   (low), which the generation prompt opens, and writes its calls in a `<ifm|tool_calls>` section.
+//   The model sometimes opens that section without closing the thought; until b12829 the parser
+//   read everything up to the missing closer as reasoning, so the call was lost. Now the section
+//   start ends the reasoning too. The real closer stays the first end tag, since the reasoning
+//   budget forces the first one. The template is this project's own in the shape of upstream's
+//   models/templates/IFM-K2-Horizon.jinja (51 KB): the parser is chosen by the two markers
+//   `<|ifm|im_start|>` and `<ifm|tool_calls>` and builds its grammar in code, so only the turns
+//   and the generation prompt of the real template matter here.
+// ============================================================
+
+namespace {
+
+constexpr const char *K2_HORIZON_TEMPLATE =
+    R"K2({#- the shape of IFM-K2-Horizon.jinja: <|ifm|im_start|> turns, calls in <ifm|tool_calls> sections -#}
+{%- for message in messages -%}
+    {{- '<|ifm|im_start|>' + message.role + '\n' + message.content + '<|ifm|im_end|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {%- set effort = reasoning_effort | default('high') -%}
+    {%- if effort == 'high' -%}
+        {{- '<|ifm|im_start|>assistant\n<ifm|think>\n' -}}
+    {%- elif effort == 'medium' -%}
+        {{- '<|ifm|im_start|>assistant\n<ifm|think_fast>\n' -}}
+    {%- else -%}
+        {{- '<|ifm|im_start|>assistant\n<ifm|think_faster>\n' -}}
+    {%- endif -%}
+{%- endif -%})K2";
+
+common_chat_params k2_horizon_params(const std::string &effort) {
+    common_chat_templates_ptr tmpls = common_chat_templates_init(nullptr, K2_HORIZON_TEMPLATE, "");
+    common_chat_msg user;
+    user.role = "user";
+    user.content = "Hey";
+    common_chat_templates_inputs inputs;
+    inputs.messages = {user};
+    inputs.tools = {tool_with_one_argument("special_function", "arg1", "integer")};
+    inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+    inputs.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
+    inputs.chat_template_kwargs["reasoning_effort"] = "\"" + effort + "\"";
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
+    return common_chat_templates_apply(tmpls.get(), inputs);
+}
+
+const std::string K2_CALL_SECTION = "<ifm|tool_calls>\n"
+                                    "<ifm|tool_call>special_function\n"
+                                    "<ifm|arg_key>arg1</ifm|arg_key>\n"
+                                    "<ifm|arg_value>1</ifm|arg_value>\n"
+                                    "</ifm|tool_call>\n"
+                                    "</ifm|tool_calls>";
+
+} // namespace
+
+TEST(K2HorizonToolCalls, ACallAfterAClosedThoughtIsACall) {
+    // The control: what the parser read before b12830 too.
+    const common_chat_params params = k2_horizon_params("high");
+    EXPECT_EQ(params.generation_prompt, "<|ifm|im_start|>assistant\n<ifm|think>\n");
+    const common_chat_msg msg = parse_answer(params, "I'm\nthinking</ifm|think>" + K2_CALL_SECTION);
+    expect_one_call(msg, "special_function", R"({"arg1":1})");
+    EXPECT_EQ(msg.reasoning_content, "I'm\nthinking");
+}
+
+TEST(K2HorizonToolCalls, ACallThatOpensBeforeTheThoughtIsClosedIsACall) {
+    for (const std::string effort : {"high", "medium"}) {
+        SCOPED_TRACE(effort);
+        const common_chat_params params = k2_horizon_params(effort);
+        const common_chat_msg msg = parse_answer(params, "I'm\nthinking" + K2_CALL_SECTION);
+        expect_one_call(msg, "special_function", R"({"arg1":1})");
+        EXPECT_EQ(msg.reasoning_content, "I'm\nthinking");
+        EXPECT_EQ(msg.content, "");
+
+        // The reasoning budget forces the first end tag: the real closer, never the section start.
+        ASSERT_FALSE(params.thinking_end_tags.empty());
+        EXPECT_EQ(params.thinking_end_tags.front(), effort == "high" ? "</ifm|think>" : "</ifm|think_fast>");
+        EXPECT_NE(std::find(params.thinking_end_tags.begin(), params.thinking_end_tags.end(), "<ifm|tool_calls>"),
+                  params.thinking_end_tags.end());
+    }
 }

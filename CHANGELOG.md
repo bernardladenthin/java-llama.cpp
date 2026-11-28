@@ -413,6 +413,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   for vision and audio; no npm package changed). All 26
   patches applied unchanged at every step, the 31 of today at the last nine; `0037` came with the tests of the bump, `0038`-`0041` with the fourth review round
   (see "Fixed").
+- **llama.cpp b12835** (from b12828, seven upstream commits in one step; master, pinned by commit).
+  b12832 gives `CONCAT` a backward pass (#32151): `patches/0044`'s list of the ops fine-tuning accepts
+  names it now, which `check-backward-ops.cmake` demanded (the configure failed until it did); the
+  generator's refused architectures are refused by the same ops, since the walk meets their experts,
+  scans and norms first. b12830 lets K2 Horizon open a tool-call section before it closes its thought
+  (#32993): the section start ends the reasoning, so the call is read instead of lost in it
+  (`K2HorizonToolCalls`, a template of this project's own in the real one's shape; red before it).
+  b12831 rewrites the s390x dot products with `vec_meadd` (#32253; the `z15` and `z16` modules, held
+  by the s390x jobs under qemu), b12835 lets tensor parallelism keep a tensor on one device (#32983,
+  `GGML_BACKEND_SPLIT_AXIS_NONE` public), b12834 changes a CUDA compiler hint (#33064), b12833 adds a
+  WebGPU kernel and b12829 a test tolerance. The 36 patches apply; `0044` gained the one op.
 - **llama.cpp b12828** (from b12826, two upstream commits; master, pinned by commit). b12828 builds
   Inkling 2's log-scaled positions after the token embeddings (#33186), so a GPU backend runs those six
   ops itself instead of the CPU thread pool (upstream measured +23 % decode on a GB10 with CUDA, and the

@@ -1437,7 +1437,7 @@ ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>'
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
 ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
-b12768 TANH's) would otherwise be refused here although ggml could train it.
+b12768 TANH's, b12832 CONCAT's) would otherwise be refused here although ggml could train it.
 
 The guards are in src/test/cpp/test_c_api.cpp:
 CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six

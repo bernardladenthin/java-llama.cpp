@@ -28,7 +28,7 @@ ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>'
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
 ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
-b12768 TANH's) would otherwise be refused here although ggml could train it.
+b12768 TANH's, b12832 CONCAT's) would otherwise be refused here although ggml could train it.
 
 The guards are in src/test/cpp/test_c_api.cpp:
 CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndTheProcessGoesOn (six
@@ -90,7 +90,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
  
  //
  // llama_context
-@@ -4235,6 +4236,208 @@
+@@ -4235,6 +4236,209 @@
      }
  }
  
@@ -140,6 +140,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +        case GGML_OP_IM2COL:
 +        case GGML_OP_POOL_2D:
 +        case GGML_OP_CROSS_ENTROPY_LOSS:
++        case GGML_OP_CONCAT:
 +        case GGML_OP_NONE:
 +        // jllama-backward-ops-end
 +            return true;
@@ -299,7 +300,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
  void llama_context::opt_epoch_iter(
          ggml_opt_dataset_t               dataset,
          ggml_opt_result_t                result,
-@@ -4312,6 +4515,16 @@
+@@ -4312,6 +4516,16 @@
  
              auto * gf = model.build_graph(gparams);
  
@@ -316,7 +317,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
              struct ggml_context * ctx_compute_opt;
              {
                  const size_t size_gf = ggml_graph_size(gf);
-@@ -4373,6 +4586,8 @@
+@@ -4373,6 +4587,8 @@
  
      int64_t idata = 0;
  
@@ -325,7 +326,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
      int64_t t_loop_start = ggml_time_us();
      int64_t ndata_in_loop = idata_split*ubatch_per_ctx;
      for (; idata < idata_split; ++idata) {
-@@ -4382,6 +4597,9 @@
+@@ -4382,6 +4598,9 @@
          ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
          opt_epoch_iter(dataset, result_train, tokens, labels_sparse, batch,
              callback_train, train, idata_in_loop, ndata_in_loop, t_loop_start);
@@ -335,7 +336,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
      }
  
      t_loop_start = ggml_time_us();
-@@ -5152,6 +5370,14 @@
+@@ -5152,6 +5371,14 @@
          callback_eval);
  }
  
