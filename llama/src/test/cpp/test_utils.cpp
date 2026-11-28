@@ -2191,17 +2191,29 @@ TEST(InklingToolCalls, ACallOfAToolThatWasNotOfferedIsReadWithSpacesInItsJson) {
 //   read everything up to the missing closer as reasoning, so the call was lost. Now the section
 //   start ends the reasoning too. The real closer stays the first end tag, since the reasoning
 //   budget forces the first one. The template is this project's own in the shape of upstream's
-//   models/templates/IFM-K2-Horizon.jinja (51 KB): the parser is chosen by the two markers
-//   `<|ifm|im_start|>` and `<ifm|tool_calls>` and builds its grammar in code, so only the turns
-//   and the generation prompt of the real template matter here.
+//   models/templates/IFM-K2-Horizon.jinja (51 KB): turns, calls in a `<ifm|tool_calls>` section
+//   and the generation prompt of each effort. The parser is chosen by the two markers
+//   `<|ifm|im_start|>` and `<ifm|tool_calls>` and builds its grammar in code; the tests assert that
+//   it was chosen (its think tag of the effort and its preserved tokens) before they parse.
 // ============================================================
 
 namespace {
 
 constexpr const char *K2_HORIZON_TEMPLATE =
-    R"K2({#- the shape of IFM-K2-Horizon.jinja: <|ifm|im_start|> turns, calls in <ifm|tool_calls> sections -#}
-{%- for message in messages -%}
-    {{- '<|ifm|im_start|>' + message.role + '\n' + message.content + '<|ifm|im_end|>\n' -}}
+    R"K2({%- for message in messages -%}
+    {{- '<|ifm|im_start|>' + message.role + '\n' + (message.content or '') -}}
+    {%- if message.tool_calls -%}
+        {{- '<ifm|tool_calls>\n' -}}
+        {%- for call in message.tool_calls -%}
+            {{- '<ifm|tool_call>' + call.function.name + '\n' -}}
+            {%- for key, value in call.function.arguments | items -%}
+                {{- '<ifm|arg_key>' + key + '</ifm|arg_key>\n<ifm|arg_value>' + (value | string) + '</ifm|arg_value>\n' -}}
+            {%- endfor -%}
+            {{- '</ifm|tool_call>\n' -}}
+        {%- endfor -%}
+        {{- '</ifm|tool_calls>' -}}
+    {%- endif -%}
+    {{- '<|ifm|im_end|>\n' -}}
 {%- endfor -%}
 {%- if add_generation_prompt -%}
     {%- set effort = reasoning_effort | default('high') -%}
@@ -2230,6 +2242,13 @@ common_chat_params k2_horizon_params(const std::string &effort) {
     return common_chat_templates_apply(tmpls.get(), inputs);
 }
 
+// The K2 Horizon parser chose the think tag of `effort` and keeps its argument tags as tokens.
+void expect_k2_horizon_parser(const common_chat_params &params, const std::string &effort) {
+    EXPECT_EQ(params.thinking_start_tag, effort == "high" ? "<ifm|think>" : "<ifm|think_fast>");
+    EXPECT_NE(std::find(params.preserved_tokens.begin(), params.preserved_tokens.end(), "<ifm|arg_key>"),
+              params.preserved_tokens.end());
+}
+
 const std::string K2_CALL_SECTION = "<ifm|tool_calls>\n"
                                     "<ifm|tool_call>special_function\n"
                                     "<ifm|arg_key>arg1</ifm|arg_key>\n"
@@ -2242,6 +2261,7 @@ const std::string K2_CALL_SECTION = "<ifm|tool_calls>\n"
 TEST(K2HorizonToolCalls, ACallAfterAClosedThoughtIsACall) {
     // The control: what the parser read before b12830 too.
     const common_chat_params params = k2_horizon_params("high");
+    expect_k2_horizon_parser(params, "high");
     EXPECT_EQ(params.generation_prompt, "<|ifm|im_start|>assistant\n<ifm|think>\n");
     const common_chat_msg msg = parse_answer(params, "I'm\nthinking</ifm|think>" + K2_CALL_SECTION);
     expect_one_call(msg, "special_function", R"({"arg1":1})");
@@ -2252,6 +2272,7 @@ TEST(K2HorizonToolCalls, ACallThatOpensBeforeTheThoughtIsClosedIsACall) {
     for (const std::string effort : {"high", "medium"}) {
         SCOPED_TRACE(effort);
         const common_chat_params params = k2_horizon_params(effort);
+        expect_k2_horizon_parser(params, effort);
         const common_chat_msg msg = parse_answer(params, "I'm\nthinking" + K2_CALL_SECTION);
         expect_one_call(msg, "special_function", R"({"arg1":1})");
         EXPECT_EQ(msg.reasoning_content, "I'm\nthinking");

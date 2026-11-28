@@ -25,6 +25,18 @@ src[0] and src[1] as if both scales were 1, so a model with weight scales traine
 with every gradient through such a weight off by its scale. The message is "cannot train this model:
 ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>')".
 
+Since b12832 (#32151) ggml differentiates CONCAT, whose backward views its gradient with explicit strides, and
+ggml_view_4d asserts that the first stride is the element's: a CONCAT whose only gradient comes back through a
+TRANSPOSE (or a PERMUTE that moves the first axis) ended the process. The walk therefore tracks the layout of every
+gradient as ggml_compute_backward builds it -- the first gradient a node gets is what its consumer hands over (the
+consumer's own for DUP, ADD, ACC, SUB and CONT, permuted for PERMUTE and TRANSPOSE), a second one is added into a
+new, contiguous tensor -- and refuses CONCAT, ACC and SET with a transposed gradient (ggml_view_4d), CPY, CONT and
+SET with a non-contiguous one (ggml_reshape, ggml_acc_impl, CONT's own assertion), and CONT and VIEW whose
+source's gradient so far is not contiguous (ggml_acc_impl). The message is "cannot train this model: ggml's
+backward pass of <op> cannot take its gradient as the transposed or permuted view it arrives as (tensor
+'<name>')". No architecture of llama.cpp reaches one of these today; the walk has external linkage (declared in
+src/llama-context.h) so that tests can drive it on graphs of their own.
+
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
 ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
@@ -35,7 +47,12 @@ CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndThePro
 architectures refused by their op, then a llama model trains; an abort of the test process without the
 check), CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
 Qwen3-VL's text model) and CApiTrainer.AModelWithWeightScalesIsRefusedBecauseTheBackwardPassIgnoresThem
-(refused, and the same model with the scale folded into its weights trains).
+(refused, and the same model with the scale folded into its weights trains),
+CApiTrainer.TheWalkRefusesAConcatWhoseGradientArrivesTransposedAndGgmlWouldAbort,
+CApiTrainer.TheWalkLetsAConcatThroughWhoseGradientIsContiguous, CApiTrainer.GgmlDifferentiatesAConcatAlongEitherAxis and
+CApiTrainer.TheWalkRefusesAContWhoseGradientArrivesTransposedAndGgmlWouldAbort (graphs built from ggml ops: the
+walk's answer, and ggml's backward pass on the same graph, which a death test holds to abort where the walk
+refuses).
 
 Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
 once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant
@@ -46,7 +63,7 @@ drop the scale check and let the test train the scaled model.
 diff --git a/include/llama.h b/include/llama.h
 --- a/include/llama.h
 +++ b/include/llama.h
-@@ -1759,6 +1759,11 @@
+@@ -1768,6 +1768,11 @@
              ggml_opt_epoch_callback   callback_train,
              ggml_opt_epoch_callback   callback_eval);
  
@@ -79,6 +96,14 @@ diff --git a/src/llama-context.h b/src/llama-context.h
  
      ggml_threadpool_t threadpool       = nullptr;
      ggml_threadpool_t threadpool_batch = nullptr;
+@@ -511,3 +515,7 @@
+ 
+     mutable int32_t n_reused = 0; // number of times the previous graph was reused
+ };
++
++// jllama: the first node of gf the backward pass from output (the logits the loss is computed from) cannot be
++// built for, with the reason in reason -- or nullptr; opt_epoch_iter refuses the model with it (src/llama-context.cpp)
++const ggml_tensor * llama_opt_find_unsupported_backward(ggml_cgraph * gf, const ggml_tensor * output, std::string & reason);
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
@@ -90,7 +115,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
  
  //
  // llama_context
-@@ -4235,6 +4236,209 @@
+@@ -4259,6 +4260,307 @@
      }
  }
  
@@ -101,7 +126,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +// below walk the forward graph with the backward pass's own rules -- which nodes need a gradient, which of them get
 +// one from the loss -- and name the first node it would fail on, so that opt_epoch can refuse the model instead.
 +// The op lists are held to ggml_compute_backward's switch at configure time (java-llama.cpp,
-+// llama/cmake/check-backward-ops.cmake); its shape assertions are not mirrored, except MUL_MAT's broadcast.
++// llama/cmake/check-backward-ops.cmake); its shape assertions are not mirrored, except MUL_MAT's broadcast and the layouts of the gradients.
 +
 +// whether ggml_compute_backward has a case for the op of t
 +static bool llama_opt_backward_op_supported(const ggml_tensor * t) {
@@ -179,8 +204,8 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +}
 +
 +// the first node of gf the backward pass from output (the logits the loss is computed from) cannot be built for,
-+// with the reason in reason -- or nullptr
-+static const ggml_tensor * llama_opt_find_unsupported_backward(
++// with the reason in reason -- or nullptr. Declared in llama-context.h.
++const ggml_tensor * llama_opt_find_unsupported_backward(
 +        ggml_cgraph * gf, const ggml_tensor * output, std::string & reason) {
 +    const int n_nodes = ggml_graph_n_nodes(gf);
 +
@@ -239,6 +264,80 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +        needs.insert(node);
 +    }
 +
++    // the layout of each gradient as ggml_compute_backward builds it, in elements: the first gradient a node gets
++    // is what its consumer hands over -- for DUP, ADD, ACC, SUB and CONT the consumer's own, permuted for PERMUTE
++    // and TRANSPOSE -- while a second one is added into a new, contiguous tensor, as the accumulators of the
++    // parameters and the loss are, and every other backward builds a new tensor. The layout matters where the
++    // backward asserts it: CONCAT, ACC and SET view their gradient with explicit strides (ggml_view_4d asserts
++    // that its first stride is the element's), CPY, CONT and SET reshape or accumulate into it (contiguous only),
++    // and CONT and VIEW accumulate into the gradient their source has so far.
++    struct grad_layout {
++        int64_t ne[GGML_MAX_DIMS];
++        int64_t nb[GGML_MAX_DIMS];
++    };
++    const auto contiguous_layout = [](const ggml_tensor * t) {
++        grad_layout l;
++        int64_t stride = 1;
++        for (int d = 0; d < GGML_MAX_DIMS; ++d) {
++            l.ne[d] = t->ne[d];
++            l.nb[d] = stride;
++            stride *= t->ne[d];
++        }
++        return l;
++    };
++    const auto is_contiguous = [](const grad_layout & l) { // ggml_is_contiguous, in elements
++        if (l.ne[0] != 1 && l.nb[0] != 1) {
++            return false;
++        }
++        int64_t next = l.ne[0];
++        for (int d = 1; d < GGML_MAX_DIMS; ++d) {
++            if (l.ne[d] != 1) {
++                if (l.nb[d] != next) {
++                    return false;
++                }
++                next *= l.ne[d];
++            }
++        }
++        return true;
++    };
++    std::unordered_map<const ggml_tensor *, grad_layout> layouts;
++    const auto layout_of = [&](const ggml_tensor * t) {
++        const auto it = layouts.find(t);
++        return it != layouts.end() ? it->second : contiguous_layout(t);
++    };
++    // what the backward of node hands source j, given the layout l of node's own gradient
++    const auto handed_over = [&](const ggml_tensor * node, int j, const grad_layout & l) {
++        const ggml_tensor * src = node->src[j];
++        switch (node->op) {
++            case GGML_OP_DUP:
++            case GGML_OP_ACC:
++            case GGML_OP_SUB:
++                return j == 0 ? l : contiguous_layout(src);
++            case GGML_OP_ADD:
++                return j == 0 || ggml_are_same_shape(node->src[0], src) ? l : contiguous_layout(src);
++            case GGML_OP_CONT:
++                return ggml_are_same_shape(node, src) ? l : contiguous_layout(src);
++            case GGML_OP_TRANSPOSE: {
++                grad_layout t = l;
++                std::swap(t.ne[0], t.ne[1]);
++                std::swap(t.nb[0], t.nb[1]);
++                return t;
++            }
++            case GGML_OP_PERMUTE: {
++                // the gradient is permuted back: axis d of the source is axis axes[d] of the node
++                const int32_t * axes = (const int32_t *) node->op_params;
++                grad_layout p;
++                for (int d = 0; d < GGML_MAX_DIMS; ++d) {
++                    p.ne[d] = l.ne[axes[d] & 0x3];
++                    p.nb[d] = l.nb[axes[d] & 0x3];
++                }
++                return p;
++            }
++            default:
++                return contiguous_layout(src);
++        }
++    };
++
 +    // the nodes that get a gradient: the output, through the loss, and the parameters, which have accumulators;
 +    // ggml_compute_backward visits them in reverse order and differentiates src[0..2]
 +    std::unordered_set<const ggml_tensor *> has;
@@ -266,6 +365,27 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +                    node->name);
 +            return node;
 +        }
++        {
++            const grad_layout l = layout_of(node);
++            const bool src0_needs = node->src[0] != nullptr && needs.count(node->src[0]) != 0;
++            const bool src1_needs = node->src[1] != nullptr && needs.count(node->src[1]) != 0;
++            const bool views = (node->op == GGML_OP_CONCAT && (src0_needs || src1_needs)) ||
++                               (node->op == GGML_OP_ACC && src1_needs) ||
++                               (node->op == GGML_OP_SET && (src0_needs || src1_needs));
++            const bool reshapes = ((node->op == GGML_OP_CPY || node->op == GGML_OP_CONT || node->op == GGML_OP_SET) &&
++                                   src0_needs);
++            if ((views && l.nb[0] != 1) || (reshapes && !is_contiguous(l))) {
++                reason = format("ggml's backward pass of %s cannot take its gradient as the transposed or permuted "
++                        "view it arrives as (tensor '%s')", ggml_op_desc(node), node->name);
++                return node;
++            }
++            if ((node->op == GGML_OP_CONT || node->op == GGML_OP_VIEW) && src0_needs && has.count(node->src[0]) != 0 &&
++                    !is_contiguous(layout_of(node->src[0]))) {
++                reason = format("ggml's backward pass of %s cannot add to the transposed or permuted gradient of "
++                        "'%s' (tensor '%s')", ggml_op_desc(node), node->src[0]->name, node->name);
++                return node;
++            }
++        }
 +        for (int j = 0; j < 3; ++j) {
 +            const ggml_tensor * src = node->src[j];
 +            if (src == nullptr || needs.count(src) == 0) {
@@ -291,6 +411,9 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +                }
 +                continue;
 +            }
++            // a second gradient is added into a new tensor; the accumulators of the parameters and the loss, and
++            // the output's gradient from the loss, are contiguous from the start
++            layouts[src] = has.count(src) == 0 ? handed_over(node, j, layout_of(node)) : contiguous_layout(src);
 +            has.insert(src);
 +        }
 +    }
@@ -300,7 +423,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
  void llama_context::opt_epoch_iter(
          ggml_opt_dataset_t               dataset,
          ggml_opt_result_t                result,
-@@ -4312,6 +4516,16 @@
+@@ -4336,6 +4638,16 @@
  
              auto * gf = model.build_graph(gparams);
  
@@ -317,7 +440,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
              struct ggml_context * ctx_compute_opt;
              {
                  const size_t size_gf = ggml_graph_size(gf);
-@@ -4373,6 +4587,8 @@
+@@ -4397,6 +4709,8 @@
  
      int64_t idata = 0;
  
@@ -326,7 +449,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
      int64_t t_loop_start = ggml_time_us();
      int64_t ndata_in_loop = idata_split*ubatch_per_ctx;
      for (; idata < idata_split; ++idata) {
-@@ -4382,6 +4598,9 @@
+@@ -4406,6 +4720,9 @@
          ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
          opt_epoch_iter(dataset, result_train, tokens, labels_sparse, batch,
              callback_train, train, idata_in_loop, ndata_in_loop, t_loop_start);
@@ -336,7 +459,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
      }
  
      t_loop_start = ggml_time_us();
-@@ -5152,6 +5371,14 @@
+@@ -5176,6 +5493,14 @@
          callback_eval);
  }
  

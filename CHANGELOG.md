@@ -427,15 +427,32 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   apply unchanged.
 - **llama.cpp b12835** (from b12828, seven upstream commits in one step; master, pinned by commit).
   b12832 gives `CONCAT` a backward pass (#32151): `patches/0044`'s list of the ops fine-tuning accepts
-  names it now, which `check-backward-ops.cmake` demanded (the configure failed until it did); the
-  generator's refused architectures are refused by the same ops, since the walk meets their experts,
-  scans and norms first. b12830 lets K2 Horizon open a tool-call section before it closes its thought
-  (#32993): the section start ends the reasoning, so the call is read instead of lost in it
-  (`K2HorizonToolCalls`, a template of this project's own in the real one's shape; red before it).
-  b12831 rewrites the s390x dot products with `vec_meadd` (#32253; the `z15` and `z16` modules, held
-  by the s390x jobs under qemu), b12835 lets tensor parallelism keep a tensor on one device (#32983,
-  `GGML_BACKEND_SPLIT_AXIS_NONE` public), b12834 changes a CUDA compiler hint (#33064), b12833 adds a
-  WebGPU kernel and b12829 a test tolerance. The 36 patches apply; `0044` gained the one op.
+  names it now, which `check-backward-ops.cmake` demanded (the configure failed until it did);
+  `CApiTrainer.GgmlDifferentiatesAConcatAlongEitherAxis` computes the gradients through a CONCAT of two
+  sources along either axis and holds them to the slices they must be (red with the second source's
+  offset broken). No architecture of the generator trains one: in the training graph the keys and values
+  go into the KV cache, through which no gradient flows. That backward views its gradient with explicit
+  strides, and `ggml_view_4d` asserts
+  that the first one is the element's: a CONCAT whose gradient comes back through a TRANSPOSE (or a
+  PERMUTE that moves the first axis) ended the process (found by the review of the bump). The walk of
+  `0044` now tracks the layout of every gradient as `ggml_compute_backward` builds it and refuses what
+  ggml would abort on -- CONCAT, ACC and SET with a transposed gradient, CPY, CONT and SET with a
+  non-contiguous one, CONT and VIEW whose source's gradient so far is not contiguous; the last two
+  groups were holes of the patch before b12832 already. No architecture of llama.cpp reaches one of
+  them today (an op without a backward pass comes first); `CApiTrainer.TheWalk...` drive the walk on
+  graphs built from ggml ops and ggml's backward pass on the same graphs (a death test where the walk
+  refuses), red without the layout check. b12830 lets K2 Horizon open a tool-call section before it
+  closes its thought (#32993): the section start ends the reasoning, so the call is read instead of
+  lost in it (`K2HorizonToolCalls`, a template of this project's own in the real one's shape; red
+  before it). b12831 rewrites the s390x dot products (#32253: pairs of products in 16-bit lanes for
+  Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, MXFP4, IQ4_NL and IQ4_XS, a saturating Q8_0 quantizer, tinyBLAS_Q0_VXE
+  and the Q4_0 4x4 repack); the matrix check of `c_abi` (`kquant_matmul.h`) multiplies all of them now,
+  with activations every quantizer reproduces exactly and an extreme pattern at the 16-bit lanes'
+  limit, through the plain and the CPU_REPACK buffer -- on s390x the `z15` module under qemu, whose CPU
+  model has no NNPA, so `z16` runs in no CI job (red with each of three helpers of the rewrite broken,
+  measured with a GCC cross build of ggml for z15). b12835 lets tensor parallelism keep a tensor on one
+  device (#32983, `GGML_BACKEND_SPLIT_AXIS_NONE` public), b12834 changes a CUDA compiler hint (#33064),
+  b12833 adds a WebGPU kernel and b12829 a test tolerance. The 36 patches apply.
 - **llama.cpp b12828** (from b12826, two upstream commits; master, pinned by commit). b12828 builds
   Inkling 2's log-scaled positions after the token embeddings (#33186), so a GPU backend runs those six
   ops itself instead of the CPU thread pool (upstream measured +23 % decode on a GB10 with CUDA, and the

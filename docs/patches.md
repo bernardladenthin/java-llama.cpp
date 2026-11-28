@@ -54,7 +54,7 @@ match a binary to this page.
 | 0040 | [`0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-on.patch`](#0040-common-closing-a-log-sink-does-not-turn-a-disabled-log-back-onpatch) | common : closing a log sink does not turn a disabled log back on | 1 | 3 |
 | 0041 | [`0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threads.patch`](#0041-common-the-log-scope-of-the-fit-is-safe-for-loads-on-several-threadspatch) | common : the log scope of the fit is safe for loads on several threads | 1 | 2 |
 | 0042 | [`0042-common-a-json-schema-whose-bounds-admit-no-value-is-refused.patch`](#0042-common-a-json-schema-whose-bounds-admit-no-value-is-refusedpatch) | common : a JSON schema whose bounds admit no value is refused | 1 | 3 |
-| 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 9 |
+| 0044 | [`0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-pass.patch`](#0044-llama-fine-tuning-refuses-a-graph-op-without-a-backward-passpatch) | llama : fine-tuning refuses a graph op without a backward pass | 3 | 10 |
 | 0045 | [`0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colon.patch`](#0045-common-a-scaled-files-path-is-split-from-its-scale-at-the-last-colonpatch) | common : a scaled file's path is split from its scale at the last colon | 1 | 3 |
 | 0046 | [`0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-event.patch`](#0046-server-a-failed-download-or-load-lets-models-sse-send-its-last-eventpatch) | server : a failed download or load lets /models/sse send its last event | 3 | 7 |
 | 0048 | [`0048-server-a-named-tool-choice-reaches-every-chat-format-and-route.patch`](#0048-server-a-named-tool-choice-reaches-every-chat-format-and-routepatch) | server : a named tool choice reaches every chat format and every route | 2 | 3 |
@@ -1434,6 +1434,18 @@ src[0] and src[1] as if both scales were 1, so a model with weight scales traine
 with every gradient through such a weight off by its scale. The message is "cannot train this model:
 ggml's backward pass of MUL_MAT ignores the scale of its weight (tensor '<name>')".
 
+Since b12832 (#32151) ggml differentiates CONCAT, whose backward views its gradient with explicit strides, and
+ggml_view_4d asserts that the first stride is the element's: a CONCAT whose only gradient comes back through a
+TRANSPOSE (or a PERMUTE that moves the first axis) ended the process. The walk therefore tracks the layout of every
+gradient as ggml_compute_backward builds it -- the first gradient a node gets is what its consumer hands over (the
+consumer's own for DUP, ADD, ACC, SUB and CONT, permuted for PERMUTE and TRANSPOSE), a second one is added into a
+new, contiguous tensor -- and refuses CONCAT, ACC and SET with a transposed gradient (ggml_view_4d), CPY, CONT and
+SET with a non-contiguous one (ggml_reshape, ggml_acc_impl, CONT's own assertion), and CONT and VIEW whose
+source's gradient so far is not contiguous (ggml_acc_impl). The message is "cannot train this model: ggml's
+backward pass of <op> cannot take its gradient as the transposed or permuted view it arrives as (tensor
+'<name>')". No architecture of llama.cpp reaches one of these today; the walk has external linkage (declared in
+src/llama-context.h) so that tests can drive it on graphs of their own.
+
 The op lists of llama_opt_backward_op_supported() sit between "jllama-backward-*-ops-begin/end" markers,
 and java-llama.cpp's llama/cmake/check-backward-ops.cmake holds them to the case labels of
 ggml_compute_backward at configure time: an op upstream gives a backward pass (b12635 added SIGMOID's,
@@ -1444,7 +1456,12 @@ CApiTrainer.AModelWhoseGraphHasAnOpWithoutABackwardPassIsRefusedByTheOpAndThePro
 architectures refused by their op, then a llama model trains; an abort of the test process without the
 check), CApiTrainer.TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain (Domyn Edge, HY-V3 and
 Qwen3-VL's text model) and CApiTrainer.AModelWithWeightScalesIsRefusedBecauseTheBackwardPassIgnoresThem
-(refused, and the same model with the scale folded into its weights trains).
+(refused, and the same model with the scale folded into its weights trains),
+CApiTrainer.TheWalkRefusesAConcatWhoseGradientArrivesTransposedAndGgmlWouldAbort,
+CApiTrainer.TheWalkLetsAConcatThroughWhoseGradientIsContiguous, CApiTrainer.GgmlDifferentiatesAConcatAlongEitherAxis and
+CApiTrainer.TheWalkRefusesAContWhoseGradientArrivesTransposedAndGgmlWouldAbort (graphs built from ggml ops: the
+walk's answer, and ggml's backward pass on the same graph, which a death test holds to abort where the walk
+refuses).
 
 Drop-check on every bump: read ggml_build_backward_expand and ggml_compute_backward in ggml/src/ggml.c --
 once neither aborts on an op or a source it cannot differentiate (a status, or a checked variant

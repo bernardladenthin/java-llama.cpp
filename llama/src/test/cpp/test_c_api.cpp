@@ -27,6 +27,7 @@
 #include "build-info.h"
 #include "log.h"
 #include "ggml.h"
+#include "ggml-cpu.h"
 #include "gguf.h"
 #include "llama.h"
 #include "mtmd-helper.h"
@@ -5676,9 +5677,26 @@ std::string with_nvfp4_experts(const std::string &src, const std::string &prefix
                 values[static_cast<size_t>(e * per_expert + k)] *= factor;
             }
         }
+        if (n_per_row % 64 != 0) { // NVFP4 blocks are 64 values; ggml_quantize_chunk would assert
+            ok = false;
+            break;
+        }
         ggml_tensor *q = ggml_new_tensor_3d(ctx, GGML_TYPE_NVFP4, n_per_row, rows, n_expert);
-        ok = ok && n_per_row % 64 == 0;
         ggml_quantize_chunk(GGML_TYPE_NVFP4, values.data(), q->data, 0, rows * n_expert, n_per_row, nullptr);
+        // every UE4M3 block scale (the first 4 bytes of a 36-byte block, exponent in bits 6..3) is 0 or normal,
+        // and not 15 (ggml's encoder saturates there): the exactness of a power-of-two scale rests on it
+        const auto *blocks = static_cast<const uint8_t *>(q->data);
+        for (size_t b = 0; b < ggml_nbytes(q) / 36; ++b) {
+            for (int sub = 0; sub < 4; ++sub) {
+                const uint8_t d = blocks[b * 36 + static_cast<size_t>(sub)];
+                const int exponent = (d >> 3) & 0xF;
+                if (d != 0 && (exponent == 0 || exponent == 15)) {
+                    std::fprintf(stderr, "%s: block %zu has the UE4M3 scale 0x%02x, which is not normal\n",
+                                 name.c_str(), b, d);
+                    ok = false;
+                }
+            }
+        }
         const std::string base = name.substr(0, name.size() - std::string("weight").size());
         if (mode == Nvfp4Experts::DEQUANTIZED) {
             ggml_tensor *f = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_per_row, rows, n_expert);
@@ -5724,12 +5742,14 @@ TEST(CApiInkling2, Nvfp4ExpertsWithAScalePerExpertAnswerAsTheirScaledWeights) {
     // "<matrix>.scale", which llama.cpp has applied inside MUL_MAT_ID since b12818 (#28898). Such a file
     // has to load and compute what its weights times their expert's scale compute: without the scale it is
     // refused by name (NVFP4 needs one), a scale with fewer values than experts is refused, and with the
-    // scales {1, 2, 4, 2} it answers bit for bit like the file whose experts hold the weights times those
-    // scales (a scale of 1 each), close to the F32 file of the same values (the CPU multiplies NVFP4 with
-    // Q8_0 activations) and unlike the file whose experts are all scaled by 1.
+    // scales {1, 2, 4, 8} (one per expert, so a mix-up of two experts shows) it answers bit for bit like the
+    // file whose experts hold the weights times those scales (a scale of 1 each), its first token close to the
+    // F32 file of the same values (the CPU multiplies NVFP4 with Q8_0 activations; only the first token, since
+    // after a greedy step that differs between two files the later ones compare different prompts), and its
+    // answer unlike the file whose experts are all scaled by 1.
     const std::string plain = write_tiny_inkling2_gguf("jllama-c-api-inkling2-nvfp4-plain", 8, 64);
     ASSERT_FALSE(plain.empty());
-    const std::vector<float> scales = {1.0f, 2.0f, 4.0f, 2.0f};
+    const std::vector<float> scales = {1.0f, 2.0f, 4.0f, 8.0f};
     const std::vector<float> ones(scales.size(), 1.0f);
     const std::string unscaled =
         with_nvfp4_experts(plain, "jllama-c-api-inkling2-nvfp4-unscaled", scales, Nvfp4Experts::WITHOUT_SCALE);
@@ -5776,10 +5796,14 @@ TEST(CApiInkling2, Nvfp4ExpertsWithAScalePerExpertAnswerAsTheirScaledWeights) {
         EXPECT_TRUE(std::isfinite(v)) << v;
     }
     EXPECT_EQ(with_scales, probs(folded)) << "the per-expert scale is not what multiplying it into the weights gives";
-    const double to_f32 = max_difference(with_scales, probs(reference));
+    const auto first_token = [](const std::vector<double> &v) {
+        return std::vector<double>(v.begin(), v.begin() + std::min<size_t>(3, v.size()));
+    };
+    const double to_f32 = max_difference(first_token(with_scales), first_token(probs(reference)));
+    // over every step: a greedy step that differs only makes the difference larger
     const double to_ones = max_difference(with_scales, probs(unit));
-    // measured: 0.14 apart from the F32 values (0.07 with every scale 1, the rounding of the activations to
-    // Q8_0), 0.99 apart from the scales of 1
+    std::printf("first token %.3g from the F32 values; %.3g from the scales of 1\n", to_f32, to_ones);
+    // the rounding of the activations to Q8_0 alone moves the first token by about 0.07
     EXPECT_LT(to_f32, 0.3) << "NVFP4 experts and their F32 values";
     EXPECT_GT(to_ones, 3 * to_f32) << "the scales do not reach the experts";
 
@@ -15412,6 +15436,162 @@ TEST(CApiTrainer, TheGeneratorsArchitecturesGgmlCanDifferentiateStillTrain) {
     }
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+// patches/0044: the walk opt_epoch_iter refuses a training graph with (src/llama-context.{h,cpp}). It has external
+// linkage, which the static library the test links keeps; the shipped library does not export it.
+const ggml_tensor *llama_opt_find_unsupported_backward(ggml_cgraph *gf, const ggml_tensor *output, std::string &reason);
+
+namespace {
+
+// A training graph built from ggml ops only: two parameters a and b of 4 x 3, what `body` makes of them, and
+// the sum of its result as the loss. The walk of patches/0044 and ggml's own backward pass judge the same graph.
+struct backward_graph {
+    ggml_context *ctx = nullptr;
+    ggml_cgraph *gf = nullptr;
+    ggml_tensor *loss = nullptr;
+
+    explicit backward_graph(const std::function<ggml_tensor *(ggml_context *, ggml_tensor *, ggml_tensor *)> &body) {
+        const ggml_init_params ip = {16u * 1024 * 1024, nullptr, true};
+        ctx = ggml_init(ip);
+        ggml_tensor *a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3);
+        ggml_tensor *b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3);
+        ggml_set_param(a);
+        ggml_set_param(b);
+        loss = ggml_sum(ctx, body(ctx, a, b));
+        ggml_set_loss(loss);
+        gf = ggml_new_graph_custom(ctx, 256, true);
+        ggml_build_forward_expand(gf, loss);
+    }
+    ~backward_graph() { ggml_free(ctx); }
+    backward_graph(const backward_graph &) = delete;
+    backward_graph &operator=(const backward_graph &) = delete;
+
+    // what the walk refuses, or "" when it lets the graph through
+    std::string refusal() {
+        std::string reason;
+        return llama_opt_find_unsupported_backward(gf, loss, reason) != nullptr ? reason : std::string();
+    }
+    // ggml's backward pass over the graph, which ends the process where the walk must refuse
+    void build_backward() { ggml_build_backward_expand(ctx, gf, nullptr); }
+};
+
+// x times a weight of x's own shape (a MUL, so every gradient it hands back is a new, contiguous tensor)
+ggml_tensor *weighted(ggml_context *ctx, ggml_tensor *x) {
+    return ggml_mul(ctx, x, ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, x->ne));
+}
+
+} // namespace
+
+TEST(CApiTrainer, TheWalkRefusesAConcatWhoseGradientArrivesTransposedAndGgmlWouldAbort) {
+    // b12832 (#32151) gave CONCAT a backward pass, which views its gradient with explicit strides; ggml_view_4d
+    // asserts that the first stride is the element's, so a CONCAT whose only gradient comes back through a
+    // TRANSPOSE ends the process in ggml_build_backward_expand. patches/0044 tracks the gradients' layouts.
+    const auto transposed = [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *b) {
+        return weighted(ctx, ggml_transpose(ctx, ggml_concat(ctx, a, b, 0)));
+    };
+    {
+        backward_graph g(transposed);
+        const std::string reason = g.refusal();
+        EXPECT_NE(reason.find("ggml's backward pass of CONCAT cannot take its gradient as the transposed or permuted"),
+                  std::string::npos)
+            << reason;
+    }
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_DEATH(backward_graph(transposed).build_backward(), "GGML_ASSERT");
+
+    // the same through a PERMUTE that moves the first axis, and one that keeps it
+    const auto permuted = [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *b) {
+        return weighted(ctx, ggml_permute(ctx, ggml_concat(ctx, a, b, 1), 1, 0, 2, 3));
+    };
+    EXPECT_NE(backward_graph(permuted).refusal(), "");
+    EXPECT_DEATH(backward_graph(permuted).build_backward(), "GGML_ASSERT");
+    const auto first_axis_kept = [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *b) {
+        return weighted(ctx, ggml_permute(ctx, ggml_concat(ctx, a, b, 1), 0, 2, 1, 3));
+    };
+    backward_graph kept(first_axis_kept);
+    EXPECT_EQ(kept.refusal(), "");
+    kept.build_backward();
+}
+
+TEST(CApiTrainer, TheWalkLetsAConcatThroughWhoseGradientIsContiguous) {
+    // directly into a MUL, and through a TRANSPOSE next to a second consumer: two gradients are added into a
+    // new, contiguous tensor, so the CONCAT views that one
+    for (const auto &body : std::vector<std::function<ggml_tensor *(ggml_context *, ggml_tensor *, ggml_tensor *)>>{
+             [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *b) { return weighted(ctx, ggml_concat(ctx, a, b, 0)); },
+             [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *b) {
+                 ggml_tensor *c = ggml_concat(ctx, a, b, 0);
+                 return ggml_add(ctx, ggml_sum(ctx, weighted(ctx, ggml_transpose(ctx, c))),
+                                 ggml_sum(ctx, weighted(ctx, c)));
+             }}) {
+        backward_graph g(body);
+        EXPECT_EQ(g.refusal(), "");
+        g.build_backward(); // and ggml builds it
+    }
+}
+
+TEST(CApiTrainer, GgmlDifferentiatesAConcatAlongEitherAxis) {
+    // b12832 (#32151): ggml_compute_backward has a case for CONCAT, and patches/0044 lets it through. With the
+    // loss sum(concat(a, b) * w) the gradient of each source is the part of w over it -- along the first axis
+    // and along the second, with sources of different lengths. Before b12832 ggml_build_backward_expand ended
+    // the process on the CONCAT (GGML_ABORT). No architecture of the generator trains a CONCAT: in the
+    // training graph the keys and values go into the KV cache, through which no gradient flows.
+    for (const int dim : {0, 1}) {
+        SCOPED_TRACE(dim);
+        const ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
+        ggml_context *ctx = ggml_init(ip);
+        ASSERT_NE(ctx, nullptr);
+        ggml_tensor *a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3);
+        ggml_tensor *b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, dim == 0 ? 2 : 4, dim == 0 ? 3 : 5);
+        ggml_set_param(a);
+        ggml_set_param(b);
+        ggml_tensor *c = ggml_concat(ctx, a, b, dim);
+        ggml_tensor *w = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, c->ne);
+        for (ggml_tensor *t : {a, b, w}) {
+            for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+                static_cast<float *>(t->data)[i] = 0.25f * static_cast<float>(i % 7) + (t == w ? 1.0f : -0.5f);
+            }
+        }
+        ggml_tensor *loss = ggml_sum(ctx, ggml_mul(ctx, c, w));
+        ggml_set_loss(loss);
+        ggml_cgraph *gf = ggml_new_graph_custom(ctx, 256, true);
+        ggml_build_forward_expand(gf, loss);
+        std::string reason;
+        EXPECT_EQ(llama_opt_find_unsupported_backward(gf, loss, reason), nullptr) << reason;
+        ggml_build_backward_expand(ctx, gf, nullptr);
+        ggml_graph_reset(gf); // the loss's gradient 1
+        ASSERT_EQ(ggml_graph_compute_with_ctx(ctx, gf, 1), GGML_STATUS_SUCCESS);
+        const ggml_tensor *grads[] = {ggml_graph_get_grad(gf, a), ggml_graph_get_grad(gf, b)};
+        const int64_t offset[] = {0, dim == 0 ? a->ne[0] : a->ne[1]}; // where each source starts in c along dim
+        const ggml_tensor *sources[] = {a, b};
+        for (int k = 0; k < 2; ++k) {
+            ASSERT_NE(grads[k], nullptr);
+            const ggml_tensor *src = sources[k];
+            for (int64_t i1 = 0; i1 < src->ne[1]; ++i1) {
+                for (int64_t i0 = 0; i0 < src->ne[0]; ++i0) {
+                    const int64_t c0 = i0 + (dim == 0 ? offset[k] : 0);
+                    const int64_t c1 = i1 + (dim == 1 ? offset[k] : 0);
+                    const float expected = static_cast<const float *>(w->data)[c0 + c1 * c->ne[0]];
+                    const float got = *reinterpret_cast<const float *>(static_cast<const char *>(grads[k]->data) +
+                                                                       i0 * grads[k]->nb[0] + i1 * grads[k]->nb[1]);
+                    EXPECT_FLOAT_EQ(got, expected) << "source " << k << " at " << i0 << ", " << i1;
+                }
+            }
+        }
+        ggml_free(ctx);
+    }
+}
+
+TEST(CApiTrainer, TheWalkRefusesAContWhoseGradientArrivesTransposedAndGgmlWouldAbort) {
+    // CONT asserts that its gradient is contiguous (and CPY reshapes it, SET accumulates into it): the same
+    // layout rule for ops 0044 accepted before b12832
+    const auto cont_transposed = [](ggml_context *ctx, ggml_tensor *a, ggml_tensor *) {
+        return weighted(ctx, ggml_transpose(ctx, ggml_cont(ctx, ggml_scale(ctx, a, 2.0f))));
+    };
+    const std::string reason = backward_graph(cont_transposed).refusal();
+    EXPECT_NE(reason.find("ggml's backward pass of CONT cannot take its gradient"), std::string::npos) << reason;
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_DEATH(backward_graph(cont_transposed).build_backward(), "GGML_ASSERT");
 }
 
 TEST_F(CApiEnumSweep, ALongImatrixNameIsRecordedAsValidUtf8) {

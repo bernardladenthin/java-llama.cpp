@@ -179,6 +179,17 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### Open from the llama.cpp bumps (b11968 onward) -- to implement, to decide, to measure
 
+- **Fine-tuning trains neither the key and value projections nor the token embedding** (measured at
+  b12838, 2026-11-28, on the random llama model of `CApi.FinetuneChangesTheWeightsWithEitherOptimizer...`:
+  after one epoch every `attn_q`, `attn_output`, `ffn_*`, norm and the output changed, every `attn_k`,
+  `attn_v` and `token_embd` is byte for byte the input's). The training graph writes K and V into the KV
+  cache (`set_rows`) and the attention reads them back from the cache, so no gradient reaches the
+  projections; `patches/0044`'s walk confirms it (a model whose keys are a CONCAT trains with CONCAT
+  refused, because the CONCAT gets no gradient). Upstream's behaviour, not a patch's. To do: find out
+  whether upstream knows it (an issue, or a no-cache attention for training), say it in `LlamaTrainer`'s
+  Javadoc and the README's fine-tuning section, and decide whether to report it -- not before the
+  release (policy). Why `token_embd` stays is not measured (a parameter filter, or GET_ROWS's gradient).
+
 - **Smaller findings of the patch review of 2026-11-19, not fixed:** the engine sets the slot-prompt
   similarity (`patches/0003`'s accessor) from the caller's thread, which the accessor's comment rules
   out -- a formal data race with the worker's slot selection over one float, benign in practice;

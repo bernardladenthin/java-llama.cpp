@@ -48,12 +48,17 @@ public class MtpDraftIntegrationTest {
                 "MTP model not found, skipping MtpDraftIntegrationTest");
     }
 
+    /**
+     * On the CPU, as upstream's own check runs: a GPU backend verifies a draft in one batch and generates
+     * without one token at a time, with kernels that may round a near tie the other way, and the comparison
+     * is token for token. On the CPU the two paths agree to 1e-4 in every log probability (measured), against
+     * a smallest margin of 0.06 between the first two tokens over the 48.
+     */
     private static ModelParameters parameters() {
-        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         return new ModelParameters()
                 .setModel(TestConstants.MTP_MODEL_PATH)
                 .setCtxSize(1024)
-                .setGpuLayers(gpuLayers)
+                .setGpuLayers(0)
                 .setFit(false);
     }
 
